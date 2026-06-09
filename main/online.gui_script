@@ -237,7 +237,8 @@ local function draw_left(self)
     cy = cy - timer_h - BLOCK_GAP
 
     -- ── Standings ─────────────────────────────────────────────────────
-    track(self, ui.text(vmath.vector3(cx, cy, 0), "STANDINGS", "small", COL_MID))
+    local s_title = txtL(self, cx - pw/2 + INNER_PAD, cy, "STANDINGS", "body", COL_BRIGHT)
+    gui.set_scale(s_title, vmath.vector3(0.82, 0.82, 1))
     cy = cy - SECTION_GAP - HDR_H_TABLE
 
     local prizes = build_prizes(self)
@@ -288,7 +289,8 @@ local function draw_left(self)
     cy = cy - BLOCK_GAP
 
     -- ── Season Bonuses ────────────────────────────────────────────────
-    track(self, ui.text(vmath.vector3(cx, cy, 0), "SEASON BONUSES", "small", COL_MID))
+    local b_title = txtL(self, cx - pw/2 + INNER_PAD, cy, "SEASON BONUSES", "body", COL_BRIGHT)
+    gui.set_scale(b_title, vmath.vector3(0.82, 0.82, 1))
     cy = cy - SECTION_GAP - HDR_H_TABLE
 
     -- Column header bar
@@ -353,19 +355,17 @@ local function draw_right(self)
     mkbtn(self, "nav_account", vmath.vector3(info_r - 16, name_y, 0), vmath.vector3(28, 28, 0), nil, vmath.vector4(0,0,0,0))
     track(self, ui.text(vmath.vector3(info_r - 16, name_y, 0), "⚙", "body", COL_MID))
 
-    -- Balance / Points pills
-    local stat_y = pcy - prof_h/2 + 30
-    local half = (info_w - 8) / 2
-    local bal_cx = info_l + half/2
-    local pts_cx = info_r - half/2
+    -- Balance / Points — stacked full-width rows so big amounts aren't squeezed
+    -- by the label (label left, amount right, each on its own line).
+    local bal_y = pcy - prof_h/2 + 44
+    local pts_y = pcy - prof_h/2 + 14
+    track(self, ui.box(vmath.vector3(info_cx, bal_y, 0), vmath.vector3(info_w, 26, 0), COL_STAT_BG))
+    txtL(self, info_l + 10, bal_y, "BAL", "small", COL_GOLD)
+    txtR(self, info_r - 10, bal_y, commas(u.balance or 0), "body", COL_GOLD)
 
-    track(self, ui.box(vmath.vector3(bal_cx, stat_y, 0), vmath.vector3(half, 36, 0), COL_STAT_BG))
-    txtL(self, bal_cx - half/2 + 10, stat_y, "Bal.", "small", COL_GOLD)
-    txtR(self, bal_cx + half/2 - 10, stat_y, commas(u.balance or 0), "body", COL_GOLD)
-
-    track(self, ui.box(vmath.vector3(pts_cx, stat_y, 0), vmath.vector3(half, 36, 0), COL_STAT_BG))
-    txtL(self, pts_cx - half/2 + 10, stat_y, "PTS.", "small", COL_DIM)
-    txtR(self, pts_cx + half/2 - 10, stat_y, commas(u.points or 0), "body", COL_CYAN)
+    track(self, ui.box(vmath.vector3(info_cx, pts_y, 0), vmath.vector3(info_w, 26, 0), COL_STAT_BG))
+    txtL(self, info_l + 10, pts_y, "PTS", "small", COL_DIM)
+    txtR(self, info_r - 10, pts_y, commas(u.points or 0), "body", COL_CYAN)
 
     cy = cy - prof_h - BLOCK_GAP
 
@@ -514,15 +514,21 @@ local function draw_center(self)
 
         for i, st in ipairs(stakes) do
             local sx = content_l + (i - 0.5) * st_w + (i - 1) * stakes_gap
+            -- STAKE_LEVELS is {0,50,200,500,1000}; the displayed stakes start at
+            -- 50, so the level index is i+1. (Using i highlighted the wrong tile.)
+            local level_idx = i + 1
             local is_active = (config.STAKE_LEVELS[self.stake_index] and config.STAKE_LEVELS[self.stake_index].amount == st)
             local affordable = (my_balance >= st)
 
-            -- Darker stake surface using the dedicated (square) stake textures
-            track(self, ui.box(vmath.vector3(sx, cy - stake_card_h/2, 0), vmath.vector3(st_w, stake_card_h, 0), vmath.vector4(0.03, 0.03, 0.045, 1.0)))
-            local btn = track(self, ui.btn9(vmath.vector3(sx, cy - stake_card_h/2, 0), vmath.vector3(st_w, stake_card_h, 0),
-                is_active and "stake_bg_active" or "stake_bg"))
-            if not affordable then gui.set_color(btn, vmath.vector4(1,1,1,0.4)) end
-            self.buttons[#self.buttons+1] = { node = btn, id = "stake_"..i, data = i }
+            -- No per-tile background: just the value. The active stake gets a
+            -- subtle tint + gold underline.
+            if is_active then
+                track(self, ui.box(vmath.vector3(sx, cy - stake_card_h/2, 0), vmath.vector3(st_w, stake_card_h, 0), vmath.vector4(0.20, 0.16, 0.03, 0.55)))
+                track(self, ui.box(vmath.vector3(sx, cy - stake_card_h + 3, 0), vmath.vector3(st_w - 6, 3, 0), COL_GOLD))
+            end
+            -- transparent hit target sized exactly to this column
+            local btn = track(self, ui.box(vmath.vector3(sx, cy - stake_card_h/2, 0), vmath.vector3(st_w, stake_card_h, 0), vmath.vector4(0, 0, 0, 0)))
+            self.buttons[#self.buttons+1] = { node = btn, id = "stake_"..i, data = level_idx }
 
             -- "200" stake is themed red (Godot scene), active stake also red
             local amt_red = (st == 200) or is_active
@@ -880,7 +886,9 @@ end
 
 function init(self)
     self.nodes, self.buttons = {}, {}
-    self.stake_index, self.tab = 1, TAB_QUICK
+    -- Default to the 50-coin stake (STAKE_LEVELS index 2; index 1 is Free/0).
+    self.stake_index, self.tab = 2, TAB_QUICK
+    app_state.selected_stake = app_state.selected_stake or config.STAKE_LEVELS[self.stake_index]
     self.dialog, self.banners, self.list_scroll, self._tick, self._dlg_tick = nil, nil, 0, 0, 0
     refresh_wh()
     update_season(self)
