@@ -609,6 +609,19 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("ws_player_rc") then
         notify_gui(self.gui_hud, "conn_overlay", { show = false })
 
+    -- ── Emoji send (from the HUD) / receive (from the opponent) ──────────────
+    elseif message_id == hash("send_emoji") then
+        if self.online_mode and message and message.emoji then
+            ws.send_emoji(message.emoji)
+        end
+
+    elseif message_id == hash("ws_emoji") then
+        local sender = tostring((message and message.sender) or "")
+        notify_gui(self.gui_hud, "emoji_received", {
+            emoji = (message and message.emoji) or "joy",
+            is_me = (sender ~= "" and sender == tostring(self.my_player_id)),
+        })
+
     -- ── Our own socket dropped / recovered (Task: current user goes offline) ──
     elseif message_id == hash("ws_net_down") then
         if self.online_mode and not self.game_over then

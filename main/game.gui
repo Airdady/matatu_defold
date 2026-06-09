@@ -23,6 +23,10 @@ textures {
   name: "avatars"
   texture: "/assets/avatars/avatars.atlas"
 }
+textures {
+  name: "emojis"
+  texture: "/assets/emojis/emojis.atlas"
+}
 background_color {
   x: 0.0
   y: 0.0
