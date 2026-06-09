@@ -283,6 +283,78 @@ local function set_conn_overlay(self, opts)
 end
 
 ----------------------------------------------------------------------
+-- Emoji selector (ported from the Godot EmojiSelector look & feel)
+----------------------------------------------------------------------
+local EMOJI_NAMES = { "joy", "tongue", "hot", "money", "party", "sleep", "thumbsdown", "wave" }
+local EMOJI_VALID = {}
+for _, n in ipairs(EMOJI_NAMES) do EMOJI_VALID[n] = true end
+
+local function build_emoji_selector(self)
+    local size = 64
+    -- Main round button, bottom-right corner.
+    self.emoji_btn = box(vmath.vector3(LOGICAL_W - 22 - size/2, 22 + size/2, 0), vmath.vector3(size, size, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
+    gui.set_xanchor(self.emoji_btn, gui.ANCHOR_RIGHT)
+    gui.set_yanchor(self.emoji_btn, gui.ANCHOR_BOTTOM)
+    pcall(function() gui.set_texture(self.emoji_btn, "emojis"); gui.play_flipbook(self.emoji_btn, hash("emoji_btn")) end)
+
+    -- Popover grid (4 x 2), opens above the button.
+    local cols, rows, cell, pad = 4, 2, 62, 12
+    local pw, ph = cols*cell + pad*2, rows*cell + pad*2
+    self.emoji_panel = box(vmath.vector3(LOGICAL_W - 22 - pw/2, 22 + size + 12 + ph/2, 0), vmath.vector3(pw, ph, 0), vmath.vector4(0.07, 0.08, 0.11, 0.97), gui.PIVOT_CENTER)
+    gui.set_xanchor(self.emoji_panel, gui.ANCHOR_RIGHT)
+    gui.set_yanchor(self.emoji_panel, gui.ANCHOR_BOTTOM)
+    self.emoji_cells = {}
+    for i, name in ipairs(EMOJI_NAMES) do
+        local c, r = (i-1) % cols, math.floor((i-1)/cols)
+        local ex = -pw/2 + pad + cell/2 + c*cell
+        local ey =  ph/2 - pad - cell/2 - r*cell
+        local n = box(vmath.vector3(ex, ey, 0), vmath.vector3(cell-12, cell-12, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
+        gui.set_parent(n, self.emoji_panel)
+        pcall(function() gui.set_texture(n, "emojis"); gui.play_flipbook(n, hash("emoji_"..name)) end)
+        self.emoji_cells[i] = { node = n, name = name }
+    end
+    gui.set_enabled(self.emoji_panel, false)
+    self.emoji_open = false
+    self.emoji_bubbles = {}
+end
+
+local function set_emoji_open(self, open)
+    self.emoji_open = open and true or false
+    if self.emoji_panel then gui.set_enabled(self.emoji_panel, self.emoji_open) end
+    if self.emoji_open and self.emoji_panel then
+        gui.set_scale(self.emoji_panel, vmath.vector3(0.85, 0.85, 1))
+        gui.animate(self.emoji_panel, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTBACK, 0.18)
+    end
+end
+
+-- Pop an emoji bubble near the player (mine) or opponent avatar; auto-fades.
+local function show_emoji_bubble(self, name, at_opponent)
+    if not EMOJI_VALID[name] then name = "joy" end
+    local key = at_opponent and "opp" or "me"
+    self.emoji_bubbles = self.emoji_bubbles or {}
+    if self.emoji_bubbles[key] then pcall(gui.delete_node, self.emoji_bubbles[key]) end
+
+    local b = box(vmath.vector3(0, 0, 0), vmath.vector3(86, 86, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
+    gui.set_xanchor(b, gui.ANCHOR_LEFT)
+    if at_opponent then
+        gui.set_yanchor(b, gui.ANCHOR_TOP)
+        gui.set_position(b, vmath.vector3(150, LOGICAL_H - 86, 0))
+    else
+        gui.set_yanchor(b, gui.ANCHOR_BOTTOM)
+        gui.set_position(b, vmath.vector3(150, 120, 0))
+    end
+    pcall(function() gui.set_texture(b, "emojis"); gui.play_flipbook(b, hash("emoji_"..name)) end)
+    self.emoji_bubbles[key] = b
+
+    gui.set_scale(b, vmath.vector3(0.3, 0.3, 1))
+    gui.animate(b, "scale", vmath.vector3(1.0, 1.0, 1), gui.EASING_OUTBACK, 0.3)
+    gui.animate(b, "color.w", 0.0, gui.EASING_INSINE, 0.5, 1.7, function()
+        pcall(gui.delete_node, b)
+        if self.emoji_bubbles and self.emoji_bubbles[key] == b then self.emoji_bubbles[key] = nil end
+    end)
+end
+
+----------------------------------------------------------------------
 -- LOGIC & UPDATES
 ----------------------------------------------------------------------
 
@@ -357,6 +429,7 @@ function init(self)
     _create_skip_button(self)
     build_exit(self)
     build_conn_overlay(self)
+    build_emoji_selector(self)
 end
 
 function update(self, dt)
@@ -423,6 +496,27 @@ function on_input(self, action_id, action)
 
     if self.exit_btn and hit(self.exit_btn, action) then
         if self.exit_popover then gui.set_enabled(self.exit_popover, true) end
+        return true
+    end
+
+    -- Emoji selector: grid taps (when open), then the toggle button.
+    if self.emoji_panel and gui.is_enabled(self.emoji_panel) then
+        for _, cell in ipairs(self.emoji_cells or {}) do
+            if hit(cell.node, action) then
+                set_emoji_open(self, false)
+                show_emoji_bubble(self, cell.name, false)
+                msg.post(GAME, "send_emoji", { emoji = cell.name })
+                msg.post(GAME, "play_sound", { sound = "SoundRequestSuit" })
+                return true
+            end
+        end
+        if not (self.emoji_btn and hit(self.emoji_btn, action)) then
+            set_emoji_open(self, false)
+            return true
+        end
+    end
+    if self.emoji_btn and hit(self.emoji_btn, action) then
+        set_emoji_open(self, not self.emoji_open)
         return true
     end
 
@@ -543,6 +637,10 @@ function on_message(self, message_id, message)
     elseif message_id == hash("conn_overlay") then
         set_conn_overlay(self, message)
 
+    elseif message_id == hash("emoji_received") then
+        show_emoji_bubble(self, message.emoji or "joy", not message.is_me)
+        msg.post(GAME, "play_sound", { sound = "SoundRequestSuit" })
+
     elseif message_id == hash("reset_hud") then
         stop_timers(self)
         set_skip_visible(self, false)
@@ -552,5 +650,7 @@ function on_message(self, message_id, message)
         if self.stake_chip then gui.set_enabled(self.stake_chip, false) end
         if self.standings_title then gui.set_enabled(self.standings_title, false) end
         for _, row in ipairs(self.standings_rows or {}) do gui.set_enabled(row.bg, false) end
+        set_emoji_open(self, false)
+        for k, b in pairs(self.emoji_bubbles or {}) do pcall(gui.delete_node, b); self.emoji_bubbles[k] = nil end
     end
 end
