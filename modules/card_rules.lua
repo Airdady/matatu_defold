@@ -299,6 +299,14 @@ function M.get_next_action(prev_card, played_card, is_penalty_active, selected_s
     return make_result(effect)
   end
 
+  -- Heads-up rule: a skip (8) may not be stacked on another 8. Playing an 8
+  -- keeps the turn (the opponent is skipped), so allowing 8-on-8 would let a
+  -- player chain 8s and lock the opponent out indefinitely. After an 8 you must
+  -- play a DIFFERENT card or draw.
+  if prev_card.v == M.VALUES.EIGHT and played_card.v == M.VALUES.EIGHT then
+    return make_invalid("Can't play an 8 on an 8 — play another card or draw")
+  end
+
   -- Basic move validation
   local is_valid_move = (
     M.is_basic_match(played_card, prev_card, selected_suit, rules)

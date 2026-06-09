@@ -20,6 +20,12 @@ M.RECONNECT_BACKOFF = 1.5
 M.MAX_RECONNECT_ATTEMPTS = 50
 M.KEEP_ALIVE_INTERVAL = 4.0
 
+-- Zombie-connection watchdog: if the socket reports "connected" but no message
+-- (not even a PONG/PING/keep-alive ack) has arrived in this many seconds, the
+-- TCP link is dead-but-open. The client force-closes it and reconnects instead
+-- of silently hanging forever. ~3x the keep-alive interval avoids false trips.
+M.ZOMBIE_TIMEOUT = 13.0
+
 -- Turn length (seconds) used by the local game timer display.
 M.TURN_SECONDS = 30
 

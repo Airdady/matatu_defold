@@ -261,30 +261,55 @@ function M.finalize_state_sync(self, state, on_complete)
     if state.rank then msg.post(GUI_HUD, "update_standings", { ranks = state.rank }) end
     M.process_scoreboard(self, state)
 
-    local deck_target = state.deckCount or (state.deck and #state.deck) or #self.deck
-    M.sync_deck_size(self, deck_target)
-    stamp_deck(self, state.deck)
+    -- ── Deck + opponent-hand reconciliation (deferred behind a reshuffle) ────
+    local function do_sync()
+        local deck_target = state.deckCount or (state.deck and #state.deck) or #self.deck
+        M.sync_deck_size(self, deck_target)
+        stamp_deck(self, state.deck)
 
-    local op = (state.players or {})[self.opponent_id] or {}
-    local real_hand = (type(op.hand) == "table") and op.hand or nil
-    local target = op.handCount or (real_hand and #real_hand) or #self.ai_hand
+        local op = (state.players or {})[self.opponent_id] or {}
+        local real_hand = (type(op.hand) == "table") and op.hand or nil
+        local target = op.handCount or (real_hand and #real_hand) or #self.ai_hand
 
-    local function settle()
-        stamp_ai_hand(self, real_hand)
-        M.sync_timers(self, state)
-        if on_complete then on_complete() end
+        local function settle()
+            stamp_ai_hand(self, real_hand)
+            M.sync_timers(self, state)
+            if on_complete then on_complete() end
+        end
+
+        if #self.ai_hand < target then
+            local diff = target - #self.ai_hand
+            self.draw_to_hand(self.ai_hand, false, diff, function() settle() end)
+        else
+            while #self.ai_hand > target do
+                local c = table.remove(self.ai_hand)
+                pcall(go.delete, c.id)
+            end
+            self.position_hands(true)
+            settle()
+        end
     end
 
-    if #self.ai_hand < target then
-        local diff = target - #self.ai_hand
-        self.draw_to_hand(self.ai_hand, false, diff, function() settle() end)
+    -- Detect a server-side reshuffle: the deck refilled while the discard pile
+    -- was reset to (just) the current card. Recycle the on-screen pile back into
+    -- the deck with the proper riffle animation instead of popping fresh cards
+    -- out of nowhere. (When an animated draw already emptied the local deck it
+    -- reshuffles itself, leaving played_cards small — so this won't double-fire.)
+    local deck_target     = state.deckCount or (state.deck and #state.deck) or #self.deck
+    local incoming_played = (type(state.playedCards) == "table") and #state.playedCards or nil
+    local pile_was_reset  = incoming_played ~= nil and incoming_played <= 1
+    local deck_jumped     = deck_target >= (#self.deck + 6)
+    local should_reshuffle = (#self.played_cards > 3) and (pile_was_reset or deck_jumped)
+
+    if should_reshuffle and not self._online_reshuffling then
+        self._online_reshuffling = true
+        msg.post(GUI_HUD, "skip", { show = false })
+        self.reshuffle_deck(function()
+            self._online_reshuffling = false
+            do_sync()
+        end)
     else
-        while #self.ai_hand > target do
-            local c = table.remove(self.ai_hand)
-            pcall(go.delete, c.id)
-        end
-        self.position_hands(true)
-        settle()
+        do_sync()
     end
 end
 
@@ -337,6 +362,7 @@ function M.start_game(self, state)
     self.move_queue = {}
     self.is_processing_move = false
     self.is_waiting_for_server_response = false
+    self._online_reshuffling = false
 
     M.setup_ws_listeners(self)
 

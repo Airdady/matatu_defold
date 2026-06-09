@@ -590,29 +590,93 @@ local function draw_center(self)
 end
 
 -- ── Modal & Banners (runtime overlays) ───────────────────────────────────────
+-- Game-request modal restyled 1:1 to the Godot GameRequestDialog: a radial
+-- gradient backdrop, the opponent vs YOU avatar layout, a countdown ring, the
+-- stake line and the Accept/Decline (or Cancel) buttons.
+local DLG_RED    = vmath.vector4(1.0, 0.40, 0.40, 1.0)   -- Godot VS colour
+local DLG_AV_BG  = vmath.vector4(0.20, 0.20, 0.20, 0.50) -- avatar disc bg
+local DLG_SEARCH = vmath.vector4(1.0, 0.84, 0.00, 1.0)   -- "YOU" / search gold
+
+local function with_a(c, a)
+    a = a or 1
+    return vmath.vector4(c.x, c.y, c.z, c.w * a)
+end
+
+-- Circular avatar: a dark filled disc with the avatar image on top.
+local function dlg_avatar(self, x, y, size, avatar_id, a)
+    track(self, ui.pie(vmath.vector3(x, y, 0), size/2 + 6, with_a(DLG_AV_BG, a)))
+    local av = track(self, ui.avatar(vmath.vector3(x, y, 0), vmath.vector3(size, size, 0), avatar_id))
+    gui.set_color(av, vmath.vector4(1, 1, 1, a or 1))
+end
+
+-- Countdown ring (dim full ring + bright arc starting at the top) + seconds.
+local function dlg_timer(self, x, y, time_left, max_time, a)
+    local frac = math.max(0, math.min(1, (time_left or 0) / (max_time or 10)))
+    local R = 34
+    local bg = track(self, gui.new_pie_node(vmath.vector3(x, y, 0), vmath.vector3(R*2, R*2, 0)))
+    gui.set_perimeter_vertices(bg, 48)
+    pcall(gui.set_inner_radius, bg, R * 0.80)
+    gui.set_color(bg, vmath.vector4(0.25, 0.25, 0.25, 0.45 * (a or 1)))
+
+    local col = (time_left or 0) <= 3 and COL_RED or COL_CYAN
+    local fg = track(self, gui.new_pie_node(vmath.vector3(x, y, 0), vmath.vector3(R*2, R*2, 0)))
+    gui.set_perimeter_vertices(fg, 48)
+    pcall(gui.set_inner_radius, fg, R * 0.80)
+    gui.set_rotation(fg, vmath.vector3(0, 0, 90))
+    gui.set_fill_angle(fg, frac * 360)
+    gui.set_color(fg, with_a(col, a))
+
+    track(self, ui.text(vmath.vector3(x, y, 0), tostring(math.ceil(time_left or 0)), "title", with_a(col, a)))
+end
+
 local function draw_dialog(self)
     local d = self.dialog
     if not d then return end
+    local a = self.dlg_alpha or 1
+    local incoming = (d.kind == "incoming")
 
-    local bg = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(LOGICAL_W, LOGICAL_H, 0), vmath.vector4(0,0,0, 0.7 * (self.dlg_alpha or 1))))
-    self.buttons[#self.buttons+1] = { node = bg, id = "dlg_block" }
+    -- Scrim hides the lobby; the gradient gives the warm radial glow on top.
+    local scrim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(LOGICAL_W*2, LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.62 * a)))
+    self.buttons[#self.buttons+1] = { node = scrim, id = "dlg_block" }
+    local grad = track(self, ui.grad_backdrop(LOGICAL_W, LOGICAL_H))
+    gui.set_color(grad, vmath.vector4(1, 1, 1, a))
 
-    local title = (d.kind == "incoming") and "INCOMING CHALLENGE" or "CHALLENGING"
-    track(self, ui.text(vmath.vector3(CX, CY + 150, 0), title, "title", vmath.vector4(0.2, 0.9, 1.0, 1)))
-    track(self, ui.text(vmath.vector3(CX, CY + 96, 0), (d.name or "PLAYER"):upper(), "body", COL_WHITE))
+    -- Title
+    local title = incoming and "INCOMING CHALLENGE" or "CHALLENGING"
+    track(self, ui.text(vmath.vector3(CX, CY + 168, 0), title, "title", with_a(COL_CYAN, a)))
 
-    local status = (d.kind == "incoming") and "Wants to play!" or "Waiting for player to accept..."
-    track(self, ui.text(vmath.vector3(CX, CY + 64, 0), status, "small", COL_MID))
+    -- VS layout
+    local col_gap = 165
+    local opp_x, me_x = CX - col_gap, CX + col_gap
+    local av_y, av_size = CY + 40, 92
 
+    -- Opponent (left)
+    dlg_avatar(self, opp_x, av_y, av_size, d.avatar or 1, a)
+    track(self, ui.text(vmath.vector3(opp_x, av_y - av_size/2 - 18, 0), (d.name or "PLAYER"):upper(), "body", with_a(COL_WHITE, a)))
+
+    -- You (right)
+    local u = ws.current_user_data or {}
+    dlg_avatar(self, me_x, av_y, av_size, u.avatar or 1, a)
+    track(self, ui.text(vmath.vector3(me_x, av_y - av_size/2 - 18, 0), "YOU", "body", with_a(DLG_SEARCH, a)))
+    track(self, ui.text(vmath.vector3(me_x, av_y - av_size/2 - 40, 0), "Bal: "..commas(u.balance or 0), "small", with_a(COL_GOLD, a)))
+
+    -- Center column: VS / stake / timer ring
+    track(self, ui.text(vmath.vector3(CX, av_y + 36, 0), "VS", "title", with_a(DLG_RED, a)))
     local amt = tonumber((d.stake or {}).amount) or 0
-    local st_txt = amt == 0 and "Practice Game (Free)" or ("Stake: "..commas(amt).." Coins")
-    track(self, ui.text(vmath.vector3(CX, CY + 34, 0), st_txt, "body", COL_GOLD))
+    local st_txt = amt == 0 and "Practice Game" or (commas(amt).." Coins")
+    track(self, ui.text(vmath.vector3(CX, av_y + 6, 0), st_txt, "small", with_a(COL_DIM, a)))
+    dlg_timer(self, CX, av_y - 36, d.time_left, d.max_time, a)
 
-    if d.kind == "incoming" then
-        mkbtn(self, "decline", vmath.vector3(CX - 95, CY - 100, 0), vmath.vector3(150, 48, 0), "Decline", "secondary_btn")
-        mkbtn(self, "accept",  vmath.vector3(CX + 95, CY - 100, 0), vmath.vector3(150, 48, 0), "Accept",  "primary_btn")
+    -- Status
+    local status = incoming and "Wants to play!" or "Waiting for player to accept..."
+    track(self, ui.text(vmath.vector3(CX, CY - 80, 0), status, "small", with_a(COL_MID, a)))
+
+    -- Buttons
+    if incoming then
+        mkbtn(self, "decline", vmath.vector3(CX - 95, CY - 138, 0), vmath.vector3(150, 48, 0), "Decline", "secondary_btn")
+        mkbtn(self, "accept",  vmath.vector3(CX + 95, CY - 138, 0), vmath.vector3(150, 48, 0), "Accept",  "primary_btn")
     else
-        mkbtn(self, "cancel_wait", vmath.vector3(CX, CY - 100, 0), vmath.vector3(170, 48, 0), "Cancel", "secondary_btn")
+        mkbtn(self, "cancel_wait", vmath.vector3(CX, CY - 138, 0), vmath.vector3(170, 48, 0), "Cancel", "secondary_btn")
     end
 end
 
@@ -716,8 +780,9 @@ local function update_season(self)
     else self.season_text = string.format("%02dH %02dM %02dS", h, m, s) end
 end
 
-local function open_dialog(self, kind, name, stake, request_id)
-    self.dialog = { kind = kind, name = name, stake = stake or {}, request_id = request_id, time_left = 10, max_time = 10 }
+local function open_dialog(self, kind, name, stake, request_id, avatar)
+    self.dialog = { kind = kind, name = name, stake = stake or {}, request_id = request_id,
+        avatar = tonumber(avatar) or 1, time_left = 10, max_time = 10 }
     self.dlg_alpha, self.dlg_dots = 0, 0
     if self._active then rebuild(self) end
 end
@@ -825,7 +890,7 @@ function on_message(self, message_id, message, sender)
         local r = ws.last_game_request or {}; local raw = r.raw or {}
         if type(raw) == "table" and (raw.gameType == "TOURNAMENT" or raw.gameType == "BATTLE" or raw.tournament) then
             open_banner(self, raw)
-        else open_dialog(self, "incoming", (r.user or {}).username or "A player", r.stake or {}, r.requestId) end
+        else open_dialog(self, "incoming", (r.user or {}).username or "A player", r.stake or {}, r.requestId, (r.user or {}).avatar) end
     elseif message_id == hash("ws_request_declined") or message_id == hash("ws_request_cancelled") then
         local rid = message and message.request_id
         if self.banners then close_banner(self, rid) end
@@ -844,7 +909,7 @@ local function handle(self, b)
     elseif id == "challenge" then
         local u = b.data or {}
         ws.send_game_request({ _id=u._id, username=u.username, isAI=u.isAI, avatar=u.avatar }, app_state.selected_stake)
-        open_dialog(self, "challenging", u.username or "opponent", app_state.selected_stake)
+        open_dialog(self, "challenging", u.username or "opponent", app_state.selected_stake, nil, u.avatar)
     elseif id == "accept" then
         if self.dialog and self.dialog.request_id then ws.accept_game_request(self.dialog.request_id) end; close_dialog(self)
     elseif id == "decline" or id == "cancel_wait" then

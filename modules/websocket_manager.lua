@@ -36,6 +36,14 @@ local pending_identity = nil
 local keep_alive_handle = nil
 local reconnect_handle = nil
 
+-- Wall-clock (seconds) of the last inbound traffic on the socket. Used by the
+-- zombie-connection watchdog. socket.gettime() is a Defold/luasocket global.
+local function now_s()
+  if socket and socket.gettime then return socket.gettime() end
+  return os.time()
+end
+local last_rx_time = now_s()
+
 local KEY_BYTES = util.hex_to_bytes(config.GAME_STATE_SECRET)
 
 -- ── pub/sub ─────────────────────────────────────────────────────────────────
@@ -257,11 +265,18 @@ local function parse_message(json_string)
   elseif t == "PLAYER_READY" then
     emit("player_ready", d._id or "")
   elseif t == "PLAYER_DISCONNECTED" then
-    emit("player_disconnected", d.reason or "Unknown", d.gracePeriod or 30)
+    emit("player_disconnected", {
+      reason = d.reason or "Unknown",
+      grace = tonumber(d.gracePeriod) or 30,
+      player_id = tostring(d._id or d.playerId or d.userId or ""),
+    })
   elseif t == "PLAYER_RECONNECTED" then
     local gs = M.extract_game_state(d)
     if next(gs) ~= nil then M.active_game_state = gs end
-    emit("player_reconnected", gs)
+    emit("player_reconnected", {
+      player_id = tostring(d._id or d.playerId or d.userId or ""),
+      state = gs,
+    })
   elseif t == "EMOJI_MESSAGE" then
     emit("emoji", d._id or "", d.emoji or "")
   elseif t == "ROUND_COMPLETE" then
@@ -303,12 +318,32 @@ local function stop_keep_alive()
   if keep_alive_handle then timer.cancel(keep_alive_handle); keep_alive_handle = nil end
 end
 
+local on_disconnected -- forward decl
+
+-- A socket reported as "connected" but with no inbound traffic for ZOMBIE_TIMEOUT
+-- seconds is a dead-but-open (zombie) link. Tear it down and let the normal
+-- reconnect/backoff path bring us back, instead of hanging forever.
+local function handle_zombie()
+  print("[WS] zombie connection detected (no traffic for " ..
+    tostring(config.ZOMBIE_TIMEOUT) .. "s) — forcing reconnect")
+  emit("connection_error", "zombie")
+  if connection and websocket then pcall(websocket.disconnect, connection) end
+  on_disconnected("zombie")
+end
+
 local function start_keep_alive()
   stop_keep_alive()
+  last_rx_time = now_s()
   keep_alive_handle = timer.delay(config.KEEP_ALIVE_INTERVAL, true, function()
-    if M.socket_connected and connection then
-      websocket.send(connection, json_util.encode({ type = "CLIENT_PING", timestamp = os.time() }))
+    if not (M.socket_connected and connection) then return end
+    -- Watchdog: if nothing has come back since the last ping cycles, the link
+    -- is a zombie. Check BEFORE sending so a truly dead socket can't keep
+    -- resetting our notion of "alive" just by queuing more outbound pings.
+    if (now_s() - last_rx_time) > config.ZOMBIE_TIMEOUT then
+      handle_zombie()
+      return
     end
+    websocket.send(connection, json_util.encode({ type = "CLIENT_PING", timestamp = os.time() }))
   end)
 end
 
@@ -325,7 +360,7 @@ local function on_connected()
   if pending_identity then M.send_message("IDENTIFY", pending_identity) end
 end
 
-local function on_disconnected(reason)
+on_disconnected = function(reason)
   print("[WS] disconnected: " .. tostring(reason))
   M.socket_connected = false
   is_connecting = false
@@ -357,13 +392,17 @@ schedule_reconnect = function()
 end
 
 local function ws_callback(_, conn, data)
-  if data.event == websocket.EVENT_CONNECTED then on_connected()
+  if data.event == websocket.EVENT_CONNECTED then
+    last_rx_time = now_s()
+    on_connected()
   elseif data.event == websocket.EVENT_DISCONNECTED then on_disconnected(data.message or "closed")
   elseif data.event == websocket.EVENT_ERROR then
     print("[WS] error: " .. tostring(data.message or (data.error and data.error.message)))
     emit("connection_error", data.message or "error")
     on_disconnected("error")
   elseif data.event == websocket.EVENT_MESSAGE then
+    -- Any inbound frame proves the link is alive; feed the zombie watchdog.
+    last_rx_time = now_s()
     parse_message(data.message)
   end
 end
