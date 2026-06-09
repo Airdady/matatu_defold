@@ -164,8 +164,14 @@ function M.decline_game_request(request_id)
   M.send_message("GAME_REQUEST_DECLINED", { requestId = request_id })
 end
 
-function M.send_emoji(emoji_content)
-  M.send_message("EMOJI_MESSAGE", { gameId = M.active_game_id, emoji = emoji_content })
+function M.send_emoji(name, sound, to)
+  M.send_message("EMOJI_MESSAGE", {
+    gameId = M.active_game_id,
+    to = to or "",
+    name = name,
+    sound = sound or "",
+    emoji = name, -- back-compat field
+  })
 end
 
 function M.update_stake(stake_data)
@@ -278,7 +284,7 @@ local function parse_message(json_string)
       state = gs,
     })
   elseif t == "EMOJI_MESSAGE" then
-    emit("emoji", d._id or "", d.emoji or "")
+    emit("emoji", d._id or d.from or "", d.emoji or d.name or "", d.sound or "")
   elseif t == "ROUND_COMPLETE" then
     local gs = M.extract_game_state(d)
     if next(gs) ~= nil then M.active_game_state = gs end
