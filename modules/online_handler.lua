@@ -100,17 +100,63 @@ function M.sync_deck_size(self, target_size)
     end
 end
 
+-- Tournament / battle scoreboard, ported from the Godot Scoreboard.update_state.
+-- A live tournament game carries its running match score in state.tournamentScore
+-- (scores + matchFormat + currentLevel). Plain MOVE states often omit it, so once
+-- we've recognised a series game we PERSIST the board and only refresh values when
+-- new ones arrive — otherwise the board would flicker off between moves.
 function M.process_scoreboard(self, state)
-    if state.tournamentScore then
-        local ts = state.tournamentScore
-        local format = tonumber(ts.matchFormat) or 3
-        local scores = ts.scores or {}
-        local p_score = tonumber(scores[self.my_player_id]) or 0
-        local o_score = tonumber(scores[self.opponent_id]) or 0
-        msg.post(GUI_HUD, "update_scoreboard", { show = true, p_score = p_score, o_score = o_score, best_of = format })
-    elseif state.matchFormat then
-        local format = tonumber(state.matchFormat) or 3
-        msg.post(GUI_HUD, "update_scoreboard", { show = true, p_score = 0, o_score = 0, best_of = format })
+    state = state or {}
+
+    -- Read a {playerId = wins} map into (mine, theirs). Iterating keys finds the
+    -- opponent even before self.opponent_id is resolved.
+    local function read_scores(scores)
+        if type(scores) ~= "table" then return nil, nil end
+        local mine, theirs, found = 0, 0, false
+        for pid, sc in pairs(scores) do
+            found = true
+            if tostring(pid) == tostring(self.my_player_id) then mine = tonumber(sc) or 0
+            else theirs = tonumber(sc) or theirs end
+        end
+        if not found then return nil, nil end
+        return mine, theirs
+    end
+
+    local ts = (type(state.tournamentScore) == "table") and state.tournamentScore or nil
+    local fmt, stage, p_score, o_score
+
+    if ts then
+        fmt = tonumber(ts.matchFormat)
+        local lvl = tonumber(ts.currentLevel)
+        if lvl then stage = "Level " .. lvl end
+        p_score, o_score = read_scores(ts.scores)
+    end
+
+    if not fmt then fmt = tonumber(state.matchFormat) end
+    if not fmt and type(state.tournament) == "table" then fmt = tonumber(state.tournament.matchFormat) end
+    if p_score == nil then p_score, o_score = read_scores(state.currentScores) end
+
+    local is_series = (ts ~= nil)
+        or (state.gameType == "TOURNAMENT")
+        or (type(state.tournamentId) == "string" and state.tournamentId ~= "")
+        or (fmt ~= nil)
+        or (type(state.tournament) == "table")
+
+    if is_series then
+        self._sb_active = true
+        self._sb_format = fmt or self._sb_format or 3
+        if p_score ~= nil then self._sb_p, self._sb_o = p_score, o_score end
+        if stage then self._sb_stage = stage end
+    end
+
+    if self._sb_active then
+        msg.post(GUI_HUD, "update_scoreboard", {
+            show = true,
+            p_score = self._sb_p or 0,
+            o_score = self._sb_o or 0,
+            best_of = self._sb_format or 3,
+            stage = self._sb_stage,
+        })
     else
         msg.post(GUI_HUD, "update_scoreboard", { show = false })
     end
@@ -363,6 +409,8 @@ function M.start_game(self, state)
     self.is_processing_move = false
     self.is_waiting_for_server_response = false
     self._online_reshuffling = false
+    self._sb_active, self._sb_format, self._sb_stage = false, nil, nil
+    self._sb_p, self._sb_o = nil, nil
 
     M.setup_ws_listeners(self)
 
