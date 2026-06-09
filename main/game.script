@@ -419,6 +419,21 @@ local function replay_failed(self, reason)
     msg.post("#controller", "goto_online")
 end
 
+-- Start (or restart) the online board from a fresh server state. De-dupes so a
+-- repeated trigger for the game we're already running is ignored, while a new
+-- game id — or any start after the current game ended (a tournament's next
+-- round) — re-initialises the board cleanly.
+local function start_new_online_game(self, state)
+    if type(state) ~= "table" or next(state) == nil then return end
+    local new_id = tostring(state.id or state.gameId or "")
+    if new_id ~= "" and new_id == tostring(self.online_game_id) and not self.game_over then
+        return
+    end
+    self.awaiting_replay = false
+    ws.active_game_state = state
+    GF.start_game(self)
+end
+
 ----------------------------------------------------------------------
 -- Message routing
 ----------------------------------------------------------------------
@@ -436,9 +451,14 @@ function on_message(self, message_id, message, sender)
         GF.start_game(self)
 
     elseif message_id == hash("ws_new_game_start") then
-        self.awaiting_replay = false
-        ws.active_game_state = message.state or ws.active_game_state
-        GF.start_game(self)
+        start_new_online_game(self, message.state or ws.get_active_game())
+
+    elseif message_id == hash("ws_round_complete") then
+        -- Tournament next round may arrive as ROUND_COMPLETE carrying the dealt
+        -- state; re-init the board (de-duped against an in-progress round).
+        if self.online_mode then
+            start_new_online_game(self, ws.get_active_game())
+        end
 
     elseif message_id == hash("disable") then
         self.active = false

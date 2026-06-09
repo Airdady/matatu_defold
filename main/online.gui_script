@@ -448,9 +448,28 @@ local function draw_center(self)
     local list_w    = content_r - content_l
     local cx = center_cx
 
+    local top = EDGE_T
+
+    -- ── Final-day reminder banner (prize-payout deadline) ──────────────
+    if self.deadline and self.deadline ~= "" then
+        local bh = 46
+        local bcy = top - bh/2
+        local urgent = (self.deadline_urgency == "FINAL HOUR!" or self.deadline_urgency == "Time running out!")
+        track(self, ui.box(vmath.vector3(center_cx, bcy, 0), vmath.vector3(list_w, bh, 0),
+            urgent and vmath.vector4(0.42, 0.07, 0.07, 0.98) or vmath.vector4(0.16, 0.12, 0.02, 0.98)))
+        track(self, ui.box(vmath.vector3(center_cx, bcy - bh/2 + 1.5, 0), vmath.vector3(list_w, 3, 0), COL_GOLD))
+        -- pulsing dot + headline on the left, countdown + urgency on the right
+        track(self, ui.box(vmath.vector3(content_l + 12, bcy, 0), vmath.vector3(10, 10, 0), urgent and COL_RED or COL_GOLD))
+        txtL(self, content_l + 26, bcy + 9, "FINAL DAY · " .. self.deadline, "small", COL_GOLD)
+        txtL(self, content_l + 26, bcy - 9, "Prizes paid today — climb the standings!", "small", COL_BRIGHT)
+        txtR(self, content_r - 8, bcy + 9, self.deadline_clock or "", "body", urgent and COL_RED or COL_WHITE)
+        txtR(self, content_r - 8, bcy - 9, self.deadline_urgency or "", "small", urgent and COL_RED or COL_MID)
+        top = top - bh - 4
+    end
+
     -- ── Header bar (dark, title + helper text, left-aligned) ───────────
     local hdr_h = 72  -- increased from 64
-    local hcy = EDGE_T - hdr_h/2
+    local hcy = top - hdr_h/2
     track(self, ui.box(vmath.vector3(center_cx, hcy, 0), vmath.vector3(list_w, hdr_h, 0), COL_HEADER_BG))
     -- subtle bottom border on header
     track(self, ui.box(vmath.vector3(center_cx, hcy - hdr_h/2 + 1, 0), vmath.vector3(list_w, 1, 0), COL_BORDER))
@@ -458,7 +477,7 @@ local function draw_center(self)
     local helper = txtL(self, content_l + 6, hcy - 14, "Tap a player to request a game. If they decline, try another!", "small", COL_MID)
     gui.set_scale(helper, vmath.vector3(0.8, 0.8, 1))
 
-    local cy = EDGE_T - hdr_h - 8
+    local cy = top - hdr_h - 8
 
     -- ── Tabs (flat, active underline) ──────────────────────────────────
     local tabw = (list_w / 2) - 4
@@ -790,6 +809,25 @@ local function update_season(self)
 
     if d > 0 then self.season_text = string.format("%dD %02dH %02dM %02dS", d, h, m, s)
     else self.season_text = string.format("%02dH %02dM %02dS", h, m, s) end
+
+    -- Final-day reminder: Wednesday before midday, or all Saturday (EAT) — the
+    -- two prize-payout deadlines. Mirrors the Godot SaturdayCountdownBanner.
+    self.deadline = ""
+    local dl_target
+    if wday == 4 and seconds_today < 43200 then
+        self.deadline, dl_target = "WEDNESDAY", 43200
+    elseif wday == 7 then
+        self.deadline, dl_target = "SATURDAY", 86400
+    end
+    if self.deadline ~= "" then
+        local rem = math.max(0, dl_target - seconds_today)
+        local dh = math.floor(rem / 3600)
+        self.deadline_clock = string.format("%02d:%02d:%02d", dh, math.floor((rem % 3600) / 60), rem % 60)
+        if dh < 1 then self.deadline_urgency = "FINAL HOUR!"
+        elseif dh < 3 then self.deadline_urgency = "Time running out!"
+        elseif dh < 6 then self.deadline_urgency = "Last chance!"
+        else self.deadline_urgency = (self.deadline == "WEDNESDAY") and "Ends at midday" or "Ends at midnight" end
+    end
 end
 
 local function open_dialog(self, kind, name, stake, request_id, avatar)
