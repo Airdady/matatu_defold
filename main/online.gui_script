@@ -240,16 +240,26 @@ local function draw_left(self)
     track(self, ui.text(vmath.vector3(cx, cy, 0), "STANDINGS", "small", COL_MID))
     cy = cy - SECTION_GAP - HDR_H_TABLE
 
+    local prizes = build_prizes(self)
+    local rank = (ws.current_user_data and ws.current_user_data.rank) or {}
+
+    -- Dynamic position-column width so a long "#10000" never squeezes the player
+    -- name. Sized to the widest position actually shown (~10px/glyph, small font).
+    local pos_chars = 3
+    for i, r in ipairs(rank) do
+        if i > 5 then break end
+        local plen = #("#" .. tostring(r.position or i))
+        if plen > pos_chars then pos_chars = plen end
+    end
+    local name_x = cx - pw/2 + INNER_PAD + 4 + (pos_chars * 10) + 10
+
     -- Column header bar
     track(self, ui.box(vmath.vector3(cx, cy + HDR_H_TABLE/2, 0), vmath.vector3(pw, HDR_H_TABLE, 0), COL_GLASS))
     track(self, ui.box(vmath.vector3(cx, cy + 1, 0), vmath.vector3(pw, 1, 0), COL_BORDER))
     txtL(self, cx - pw/2 + INNER_PAD, cy + HDR_H_TABLE/2, "POS",    "small", COL_DIM)
-    txtL(self, cx - pw/2 + 56,        cy + HDR_H_TABLE/2, "PLAYER", "small", COL_DIM)
+    txtL(self, name_x,                cy + HDR_H_TABLE/2, "PLAYER", "small", COL_DIM)
     txtR(self, cx + pw/2 - INNER_PAD, cy + HDR_H_TABLE/2, "POINTS", "small", COL_DIM)
-    cy = cy  -- cy is now at the bottom of the header
 
-    local prizes = build_prizes(self)
-    local rank = (ws.current_user_data and ws.current_user_data.rank) or {}
     local shown = 0
     local row_h = ROW_H_SM
     for _, r in ipairs(rank) do
@@ -265,7 +275,7 @@ local function draw_left(self)
         track(self, ui.box(vmath.vector3(cx - pw/2 + 2, cy - row_h/2, 0), vmath.vector3(3, row_h, 0), tier_col))
 
         txtL(self, cx - pw/2 + INNER_PAD + 4, cy - row_h/2, "#"..tostring(r.position or shown), "small", me and COL_WHITE or COL_DIM)
-        txtL(self, cx - pw/2 + 56,            cy - row_h/2, me and "YOU" or string.upper(r.username or "PLAYER"), "small", me and COL_WHITE or COL_BRIGHT)
+        txtL(self, name_x,                    cy - row_h/2, me and "YOU" or string.upper(r.username or "PLAYER"), "small", me and COL_WHITE or COL_BRIGHT)
         txtR(self, cx + pw/2 - INNER_PAD,     cy - row_h/2, commas(r.points or 0), "small", me and COL_GOLD or COL_MID)
         cy = cy - row_h
     end
@@ -304,8 +314,9 @@ local function draw_left(self)
         local accent_w = is_active and 4 or 3
         track(self, ui.box(vmath.vector3(cx - pw/2 + accent_w/2, cy - row_h_bonus/2, 0), vmath.vector3(accent_w, row_h_bonus, 0), tier_col))
 
-        txtL(self, cx - pw/2 + INNER_PAD + 4, cy - row_h_bonus/2, p.rank, "body", is_active and COL_WHITE or COL_BRIGHT)
-        txtR(self, cx + pw/2 - INNER_PAD,     cy - row_h_bonus/2, p.amount..(p.suffix or ""), "body", is_active and tier_col or COL_GOLD)
+        local rnk = txtL(self, cx - pw/2 + INNER_PAD + 4, cy - row_h_bonus/2, p.rank, "body", is_active and COL_WHITE or COL_BRIGHT)
+        local amt = txtR(self, cx + pw/2 - INNER_PAD,     cy - row_h_bonus/2, p.amount..(p.suffix or ""), "body", is_active and tier_col or COL_GOLD)
+        gui.set_scale(rnk, vmath.vector3(0.9, 0.9, 1)); gui.set_scale(amt, vmath.vector3(0.9, 0.9, 1))
         cy = cy - row_h_bonus
     end
 
@@ -322,7 +333,7 @@ local function draw_right(self)
     local cy = EDGE_T - 16
 
     -- ── Profile card (HORIZONTAL: avatar left, info right) ─────────────
-    local prof_h = 136  -- slightly taller for better internal spacing
+    local prof_h = 142  -- taller for clearer top/bottom padding
     local pcy = cy - prof_h / 2
     glass(self, vmath.vector3(cx, pcy, 0), vmath.vector3(pw, prof_h, 0), "container_bg")
 
@@ -336,14 +347,14 @@ local function draw_right(self)
     local info_cx = (info_l + info_r) / 2
 
     -- Name pill (+ gear)
-    local name_y = pcy + prof_h/2 - 28
+    local name_y = pcy + prof_h/2 - 30
     track(self, ui.box(vmath.vector3(info_cx, name_y, 0), vmath.vector3(info_w, 32, 0), COL_NAMEID_BG))
     txtL(self, info_l + 10, name_y, string.upper(u.username or "PLAYER"), "body", COL_BRIGHT)
     mkbtn(self, "nav_account", vmath.vector3(info_r - 16, name_y, 0), vmath.vector3(28, 28, 0), nil, vmath.vector4(0,0,0,0))
     track(self, ui.text(vmath.vector3(info_r - 16, name_y, 0), "⚙", "body", COL_MID))
 
     -- Balance / Points pills
-    local stat_y = pcy - prof_h/2 + 28
+    local stat_y = pcy - prof_h/2 + 30
     local half = (info_w - 8) / 2
     local bal_cx = info_l + half/2
     local pts_cx = info_r - half/2
@@ -387,35 +398,35 @@ local function draw_right(self)
     cy = cy - 58
 
     -- ── Battles panel ─────────────────────────────────────────────────
-    local battle_h = 138  -- slightly taller for breathing room
+    local battle_h = 150  -- taller for clearer top/bottom padding
     local scy = cy - battle_h/2
     glass(self, vmath.vector3(cx, scy, 0), vmath.vector3(pw, battle_h, 0), "container_bg")
-    track(self, ui.image(vmath.vector3(cx, cy - 26, 0), vmath.vector3(30, 30, 0), "battle_icon"))
-    track(self, ui.text(vmath.vector3(cx, cy - 54, 0), "BATTLES", "body", COL_WHITE))
+    track(self, ui.image(vmath.vector3(cx, cy - 32, 0), vmath.vector3(30, 30, 0), "battle_icon"))
+    track(self, ui.text(vmath.vector3(cx, cy - 60, 0), "BATTLES", "body", COL_WHITE))
 
     local mb = u.myBattle or u.myTournament
     local has_battle = type(mb) == "table" and next(mb) ~= nil
     if has_battle then
         local amt = tonumber(mb.stakeAmount) or tonumber((mb.stake or {}).amount) or 0
         local fmt = tonumber(mb.matchFormat) or 3
-        track(self, ui.text(vmath.vector3(cx, cy - 78, 0), string.format("BO %d ~ %s", fmt, commas(amt)), "body", COL_GREEN))
-        mkbtn(self, "nav_invite",    vmath.vector3(cx - pw/4 + 4, cy - 114, 0), vmath.vector3(pw/2 - 12, 40, 0), "INVITE", "primary_btn")
-        mkbtn(self, "update_battle", vmath.vector3(cx + pw/4 - 4, cy - 114, 0), vmath.vector3(pw/2 - 12, 40, 0), "EDIT",   "secondary_btn")
+        track(self, ui.text(vmath.vector3(cx, cy - 86, 0), string.format("BO %d ~ %s", fmt, commas(amt)), "body", COL_GREEN))
+        mkbtn(self, "nav_invite",    vmath.vector3(cx - pw/4 + 4, cy - 122, 0), vmath.vector3(pw/2 - 12, 40, 0), "INVITE", "primary_btn")
+        mkbtn(self, "update_battle", vmath.vector3(cx + pw/4 - 4, cy - 122, 0), vmath.vector3(pw/2 - 12, 40, 0), "EDIT",   "secondary_btn")
     else
-        mkbtn(self, "create_battle", vmath.vector3(cx, cy - 104, 0), vmath.vector3(pw - 24, 44, 0), "CREATE BATTLE", "primary_btn")
+        mkbtn(self, "create_battle", vmath.vector3(cx, cy - 112, 0), vmath.vector3(pw - 24, 44, 0), "CREATE BATTLE", "primary_btn")
     end
     cy = cy - battle_h - BLOCK_GAP
 
     -- ── Tournaments (icon + label + green NEW badge) ───────────────────
-    local t_h = 100  -- slightly taller
+    local t_h = 110  -- taller for clearer top/bottom padding
     local tcy = cy - t_h/2
     track(self, ui.box(vmath.vector3(cx, tcy, 0), vmath.vector3(pw, t_h, 0), COL_BG)) -- tint behind
     mkbtn(self, "nav_tournaments", vmath.vector3(cx, tcy, 0), vmath.vector3(pw, t_h, 0), nil, "container_bg")
-    track(self, ui.image(vmath.vector3(cx, cy - 34, 0), vmath.vector3(50, 50, 0), "tournament_icon"))
-    track(self, ui.text(vmath.vector3(cx, cy - 76, 0), "TOURNAMENTS", "body", COL_WHITE))
+    track(self, ui.image(vmath.vector3(cx, cy - 40, 0), vmath.vector3(50, 50, 0), "tournament_icon"))
+    track(self, ui.text(vmath.vector3(cx, cy - 84, 0), "TOURNAMENTS", "body", COL_WHITE))
 
     local nx = cx + pw/2 - 30
-    local ny = cy - 14
+    local ny = cy - 16
     track(self, ui.box(vmath.vector3(nx, ny, 0), vmath.vector3(44, 18, 0), vmath.vector4(0.15, 0.8, 0.25, 1.0)))
     track(self, ui.box(vmath.vector3(nx, ny + 9, 0), vmath.vector3(44, 1, 0), COL_WHITE))
     track(self, ui.text(vmath.vector3(nx, ny, 0), "NEW", "small", COL_WHITE))
@@ -444,9 +455,10 @@ local function draw_center(self)
     -- subtle bottom border on header
     track(self, ui.box(vmath.vector3(center_cx, hcy - hdr_h/2 + 1, 0), vmath.vector3(list_w, 1, 0), COL_BORDER))
     txtL(self, content_l + 6, hcy + 12,  "AVAILABLE PLAYERS", "body", COL_BRIGHT)
-    txtL(self, content_l + 6, hcy - 13, "Tap a player to request a game. If they decline, try another!", "small", COL_MID)
+    local helper = txtL(self, content_l + 6, hcy - 14, "Tap a player to request a game. If they decline, try another!", "small", COL_MID)
+    gui.set_scale(helper, vmath.vector3(0.8, 0.8, 1))
 
-    local cy = EDGE_T - hdr_h - 16
+    local cy = EDGE_T - hdr_h - 8
 
     -- ── Tabs (flat, active underline) ──────────────────────────────────
     local tabw = (list_w / 2) - 4
@@ -470,7 +482,7 @@ local function draw_center(self)
     else
         track(self, ui.box(vmath.vector3(tab_bx, cy - tab_h, 0), vmath.vector3(tabw, 2, 0), COL_GOLD))
     end
-    cy = cy - tab_h - 22
+    cy = cy - tab_h - 6
 
     -- ── Stakes selector (Quick Play only) ──────────────────────────────
     local list_top = cy
@@ -486,10 +498,10 @@ local function draw_center(self)
             local is_active = (config.STAKE_LEVELS[self.stake_index] and config.STAKE_LEVELS[self.stake_index].amount == st)
             local affordable = (my_balance >= st)
 
-            -- Tint behind + textured stake surface (active uses container_bg_active)
-            track(self, ui.box(vmath.vector3(sx, cy - stake_card_h/2, 0), vmath.vector3(st_w, stake_card_h, 0), COL_BG))
+            -- Darker stake surface using the dedicated (square) stake textures
+            track(self, ui.box(vmath.vector3(sx, cy - stake_card_h/2, 0), vmath.vector3(st_w, stake_card_h, 0), vmath.vector4(0.03, 0.03, 0.045, 1.0)))
             local btn = track(self, ui.btn9(vmath.vector3(sx, cy - stake_card_h/2, 0), vmath.vector3(st_w, stake_card_h, 0),
-                is_active and "container_bg_active" or "container_bg"))
+                is_active and "stake_bg_active" or "stake_bg"))
             if not affordable then gui.set_color(btn, vmath.vector4(1,1,1,0.4)) end
             self.buttons[#self.buttons+1] = { node = btn, id = "stake_"..i, data = i }
 

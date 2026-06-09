@@ -223,14 +223,21 @@ local function build_exit(self)
 end
 
 local function build_conn_overlay(self)
-    -- Full-screen dim scrim (built last so it renders above the board + HUD).
-    self.conn_scrim = box(vmath.vector3(LOGICAL_W/2, LOGICAL_H/2, 0), vmath.vector3(LOGICAL_W*3, LOGICAL_H*3, 0), vmath.vector4(0, 0, 0, 0.6), gui.PIVOT_CENTER)
+    -- Full-screen dim scrim, centred on the real screen middle and stretched to
+    -- cover any aspect ratio (same pattern as the suit selector overlay).
+    self.conn_scrim = box(vmath.vector3(LOGICAL_W/2, LOGICAL_H/2, 0), vmath.vector3(5000, 5000, 0), vmath.vector4(0, 0, 0, 0.6), gui.PIVOT_CENTER)
     gui.set_xanchor(self.conn_scrim, gui.ANCHOR_NONE)
     gui.set_yanchor(self.conn_scrim, gui.ANCHOR_NONE)
     gui.set_adjust_mode(self.conn_scrim, gui.ADJUST_STRETCH)
 
-    self.conn_panel = box(vmath.vector3(LOGICAL_W/2, LOGICAL_H/2, 0), vmath.vector3(460, 190, 0), vmath.vector4(0.07, 0.08, 0.11, 0.98), gui.PIVOT_CENTER)
+    -- Panel must be created at the origin BEFORE parenting; its local position
+    -- is then (0,0) relative to the scrim centre, so it stays centred on screen.
+    self.conn_panel = box(vmath.vector3(0, 0, 0), vmath.vector3(460, 190, 0), vmath.vector4(0.07, 0.08, 0.11, 0.98), gui.PIVOT_CENTER)
     gui.set_parent(self.conn_panel, self.conn_scrim)
+    gui.set_position(self.conn_panel, vmath.vector3(0, 0, 0))
+    gui.set_adjust_mode(self.conn_panel, gui.ADJUST_FIT)
+    gui.set_xanchor(self.conn_panel, gui.ANCHOR_NONE)
+    gui.set_yanchor(self.conn_panel, gui.ANCHOR_NONE)
 
     self.conn_title = label(vmath.vector3(0, 48, 0), "RECONNECTING", 24, vmath.vector4(0.0, 0.722, 0.831, 1.0), gui.PIVOT_CENTER)
     gui.set_parent(self.conn_title, self.conn_panel)
@@ -460,7 +467,9 @@ function on_message(self, message_id, message)
             if self.sb_o_score then gui.set_text(self.sb_o_score, tostring(message.o_score or 0)) end
             if self.sb_p_ind then gui.set_text(self.sb_p_ind, tostring(message.p_score or 0) .. " of " .. target) end
             if self.sb_o_ind then gui.set_text(self.sb_o_ind, tostring(message.o_score or 0) .. " of " .. target) end
-            if self.sb_title then gui.set_text(self.sb_title, "BEST OF " .. tostring(best_of)) end
+            local title = "BEST OF " .. tostring(best_of)
+            if message.stage and message.stage ~= "" then title = title .. "  •  " .. string.upper(message.stage) end
+            if self.sb_title then gui.set_text(self.sb_title, title) end
         else
             if self.sb_root then gui.set_enabled(self.sb_root, false) end
         end
