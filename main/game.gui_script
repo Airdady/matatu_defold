@@ -222,6 +222,53 @@ local function build_exit(self)
     gui.set_enabled(self.exit_popover, false)
 end
 
+local function build_conn_overlay(self)
+    -- Full-screen dim scrim (built last so it renders above the board + HUD).
+    self.conn_scrim = box(vmath.vector3(LOGICAL_W/2, LOGICAL_H/2, 0), vmath.vector3(LOGICAL_W*3, LOGICAL_H*3, 0), vmath.vector4(0, 0, 0, 0.6), gui.PIVOT_CENTER)
+    gui.set_xanchor(self.conn_scrim, gui.ANCHOR_NONE)
+    gui.set_yanchor(self.conn_scrim, gui.ANCHOR_NONE)
+    gui.set_adjust_mode(self.conn_scrim, gui.ADJUST_STRETCH)
+
+    self.conn_panel = box(vmath.vector3(LOGICAL_W/2, LOGICAL_H/2, 0), vmath.vector3(460, 190, 0), vmath.vector4(0.07, 0.08, 0.11, 0.98), gui.PIVOT_CENTER)
+    gui.set_parent(self.conn_panel, self.conn_scrim)
+
+    self.conn_title = label(vmath.vector3(0, 48, 0), "RECONNECTING", 24, vmath.vector4(0.0, 0.722, 0.831, 1.0), gui.PIVOT_CENTER)
+    gui.set_parent(self.conn_title, self.conn_panel)
+
+    self.conn_sub = label(vmath.vector3(0, 8, 0), "", 16, vmath.vector4(0.70, 0.74, 0.80, 1.0), gui.PIVOT_CENTER)
+    gui.set_parent(self.conn_sub, self.conn_panel)
+
+    self.conn_count = label(vmath.vector3(0, -44, 0), "", 34, C_WHITE, gui.PIVOT_CENTER)
+    gui.set_parent(self.conn_count, self.conn_panel)
+
+    gui.set_enabled(self.conn_scrim, false)
+    self.conn_count_active = false
+end
+
+local function set_conn_overlay(self, opts)
+    if not self.conn_scrim then return end
+    if opts and opts.show then
+        gui.set_enabled(self.conn_scrim, true)
+        gui.set_text(self.conn_title, opts.title or "RECONNECTING")
+        gui.set_color(self.conn_title, opts.danger and C_T_RED or vmath.vector4(0.0, 0.722, 0.831, 1.0))
+        gui.set_text(self.conn_sub, opts.subtitle or "")
+        local grace = tonumber(opts.grace) or 0
+        if grace > 0 then
+            self.conn_deadline = socket.gettime() + grace
+            self.conn_count_active = true
+            gui.set_enabled(self.conn_count, true)
+            gui.set_text(self.conn_count, string.format("%ds", math.ceil(grace)))
+        else
+            self.conn_count_active = false
+            gui.set_enabled(self.conn_count, false)
+            gui.set_text(self.conn_count, "")
+        end
+    else
+        gui.set_enabled(self.conn_scrim, false)
+        self.conn_count_active = false
+    end
+end
+
 ----------------------------------------------------------------------
 -- LOGIC & UPDATES
 ----------------------------------------------------------------------
@@ -296,9 +343,17 @@ function init(self)
     build_standings_ui(self)
     _create_skip_button(self)
     build_exit(self)
+    build_conn_overlay(self)
 end
 
 function update(self, dt)
+    if self.conn_count_active then
+        local left = (self.conn_deadline or 0) - socket.gettime()
+        if left < 0 then left = 0 end
+        gui.set_text(self.conn_count, string.format("%ds", math.ceil(left)))
+        if left <= 0 then self.conn_count_active = false end
+    end
+
     if self.timer_remaining and self.timer_remaining > 0 then
         self.timer_remaining = self.timer_remaining - dt
         if self.timer_remaining < 0 then self.timer_remaining = 0 end
@@ -444,10 +499,14 @@ function on_message(self, message_id, message)
 
     elseif message_id == hash("stop_timers") then
         stop_timers(self)
-        
+
+    elseif message_id == hash("conn_overlay") then
+        set_conn_overlay(self, message)
+
     elseif message_id == hash("reset_hud") then
         stop_timers(self)
         set_skip_visible(self, false)
+        set_conn_overlay(self, { show = false })
         if self.exit_popover then gui.set_enabled(self.exit_popover, false) end
         if self.sb_root then gui.set_enabled(self.sb_root, false) end
     end

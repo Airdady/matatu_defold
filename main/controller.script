@@ -152,10 +152,29 @@ function init(self)
 	-- Game notifications go to the logic script that owns the sprite board.
 	forward("game_move",           "#game_logic", "ws_game_move")
 	forward("game_over",           "#game_logic", "ws_game_over")
-	forward("player_disconnected", "#game_logic", "ws_player_dc")
-	forward("player_reconnected",  "#game_logic", "ws_player_rc")
 	forward("timer_update",        "#game_logic", "ws_timer")
 	forward("round_complete",      "#game_logic", "ws_round_complete")
+
+	-- Opponent connection state during a live match (carries grace + player id).
+	table.insert(self.tokens, ws.on("player_disconnected", function(info)
+		info = info or {}
+		msg.post("#game_logic", "ws_player_dc",
+			{ grace = info.grace or 30, player_id = info.player_id or "" })
+	end))
+	table.insert(self.tokens, ws.on("player_reconnected", function(info)
+		msg.post("#game_logic", "ws_player_rc", { player_id = (info or {}).player_id or "" })
+	end))
+
+	-- Our OWN socket dropping / recovering — the board shows a reconnect overlay.
+	table.insert(self.tokens, ws.on("disconnected",      function() msg.post("#game_logic", "ws_net_down") end))
+	table.insert(self.tokens, ws.on("connected",         function() msg.post("#game_logic", "ws_net_up") end))
+	table.insert(self.tokens, ws.on("reconnect_failed",  function() msg.post("#game_logic", "ws_net_failed") end))
+
+	-- A declined request also reaches the board: if the player asked for a
+	-- replay from the game-over modal, a decline sends them back to the lobby.
+	table.insert(self.tokens, ws.on("game_request_declined", function(reason)
+		msg.post("#game_logic", "ws_replay_declined", { reason = tostring(reason or "Declined") })
+	end))
 end
 
 function on_message(self, message_id, message, sender)
