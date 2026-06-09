@@ -1,0 +1,621 @@
+-- =============================================================================
+--  lobby.gui_script  —  Matatu "Fight Lobby" Landing Screen (Guest-Optimized)
+--  Layout: Reference-image style with character stage LEFT, 4-mode-card grid
+--  RIGHT. NO top nav, NO bottom nav, NO theme switch, NO account display.
+--  Generous spacing at top and bottom.
+--
+--  Mode cards (tappable 4-tile grid):
+--    [1] PLAY ONLINE        — live multiplayer (full-height left card)
+--    [2] QUICK PLAY OFFLINE — single match vs bot (top-right left-half)
+--    [3] BATTLE AI          — best-of series vs bot (top-right right-half)
+--    [4] TOURNAMENT         — quick bracket (bottom-right wide card)
+-- =============================================================================
+
+local ui         = require("modules.ui")
+local app_state  = require("modules.app_state")
+local game_logic = require("modules.game_logic")
+local ws         = require("modules.websocket_manager")
+local screen     = require("modules.screen")
+
+-- ---------------------------------------------------------------------------
+-- Logical canvas (landscape mobile / tablet baseline)
+-- ---------------------------------------------------------------------------
+local LOGICAL_W, LOGICAL_H = 1280, 720
+local VISIBLE_W, VISIBLE_H = 1280, 720
+local EDGE_L, EDGE_R = 0, 1280
+local EDGE_B, EDGE_T = 0, 720
+local CX, CY = 640, 360
+
+-- ---------------------------------------------------------------------------
+-- Palette — vibrant game-lobby colours matching the reference image
+-- ---------------------------------------------------------------------------
+local C_BLACK    = vmath.vector4(0.04, 0.03, 0.10, 1)   -- near-black purple bg
+local C_PURPLE_L = vmath.vector4(0.45, 0.32, 0.95, 1)   -- light violet glow
+local C_BLUE_GL  = vmath.vector4(0.28, 0.42, 0.98, 1)   -- cool blue glow
+local C_AMBER    = vmath.vector4(1.00, 0.78, 0.18, 1)   -- gold / coins
+local C_GEM      = vmath.vector4(0.35, 0.82, 0.98, 1)   -- gem / diamond blue
+local C_ACCENT   = vmath.vector4(0.98, 0.22, 0.45, 1)   -- hot-pink/red CTA
+local C_ACCENT2  = vmath.vector4(1.00, 0.55, 0.10, 1)   -- orange accent (AI card)
+local C_GREEN    = vmath.vector4(0.18, 0.88, 0.52, 1)   -- online indicator
+local C_WHITE    = ui.WHITE
+local C_MUTED    = vmath.vector4(0.70, 0.68, 0.80, 1)
+local C_STAGE_LO = vmath.vector4(0.10, 0.05, 0.30, 1)   -- stage platform dark
+local C_STAGE_HI = vmath.vector4(0.55, 0.45, 1.00, 1)   -- stage platform rim
+local C_DIM      = vmath.vector4(0, 0, 0, 0.32)
+local C_HILITE   = vmath.vector4(1, 1, 1, 0.07)
+
+local C_TRANSP   = vmath.vector4(0, 0, 0, 0)
+
+-- ---------------------------------------------------------------------------
+-- Helpers
+-- ---------------------------------------------------------------------------
+local function refresh_wh()
+    local m = screen.metrics()
+    VISIBLE_W, VISIBLE_H = m.VW, m.VH
+    EDGE_L, EDGE_R = m.L, m.R
+    EDGE_B, EDGE_T = m.B, m.T
+    CX, CY = m.CX, m.CY
+end
+
+local function clear(self)
+    for _, n in ipairs(self.nodes) do pcall(gui.delete_node, n) end
+    self.nodes, self.buttons = {}, {}
+end
+
+local function track(self, n) self.nodes[#self.nodes + 1] = n; return n end
+
+-- Shadow: stacked dark boxes for depth
+local function shadow(self, x, y, w, h, grow, alpha)
+    grow  = grow  or 10
+    alpha = alpha or 0.18
+    for i = 1, 3 do
+        track(self, ui.box(
+            vmath.vector3(x, y - 4, 0),
+            vmath.vector3(w + grow * i, h + grow * i, 0),
+            vmath.vector4(0, 0, 0, alpha)))
+    end
+end
+
+-- Text with drop-shadow copy for punch
+local function text_sh(self, pos, str, font, color, ox, oy)
+    ox = ox or 2; oy = oy or -2
+    track(self, ui.text(vmath.vector3(pos.x + ox, pos.y + oy, 0),
+        str, font, vmath.vector4(0, 0, 0, 0.60)))
+    return track(self, ui.text(pos, str, font, color))
+end
+
+-- Radial-ish glow: concentric boxes brightest at centre
+local function glow(self, x, y, w, h, col, base)
+    base = base or 0.04
+    for i = 4, 1, -1 do
+        local g = i / 4
+        track(self, ui.box(
+            vmath.vector3(x, y, 0),
+            vmath.vector3(w * g, h * g, 0),
+            vmath.vector4(col.x, col.y, col.z, base * (5 - i))))
+    end
+end
+
+-- Vertical gradient band (dark at top/bottom, transparent mid) for vignette
+local function grad_band(self, cx, top_y, w, h, steps, a_top, a_bot)
+    steps = steps or 6
+    local seg = h / steps
+    for i = 0, steps - 1 do
+        local t = (steps > 1) and (i / (steps - 1)) or 0
+        local a = a_top + (a_bot - a_top) * t
+        track(self, ui.box(
+            vmath.vector3(cx, top_y - seg * (i + 0.5), 0),
+            vmath.vector3(w, seg + 1, 0),
+            vmath.vector4(0, 0, 0, a)))
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Mode card builder
+-- ---------------------------------------------------------------------------
+local function mode_card(self, cfg)
+    local x, y, w, h      = cfg.x, cfg.y, cfg.w, cfg.h
+    local title           = cfg.title
+    local subtitle        = cfg.subtitle
+    local badge           = cfg.badge          -- e.g. "LIVE" or "NEW"
+    local badge_col       = cfg.badge_col or C_ACCENT
+    local accent          = cfg.accent or vmath.vector4(0.30, 0.18, 0.72, 1)
+    local header_h        = cfg.header_h or 36
+    local featured        = cfg.featured       -- boolean: large hero card
+    local icon_text       = cfg.icon_text or ""
+    local btn_id          = cfg.btn_id
+    local btn_data        = cfg.btn_data
+
+    -- Card backing + shadow
+    shadow(self, x, y, w, h, 10, 0.22)
+    track(self, ui.panel9(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), "container_bg"))
+
+    -- Accent colour fill on lower portion for depth
+    track(self, ui.box(vmath.vector3(x, y - h / 2 + header_h / 2, 0),
+        vmath.vector3(w - 6, header_h, 0), accent))
+
+    -- Glass highlight top edge
+    track(self, ui.box(vmath.vector3(x, y + h / 2 - 4, 0),
+        vmath.vector3(w - 14, 4, 0), C_HILITE))
+
+    -- Inner glow spotlight (featured card gets brighter glow)
+    local glow_alpha = featured and 0.07 or 0.04
+    glow(self, x, y + h / 4, w * 0.85, h * 0.55, accent, glow_alpha)
+
+    -- Icon / illustration placeholder
+    if icon_text ~= "" then
+        local icon_size = featured and "title" or "body"
+        track(self, ui.text(vmath.vector3(x, y + (featured and 60 or 20), 0),
+            icon_text, icon_size, vmath.vector4(1, 1, 1, 0.22)))
+    end
+
+    -- Badge pill (top-left corner)
+    if badge then
+        local bw = featured and 90 or 60
+        local bh = 24
+        local bx = x - w / 2 + bw / 2 + 8
+        local by = y + h / 2 - bh / 2 - 8
+        track(self, ui.box(vmath.vector3(bx, by, 0),
+            vmath.vector3(bw, bh, 0), badge_col))
+        text_sh(self, vmath.vector3(bx, by - 1, 0), badge, "small", C_WHITE, 1, -1)
+    end
+
+    -- Title
+    local title_y = y - h / 2 + header_h + (featured and 28 or 18)
+    text_sh(self, vmath.vector3(x, title_y, 0), title,
+        featured and "body" or "small", C_WHITE, 1, -1)
+
+    -- Subtitle
+    if subtitle then
+        track(self, ui.text(vmath.vector3(x, title_y - (featured and 22 or 16), 0),
+            subtitle, "small", C_MUTED))
+    end
+
+    -- Invisible hit node
+    local hit = track(self, ui.box(vmath.vector3(x, y, 0),
+        vmath.vector3(w, h, 0), C_TRANSP))
+    self.buttons[#self.buttons + 1] = { node = hit, id = btn_id, data = btn_data }
+end
+
+-- ---------------------------------------------------------------------------
+-- Main rebuild
+-- ---------------------------------------------------------------------------
+local function rebuild(self)
+    clear(self)
+
+    local th   = app_state.get_theme()
+    local u    = ws.current_user_data
+
+    -- ===== Background ======================================================
+    track(self, ui.cover(LOGICAL_W, LOGICAL_H, C_BLACK))
+    local thbg = track(self, ui.cover_image(LOGICAL_W, LOGICAL_H, th.bg_image))
+    gui.set_color(thbg, vmath.vector4(1, 1, 1, 0.18))
+    track(self, ui.cover(LOGICAL_W, LOGICAL_H, C_DIM))
+    grad_band(self, CX, EDGE_T,        VISIBLE_W + 40, 180, 6, 0.65, 0.0)
+    grad_band(self, CX, EDGE_B + 280,  VISIBLE_W + 40, 280, 6, 0.0,  0.75)
+    glow(self, CX - 180, CY + 40,  820, 620, C_PURPLE_L, 0.028)
+    glow(self, CX + 300, CY - 30,  640, 480, C_BLUE_GL,  0.025)
+
+    -- ===== Layout constants ================================================
+    local top_margin  = 60   -- generous space at the top
+    local bot_margin  = 60   -- generous space at the bottom
+    local content_t   = EDGE_T - top_margin
+    local content_b   = EDGE_B + bot_margin
+    local content_h   = content_t - content_b
+    local content_cy  = content_b + content_h / 2
+
+    -- Left column: character stage  (44 % of width)
+    local stage_cx   = EDGE_L + VISIBLE_W * 0.22
+    local stage_w    = VISIBLE_W * 0.42
+    
+    -- Right column: mode cards grid (remaining width)
+    local cards_cx   = EDGE_L + VISIBLE_W * 0.67
+    local cards_w    = VISIBLE_W * 0.46
+    local cards_pad  = 14
+
+    -- ===== Guest prompt (top margin area) ==================================
+    if not (u and u.username) then
+        track(self, ui.text(
+            vmath.vector3(CX, EDGE_T - 32, 0),
+            "Tap PLAY ONLINE to sign in", "small",
+            vmath.vector4(0.65, 0.60, 0.80, 0.9)))
+    end
+
+    -- ===== LEFT — Character / Mascot Stage =================================
+    local stage_cy = content_cy + 20
+
+    glow(self, stage_cx, stage_cy - 40, stage_w * 0.90, content_h * 0.75,
+        C_PURPLE_L, 0.042)
+
+    for i = 3, 1, -1 do
+        local ew = stage_w * 0.72 * (i / 3)
+        local eh = 46 * (i / 3)
+        local pa = 0.08 * (4 - i)
+        track(self, ui.box(vmath.vector3(stage_cx, content_b + 58, 0),
+            vmath.vector3(ew, eh, 0),
+            vmath.vector4(C_STAGE_HI.x, C_STAGE_HI.y, C_STAGE_HI.z, pa)))
+    end
+    track(self, ui.box(vmath.vector3(stage_cx, content_b + 50, 0),
+        vmath.vector3(stage_w * 0.68, 12, 0),
+        vmath.vector4(C_STAGE_HI.x, C_STAGE_HI.y, C_STAGE_HI.z, 0.22)))
+
+    local char_size = math.min(content_h * 0.68, 340)
+    track(self, ui.image(vmath.vector3(stage_cx, stage_cy, 0),
+        vmath.vector3(char_size, char_size, 0), "icon"))
+
+    local np_y = content_b + 86
+    shadow(self, stage_cx, np_y, 220, 36, 6, 0.16)
+    track(self, ui.box(vmath.vector3(stage_cx, np_y, 0),
+        vmath.vector3(220, 36, 0), vmath.vector4(0.12, 0.06, 0.36, 0.82)))
+    track(self, ui.text(vmath.vector3(stage_cx, np_y - 2, 0),
+        "MATATU MASTER", "small", C_AMBER))
+
+    local chat_label_y = content_b + 22
+    track(self, ui.image(vmath.vector3(stage_cx - 80, chat_label_y, 0),
+        vmath.vector3(22, 22, 0), "clubs"))
+    track(self, ui.text(vmath.vector3(stage_cx + 4, chat_label_y - 1, 0),
+        "East Africa's Best Card Game", "small",
+        vmath.vector4(0.65, 0.60, 0.80, 1)))
+
+    -- ===== RIGHT — Mode Cards Grid (4 Tiles) ===============================
+    local grid_l = cards_cx - cards_w / 2
+    local grid_t = content_t - 12
+    local grid_b = content_b + 12
+    local grid_h = grid_t - grid_b
+    local gap    = cards_pad
+
+    local left_card_w = cards_w * 0.42 - gap / 2
+    local right_col_w = cards_w * 0.58 - gap / 2
+    
+    local top_h = (grid_h - gap) / 2
+    local bot_h = (grid_h - gap) / 2
+
+    local tr_card_w = (right_col_w - gap) / 2 -- Top right individual cards width
+
+    local left_cx   = grid_l + left_card_w / 2
+    local grid_cy   = grid_b + grid_h / 2
+
+    local right_col_l  = grid_l + left_card_w + gap
+    local right_col_cx = right_col_l + right_col_w / 2
+
+    local tr_1_cx = right_col_l + tr_card_w / 2
+    local tr_2_cx = right_col_l + tr_card_w + gap + tr_card_w / 2
+
+    local top_cy = grid_b + bot_h + gap + top_h / 2
+    local bot_cy = grid_b + bot_h / 2
+
+    -- ---- Card 1: PLAY ONLINE (featured, left, full height) ----------------
+    mode_card(self, {
+        x        = left_cx,
+        y        = grid_cy,
+        w        = left_card_w,
+        h        = grid_h,
+        title    = "PLAY ONLINE",
+        subtitle = "Live stakes",
+        badge    = "LIVE",
+        badge_col = C_GREEN,
+        accent   = vmath.vector4(0.98, 0.22, 0.45, 0.55),
+        header_h = 44,
+        featured = true,
+        icon_text = ">>",
+        btn_id   = "play_online",
+    })
+    
+    local play_label_y = grid_b + 36
+    shadow(self, left_cx, play_label_y, left_card_w - 28, 42, 4, 0.14)
+    track(self, ui.box(vmath.vector3(left_cx, play_label_y, 0),
+        vmath.vector3(left_card_w - 28, 42, 0), C_ACCENT))
+    text_sh(self, vmath.vector3(left_cx, play_label_y - 1, 0), "PLAY NOW", "body", C_WHITE, 1, -1)
+
+    -- ---- Card 2: QUICK PLAY OFFLINE (top-right, left half) ----------------
+    mode_card(self, {
+        x        = tr_1_cx,
+        y        = top_cy,
+        w        = tr_card_w,
+        h        = top_h,
+        title    = "Quick Play",
+        subtitle = "Offline match",
+        accent   = vmath.vector4(0.18, 0.88, 0.52, 0.50),
+        header_h = 32,
+        featured = false,
+        icon_text = "Q",
+        btn_id   = "quick_play",
+    })
+
+    -- ---- Card 3: BATTLE AI (top-right, right half) ------------------------
+    mode_card(self, {
+        x        = tr_2_cx,
+        y        = top_cy,
+        w        = tr_card_w,
+        h        = top_h,
+        title    = "Battle AI",
+        subtitle = "Best of series",
+        badge    = "NEW",
+        badge_col = C_ACCENT2,
+        accent   = vmath.vector4(1.00, 0.55, 0.10, 0.50),
+        header_h = 32,
+        featured = false,
+        icon_text = "AI",
+        btn_id   = "battle_ai",
+    })
+
+    -- ---- Card 4: QUICK TOURNAMENT (bottom-right, wide span) ---------------
+    mode_card(self, {
+        x        = right_col_cx,
+        y        = bot_cy,
+        w        = right_col_w,
+        h        = bot_h,
+        title    = "Tournament",
+        subtitle = "Quick bracket · 4-8 players",
+        badge    = "HOT",
+        badge_col = vmath.vector4(0.55, 0.20, 0.90, 1),
+        accent   = vmath.vector4(0.45, 0.20, 0.85, 0.55),
+        header_h = 38,
+        featured = false,
+        icon_text = "[]",
+        btn_id   = "quick_tournament",
+    })
+
+    -- ===== BOTTOM — Guest prompt ===========================================
+    if not (u and u.username) then
+        track(self, ui.text(
+            vmath.vector3(CX, EDGE_B + bot_margin + 16, 0),
+            "Sign in to access rankings, records, and prizes", "small",
+            vmath.vector4(0.55, 0.50, 0.70, 0.8)))
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Battle-AI "best-of" series selector sub-screen
+-- ---------------------------------------------------------------------------
+local function rebuild_ai_select(self)
+    clear(self)
+
+    local th  = app_state.get_theme()
+
+    track(self, ui.cover(LOGICAL_W, LOGICAL_H, C_BLACK))
+    local thbg = track(self, ui.cover_image(LOGICAL_W, LOGICAL_H, th.bg_image))
+    gui.set_color(thbg, vmath.vector4(1, 1, 1, 0.14))
+    track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.55)))
+
+    local pw, ph = 740, 420
+    shadow(self, CX, CY, pw, ph, 14, 0.20)
+    track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), "container_bg"))
+    track(self, ui.box(vmath.vector3(CX, CY + ph / 2 - 5, 0), vmath.vector3(pw - 16, 5, 0), C_ACCENT2))
+    glow(self, CX, CY, pw, ph, C_ACCENT2, 0.028)
+
+    text_sh(self, vmath.vector3(CX, CY + ph / 2 - 46, 0),
+        "BATTLE AI", "title", C_WHITE, 2, -2)
+    track(self, ui.text(vmath.vector3(CX, CY + ph / 2 - 80, 0),
+        "Choose your series length", "small", C_MUTED))
+
+    local opts = {
+        { label = "Best of 3",  wins = 2, desc = "First to 2 wins" },
+        { label = "Best of 5",  wins = 3, desc = "First to 3 wins" },
+        { label = "Best of 7",  wins = 4, desc = "First to 4 wins" },
+        { label = "Best of 9",  wins = 5, desc = "First to 5 wins" },
+    }
+    local opt_w  = 140
+    local opt_h  = 100
+    local opt_y  = CY + 18
+    local opt_x0 = CX - (opt_w * 1.5 + 20 * 1.5)
+    local cur    = app_state.ai_series or 3
+
+    for i, o in ipairs(opts) do
+        local ox     = opt_x0 + (i - 1) * (opt_w + 20)
+        local active = (cur == (i * 2 + 1)) 
+        if active then glow(self, ox, opt_y, opt_w + 30, opt_h + 30, C_ACCENT2, 0.07) end
+        shadow(self, ox, opt_y, opt_w, opt_h, 6, 0.14)
+        track(self, ui.panel9(vmath.vector3(ox, opt_y, 0), vmath.vector3(opt_w, opt_h, 0),
+            active and "container_bg_active" or "container_bg"))
+        if active then
+            track(self, ui.box(vmath.vector3(ox, opt_y + opt_h / 2 - 4, 0),
+                vmath.vector3(opt_w - 8, 4, 0), C_ACCENT2))
+        end
+        text_sh(self, vmath.vector3(ox, opt_y + 16, 0),
+            o.label, "body", active and C_ACCENT2 or C_WHITE, 1, -1)
+        track(self, ui.text(vmath.vector3(ox, opt_y - 16, 0),
+            o.desc, "small", C_MUTED))
+        local hit = track(self, ui.box(vmath.vector3(ox, opt_y, 0),
+            vmath.vector3(opt_w, opt_h, 0), C_TRANSP))
+        local series_val = i * 2 + 1
+        self.buttons[#self.buttons + 1] = { node = hit, id = "ai_series", data = series_val }
+    end
+
+    local sb_y = CY - 130
+    shadow(self, CX, sb_y, 300, 62, 10, 0.20)
+    local sb = track(self, ui.btn9(vmath.vector3(CX, sb_y, 0),
+        vmath.vector3(300, 62, 0), "play_btn"))
+    text_sh(self, vmath.vector3(CX, sb_y + 4, 0), "START BATTLE", "body", C_WHITE, 2, -2)
+    track(self, ui.text(vmath.vector3(CX, sb_y - 20, 0),
+        "vs Matatu Bot", "small", C_MUTED))
+    self.buttons[#self.buttons + 1] = { node = sb, id = "start_ai" }
+
+    local bkb = track(self, ui.btn9(vmath.vector3(CX - pw / 2 + 52, CY + ph / 2 - 26, 0),
+        vmath.vector3(80, 34, 0), "secondary_btn"))
+    track(self, ui.text(vmath.vector3(CX - pw / 2 + 52, CY + ph / 2 - 28, 0),
+        "< BACK", "small", C_WHITE))
+    self.buttons[#self.buttons + 1] = { node = bkb, id = "back_to_lobby" }
+end
+
+-- ---------------------------------------------------------------------------
+-- Quick Tournament selector sub-screen
+-- ---------------------------------------------------------------------------
+local function rebuild_tournament(self)
+    clear(self)
+
+    local th  = app_state.get_theme()
+
+    track(self, ui.cover(LOGICAL_W, LOGICAL_H, C_BLACK))
+    local thbg = track(self, ui.cover_image(LOGICAL_W, LOGICAL_H, th.bg_image))
+    gui.set_color(thbg, vmath.vector4(1, 1, 1, 0.14))
+    track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.55)))
+
+    local pw, ph = 740, 460
+    shadow(self, CX, CY, pw, ph, 14, 0.20)
+    track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), "container_bg"))
+    track(self, ui.box(vmath.vector3(CX, CY + ph / 2 - 5, 0),
+        vmath.vector3(pw - 16, 5, 0), vmath.vector4(0.55, 0.20, 0.90, 1)))
+    glow(self, CX, CY, pw, ph, C_PURPLE_L, 0.030)
+
+    text_sh(self, vmath.vector3(CX, CY + ph / 2 - 46, 0),
+        "QUICK TOURNAMENT", "title", C_WHITE, 2, -2)
+    track(self, ui.text(vmath.vector3(CX, CY + ph / 2 - 80, 0),
+        "Jump straight into a bracket", "small", C_MUTED))
+
+    local sizes = {
+        { label = "4 Players",  desc = "2 rounds to glory",  sz = 4  },
+        { label = "8 Players",  desc = "3 rounds to glory",  sz = 8  },
+    }
+    local sz_w  = 220
+    local sz_h  = 110
+    local sz_y  = CY + 40
+    local cur   = app_state.tournament_size or 4
+    for i, s in ipairs(sizes) do
+        local sx     = CX - sz_w / 2 - 130 + (i - 1) * (sz_w + 30)
+        local active = (cur == s.sz)
+        if active then glow(self, sx, sz_y, sz_w + 28, sz_h + 28, C_PURPLE_L, 0.07) end
+        shadow(self, sx, sz_y, sz_w, sz_h, 6, 0.14)
+        track(self, ui.panel9(vmath.vector3(sx, sz_y, 0), vmath.vector3(sz_w, sz_h, 0),
+            active and "container_bg_active" or "container_bg"))
+        if active then
+            track(self, ui.box(vmath.vector3(sx, sz_y + sz_h / 2 - 4, 0),
+                vmath.vector3(sz_w - 8, 4, 0), C_PURPLE_L))
+        end
+        text_sh(self, vmath.vector3(sx, sz_y + 20, 0),
+            s.label, "body", active and C_PURPLE_L or C_WHITE, 1, -1)
+        track(self, ui.text(vmath.vector3(sx, sz_y - 14, 0), s.desc, "small", C_MUTED))
+        local hit = track(self, ui.box(vmath.vector3(sx, sz_y, 0),
+            vmath.vector3(sz_w, sz_h, 0), C_TRANSP))
+        self.buttons[#self.buttons + 1] = { node = hit, id = "tournament_size", data = s.sz }
+    end
+
+    local fb_y = CY - 150
+    shadow(self, CX, fb_y, 320, 62, 10, 0.20)
+    local fb = track(self, ui.btn9(vmath.vector3(CX, fb_y, 0),
+        vmath.vector3(320, 62, 0), "play_btn"))
+    text_sh(self, vmath.vector3(CX, fb_y + 4, 0), "FIND MATCH", "body", C_WHITE, 2, -2)
+    track(self, ui.text(vmath.vector3(CX, fb_y - 20, 0),
+        "Joins or creates a bracket", "small", C_MUTED))
+    self.buttons[#self.buttons + 1] = { node = fb, id = "start_tournament" }
+
+    local bkb = track(self, ui.btn9(vmath.vector3(CX - pw / 2 + 52, CY + ph / 2 - 26, 0),
+        vmath.vector3(80, 34, 0), "secondary_btn"))
+    track(self, ui.text(vmath.vector3(CX - pw / 2 + 52, CY + ph / 2 - 28, 0),
+        "< BACK", "small", C_WHITE))
+    self.buttons[#self.buttons + 1] = { node = bkb, id = "back_to_lobby" }
+end
+
+-- ---------------------------------------------------------------------------
+-- State machine
+-- ---------------------------------------------------------------------------
+local STATE_LOBBY      = "lobby"
+local STATE_AI_SELECT  = "ai_select"
+local STATE_TOURNEY    = "tournament"
+
+local function set_state(self, new_state)
+    self.state = new_state
+    if new_state == STATE_LOBBY     then rebuild(self)
+    elseif new_state == STATE_AI_SELECT then rebuild_ai_select(self)
+    elseif new_state == STATE_TOURNEY   then rebuild_tournament(self)
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Input handler
+-- ---------------------------------------------------------------------------
+local function handle(self, b)
+    -- ---- Lobby actions ----------------------------------------------------
+    if b.id == "play_online" then
+        msg.post("#controller", "play_online")
+
+    elseif b.id == "quick_play" then
+        app_state.mode = "offline"
+        local me = ws.current_user_data or {}
+        app_state.offline_game = game_logic.new({
+            human_id     = "you",    ai_id       = "ai",
+            human_name   = me.username or "You", human_avatar = me.avatar or 1,
+            ai_name      = "Matatu Bot",          ai_avatar    = 2,
+            rules        = "JOKERS",
+            series       = 1, 
+            p_wins       = 0,
+            ai_wins      = 0
+        })
+        msg.post("#controller", "goto_game")
+
+    elseif b.id == "battle_ai" then
+        set_state(self, STATE_AI_SELECT)
+
+    elseif b.id == "quick_tournament" then
+        set_state(self, STATE_TOURNEY)
+
+    elseif b.id == "back_to_lobby" then
+        set_state(self, STATE_LOBBY)
+
+    -- ---- AI select --------------------------------------------------------
+    elseif b.id == "ai_series" then
+        app_state.ai_series = b.data
+        set_state(self, STATE_AI_SELECT)
+
+    elseif b.id == "start_ai" then
+        app_state.mode = "offline"
+        local me = ws.current_user_data or {}
+        local series = app_state.ai_series or 3
+        app_state.offline_game = game_logic.new({
+            human_id     = "you",    ai_id       = "ai",
+            human_name   = me.username or "You", human_avatar = me.avatar or 1,
+            ai_name      = "Matatu Bot",          ai_avatar    = 2,
+            rules        = "JOKERS",
+            series       = series,
+            p_wins       = 0,
+            ai_wins      = 0
+        })
+        msg.post("#controller", "goto_game")
+
+    -- ---- Tournament -------------------------------------------------------
+    elseif b.id == "tournament_size" then
+        app_state.tournament_size = b.data
+        set_state(self, STATE_TOURNEY)
+
+    elseif b.id == "start_tournament" then
+        app_state.tournament_size = app_state.tournament_size or 4
+        msg.post("#controller", "start_tournament")
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Lifecycle
+-- ---------------------------------------------------------------------------
+function init(self)
+    self.nodes, self.buttons = {}, {}
+    self.state = STATE_LOBBY
+    refresh_wh()
+    if not app_state.ai_series        then app_state.ai_series        = 3 end
+    if not app_state.tournament_size  then app_state.tournament_size  = 4 end
+    msg.post(".", "acquire_input_focus")
+    rebuild(self)
+end
+
+function on_message(self, message_id, message, sender)
+    if message_id == hash("screen_enter") or
+       message_id == hash("enable")       or
+       message_id == hash("layout_changed") then
+        refresh_wh()
+        set_state(self, self.state or STATE_LOBBY)
+    elseif message_id == hash("disable") then
+        clear(self)
+    end
+end
+
+function on_input(self, action_id, action)
+    if action_id == hash("touch") and action.pressed then
+        for i = #self.buttons, 1, -1 do
+            local b = self.buttons[i]
+            if b.node and gui.pick_node(b.node, action.x, action.y) then
+                handle(self, b)
+                return true
+            end
+        end
+    end
+    return false
+end

@@ -1,0 +1,2 @@
+prototype: "/main/card.go"
+load_dynamically: false

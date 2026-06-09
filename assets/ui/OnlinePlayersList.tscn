@@ -1,0 +1,1047 @@
+[gd_scene load_steps=39 format=3 uid="uid://7egkfsin2pnv"]
+
+[ext_resource type="Script" path="res://src/players/OnlinePlayersList.gd" id="1_players_script"]
+[ext_resource type="Texture2D" path="res://assets/images/battle_icon.png" id="8_battle_icon"]
+[ext_resource type="Texture2D" path="res://assets/images/tournament_icon.png" id="9_tourn_icon"]
+[ext_resource type="Texture2D" path="res://assets/images/bg/texture_bg.png" id="bg_texture"]
+[ext_resource type="Texture2D" path="res://assets/images/bg/primary_btn.png" id="tex_primary_btn"]
+[ext_resource type="Texture2D" path="res://assets/images/bg/default_btn.png" id="tex_default_btn"]
+[ext_resource type="Texture2D" path="res://assets/images/bg/container_bg.png" id="tex_stake_bg"]
+[ext_resource type="Texture2D" path="res://assets/images/bg/container_bg_active.png" id="tex_stake_active"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_sidebar"]
+bg_color = Color(0, 0, 0, 0)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0.168627, 0.152941, 0.141176, 1)
+
+[sub_resource type="StyleBoxTexture" id="StyleBoxTexture_glass_panel"]
+content_margin_left = 0.0
+content_margin_top = 0.0
+content_margin_right = 0.0
+content_margin_bottom = 0.0
+texture = ExtResource("tex_stake_bg")
+texture_margin_left = 15.0
+texture_margin_top = 15.0
+texture_margin_right = 15.0
+texture_margin_bottom = 15.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_glass_tint"]
+bg_color = Color(0.164706, 0.145098, 0.133333, 1)
+corner_radius_top_left = 7
+corner_radius_top_right = 7
+corner_radius_bottom_right = 7
+corner_radius_bottom_left = 7
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_name_id_bg"]
+bg_color = Color(0, 0, 0, 0.6)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+content_margin_left = 15.0
+content_margin_top = 4.0
+content_margin_right = 8.0
+content_margin_bottom = 4.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_stat_bg"]
+bg_color = Color(0, 0, 0, 0.2)
+content_margin_left = 10.0
+content_margin_top = 0.0
+content_margin_right = 10.0
+content_margin_bottom = 0.0
+
+[sub_resource type="StyleBoxTexture" id="StyleBoxTexture_btn_primary"]
+texture = ExtResource("tex_primary_btn")
+texture_margin_left = 8.0
+texture_margin_top = 8.0
+texture_margin_right = 8.0
+texture_margin_bottom = 8.0
+expand_margin_left = 2.0
+expand_margin_top = 2.0
+expand_margin_right = 2.0
+expand_margin_bottom = 6.0
+
+[sub_resource type="StyleBoxTexture" id="StyleBoxTexture_btn_primary_hover"]
+texture = ExtResource("tex_primary_btn")
+texture_margin_left = 8.0
+texture_margin_top = 8.0
+texture_margin_right = 8.0
+texture_margin_bottom = 8.0
+expand_margin_left = 2.0
+expand_margin_top = 2.0
+expand_margin_right = 2.0
+expand_margin_bottom = 6.0
+modulate_color = Color(1.15, 1.15, 1.15, 1)
+
+[sub_resource type="StyleBoxTexture" id="StyleBoxTexture_btn_primary_pressed"]
+texture = ExtResource("tex_primary_btn")
+texture_margin_left = 8.0
+texture_margin_top = 8.0
+texture_margin_right = 8.0
+texture_margin_bottom = 8.0
+expand_margin_left = 2.0
+expand_margin_top = 2.0
+expand_margin_right = 2.0
+expand_margin_bottom = 6.0
+modulate_color = Color(0.8, 0.8, 0.8, 1)
+
+[sub_resource type="StyleBoxTexture" id="StyleBoxTexture_btn_default"]
+texture = ExtResource("tex_default_btn")
+texture_margin_left = 8.0
+texture_margin_top = 8.0
+texture_margin_right = 8.0
+texture_margin_bottom = 8.0
+expand_margin_left = 2.0
+expand_margin_top = 2.0
+expand_margin_right = 2.0
+expand_margin_bottom = 6.0
+
+[sub_resource type="StyleBoxTexture" id="StyleBoxTexture_btn_default_hover"]
+texture = ExtResource("tex_default_btn")
+texture_margin_left = 8.0
+texture_margin_top = 8.0
+texture_margin_right = 8.0
+texture_margin_bottom = 8.0
+expand_margin_left = 2.0
+expand_margin_top = 2.0
+expand_margin_right = 2.0
+expand_margin_bottom = 6.0
+modulate_color = Color(1.15, 1.15, 1.15, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_separator"]
+bg_color = Color(0.6, 0.55, 0.5, 0)
+border_width_top = 0
+
+[sub_resource type="Shader" id="Shader_stripe_border"]
+code = "shader_type canvas_item;
+uniform vec4 bg_color : source_color = vec4(0.165, 0.145, 0.133, 1.0);
+uniform vec4 l_outer : source_color = vec4(0.169, 0.153, 0.141, 1.0);
+uniform vec4 l_mid   : source_color = vec4(0.039, 0.031, 0.027, 1.0);
+uniform vec4 l_inner : source_color = vec4(0.337, 0.333, 0.314, 1.0);
+uniform vec4 r_outer : source_color = vec4(0.169, 0.153, 0.141, 1.0);
+uniform vec4 r_mid   : source_color = vec4(0.039, 0.031, 0.027, 1.0);
+uniform vec4 r_inner : source_color = vec4(0.337, 0.333, 0.314, 1.0);
+
+void fragment() {
+    float px_size = fwidth(UV.x);
+    float x_px = UV.x / px_size;
+    float right_px = (1.0 - UV.x) / px_size;
+    
+    float w_outer = 4.0;
+    float w_mid   = 10.0;
+    float w_inner = 4.0;
+    
+    vec4 final = bg_color;
+    
+    if (x_px < w_outer) {
+        final = l_outer;
+    } else if (x_px < w_outer + w_mid) {
+        final = l_mid;
+    } else if (x_px < w_outer + w_mid + w_inner) {
+        final = l_inner;
+    } else if (right_px < w_outer) {
+        final = r_outer;
+    } else if (right_px < w_outer + w_mid) {
+        final = r_mid;
+    } else if (right_px < w_outer + w_mid + w_inner) {
+        final = r_inner;
+    }
+    
+    COLOR = final;
+}"
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_stripes"]
+shader = SubResource("Shader_stripe_border")
+shader_parameter/bg_color = Color(0.164706, 0.145098, 0.133333, 1)
+shader_parameter/l_outer = Color(0.168627, 0.152941, 0.141176, 1)
+shader_parameter/l_mid = Color(0.0392157, 0.0313726, 0.027451, 1)
+shader_parameter/l_inner = Color(0.337255, 0.333333, 0.313726, 1)
+shader_parameter/r_outer = Color(0.168627, 0.152941, 0.141176, 1)
+shader_parameter/r_mid = Color(0.0392157, 0.0313726, 0.027451, 1)
+shader_parameter/r_inner = Color(0.337255, 0.333333, 0.313726, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_center_container"]
+bg_color = Color(0.164706, 0.145098, 0.133333, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_center_separator"]
+bg_color = Color(0.231373, 0.231373, 0.231373, 1)
+
+[sub_resource type="StyleBoxTexture" id="StyleBoxFlat_stake_normal"]
+content_margin_left = 0.0
+content_margin_top = 0.0
+content_margin_right = 0.0
+content_margin_bottom = 0.0
+texture = ExtResource("tex_stake_bg")
+texture_margin_left = 12.0
+texture_margin_top = 12.0
+texture_margin_right = 12.0
+texture_margin_bottom = 12.0
+
+[sub_resource type="StyleBoxTexture" id="StyleBoxFlat_stake_active"]
+content_margin_left = 0.0
+content_margin_top = 0.0
+content_margin_right = 0.0
+content_margin_bottom = 0.0
+texture = ExtResource("tex_stake_active")
+texture_margin_left = 12.0
+texture_margin_top = 12.0
+texture_margin_right = 12.0
+texture_margin_bottom = 12.0
+
+[sub_resource type="StyleBoxTexture" id="StyleBoxTexture_glass_active"]
+content_margin_left = 0.0
+content_margin_top = 0.0
+content_margin_right = 0.0
+content_margin_bottom = 0.0
+texture = ExtResource("tex_stake_active")
+texture_margin_left = 15.0
+texture_margin_top = 15.0
+texture_margin_right = 15.0
+texture_margin_bottom = 15.0
+
+[sub_resource type="ButtonGroup" id="ButtonGroup_stake"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_badge"]
+content_margin_left = 8.0
+content_margin_top = 2.0
+content_margin_right = 8.0
+content_margin_bottom = 2.0
+bg_color = Color(1, 0.768627, 0, 1)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_badge_green"]
+content_margin_left = 8.0
+content_margin_top = 2.0
+content_margin_right = 8.0
+content_margin_bottom = 2.0
+bg_color = Color(0.15, 0.7, 0.25, 1)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_sidebar_modal"]
+bg_color = Color(0.14, 0.15, 0.18, 0.95)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.25, 0.26, 0.3, 1)
+corner_radius_top_left = 16
+corner_radius_top_right = 16
+corner_radius_bottom_right = 16
+corner_radius_bottom_left = 16
+shadow_color = Color(0, 0, 0, 0.3)
+shadow_size = 10
+
+[node name="OnlinePlayersList" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_players_script")
+
+[node name="BackgroundTexture" type="TextureRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+texture = ExtResource("bg_texture")
+expand_mode = 1
+stretch_mode = 6
+
+[node name="MainLayout" type="HBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 0
+
+[node name="LeftSidebar" type="PanelContainer" parent="MainLayout"]
+clip_contents = true
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+size_flags_stretch_ratio = 3.0
+theme_override_styles/panel = SubResource("StyleBoxFlat_sidebar")
+
+[node name="ContentMargin" type="MarginContainer" parent="MainLayout/LeftSidebar"]
+layout_mode = 2
+theme_override_constants/margin_left = 20
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_right = 20
+theme_override_constants/margin_bottom = 20
+
+[node name="LeftSidebarVBox" type="VBoxContainer" parent="MainLayout/LeftSidebar/ContentMargin"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="ScrollContainer" type="ScrollContainer" parent="MainLayout/LeftSidebar/ContentMargin/LeftSidebarVBox"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 3
+vertical_scroll_mode = 3
+
+[node name="VBox" type="VBoxContainer" parent="MainLayout/LeftSidebar/ContentMargin/LeftSidebarVBox/ScrollContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="SeasonLabel" type="Label" parent="MainLayout/LeftSidebar/ContentMargin/LeftSidebarVBox/ScrollContainer/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.4, 0.4, 0.4, 1)
+theme_override_font_sizes/font_size = 16
+text = "SEASON END IN 2H : 3M"
+horizontal_alignment = 1
+
+[node name="StandingsContainer" type="VBoxContainer" parent="MainLayout/LeftSidebar/ContentMargin/LeftSidebarVBox/ScrollContainer/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 0
+
+[node name="Header" type="HBoxContainer" parent="MainLayout/LeftSidebar/ContentMargin/LeftSidebarVBox/ScrollContainer/VBox/StandingsContainer"]
+layout_mode = 2
+alignment = 1
+
+[node name="Label" type="Label" parent="MainLayout/LeftSidebar/ContentMargin/LeftSidebarVBox/ScrollContainer/VBox/StandingsContainer/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.6, 0.6, 0.6, 1)
+theme_override_font_sizes/font_size = 16
+text = "STANDINGS"
+
+[node name="Separator" type="Panel" parent="MainLayout/LeftSidebar/ContentMargin/LeftSidebarVBox/ScrollContainer/VBox/StandingsContainer"]
+custom_minimum_size = Vector2(0, 2)
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_separator")
+
+[node name="StandingsList" type="VBoxContainer" parent="MainLayout/LeftSidebar/ContentMargin/LeftSidebarVBox/ScrollContainer/VBox/StandingsContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="Spacer2" type="Control" parent="MainLayout/LeftSidebar/ContentMargin/LeftSidebarVBox/ScrollContainer/VBox"]
+custom_minimum_size = Vector2(0, 10)
+layout_mode = 2
+
+[node name="BonusesContainer" type="VBoxContainer" parent="MainLayout/LeftSidebar/ContentMargin/LeftSidebarVBox/ScrollContainer/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="Header" type="HBoxContainer" parent="MainLayout/LeftSidebar/ContentMargin/LeftSidebarVBox/ScrollContainer/VBox/BonusesContainer"]
+layout_mode = 2
+alignment = 1
+
+[node name="Label" type="Label" parent="MainLayout/LeftSidebar/ContentMargin/LeftSidebarVBox/ScrollContainer/VBox/BonusesContainer/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.6, 0.6, 0.6, 1)
+theme_override_font_sizes/font_size = 16
+text = "THIS WEEK BONUSES"
+
+[node name="Separator" type="Panel" parent="MainLayout/LeftSidebar/ContentMargin/LeftSidebarVBox/ScrollContainer/VBox/BonusesContainer"]
+custom_minimum_size = Vector2(0, 2)
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_separator")
+
+[node name="BonusList" type="VBoxContainer" parent="MainLayout/LeftSidebar/ContentMargin/LeftSidebarVBox/ScrollContainer/VBox/BonusesContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 0
+
+[node name="CenterPanel" type="PanelContainer" parent="MainLayout"]
+clip_contents = true
+material = SubResource("ShaderMaterial_stripes")
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+size_flags_stretch_ratio = 4.0
+theme_override_styles/panel = SubResource("StyleBoxFlat_center_container")
+
+[node name="VBox" type="VBoxContainer" parent="MainLayout/CenterPanel"]
+layout_mode = 2
+theme_override_constants/separation = 0
+
+[node name="HeaderPanel" type="PanelContainer" parent="MainLayout/CenterPanel/VBox"]
+layout_mode = 2
+
+[node name="Bg" type="ColorRect" parent="MainLayout/CenterPanel/VBox/HeaderPanel"]
+layout_mode = 2
+color = Color(0.12, 0.12, 0.14, 1)
+
+[node name="Margin" type="MarginContainer" parent="MainLayout/CenterPanel/VBox/HeaderPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 20
+theme_override_constants/margin_top = 15
+theme_override_constants/margin_right = 20
+theme_override_constants/margin_bottom = 15
+
+[node name="HeaderVBox" type="VBoxContainer" parent="MainLayout/CenterPanel/VBox/HeaderPanel/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 2
+alignment = 1
+
+[node name="Label" type="Label" parent="MainLayout/CenterPanel/VBox/HeaderPanel/Margin/HeaderVBox"]
+custom_minimum_size = Vector2(10, 0)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.9, 0.9, 0.9, 1)
+theme_override_font_sizes/font_size = 22
+text = "AVAILABLE PLAYERS"
+vertical_alignment = 1
+
+[node name="HelperText" type="Label" parent="MainLayout/CenterPanel/VBox/HeaderPanel/Margin/HeaderVBox"]
+custom_minimum_size = Vector2(10, 0)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.6, 0.6, 0.6, 1)
+theme_override_font_sizes/font_size = 14
+text = "Tap a player to request a game. If they decline, try another!"
+vertical_alignment = 1
+autowrap_mode = 2
+
+[node name="StakesMargin" type="MarginContainer" parent="MainLayout/CenterPanel/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/margin_left = 20
+theme_override_constants/margin_top = 15
+theme_override_constants/margin_right = 20
+theme_override_constants/margin_bottom = 15
+
+[node name="StakesTabs" type="HBoxContainer" parent="MainLayout/CenterPanel/VBox/StakesMargin"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Stake50" type="Button" parent="MainLayout/CenterPanel/VBox/StakesMargin/StakesTabs"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 56)
+layout_mode = 2
+size_flags_horizontal = 3
+toggle_mode = true
+button_group = SubResource("ButtonGroup_stake")
+theme_override_styles/normal = SubResource("StyleBoxFlat_stake_normal")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_stake_active")
+theme_override_styles/hover = SubResource("StyleBoxFlat_stake_normal")
+
+[node name="BG_Tint" type="Panel" parent="MainLayout/CenterPanel/VBox/StakesMargin/StakesTabs/Stake50"]
+show_behind_parent = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_glass_tint")
+
+[node name="VBox" type="VBoxContainer" parent="MainLayout/CenterPanel/VBox/StakesMargin/StakesTabs/Stake50"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+alignment = 1
+theme_override_constants/separation = -2
+
+[node name="Amount" type="Label" parent="MainLayout/CenterPanel/VBox/StakesMargin/StakesTabs/Stake50/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.1, 0.1, 0.1, 1)
+theme_override_font_sizes/font_size = 20
+text = "50"
+horizontal_alignment = 1
+
+[node name="Label" type="Label" parent="MainLayout/CenterPanel/VBox/StakesMargin/StakesTabs/Stake50/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.4, 0.4, 0.4, 1)
+theme_override_font_sizes/font_size = 11
+text = "COINS"
+horizontal_alignment = 1
+
+[node name="Stake200" type="Button" parent="MainLayout/CenterPanel/VBox/StakesMargin/StakesTabs"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 56)
+layout_mode = 2
+size_flags_horizontal = 3
+toggle_mode = true
+button_group = SubResource("ButtonGroup_stake")
+theme_override_styles/normal = SubResource("StyleBoxFlat_stake_normal")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_stake_active")
+theme_override_styles/hover = SubResource("StyleBoxFlat_stake_normal")
+
+[node name="BG_Tint" type="Panel" parent="MainLayout/CenterPanel/VBox/StakesMargin/StakesTabs/Stake200"]
+show_behind_parent = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_glass_tint")
+
+[node name="VBox" type="VBoxContainer" parent="MainLayout/CenterPanel/VBox/StakesMargin/StakesTabs/Stake200"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+alignment = 1
+theme_override_constants/separation = -2
+
+[node name="Amount" type="Label" parent="MainLayout/CenterPanel/VBox/StakesMargin/StakesTabs/Stake200/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.8, 0.2, 0.2, 1)
+theme_override_font_sizes/font_size = 20
+text = "200"
+horizontal_alignment = 1
+
+[node name="Label" type="Label" parent="MainLayout/CenterPanel/VBox/StakesMargin/StakesTabs/Stake200/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.8, 0.4, 0.2, 1)
+theme_override_font_sizes/font_size = 11
+text = "COINS"
+horizontal_alignment = 1
+
+[node name="Stake500" type="Button" parent="MainLayout/CenterPanel/VBox/StakesMargin/StakesTabs"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 56)
+layout_mode = 2
+size_flags_horizontal = 3
+toggle_mode = true
+button_group = SubResource("ButtonGroup_stake")
+theme_override_styles/normal = SubResource("StyleBoxFlat_stake_normal")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_stake_active")
+theme_override_styles/hover = SubResource("StyleBoxFlat_stake_normal")
+
+[node name="BG_Tint" type="Panel" parent="MainLayout/CenterPanel/VBox/StakesMargin/StakesTabs/Stake500"]
+show_behind_parent = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_glass_tint")
+
+[node name="VBox" type="VBoxContainer" parent="MainLayout/CenterPanel/VBox/StakesMargin/StakesTabs/Stake500"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+alignment = 1
+theme_override_constants/separation = -2
+
+[node name="Amount" type="Label" parent="MainLayout/CenterPanel/VBox/StakesMargin/StakesTabs/Stake500/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.1, 0.1, 0.1, 1)
+theme_override_font_sizes/font_size = 20
+text = "500"
+horizontal_alignment = 1
+
+[node name="Label" type="Label" parent="MainLayout/CenterPanel/VBox/StakesMargin/StakesTabs/Stake500/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.4, 0.4, 0.4, 1)
+theme_override_font_sizes/font_size = 11
+text = "COINS"
+horizontal_alignment = 1
+
+[node name="Stake1000" type="Button" parent="MainLayout/CenterPanel/VBox/StakesMargin/StakesTabs"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 56)
+layout_mode = 2
+size_flags_horizontal = 3
+toggle_mode = true
+button_group = SubResource("ButtonGroup_stake")
+theme_override_styles/normal = SubResource("StyleBoxFlat_stake_normal")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_stake_active")
+theme_override_styles/hover = SubResource("StyleBoxFlat_stake_normal")
+
+[node name="BG_Tint" type="Panel" parent="MainLayout/CenterPanel/VBox/StakesMargin/StakesTabs/Stake1000"]
+show_behind_parent = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_glass_tint")
+
+[node name="VBox" type="VBoxContainer" parent="MainLayout/CenterPanel/VBox/StakesMargin/StakesTabs/Stake1000"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+alignment = 1
+theme_override_constants/separation = -2
+
+[node name="Amount" type="Label" parent="MainLayout/CenterPanel/VBox/StakesMargin/StakesTabs/Stake1000/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.1, 0.1, 0.1, 1)
+theme_override_font_sizes/font_size = 20
+text = "1000"
+horizontal_alignment = 1
+
+[node name="Label" type="Label" parent="MainLayout/CenterPanel/VBox/StakesMargin/StakesTabs/Stake1000/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.4, 0.4, 0.4, 1)
+theme_override_font_sizes/font_size = 11
+text = "COINS"
+horizontal_alignment = 1
+
+[node name="Separator" type="Panel" parent="MainLayout/CenterPanel/VBox"]
+custom_minimum_size = Vector2(0, 3)
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_center_separator")
+
+[node name="ScrollContainer" type="ScrollContainer" parent="MainLayout/CenterPanel/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 3
+vertical_scroll_mode = 3
+
+[node name="ListMargin" type="MarginContainer" parent="MainLayout/CenterPanel/VBox/ScrollContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/margin_left = 20
+theme_override_constants/margin_right = 20
+
+[node name="PlayersListContainer" type="VBoxContainer" parent="MainLayout/CenterPanel/VBox/ScrollContainer/ListMargin"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 0
+
+[node name="EmptyContainer" type="CenterContainer" parent="MainLayout/CenterPanel/VBox"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="EmptyLabel" type="Label" parent="MainLayout/CenterPanel/VBox/EmptyContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.3, 0.3, 0.3, 1)
+text = "No opponents online"
+
+[node name="RightSidebar" type="PanelContainer" parent="MainLayout"]
+clip_contents = true
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+size_flags_stretch_ratio = 3.0
+theme_override_styles/panel = SubResource("StyleBoxFlat_sidebar")
+
+[node name="ContentMargin" type="MarginContainer" parent="MainLayout/RightSidebar"]
+layout_mode = 2
+theme_override_constants/margin_left = 20
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_right = 20
+theme_override_constants/margin_bottom = 20
+
+[node name="RightSidebarVBox" type="VBoxContainer" parent="MainLayout/RightSidebar/ContentMargin"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="ScrollContainer" type="ScrollContainer" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 3
+vertical_scroll_mode = 3
+
+[node name="VBox" type="VBoxContainer" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 20
+
+[node name="UserInfoContainer" type="PanelContainer" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox"]
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxTexture_glass_panel")
+
+[node name="BG_Tint" type="Panel" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/UserInfoContainer"]
+show_behind_parent = true
+layout_mode = 2
+mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_glass_tint")
+
+[node name="UserMargin" type="MarginContainer" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/UserInfoContainer"]
+layout_mode = 2
+theme_override_constants/margin_left = 15
+theme_override_constants/margin_top = 15
+theme_override_constants/margin_right = 15
+theme_override_constants/margin_bottom = 15
+
+[node name="UserVBox" type="VBoxContainer" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/UserInfoContainer/UserMargin"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="ProfileSection" type="HBoxContainer" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/UserInfoContainer/UserMargin/UserVBox"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="AvatarPlaceholder" type="Control" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/UserInfoContainer/UserMargin/UserVBox/ProfileSection"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(120, 120)
+layout_mode = 2
+
+[node name="Info" type="VBoxContainer" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/UserInfoContainer/UserMargin/UserVBox/ProfileSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+alignment = 1
+theme_override_constants/separation = 8
+
+[node name="NameIdPanel" type="PanelContainer" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/UserInfoContainer/UserMargin/UserVBox/ProfileSection/Info"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_styles/panel = SubResource("StyleBoxFlat_name_id_bg")
+
+[node name="NameIdHBox" type="HBoxContainer" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/UserInfoContainer/UserMargin/UserVBox/ProfileSection/Info/NameIdPanel"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="Username" type="Label" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/UserInfoContainer/UserMargin/UserVBox/ProfileSection/Info/NameIdPanel/NameIdHBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.9, 0.9, 0.9, 1)
+theme_override_font_sizes/font_size = 13
+text = "PLAYER NAME"
+uppercase = true
+
+[node name="AccountBtn" type="Button" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/UserInfoContainer/UserMargin/UserVBox/ProfileSection/Info/NameIdPanel/NameIdHBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(28, 28)
+layout_mode = 2
+focus_mode = 0
+theme_override_colors/font_color = Color(0.6, 0.6, 0.6, 1)
+theme_override_colors/font_hover_color = Color(0.9, 0.9, 0.9, 1)
+theme_override_colors/font_pressed_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 18
+flat = true
+text = "⚙"
+
+[node name="BotRow" type="HBoxContainer" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/UserInfoContainer/UserMargin/UserVBox/ProfileSection/Info"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="BalBg" type="PanelContainer" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/UserInfoContainer/UserMargin/UserVBox/ProfileSection/Info/BotRow"]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_styles/panel = SubResource("StyleBoxFlat_stat_bg")
+
+[node name="HBox" type="HBoxContainer" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/UserInfoContainer/UserMargin/UserVBox/ProfileSection/Info/BotRow/BalBg"]
+layout_mode = 2
+theme_override_constants/separation = 6
+alignment = 1
+
+[node name="Label" type="Label" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/UserInfoContainer/UserMargin/UserVBox/ProfileSection/Info/BotRow/BalBg/HBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.6, 0, 1)
+theme_override_font_sizes/font_size = 16
+text = "Bal."
+
+[node name="Balance" type="Label" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/UserInfoContainer/UserMargin/UserVBox/ProfileSection/Info/BotRow/BalBg/HBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.6, 0, 1)
+theme_override_font_sizes/font_size = 18
+text = "0.0"
+
+[node name="PtsBg" type="PanelContainer" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/UserInfoContainer/UserMargin/UserVBox/ProfileSection/Info/BotRow"]
+custom_minimum_size = Vector2(90, 32)
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_stat_bg")
+
+[node name="HBox" type="HBoxContainer" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/UserInfoContainer/UserMargin/UserVBox/ProfileSection/Info/BotRow/PtsBg"]
+layout_mode = 2
+theme_override_constants/separation = 6
+alignment = 1
+
+[node name="Label" type="Label" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/UserInfoContainer/UserMargin/UserVBox/ProfileSection/Info/BotRow/PtsBg/HBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.6, 0.6, 0.6, 1)
+theme_override_font_sizes/font_size = 16
+text = "PTS."
+
+[node name="Points" type="Label" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/UserInfoContainer/UserMargin/UserVBox/ProfileSection/Info/BotRow/PtsBg/HBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 18
+text = "0.0"
+
+[node name="PaymentsBtn" type="Button" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/UserInfoContainer/UserMargin/UserVBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+theme_type_variation = &"PrimaryButton"
+text = "MAKE PAYMENTS"
+
+[node name="Spacer1" type="Control" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox"]
+custom_minimum_size = Vector2(0, 10)
+layout_mode = 2
+
+[node name="BattleSectionPanel" type="PanelContainer" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_styles/panel = SubResource("StyleBoxTexture_glass_panel")
+
+[node name="BG_Tint" type="Panel" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/BattleSectionPanel"]
+show_behind_parent = true
+layout_mode = 2
+mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_glass_tint")
+
+[node name="BadgeLayer" type="Control" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/BattleSectionPanel"]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="BattleBadge" type="Label" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/BattleSectionPanel/BadgeLayer"]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -93.0
+offset_top = 8.0
+offset_right = -8.0
+offset_bottom = 26.0
+grow_horizontal = 0
+theme_override_colors/font_color = Color(0.1, 0.1, 0.1, 1)
+theme_override_font_sizes/font_size = 10
+theme_override_styles/normal = SubResource("StyleBoxFlat_badge")
+text = "COMING SOON"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="BattleMargin" type="MarginContainer" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/BattleSectionPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 20
+theme_override_constants/margin_top = 30
+theme_override_constants/margin_right = 20
+theme_override_constants/margin_bottom = 30
+
+[node name="Content" type="VBoxContainer" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/BattleSectionPanel/BattleMargin"]
+layout_mode = 2
+theme_override_constants/separation = 10
+alignment = 1
+
+[node name="Icon" type="TextureRect" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/BattleSectionPanel/BattleMargin/Content"]
+custom_minimum_size = Vector2(32, 32)
+layout_mode = 2
+texture = ExtResource("8_battle_icon")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="Label" type="Label" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/BattleSectionPanel/BattleMargin/Content"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.9, 0.9, 0.9, 1)
+theme_override_font_sizes/font_size = 18
+text = "BATTLES"
+horizontal_alignment = 1
+
+[node name="BattleInfoLabel" type="Label" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/BattleSectionPanel/BattleMargin/Content"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+theme_override_colors/font_color = Color(0.5, 0.8, 0.5, 1)
+theme_override_font_sizes/font_size = 14
+text = "Active: 500"
+horizontal_alignment = 1
+
+[node name="BattleActionsContainer" type="VBoxContainer" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/BattleSectionPanel/BattleMargin/Content"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="CreateBattleBtn" type="Button" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/BattleSectionPanel/BattleMargin/Content/BattleActionsContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"PrimaryButton"
+text = "CREATE BATTLE"
+
+[node name="InviteUsersBtn" type="Button" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/BattleSectionPanel/BattleMargin/Content/BattleActionsContainer"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+theme_type_variation = &"PrimaryButton"
+text = "INVITE PLAYERS"
+
+[node name="UpdateBattleBtn" type="Button" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/BattleSectionPanel/BattleMargin/Content/BattleActionsContainer"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+theme_type_variation = &"SecondaryButton"
+text = "UPDATE BATTLE"
+
+[node name="TournamentModeBtn" type="Button" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_styles/normal = SubResource("StyleBoxTexture_glass_panel")
+theme_override_styles/hover = SubResource("StyleBoxTexture_glass_panel")
+theme_override_styles/pressed = SubResource("StyleBoxTexture_glass_panel")
+
+[node name="BG_Tint" type="Panel" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/TournamentModeBtn"]
+show_behind_parent = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_glass_tint")
+
+[node name="TournBadge" type="Label" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/TournamentModeBtn"]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -93.0
+offset_top = 8.0
+offset_right = -8.0
+offset_bottom = 26.0
+grow_horizontal = 0
+theme_override_colors/font_color = Color(0.9, 1, 0.9, 1)
+theme_override_font_sizes/font_size = 10
+theme_override_styles/normal = SubResource("StyleBoxFlat_badge_green")
+text = "NEW"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="TournamentMargin" type="MarginContainer" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/TournamentModeBtn"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_top = 25
+theme_override_constants/margin_right = 10
+theme_override_constants/margin_bottom = 25
+
+[node name="Content" type="VBoxContainer" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/TournamentModeBtn/TournamentMargin"]
+layout_mode = 2
+theme_override_constants/separation = 10
+alignment = 1
+
+[node name="Icon" type="TextureRect" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/TournamentModeBtn/TournamentMargin/Content"]
+custom_minimum_size = Vector2(56, 56)
+layout_mode = 2
+size_flags_horizontal = 4
+texture = ExtResource("9_tourn_icon")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="Label" type="Label" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/ScrollContainer/VBox/TournamentModeBtn/TournamentMargin/Content"]
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 22
+text = "TOURNAMENTS"
+vertical_alignment = 1
+horizontal_alignment = 1
+
+[node name="FooterButtons" type="HBoxContainer" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="SupportButton" type="Button" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/FooterButtons"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_type_variation = &"SecondaryButton"
+text = "SUPPORT"
+clip_text = true
+
+[node name="ThemesButton" type="Button" parent="MainLayout/RightSidebar/ContentMargin/RightSidebarVBox/FooterButtons"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_type_variation = &"SecondaryButton"
+text = "THEMES"
+clip_text = true
+
+[node name="StakeWarningModal" type="ColorRect" parent="."]
+unique_name_in_owner = true
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.8)
+
+[node name="CenterContainer" type="CenterContainer" parent="StakeWarningModal"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="PanelContainer" type="PanelContainer" parent="StakeWarningModal/CenterContainer"]
+custom_minimum_size = Vector2(450, 0)
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_sidebar_modal")
+
+[node name="MarginContainer" type="MarginContainer" parent="StakeWarningModal/CenterContainer/PanelContainer"]
+layout_mode = 2
+theme_override_constants/margin_left = 30
+theme_override_constants/margin_top = 25
+theme_override_constants/margin_right = 30
+theme_override_constants/margin_bottom = 25
+
+[node name="VBoxContainer" type="VBoxContainer" parent="StakeWarningModal/CenterContainer/PanelContainer/MarginContainer"]
+layout_mode = 2
+theme_override_constants/separation = 15
+
+[node name="Title" type="Label" parent="StakeWarningModal/CenterContainer/PanelContainer/MarginContainer/VBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.3, 0.3, 1)
+theme_override_font_sizes/font_size = 22
+text = "NO COIN REWARDS"
+horizontal_alignment = 1
+
+[node name="Message" type="Label" parent="StakeWarningModal/CenterContainer/PanelContainer/MarginContainer/VBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "Winners receive Boost Points and Point Bonuses only."
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="CloseWarningButton" type="Button" parent="StakeWarningModal/CenterContainer/PanelContainer/MarginContainer/VBoxContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"SecondaryButton"
+text = "I Understand"

@@ -1,0 +1,238 @@
+-- payments.gui_script - Mobile-money transaction screen.
+-- texture_bg background anchored to true physical edges. Method tabs and input
+-- fields use container_bg / container_bg_active glass panels. Numpad uses
+-- default_btn 9-slice (PAY → primary_btn, backspace → secondary_btn).
+
+local ui        = require("modules.ui")
+local ws        = require("modules.websocket_manager")
+local screen    = require("modules.screen")
+
+local LOGICAL_W, LOGICAL_H = 1280, 720
+local VISIBLE_W, VISIBLE_H = 1280, 720
+local EDGE_L, EDGE_R = 0, 1280
+local EDGE_B, EDGE_T = 0, 720
+local CX, CY = 640, 360
+
+local function refresh_wh()
+	local m = screen.metrics()
+	VISIBLE_W, VISIBLE_H = m.VW, m.VH
+	EDGE_L, EDGE_R = m.L, m.R
+	EDGE_B, EDGE_T = m.B, m.T
+	CX, CY = m.CX, m.CY
+end
+
+local function commas(n)
+	n = tostring(math.floor(tonumber(n) or 0))
+	return (n:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""))
+end
+
+local function calc_fee(method, amount)
+	if type(method) ~= "table" or type(method.charges) ~= "table" then return 0 end
+	for _, tier in ipairs(method.charges) do
+		local mn = tonumber(tier.min) or 0
+		local mx = tier.max and tonumber(tier.max) or nil
+		if amount >= mn and (mx == nil or amount <= mx) then
+			return tonumber(tier.fee) or 0
+		end
+	end
+	return 0
+end
+
+local function methods()
+	local u = ws.current_user_data or {}
+	if type(u.payments) == "table" and #u.payments > 0 then return u.payments end
+	return {
+		{ type = "DEPOSIT",  min = 500,  charges = { { min = 0, fee = 0 } } },
+		{ type = "WITHDRAW", min = 1000, charges = { { min = 0, fee = 200 } } },
+	}
+end
+
+local function clear(self)
+	for _, n in ipairs(self.nodes) do pcall(gui.delete_node, n) end
+	self.nodes, self.buttons = {}, {}
+end
+local function track(self, n) self.nodes[#self.nodes+1] = n return n end
+
+local NUM = {"1","2","3","4","5","6","7","8","9","<","0","PAY"}
+
+local function rebuild(self)
+	clear(self)
+
+	-- Background.
+	track(self, ui.cover(LOGICAL_W, LOGICAL_H, ui.DARK))
+	track(self, ui.cover_image(LOGICAL_W, LOGICAL_H, "texture_bg"))
+	track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.58)))
+
+	-- Top bar — anchored to edges.
+	track(self, ui.text(vmath.vector3(CX, EDGE_T - 44, 0), "PAYMENTS", "title", ui.GOLD))
+	local bb = track(self, ui.btn9(vmath.vector3(EDGE_L + 90, EDGE_T - 44, 0), vmath.vector3(140, 44, 0), "secondary_btn"))
+	track(self, ui.text(vmath.vector3(EDGE_L + 90, EDGE_T - 44, 0), "< BACK", "small", ui.WHITE))
+	self.buttons[#self.buttons+1] = { node = bb, id = "back" }
+
+	local u = ws.current_user_data or {}
+	track(self, ui.image(vmath.vector3(EDGE_R - 200, EDGE_T - 44, 0), vmath.vector3(22, 22, 0), "coin_icon"))
+	track(self, ui.text(vmath.vector3(EDGE_R - 130, EDGE_T - 44, 0), commas(u.balance or 0), "body", ui.GOLD))
+
+	local ms = methods()
+	local method = ms[self.method_index] or ms[1]
+	local amount = tonumber(self.amount) or 0
+	local fee = calc_fee(method, amount)
+	local total = amount + fee
+	local minv = tonumber(method.min) or 0
+
+	-- Method tabs.
+	local tabw = math.min(200, (VISIBLE_W - 80) / #ms)
+	local tx0 = CX - (#ms * tabw) / 2 + tabw / 2
+	for i, m in ipairs(ms) do
+		local sel = (i == self.method_index)
+		track(self, ui.panel9(vmath.vector3(tx0+(i-1)*tabw, EDGE_T - 100, 0), vmath.vector3(tabw-8, 48, 0),
+			sel and "container_bg_active" or "container_bg"))
+		track(self, ui.text(vmath.vector3(tx0+(i-1)*tabw, EDGE_T - 100, 0), m.type or ("M"..i), "body",
+			sel and vmath.vector4(0.9, 0.2, 0.2, 1) or ui.WHITE))
+		local hit = track(self, ui.box(vmath.vector3(tx0+(i-1)*tabw, EDGE_T - 100, 0), vmath.vector3(tabw-8, 48, 0),
+			vmath.vector4(0, 0, 0, 0)))
+		self.buttons[#self.buttons+1] = { node = hit, id = "method", data = i }
+	end
+
+	-- Input row.
+	local field_y = EDGE_T - 175
+	track(self, ui.text(vmath.vector3(CX-240, field_y+36, 0), "PHONE", "small", ui.MUTED))
+	track(self, ui.panel9(vmath.vector3(CX-200, field_y, 0), vmath.vector3(300, 50, 0),
+		self.field=="phone" and "container_bg_active" or "container_bg"))
+	local ph_disp = (self.phone ~= "") and self.phone or "07XX XXX XXX"
+	track(self, ui.text(vmath.vector3(CX-200, field_y, 0), ph_disp, "body",
+		self.phone ~= "" and ui.WHITE or ui.MUTED))
+	local ph_hit = track(self, ui.box(vmath.vector3(CX-200, field_y, 0), vmath.vector3(300, 50, 0),
+		vmath.vector4(0, 0, 0, 0)))
+	self.buttons[#self.buttons+1] = { node = ph_hit, id = "focus_phone" }
+
+	track(self, ui.text(vmath.vector3(CX+180, field_y+36, 0), "AMOUNT (UGX)", "small", ui.MUTED))
+	track(self, ui.panel9(vmath.vector3(CX+200, field_y, 0), vmath.vector3(300, 50, 0),
+		self.field=="amount" and "container_bg_active" or "container_bg"))
+	local am_disp = (self.amount ~= "") and commas(self.amount) or "0"
+	track(self, ui.text(vmath.vector3(CX+200, field_y, 0), am_disp, "body",
+		self.amount ~= "" and ui.WHITE or ui.MUTED))
+	local am_hit = track(self, ui.box(vmath.vector3(CX+200, field_y, 0), vmath.vector3(300, 50, 0),
+		vmath.vector4(0, 0, 0, 0)))
+	self.buttons[#self.buttons+1] = { node = am_hit, id = "focus_amount" }
+
+	-- Fee / total row.
+	local info_y = field_y - 36
+	track(self, ui.text(vmath.vector3(CX-200, info_y, 0), "Min: "..commas(minv).." UGX", "small",
+		amount < minv and vmath.vector4(0.95, 0.4, 0.4, 1) or ui.MUTED))
+	track(self, ui.text(vmath.vector3(CX, info_y, 0), "Fee: "..commas(fee).." UGX", "small", ui.MUTED))
+	track(self, ui.text(vmath.vector3(CX+200, info_y, 0), "Total: "..commas(total).." UGX", "small",
+		vmath.vector4(0.4, 0.9, 0.5, 1)))
+
+	-- Numpad.
+	local kw, kh, kg = 110, 56, 10
+	local kx0 = CX - kw - kg - kw / 2
+	local ky0 = EDGE_T - 310
+	local ready = amount >= minv and amount > 0 and self.phone ~= ""
+	for i, k in ipairs(NUM) do
+		local ci = (i-1) % 3
+		local ri = math.floor((i-1) / 3)
+		local pos  = vmath.vector3(kx0 + ci*(kw+kg), ky0 - ri*(kh+kg), 0)
+		local size = vmath.vector3(kw, kh, 0)
+		local anim = "default_btn"
+		if k == "PAY" then anim = ready and "primary_btn" or "default_btn" end
+		if k == "<"  then anim = "secondary_btn" end
+		local kb = track(self, ui.btn9(pos, size, anim))
+		track(self, ui.text(pos, k, "body", ui.WHITE))
+		self.buttons[#self.buttons+1] = { node = kb, id = "num_"..k, data = k }
+	end
+
+	if self._msg then
+		track(self, ui.text(vmath.vector3(CX, EDGE_B + 52, 0), self._msg, "small",
+			self._msg_ok and vmath.vector4(0.4, 0.9, 0.5, 1) or vmath.vector4(0.95, 0.5, 0.3, 1)))
+	end
+end
+
+function init(self)
+	self.nodes, self.buttons = {}, {}
+	self.method_index = 1
+	self.phone, self.amount = "", ""
+	self.field = "amount"
+	refresh_wh()
+end
+
+function on_message(self, message_id, message, sender)
+	if message_id == hash("screen_enter") then
+		refresh_wh()
+		msg.post(".", "acquire_input_focus")
+		self._active = true
+		self._msg = nil
+		local u = ws.current_user_data or {}
+		self.phone = u.phoneNumber or u.phone or ""
+		if self.phone:sub(1,4) == "+256" then self.phone = "0"..self.phone:sub(5) end
+		self.amount = ""
+		self.field = "amount"
+		rebuild(self)
+	elseif message_id == hash("enable") then
+		self._active = true
+	elseif message_id == hash("disable") then
+		self._active = false
+		clear(self)
+	elseif message_id == hash("layout_changed") then
+		refresh_wh()
+		if self._active then rebuild(self) end
+	elseif message_id == hash("user_data_updated") then
+		if self._active then rebuild(self) end
+	elseif message_id == hash("payment_result") then
+		self._msg = message.ok and "Request sent - check your phone." or (message.message or "Failed")
+		self._msg_ok = message.ok
+		if message.ok then self.amount = "" end
+		if self._active then rebuild(self) end
+	end
+end
+
+local function handle(self, b)
+	local id = b.id
+	if id == "back" then
+		msg.post("#controller", "goto_online")
+	elseif id == "method" then
+		self.method_index = b.data; rebuild(self)
+	elseif id == "focus_phone" then
+		self.field = "phone"; rebuild(self)
+	elseif id == "focus_amount" then
+		self.field = "amount"; rebuild(self)
+	elseif id:sub(1,4) == "num_" then
+		local k = b.data
+		if k == "<" then
+			if self.field == "phone" then self.phone = self.phone:sub(1,-2)
+			else self.amount = self.amount:sub(1,-2) end
+			rebuild(self)
+		elseif k == "PAY" then
+			local ms = methods()
+			local method = ms[self.method_index] or ms[1]
+			local amount = tonumber(self.amount) or 0
+			local fee = calc_fee(method, amount)
+			if amount >= (tonumber(method.min) or 0) and amount > 0 and self.phone ~= "" then
+				self._msg = "Processing..."; self._msg_ok = true
+				msg.post("#controller", "submit_payment", {
+					phone = self.phone, amount = amount + fee, ptype = method.type or "",
+				})
+				rebuild(self)
+			end
+		else
+			if self.field == "phone" then
+				if #self.phone < 13 then self.phone = self.phone..k end
+			else
+				if #self.amount < 9 then self.amount = self.amount..k end
+			end
+			rebuild(self)
+		end
+	end
+end
+
+function on_input(self, action_id, action)
+	if action_id == hash("touch") and action.pressed then
+		for i = #self.buttons, 1, -1 do
+			local b = self.buttons[i]
+			if b.node and gui.pick_node(b.node, action.x, action.y) then
+				handle(self, b); return true
+			end
+		end
+	end
+	return false
+end

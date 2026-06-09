@@ -1,0 +1,191 @@
+--- api_service.lua
+-- REST client for the Matatu backend, ported from the Godot `ApiService.gd`.
+-- Uses Defold's built-in `http.request`. Every call takes a `cb(result)` where
+--   result = { success=bool, status_code=int, data=table, message=string }.
+
+local config = require("modules.config")
+local json_util = require("modules.json_util")
+
+local M = {}
+
+local _device_id = nil
+local _auth_token = ""
+local SAVE_FILE = sys.get_save_file("matatu_gdt", "device.json")
+
+-- ── device id ───────────────────────────────────────────────────────────────
+local function generate_id()
+	local info = sys.get_sys_info()
+	if info.device_ident and info.device_ident ~= "" then
+		return info.device_ident
+	end
+	-- Stable-ish fallback id.
+	math.randomseed(os.time() + (os.clock() * 1000000))
+	local t = {}
+	for _ = 1, 24 do
+		t[#t + 1] = string.format("%x", math.random(0, 15))
+	end
+	return "defold_" .. table.concat(t)
+end
+
+function M.get_device_id()
+	if _device_id then
+		return _device_id
+	end
+	local saved = sys.load(SAVE_FILE)
+	if saved and saved.device_id and saved.device_id ~= "" then
+		_device_id = saved.device_id
+	else
+		_device_id = generate_id()
+		sys.save(SAVE_FILE, { device_id = _device_id })
+	end
+	return _device_id
+end
+
+function M.set_auth_token(token)
+	_auth_token = token or ""
+end
+
+-- ── session persistence ──────────────────────────────────────────────────────
+local SESSION_FILE = sys.get_save_file("matatu_gdt", "session.json")
+
+function M.save_session(user)
+	if type(user) ~= "table" then return end
+	local data = {
+		_id         = user._id or user.localId or "",
+		username    = user.username or "",
+		avatar      = user.avatar or 1,
+		balance     = user.balance or 0,
+		points      = user.points or 0,
+		phoneNumber = user.phoneNumber or user.phone or "",
+		idToken     = user.idToken or user.token or _auth_token or "",
+	}
+	sys.save(SESSION_FILE, data)
+end
+
+function M.load_session()
+	local d = sys.load(SESSION_FILE)
+	if type(d) ~= "table" or (d._id or "") == "" then return nil end
+	return d
+end
+
+function M.clear_session()
+	sys.save(SESSION_FILE, {})
+end
+
+-- ── headers + parsing ─────────────────────────────────────────────────────--
+local function build_headers()
+	local h = {
+		["Content-Type"] = "application/json",
+		["X-Device-ID"] = M.get_device_id(),
+		["X-Platform"] = "android",
+		["X-App-Version"] = config.APP_VERSION,
+	}
+	if _auth_token ~= "" then
+		h["Authorization"] = "Bearer " .. _auth_token
+	end
+	return h
+end
+
+local function parse_response(response)
+	if not response then
+		return { success = false, status_code = 0, data = {}, message = "Connection Error" }
+	end
+	local code = response.status or 0
+	local data = json_util.decode(response.response or "") or {}
+	local success = code >= 200 and code < 300
+	local message = "Success"
+	if not success then
+		if type(data) == "table" and data.message then
+			message = data.message
+		elseif type(data) == "table" and data.reason then
+			message = data.reason
+		else
+			message = "Server Error: " .. tostring(code)
+		end
+	end
+	return { success = success, status_code = code, data = data, message = message }
+end
+
+local function request(method, endpoint, payload, cb)
+	local url = config.BASE_URL .. endpoint
+	local headers = build_headers()
+	local body = payload and json_util.encode(payload) or nil
+	local options = { timeout = 20 }
+	print("[API] " .. method .. " " .. url)
+	http.request(url, method, function(_, _, response)
+		if cb then
+			cb(parse_response(response))
+		end
+	end, headers, body, options)
+end
+
+-- ── endpoints ───────────────────────────────────────────────────────────────
+function M.device_login(cb)
+	request("GET", "/users/device_login", nil, cb)
+end
+
+function M.get_user(user_id, cb)
+	if not user_id or user_id == "" then
+		return cb({ success = false, status_code = 0, data = {}, message = "User ID required" })
+	end
+	request("GET", "/users/" .. user_id, nil, cb)
+end
+
+function M.update_profile(user_id, update_data, cb)
+	request("PUT", "/users/" .. user_id, update_data, cb)
+end
+
+function M.send_otp(phone_number, is_update, cb)
+	local payload = { phoneNumber = phone_number, channel = "sms", deviceId = M.get_device_id() }
+	if is_update then
+		payload.isUpdate = true
+	end
+	request("POST", "/otp/send", payload, cb)
+end
+
+function M.verify_otp(phone_number, code, cb)
+	local payload = { phoneNumber = phone_number, code = code, deviceId = M.get_device_id() }
+	request("POST", "/otp/verify", payload, function(result)
+		if result.success and result.data and result.data.idToken then
+			M.set_auth_token(result.data.idToken)
+		end
+		if cb then
+			cb(result)
+		end
+	end)
+end
+
+function M.send_transaction(payload, cb)
+	request("POST", "/payments", payload, cb)
+end
+
+-- ── profile ─────────────────────────────────────────────────────────────────
+-- PUT /users/:id  { username, avatar, phoneNumber }  (mirrors ProfileScreen.gd)
+function M.update_profile(user_id, payload, cb)
+	if not user_id or user_id == "" then
+		return cb({ success = false, status_code = 0, data = {}, message = "User ID required" })
+	end
+	request("PUT", "/users/" .. user_id, payload, cb)
+end
+
+-- ── themes ──────────────────────────────────────────────────────────────────
+-- POST /themes/purchase  { _id, themeId }
+function M.purchase_theme(user_id, theme_id, cb)
+	request("POST", "/themes/purchase", { _id = user_id, themeId = theme_id }, cb)
+end
+
+-- PATCH /themes/switch/user/:id  { themeId }
+function M.switch_theme(user_id, theme_id, cb)
+	request("PATCH", "/themes/switch/user/" .. user_id, { themeId = theme_id }, cb)
+end
+
+-- ── tournaments ─────────────────────────────────────────────────────────────
+function M.create_tournament(payload, cb)
+	request("POST", "/tournaments", payload, cb)
+end
+
+function M.update_tournament(tournament_id, payload, cb)
+	request("PUT", "/tournaments/" .. tournament_id, payload, cb)
+end
+
+return M

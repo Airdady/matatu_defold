@@ -1,0 +1,892 @@
+-- online.gui_script - Online players lobby (multiplayer hub).
+-- Restyled to match the Godot reference 1:1:
+--   * Transparent textured sidebars over an OPAQUE warm center panel
+--   * 4 / 10 / 4 three-stripe vertical dividers (shader equivalent)
+--   * Dark center header bar with title + helper text
+--   * Horizontal profile card (avatar left, name + Bal/Pts right)
+--   * Season-timer block (dark glass + gold underline)
+--   * Exact row / tier / border colors, fonts, labels and spacing
+--   * 3:4:3 layout ratio (left : center : right) like Godot stretch ratios
+
+local ui        = require("modules.ui")
+local config    = require("modules.config")
+local app_state = require("modules.app_state")
+local ws        = require("modules.websocket_manager")
+local screen    = require("modules.screen")
+
+local LOGICAL_W, LOGICAL_H = 1280, 720
+
+-- Dynamically calculated true screen bounds
+local VISIBLE_W, VISIBLE_H = 1280, 720
+local EDGE_L, EDGE_R = 0, 1280
+local EDGE_B, EDGE_T = 0, 720
+local CX, CY = 640, 360
+
+local TAB_QUICK   = 1
+local TAB_BATTLES = 2
+
+-- ── Layout (Godot stretch ratio 3 : 4 : 3) ───────────────────────────────────
+local SIDE_RATIO   = 0.30   -- each sidebar takes 30% of width
+local SIDE_MARGIN  = 20     -- Godot ContentMargin (20px) inside each sidebar
+local CENTER_PAD   = 22     -- keep center content clear of the 18px stripe edge
+
+-- ── Spacing constants ─────────────────────────────────────────────────────────
+local ROW_H_SM     = 38     -- standing / small table row height (was 32)
+local ROW_H_LG     = 44     -- season bonus / larger table row height (was 32)
+local ROW_H_LIST   = 56     -- center user-list row height (was 52)
+local ROW_GAP      = 5      -- gap between user-list rows (was 4)
+local HDR_H_TABLE  = 30     -- column-header bar height (was 26)
+local SECTION_GAP  = 10     -- gap between section label and its table header (was implicit)
+local BLOCK_GAP    = 18     -- vertical gap between sidebar blocks (was 10–16, unified)
+local INNER_PAD    = 14     -- horizontal inner padding inside containers (was 12)
+
+-- ── Theming Colors (Godot Reference) ─────────────────────────────────────────
+local COL_BG       = vmath.vector4(0.165, 0.145, 0.133, 1.0)   -- opaque center / base
+local COL_GLASS    = vmath.vector4(0.04, 0.04, 0.06, 0.70)
+local COL_GLASS_HI = vmath.vector4(0.10, 0.10, 0.12, 0.85)
+
+local ROW_EVEN     = vmath.vector4(0.10, 0.10, 0.12, 0.75)
+local ROW_ODD      = vmath.vector4(0.07, 0.07, 0.09, 0.60)
+local ROW_YOU      = vmath.vector4(0.28, 0.06, 0.06, 0.80)
+
+local TIER_GOLD    = vmath.vector4(1.00, 0.80, 0.20, 1.0)
+local TIER_SILVER  = vmath.vector4(0.70, 0.70, 0.72, 1.0)
+local TIER_BRONZE  = vmath.vector4(0.80, 0.50, 0.20, 1.0)
+local TIER_TEAL    = vmath.vector4(0.11, 0.62, 0.46, 0.85)
+local TIER_DIM     = vmath.vector4(0.35, 0.35, 0.38, 0.55)
+local TIER_COLORS  = { TIER_GOLD, TIER_SILVER, TIER_BRONZE, TIER_TEAL, TIER_DIM }
+
+local COL_DIM      = vmath.vector4(0.45, 0.45, 0.45, 1.0)
+local COL_MID      = vmath.vector4(0.65, 0.65, 0.65, 1.0)
+local COL_BRIGHT   = vmath.vector4(0.88, 0.88, 0.88, 1.0)
+local COL_GOLD     = vmath.vector4(1.00, 0.84, 0.20, 1.0)
+local COL_WHITE    = vmath.vector4(1.00, 1.00, 1.00, 1.0)
+local COL_GREEN    = vmath.vector4(0.15, 0.70, 0.25, 1.0)
+local COL_RED      = vmath.vector4(0.90, 0.25, 0.25, 1.0)
+local COL_CYAN     = vmath.vector4(0.20, 0.90, 1.00, 1.0)   -- points value (Godot _style_points_label)
+
+-- Frame / border accents
+local COL_BORDER     = vmath.vector4(0.25, 0.25, 0.28, 0.50) -- header underline (Godot 0.25,0.25,0.28,0.5)
+local COL_GOLD_BDR   = vmath.vector4(1.00, 0.84, 0.00, 0.55) -- season block underline + badge border
+local COL_GOLD_BDR_D = vmath.vector4(1.00, 0.84, 0.00, 0.50)
+local COL_TIMER_BG   = vmath.vector4(0.05, 0.05, 0.07, 0.85) -- season block bg
+local COL_HEADER_BG  = vmath.vector4(0.12, 0.12, 0.14, 1.00) -- center header bar bg
+local COL_BADGE_BG   = vmath.vector4(0.05, 0.05, 0.05, 0.70) -- compact standing badge bg
+local COL_NAMEID_BG  = vmath.vector4(0.00, 0.00, 0.00, 0.60) -- profile name pill
+local COL_STAT_BG    = vmath.vector4(0.00, 0.00, 0.00, 0.20) -- profile bal/pts pill
+
+-- Stripe divider colors (Godot Shader_stripe_border)
+local STRIPE_OUTER = vmath.vector4(0.169, 0.153, 0.141, 1.0)
+local STRIPE_MID   = vmath.vector4(0.039, 0.031, 0.027, 1.0)
+local STRIPE_INNER = vmath.vector4(0.337, 0.333, 0.314, 1.0)
+
+local DEFAULT_PRIZES = {
+    { rank = "#1",     amount = "70,000", min_pos = 1,  max_pos = 1  },
+    { rank = "#2",     amount = "30,000", min_pos = 2,  max_pos = 2  },
+    { rank = "#3",     amount = "10,000", min_pos = 3,  max_pos = 3  },
+    { rank = "#4-10",  amount = "5,000",  min_pos = 4,  max_pos = 10 },
+    { rank = "#11-20", amount = "1,000",  min_pos = 11, max_pos = 20 },
+}
+
+local function refresh_wh()
+    local m = screen.metrics()
+    VISIBLE_W, VISIBLE_H = m.VW, m.VH
+    EDGE_L, EDGE_R = m.L, m.R
+    EDGE_B, EDGE_T = m.B, m.T
+    CX, CY = m.CX, m.CY
+end
+
+local function commas(n)
+    n = tostring(math.floor(tonumber(n) or 0))
+    return (n:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""))
+end
+
+local function clear(self)
+    for _, n in ipairs(self.nodes) do pcall(gui.delete_node, n) end
+    self.nodes, self.buttons = {}, {}
+end
+
+local function track(self, n) self.nodes[#self.nodes+1] = n return n end
+
+-- A short label drawn left-aligned at x.
+local function txtL(self, x, y, str, font, color)
+    local t = track(self, ui.text(vmath.vector3(x, y, 0), str, font, color))
+    gui.set_pivot(t, gui.PIVOT_W)
+    return t
+end
+local function txtR(self, x, y, str, font, color)
+    local t = track(self, ui.text(vmath.vector3(x, y, 0), str, font, color))
+    gui.set_pivot(t, gui.PIVOT_E)
+    return t
+end
+
+local function mkbtn(self, id, pos, size, label, style, data, font, text_color)
+    local bg
+    if type(style) == "string" then
+        bg = track(self, ui.btn9(pos, size, style))
+    else
+        bg = track(self, ui.box(pos, size, style or COL_GLASS_HI))
+    end
+    if label then track(self, ui.text(pos, label, font or "small", text_color or COL_WHITE)) end
+    self.buttons[#self.buttons+1] = { node = bg, id = id, data = data }
+    return bg
+end
+
+-- ── Textured glass panel: solid tint behind + container_bg 9-slice frame ─────
+-- (Godot equivalent: BG_Tint glass_tint + StyleBoxTexture using container_bg)
+local function glass(self, pos, size, style)
+    track(self, ui.box(pos, size, COL_BG))                 -- opaque tint behind the bevel
+    return track(self, ui.btn9(pos, size, style or "container_bg"))
+end
+
+-- ── Shared layout (consistent dividers + sidebars + center) ──────────────────
+local function get_layout()
+    local left_w  = VISIBLE_W * SIDE_RATIO
+    local right_w = VISIBLE_W * SIDE_RATIO
+    local div_lx  = EDGE_L + left_w
+    local div_rx  = EDGE_R - right_w
+    return left_w, right_w, div_lx, div_rx
+end
+
+local function build_prizes(self)
+    local u = ws.current_user_data or {}
+    local prizes = u.prizes
+    if type(prizes) == "table" and prizes[1] and type(prizes[1].rewards) == "table" and #prizes[1].rewards > 0 then
+        local out = {}
+        for _, reward in ipairs(prizes[1].rewards) do
+            local coins  = tonumber(reward.coins)  or 0
+            local points = tonumber(reward.points) or 0
+            local amount, suffix
+            if coins > 0 then amount, suffix = commas(coins), ""
+            elseif points > 0 then amount, suffix = commas(points), " PTS"
+            else amount, suffix = "0", "" end
+
+            local range = tostring(reward.range or "")
+            local lo, hi = range:match("^(%d+)%-(%d+)$")
+            if lo then lo, hi = tonumber(lo), tonumber(hi)
+            else lo = tonumber(range) or 9999; hi = lo end
+            out[#out+1] = { rank = "#"..range, amount = amount, suffix = suffix, min_pos = lo, max_pos = hi }
+        end
+        return out
+    end
+    local out = {}
+    for i, p in ipairs(DEFAULT_PRIZES) do
+        out[i] = { rank = p.rank, amount = p.amount, suffix = "", min_pos = p.min_pos, max_pos = p.max_pos }
+    end
+    return out
+end
+
+local function active_tier_index(prizes, pos)
+    if not pos or pos <= 0 then return -1 end
+    for i, p in ipairs(prizes) do
+        if pos >= p.min_pos and pos <= p.max_pos then return i end
+    end
+    return -1
+end
+
+-- Human prize string for the compact standing badge ("Current value is: X Coins")
+local function prize_for_position(self, pos)
+    if not pos or pos <= 0 then return "" end
+    local prizes = build_prizes(self)
+    local idx = active_tier_index(prizes, pos)
+    if idx and idx > 0 and prizes[idx] then
+        local p = prizes[idx]
+        if p.suffix == " PTS" then return p.amount .. " Pts" end
+        return p.amount .. " Coins"
+    end
+    return ""
+end
+
+-- ── Panel Dividers (Godot 3-line stripe shader equivalent: 4 / 10 / 4) ───────
+local function vbar(self, x, w, color)
+    track(self, ui.box(vmath.vector3(x, CY, 0), vmath.vector3(w, VISIBLE_H, 0), color))
+end
+
+local function draw_dividers(self, div_lx, div_rx)
+    -- Left edge (going inward / rightward): outer(4) -> mid(10) -> inner(4)
+    vbar(self, div_lx + 2,  4,  STRIPE_OUTER)
+    vbar(self, div_lx + 9,  10, STRIPE_MID)
+    vbar(self, div_lx + 16, 4,  STRIPE_INNER)
+
+    -- Right edge (going inward / leftward): outer(4) -> mid(10) -> inner(4)
+    vbar(self, div_rx - 2,  4,  STRIPE_OUTER)
+    vbar(self, div_rx - 9,  10, STRIPE_MID)
+    vbar(self, div_rx - 16, 4,  STRIPE_INNER)
+end
+
+-- ── Left sidebar (Season, Standings, Bonuses) ────────────────────────────────
+local function draw_left(self)
+    local _, _, div_lx = get_layout()
+    local pw = (div_lx - EDGE_L) - (SIDE_MARGIN * 2)
+    local cx = (EDGE_L + div_lx) / 2
+    local cy = EDGE_T - 16
+
+    -- ── Season timer block ────────────────────────────────────────────
+    local timer_h = 88   -- increased from 76 for more breathing room
+    local tcy = cy - timer_h / 2
+    track(self, ui.box(vmath.vector3(cx, tcy, 0), vmath.vector3(pw, timer_h, 0), COL_TIMER_BG))
+    track(self, ui.box(vmath.vector3(cx, tcy - timer_h/2 + 1, 0), vmath.vector3(pw, 2, 0), COL_GOLD_BDR)) -- gold underline
+
+    track(self, ui.image(vmath.vector3(cx - pw/2 + 34, tcy, 0), vmath.vector3(44, 44, 0), "timer"))
+
+    local tx = cx - pw/2 + 68
+    txtL(self, tx, tcy + 26, "SEASON ENDS IN", "small", COL_DIM)
+    txtL(self, tx, tcy,      self.season_text or "00:00:00", "title", COL_GOLD)
+    txtL(self, tx, tcy - 28, self.season_target_text or "", "small", COL_BRIGHT)
+
+    cy = cy - timer_h - BLOCK_GAP
+
+    -- ── Standings ─────────────────────────────────────────────────────
+    track(self, ui.text(vmath.vector3(cx, cy, 0), "STANDINGS", "small", COL_MID))
+    cy = cy - SECTION_GAP - HDR_H_TABLE
+
+    -- Column header bar
+    track(self, ui.box(vmath.vector3(cx, cy + HDR_H_TABLE/2, 0), vmath.vector3(pw, HDR_H_TABLE, 0), COL_GLASS))
+    track(self, ui.box(vmath.vector3(cx, cy + 1, 0), vmath.vector3(pw, 1, 0), COL_BORDER))
+    txtL(self, cx - pw/2 + INNER_PAD, cy + HDR_H_TABLE/2, "POS",    "small", COL_DIM)
+    txtL(self, cx - pw/2 + 56,        cy + HDR_H_TABLE/2, "PLAYER", "small", COL_DIM)
+    txtR(self, cx + pw/2 - INNER_PAD, cy + HDR_H_TABLE/2, "POINTS", "small", COL_DIM)
+    cy = cy  -- cy is now at the bottom of the header
+
+    local prizes = build_prizes(self)
+    local rank = (ws.current_user_data and ws.current_user_data.rank) or {}
+    local shown = 0
+    local row_h = ROW_H_SM
+    for _, r in ipairs(rank) do
+        if shown >= 5 then break end
+        shown = shown + 1
+        local me = r.active
+        local pos_int = tonumber(r.position) or 99
+        local tier_col = TIER_COLORS[active_tier_index(prizes, pos_int)] or TIER_DIM
+
+        local bg_col = me and ROW_YOU or ((shown % 2 == 0) and ROW_EVEN or ROW_ODD)
+        track(self, ui.box(vmath.vector3(cx, cy - row_h/2, 0), vmath.vector3(pw, row_h, 0), bg_col))
+        -- 3px tier accent on left edge
+        track(self, ui.box(vmath.vector3(cx - pw/2 + 2, cy - row_h/2, 0), vmath.vector3(3, row_h, 0), tier_col))
+
+        txtL(self, cx - pw/2 + INNER_PAD + 4, cy - row_h/2, "#"..tostring(r.position or shown), "small", me and COL_WHITE or COL_DIM)
+        txtL(self, cx - pw/2 + 56,            cy - row_h/2, me and "YOU" or string.upper(r.username or "PLAYER"), "small", me and COL_WHITE or COL_BRIGHT)
+        txtR(self, cx + pw/2 - INNER_PAD,     cy - row_h/2, commas(r.points or 0), "small", me and COL_GOLD or COL_MID)
+        cy = cy - row_h
+    end
+
+    if shown == 0 then
+        track(self, ui.text(vmath.vector3(cx, cy - 20, 0), "Standings load when live", "small", COL_DIM))
+        cy = cy - 40
+    end
+
+    cy = cy - BLOCK_GAP
+
+    -- ── Season Bonuses ────────────────────────────────────────────────
+    track(self, ui.text(vmath.vector3(cx, cy, 0), "SEASON BONUSES", "small", COL_MID))
+    cy = cy - SECTION_GAP - HDR_H_TABLE
+
+    -- Column header bar
+    track(self, ui.box(vmath.vector3(cx, cy + HDR_H_TABLE/2, 0), vmath.vector3(pw, HDR_H_TABLE, 0), COL_GLASS))
+    track(self, ui.box(vmath.vector3(cx, cy + 1, 0), vmath.vector3(pw, 1, 0), COL_BORDER))
+    txtL(self, cx - pw/2 + INNER_PAD, cy + HDR_H_TABLE/2, "RANK",  "small", COL_DIM)
+    txtR(self, cx + pw/2 - INNER_PAD, cy + HDR_H_TABLE/2, "PRIZE", "small", COL_DIM)
+    cy = cy
+
+    local my_pos = tonumber((ws.current_user_data or {}).position) or -1
+    local active = active_tier_index(prizes, my_pos)
+    local row_h_bonus = ROW_H_LG  -- taller rows for season bonus table
+
+    for i, p in ipairs(prizes) do
+        local tier_col = TIER_COLORS[math.min(i, #TIER_COLORS)]
+        local is_active = (i == active)
+
+        local bg_col = is_active and vmath.vector4(tier_col.x, tier_col.y, tier_col.z, 0.25)
+            or ((i % 2 == 0) and ROW_EVEN or ROW_ODD)
+
+        track(self, ui.box(vmath.vector3(cx, cy - row_h_bonus/2, 0), vmath.vector3(pw, row_h_bonus, 0), bg_col))
+        -- tier accent bar on left: 4px active, 3px inactive
+        local accent_w = is_active and 4 or 3
+        track(self, ui.box(vmath.vector3(cx - pw/2 + accent_w/2, cy - row_h_bonus/2, 0), vmath.vector3(accent_w, row_h_bonus, 0), tier_col))
+
+        txtL(self, cx - pw/2 + INNER_PAD + 4, cy - row_h_bonus/2, p.rank, "body", is_active and COL_WHITE or COL_BRIGHT)
+        txtR(self, cx + pw/2 - INNER_PAD,     cy - row_h_bonus/2, p.amount..(p.suffix or ""), "body", is_active and tier_col or COL_GOLD)
+        cy = cy - row_h_bonus
+    end
+
+    cy = cy - BLOCK_GAP
+    track(self, ui.text(vmath.vector3(cx, cy, 0), "Prizes paid every Wednesday\nmidday & Saturday midnight EAT", "small", COL_DIM))
+end
+
+-- ── Right sidebar (Profile, Standing, Payments, Battles, Tournaments) ─────────
+local function draw_right(self)
+    local u = ws.current_user_data or {}
+    local _, right_w, _, div_rx = get_layout()
+    local pw = (EDGE_R - div_rx) - (SIDE_MARGIN * 2)
+    local cx = (div_rx + EDGE_R) / 2
+    local cy = EDGE_T - 16
+
+    -- ── Profile card (HORIZONTAL: avatar left, info right) ─────────────
+    local prof_h = 136  -- slightly taller for better internal spacing
+    local pcy = cy - prof_h / 2
+    glass(self, vmath.vector3(cx, pcy, 0), vmath.vector3(pw, prof_h, 0), "container_bg")
+
+    local av_size = math.max(72, math.min(106, pw * 0.32))
+    local av_x = cx - pw/2 + 18 + av_size/2
+    track(self, ui.avatar(vmath.vector3(av_x, pcy, 0), vmath.vector3(av_size, av_size, 0), u.avatar or 1))
+
+    local info_l = av_x + av_size/2 + 14
+    local info_r = cx + pw/2 - 16
+    local info_w = info_r - info_l
+    local info_cx = (info_l + info_r) / 2
+
+    -- Name pill (+ gear)
+    local name_y = pcy + prof_h/2 - 28
+    track(self, ui.box(vmath.vector3(info_cx, name_y, 0), vmath.vector3(info_w, 32, 0), COL_NAMEID_BG))
+    txtL(self, info_l + 10, name_y, string.upper(u.username or "PLAYER"), "body", COL_BRIGHT)
+    mkbtn(self, "nav_account", vmath.vector3(info_r - 16, name_y, 0), vmath.vector3(28, 28, 0), nil, vmath.vector4(0,0,0,0))
+    track(self, ui.text(vmath.vector3(info_r - 16, name_y, 0), "⚙", "body", COL_MID))
+
+    -- Balance / Points pills
+    local stat_y = pcy - prof_h/2 + 28
+    local half = (info_w - 8) / 2
+    local bal_cx = info_l + half/2
+    local pts_cx = info_r - half/2
+
+    track(self, ui.box(vmath.vector3(bal_cx, stat_y, 0), vmath.vector3(half, 36, 0), COL_STAT_BG))
+    txtL(self, bal_cx - half/2 + 10, stat_y, "Bal.", "small", COL_GOLD)
+    txtR(self, bal_cx + half/2 - 10, stat_y, commas(u.balance or 0), "body", COL_GOLD)
+
+    track(self, ui.box(vmath.vector3(pts_cx, stat_y, 0), vmath.vector3(half, 36, 0), COL_STAT_BG))
+    txtL(self, pts_cx - half/2 + 10, stat_y, "PTS.", "small", COL_DIM)
+    txtR(self, pts_cx + half/2 - 10, stat_y, commas(u.points or 0), "body", COL_CYAN)
+
+    cy = cy - prof_h - BLOCK_GAP
+
+    -- ── Compact standing badge (sharp corners, gold border) ────────────
+    local pos = tonumber(u.position) or -1
+    local has_rank = pos > 0
+    local badge_h = 86  -- increased from 78
+    local bcy = cy - badge_h/2
+
+    track(self, ui.box(vmath.vector3(cx, bcy, 0), vmath.vector3(pw, badge_h, 0), COL_BADGE_BG))
+    -- 1px gold (or dim) border frame
+    local bdr = has_rank and COL_GOLD_BDR_D or vmath.vector4(0.5, 0.5, 0.5, 0.3)
+    track(self, ui.box(vmath.vector3(cx, bcy + badge_h/2 - 0.5, 0), vmath.vector3(pw, 1, 0), bdr))
+    track(self, ui.box(vmath.vector3(cx, bcy - badge_h/2 + 0.5, 0), vmath.vector3(pw, 1, 0), bdr))
+    track(self, ui.box(vmath.vector3(cx - pw/2 + 0.5, bcy, 0), vmath.vector3(1, badge_h, 0), bdr))
+    track(self, ui.box(vmath.vector3(cx + pw/2 - 0.5, bcy, 0), vmath.vector3(1, badge_h, 0), bdr))
+
+    track(self, ui.text(vmath.vector3(cx, bcy + 28, 0), "Your current position", "small", has_rank and vmath.vector4(1, 0.84, 0, 0.8) or vmath.vector4(0.7, 0.7, 0.7, 0.7)))
+    track(self, ui.text(vmath.vector3(cx, bcy,      0), has_rank and ("#"..pos) or "Unranked", "title", has_rank and COL_GOLD or COL_MID))
+    if has_rank then
+        local val = prize_for_position(self, pos)
+        if val ~= "" then
+            track(self, ui.text(vmath.vector3(cx, bcy - 30, 0), "Current value is: "..val, "small", vmath.vector4(1, 0.84, 0, 0.9)))
+        end
+    end
+    cy = cy - badge_h - BLOCK_GAP
+
+    -- ── Make Payments ─────────────────────────────────────────────────
+    mkbtn(self, "nav_payments", vmath.vector3(cx, cy - 24, 0), vmath.vector3(pw, 46, 0), "MAKE PAYMENTS", "primary_btn")
+    cy = cy - 58
+
+    -- ── Battles panel ─────────────────────────────────────────────────
+    local battle_h = 138  -- slightly taller for breathing room
+    local scy = cy - battle_h/2
+    glass(self, vmath.vector3(cx, scy, 0), vmath.vector3(pw, battle_h, 0), "container_bg")
+    track(self, ui.image(vmath.vector3(cx, cy - 26, 0), vmath.vector3(30, 30, 0), "battle_icon"))
+    track(self, ui.text(vmath.vector3(cx, cy - 54, 0), "BATTLES", "body", COL_WHITE))
+
+    local mb = u.myBattle or u.myTournament
+    local has_battle = type(mb) == "table" and next(mb) ~= nil
+    if has_battle then
+        local amt = tonumber(mb.stakeAmount) or tonumber((mb.stake or {}).amount) or 0
+        local fmt = tonumber(mb.matchFormat) or 3
+        track(self, ui.text(vmath.vector3(cx, cy - 78, 0), string.format("BO %d ~ %s", fmt, commas(amt)), "body", COL_GREEN))
+        mkbtn(self, "nav_invite",    vmath.vector3(cx - pw/4 + 4, cy - 114, 0), vmath.vector3(pw/2 - 12, 40, 0), "INVITE", "primary_btn")
+        mkbtn(self, "update_battle", vmath.vector3(cx + pw/4 - 4, cy - 114, 0), vmath.vector3(pw/2 - 12, 40, 0), "EDIT",   "secondary_btn")
+    else
+        mkbtn(self, "create_battle", vmath.vector3(cx, cy - 104, 0), vmath.vector3(pw - 24, 44, 0), "CREATE BATTLE", "primary_btn")
+    end
+    cy = cy - battle_h - BLOCK_GAP
+
+    -- ── Tournaments (icon + label + green NEW badge) ───────────────────
+    local t_h = 100  -- slightly taller
+    local tcy = cy - t_h/2
+    track(self, ui.box(vmath.vector3(cx, tcy, 0), vmath.vector3(pw, t_h, 0), COL_BG)) -- tint behind
+    mkbtn(self, "nav_tournaments", vmath.vector3(cx, tcy, 0), vmath.vector3(pw, t_h, 0), nil, "container_bg")
+    track(self, ui.image(vmath.vector3(cx, cy - 34, 0), vmath.vector3(50, 50, 0), "tournament_icon"))
+    track(self, ui.text(vmath.vector3(cx, cy - 76, 0), "TOURNAMENTS", "body", COL_WHITE))
+
+    local nx = cx + pw/2 - 30
+    local ny = cy - 14
+    track(self, ui.box(vmath.vector3(nx, ny, 0), vmath.vector3(44, 18, 0), vmath.vector4(0.15, 0.8, 0.25, 1.0)))
+    track(self, ui.box(vmath.vector3(nx, ny + 9, 0), vmath.vector3(44, 1, 0), COL_WHITE))
+    track(self, ui.text(vmath.vector3(nx, ny, 0), "NEW", "small", COL_WHITE))
+    cy = cy - t_h - BLOCK_GAP
+
+    -- ── Footer links ──────────────────────────────────────────────────
+    local fx1 = cx - pw/4
+    local fx2 = cx + pw/4
+    mkbtn(self, "nav_support", vmath.vector3(fx1, cy - 22, 0), vmath.vector3(pw/2 - 8, 42, 0), "SUPPORT", "secondary_btn")
+    mkbtn(self, "nav_themes",  vmath.vector3(fx2, cy - 22, 0), vmath.vector3(pw/2 - 8, 42, 0), "THEMES",  "secondary_btn")
+end
+
+-- ── Center panel (Header bar, Tabs, Stakes, User List) ───────────────────────
+local function draw_center(self)
+    local _, _, div_lx, div_rx = get_layout()
+    local center_cx = (div_lx + div_rx) / 2
+    local content_l = div_lx + CENTER_PAD
+    local content_r = div_rx - CENTER_PAD
+    local list_w    = content_r - content_l
+    local cx = center_cx
+
+    -- ── Header bar (dark, title + helper text, left-aligned) ───────────
+    local hdr_h = 72  -- increased from 64
+    local hcy = EDGE_T - hdr_h/2
+    track(self, ui.box(vmath.vector3(center_cx, hcy, 0), vmath.vector3(list_w, hdr_h, 0), COL_HEADER_BG))
+    -- subtle bottom border on header
+    track(self, ui.box(vmath.vector3(center_cx, hcy - hdr_h/2 + 1, 0), vmath.vector3(list_w, 1, 0), COL_BORDER))
+    txtL(self, content_l + 6, hcy + 12,  "AVAILABLE PLAYERS", "body", COL_BRIGHT)
+    txtL(self, content_l + 6, hcy - 13, "Tap a player to request a game. If they decline, try another!", "small", COL_MID)
+
+    local cy = EDGE_T - hdr_h - 16
+
+    -- ── Tabs (flat, active underline) ──────────────────────────────────
+    local tabw = (list_w / 2) - 4
+    local tab_qx = cx - tabw/2 - 2
+    local tab_bx = cx + tabw/2 + 2
+    local tab_h  = 44  -- increased from 40
+
+    local q_col = self.tab == TAB_QUICK   and COL_WHITE or COL_DIM
+    local b_col = self.tab == TAB_BATTLES and COL_GOLD  or COL_DIM
+
+    local btn_q = track(self, ui.box(vmath.vector3(tab_qx, cy - tab_h/2, 0), vmath.vector3(tabw, tab_h, 0), self.tab == TAB_QUICK   and vmath.vector4(0.2,0.2,0.2,1) or vmath.vector4(0.1,0.1,0.1,0.5)))
+    local btn_b = track(self, ui.box(vmath.vector3(tab_bx, cy - tab_h/2, 0), vmath.vector3(tabw, tab_h, 0), self.tab == TAB_BATTLES and vmath.vector4(0.2,0.2,0.2,1) or vmath.vector4(0.1,0.1,0.1,0.5)))
+    self.buttons[#self.buttons+1] = { node = btn_q, id = "tab_quick" }
+    self.buttons[#self.buttons+1] = { node = btn_b, id = "tab_battles" }
+
+    track(self, ui.text(vmath.vector3(tab_qx, cy - tab_h/2, 0), "QUICK PLAY",     "body", q_col))
+    track(self, ui.text(vmath.vector3(tab_bx, cy - tab_h/2, 0), "BATTLE GROUNDS", "body", b_col))
+
+    if self.tab == TAB_QUICK then
+        track(self, ui.box(vmath.vector3(tab_qx, cy - tab_h, 0), vmath.vector3(tabw, 2, 0), COL_WHITE))
+    else
+        track(self, ui.box(vmath.vector3(tab_bx, cy - tab_h, 0), vmath.vector3(tabw, 2, 0), COL_GOLD))
+    end
+    cy = cy - tab_h - 22
+
+    -- ── Stakes selector (Quick Play only) ──────────────────────────────
+    local list_top = cy
+    if self.tab == TAB_QUICK then
+        local stakes_gap = 10   -- gap between stake cards (was 12, unified)
+        local st_w = (list_w - (3 * stakes_gap)) / 4
+        local my_balance = tonumber((ws.current_user_data or {}).balance) or 0
+        local stakes = { 50, 200, 500, 1000 }
+        local stake_card_h = 62  -- increased from 56
+
+        for i, st in ipairs(stakes) do
+            local sx = content_l + (i - 0.5) * st_w + (i - 1) * stakes_gap
+            local is_active = (config.STAKE_LEVELS[self.stake_index] and config.STAKE_LEVELS[self.stake_index].amount == st)
+            local affordable = (my_balance >= st)
+
+            -- Tint behind + textured stake surface (active uses container_bg_active)
+            track(self, ui.box(vmath.vector3(sx, cy - stake_card_h/2, 0), vmath.vector3(st_w, stake_card_h, 0), COL_BG))
+            local btn = track(self, ui.btn9(vmath.vector3(sx, cy - stake_card_h/2, 0), vmath.vector3(st_w, stake_card_h, 0),
+                is_active and "container_bg_active" or "container_bg"))
+            if not affordable then gui.set_color(btn, vmath.vector4(1,1,1,0.4)) end
+            self.buttons[#self.buttons+1] = { node = btn, id = "stake_"..i, data = i }
+
+            -- "200" stake is themed red (Godot scene), active stake also red
+            local amt_red = (st == 200) or is_active
+            track(self, ui.text(vmath.vector3(sx, cy - stake_card_h/2 - 6, 0), tostring(st), "body", amt_red and COL_RED or (affordable and COL_WHITE or COL_DIM)))
+            track(self, ui.text(vmath.vector3(sx, cy - stake_card_h/2 + 16, 0), "COINS", "small", COL_DIM))
+        end
+        cy = cy - stake_card_h - 10
+        -- center separator under stakes
+        track(self, ui.box(vmath.vector3(center_cx, cy + 2, 0), vmath.vector3(list_w, 3, 0), vmath.vector4(0.231, 0.231, 0.231, 1.0)))
+        cy = cy - 6
+        list_top = cy
+    end
+
+    -- ── Scrollable user list (backend filters per tab) ─────────────────
+    local list_bottom = EDGE_B + 20
+    local region_h = list_top - list_bottom
+    local row_h = ROW_H_LIST
+    local row_gap = ROW_GAP
+    local step = row_h + row_gap
+
+    local users = ws.get_online_users() or {}
+    local my_id = ws.get_current_user_id()
+
+    local rows = {}
+    for _, pu in ipairs(users) do
+        if pu._id ~= my_id then rows[#rows+1] = pu end
+    end
+
+    local content_h = #rows * step
+    local max_scroll = math.max(0, content_h - region_h)
+    self.list_scroll = math.max(0, math.min(self.list_scroll or 0, max_scroll))
+
+    if #rows == 0 then
+        local msg = ws.socket_connected and "No opponents online right now" or "Connecting..."
+        track(self, ui.text(vmath.vector3(cx, list_top - region_h/2, 0), msg, "body", COL_DIM))
+        self.list_region = nil
+        return
+    end
+
+    self.list_region = { top = list_top, bottom = list_bottom, left = content_l, right = content_r, x = cx }
+
+    local y = list_top - row_h/2 - (self.list_scroll or 0)
+    for i, pu in ipairs(rows) do
+        local row_cy = y - (i-1) * step
+        if row_cy + row_h/2 >= list_bottom and row_cy - row_h/2 <= list_top then
+            local playing = pu.gameId and pu.gameId ~= ""
+            local is_ai = pu.isAI or tostring(pu._id or ""):find("^ai_bot")
+
+            local rowcol = (i % 2 == 0) and vmath.vector4(0.10, 0.08, 0.06, 0.9) or vmath.vector4(0.10, 0.08, 0.06, 0.35)
+            local frame = track(self, ui.box(vmath.vector3(cx, row_cy, 0), vmath.vector3(list_w, row_h, 0), rowcol))
+
+            local name_x = content_l + INNER_PAD
+            local name_col = playing and vmath.vector4(0.5,0.5,0.5,1) or COL_WHITE
+            txtL(self, name_x, row_cy, string.upper(pu.username or "PLAYER"), "body", name_col)
+
+            local badge_x = content_l + 200
+            if is_ai then
+                txtL(self, badge_x, row_cy, "AI", "body", vmath.vector4(0.3, 1.0, 0.5, 1.0))
+                badge_x = badge_x + 36
+            end
+            if playing then
+                track(self, ui.box(vmath.vector3(badge_x + 6, row_cy, 0), vmath.vector3(6, 6, 0), COL_RED))
+                txtL(self, badge_x + 16, row_cy, "PLAYING", "small", vmath.vector4(1.0, 0.5, 0.5, 1.0))
+            end
+
+            local info_x = content_r - INNER_PAD
+            if self.tab == TAB_BATTLES and pu.myBattle then
+                local mb = pu.myBattle
+                local amt = tonumber((mb.stake or {}).amount) or tonumber(mb.stakeAmount) or 0
+                local fmt = tonumber(mb.matchFormat) or 3
+
+                local rules = mb.rules
+                local is_classic = false
+                if type(rules) == "string" then is_classic = rules:upper() == "CLASSIC"
+                elseif type(rules) == "table" then
+                    for _, r in ipairs(rules) do if tostring(r):upper() == "CLASSIC" then is_classic = true end end
+                end
+
+                if is_classic then
+                    local jx = info_x - 140
+                    track(self, ui.box(vmath.vector3(jx, row_cy, 0), vmath.vector3(70, 18, 0), vmath.vector4(0.3, 0.1, 0.1, 0.8)))
+                    track(self, ui.text(vmath.vector3(jx, row_cy, 0), "NO JOKERS", "small", COL_RED))
+                end
+
+                txtR(self, info_x, row_cy, string.format("BEST OF %d ~ %s", fmt, commas(amt)), "small", COL_GOLD)
+            else
+                local s_amt = tonumber((pu.stake or {}).amount) or 0
+                txtR(self, info_x, row_cy, s_amt == 0 and "FREE" or commas(s_amt), "body", COL_BRIGHT)
+            end
+
+            if not playing then
+                self.buttons[#self.buttons+1] = { node = frame, id = "challenge", data = pu, row = true }
+            end
+        end
+    end
+end
+
+-- ── Modal & Banners (runtime overlays) ───────────────────────────────────────
+local function draw_dialog(self)
+    local d = self.dialog
+    if not d then return end
+
+    local bg = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(LOGICAL_W, LOGICAL_H, 0), vmath.vector4(0,0,0, 0.7 * (self.dlg_alpha or 1))))
+    self.buttons[#self.buttons+1] = { node = bg, id = "dlg_block" }
+
+    local title = (d.kind == "incoming") and "INCOMING CHALLENGE" or "CHALLENGING"
+    track(self, ui.text(vmath.vector3(CX, CY + 150, 0), title, "title", vmath.vector4(0.2, 0.9, 1.0, 1)))
+    track(self, ui.text(vmath.vector3(CX, CY + 96, 0), (d.name or "PLAYER"):upper(), "body", COL_WHITE))
+
+    local status = (d.kind == "incoming") and "Wants to play!" or "Waiting for player to accept..."
+    track(self, ui.text(vmath.vector3(CX, CY + 64, 0), status, "small", COL_MID))
+
+    local amt = tonumber((d.stake or {}).amount) or 0
+    local st_txt = amt == 0 and "Practice Game (Free)" or ("Stake: "..commas(amt).." Coins")
+    track(self, ui.text(vmath.vector3(CX, CY + 34, 0), st_txt, "body", COL_GOLD))
+
+    if d.kind == "incoming" then
+        mkbtn(self, "decline", vmath.vector3(CX - 95, CY - 100, 0), vmath.vector3(150, 48, 0), "Decline", "secondary_btn")
+        mkbtn(self, "accept",  vmath.vector3(CX + 95, CY - 100, 0), vmath.vector3(150, 48, 0), "Accept",  "primary_btn")
+    else
+        mkbtn(self, "cancel_wait", vmath.vector3(CX, CY - 100, 0), vmath.vector3(170, 48, 0), "Cancel", "secondary_btn")
+    end
+end
+
+local BANNER_H, BANNER_GAP = 92, 10
+local function draw_one_banner(self, b, idx)
+    local bw = VISIBLE_W
+    local slide = (b.y_off or 0) * (BANNER_H + 40)
+    local cy = EDGE_T - 70 - (idx - 1) * (BANNER_H + BANNER_GAP) + slide
+    local alpha = b.alpha or 1
+
+    local panel = track(self, ui.box(vmath.vector3(CX, cy, 0), vmath.vector3(bw, BANNER_H, 0), vmath.vector4(0.06, 0.10, 0.14, 0.97 * alpha)))
+    track(self, ui.box(vmath.vector3(CX, cy + BANNER_H/2 - 2, 0), vmath.vector3(bw, 3, 0), vmath.vector4(0.2, 0.9, 1.0, alpha)))
+    self.buttons[#self.buttons+1] = { node = panel, id = "banner_block" }
+
+    local tx = EDGE_L + 40
+    local title = track(self, ui.text(vmath.vector3(tx, cy + 20, 0), b.title or "GAME REQUEST", "body", vmath.vector4(0.92, 0.96, 1.0, alpha)))
+    gui.set_pivot(title, gui.PIVOT_W)
+    local desc = track(self, ui.text(vmath.vector3(tx, cy - 12, 0), b.desc or "", "small", vmath.vector4(0.42, 0.56, 0.68, alpha)))
+    gui.set_pivot(desc, gui.PIVOT_W)
+
+    local accx = EDGE_R - 90
+    local accb = ui.box(vmath.vector3(accx, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.0, 0.9, 0.63, 0.30 * alpha))
+    track(self, accb)
+    track(self, ui.text(vmath.vector3(accx, cy, 0), "ACCEPT", "small", vmath.vector4(1,1,1,alpha)))
+    self.buttons[#self.buttons+1] = { node = accb, id = "banner_accept", data = b.request_id }
+
+    local decx = EDGE_R - 225
+    local decb = ui.box(vmath.vector3(decx, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.12, 0.19, 0.27, 0.85 * alpha))
+    track(self, decb)
+    track(self, ui.text(vmath.vector3(decx, cy, 0), "DECLINE", "small", vmath.vector4(0.82,0.86,0.91,alpha)))
+    self.buttons[#self.buttons+1] = { node = decb, id = "banner_decline", data = b.request_id }
+
+    local frac = math.max(0, math.min(1, (b.time_left or 10) / (b.max_time or 10)))
+    local barw = bw * frac
+    track(self, ui.box(vmath.vector3(CX, cy - BANNER_H/2 + 2, 0), vmath.vector3(bw, 3, 0), vmath.vector4(0.12, 0.19, 0.27, alpha)))
+    local fill = frac < 0.3 and COL_RED or COL_GREEN
+    if barw > 1 then
+        track(self, ui.box(vmath.vector3(CX - bw/2 + barw/2, cy - BANNER_H/2 + 2, 0), vmath.vector3(barw, 3, 0), fill))
+    end
+end
+
+local function draw_banner(self)
+    for i, b in ipairs(self.banners or {}) do draw_one_banner(self, b, i) end
+end
+
+local function rebuild(self)
+    clear(self)
+    local _, _, div_lx, div_rx = get_layout()
+
+    -- 1. Base + full-screen background texture (visible under the sidebars)
+    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(LOGICAL_W*2, LOGICAL_H*2, 0), COL_BG))
+    track(self, ui.cover_image(LOGICAL_W, LOGICAL_H, "texture_bg"))
+
+    -- 2. OPAQUE center panel (covers the texture in the middle, like Godot)
+    track(self, ui.box(vmath.vector3((div_lx+div_rx)/2, CY, 0), vmath.vector3(div_rx - div_lx, VISIBLE_H, 0), COL_BG))
+
+    -- 3. Stripe dividers on the center panel edges
+    draw_dividers(self, div_lx, div_rx)
+
+    -- 4. Content
+    draw_left(self)
+    draw_center(self)
+    draw_right(self)
+    draw_banner(self)
+    draw_dialog(self)
+end
+
+-- ── Loops & Control (EAT Season Logic) ───────────────────────────────────────
+local function update_season(self)
+    local now_utc = os.time(os.date("!*t"))
+    local now_eat = now_utc + 3 * 3600
+    local t = os.date("!*t", now_eat)
+
+    local wday = t.wday
+    local seconds_today = t.hour * 3600 + t.min * 60 + t.sec
+    local midnight_today_eat = now_eat - seconds_today
+
+    local is_phase_1 = (wday == 1 or wday == 2 or wday == 3 or (wday == 4 and seconds_today < 43200))
+
+    local target_eat
+    if is_phase_1 then
+        local days_until_wed = (4 - wday) % 7
+        if days_until_wed < 0 then days_until_wed = days_until_wed + 7 end
+        target_eat = midnight_today_eat + (days_until_wed * 86400) + 43200
+        self.season_target_text = "Ends Wednesday Midday"
+    else
+        local days_until_sat = (7 - wday) % 7
+        if days_until_sat < 0 then days_until_sat = days_until_sat + 7 end
+        target_eat = midnight_today_eat + (days_until_sat * 86400) + 86399
+        self.season_target_text = "Ends Saturday Midnight"
+    end
+
+    local diff = target_eat - now_eat
+    if diff < 0 then diff = 0 end
+
+    local d = math.floor(diff/86400); diff = diff % 86400
+    local h = math.floor(diff/3600);  diff = diff % 3600
+    local m = math.floor(diff/60);    local s = diff % 60
+
+    if d > 0 then self.season_text = string.format("%dD %02dH %02dM %02dS", d, h, m, s)
+    else self.season_text = string.format("%02dH %02dM %02dS", h, m, s) end
+end
+
+local function open_dialog(self, kind, name, stake, request_id)
+    self.dialog = { kind = kind, name = name, stake = stake or {}, request_id = request_id, time_left = 10, max_time = 10 }
+    self.dlg_alpha, self.dlg_dots = 0, 0
+    if self._active then rebuild(self) end
+end
+
+local function close_dialog(self)
+    self.dialog = nil
+    if self._active then rebuild(self) end
+end
+
+local function close_banner(self, rid)
+    if not self.banners then return end
+    if rid == nil then table.remove(self.banners, 1)
+    else
+        for i = #self.banners, 1, -1 do
+            if self.banners[i].request_id == rid then table.remove(self.banners, i) end
+        end
+    end
+    if #self.banners == 0 then self.banners = nil end
+    if self._active then rebuild(self) end
+end
+
+local function open_banner(self, raw)
+    raw = raw or {}
+    local sender = type(raw.sender) == "table" and raw.sender or (raw.user or {})
+    local name = sender.username or "Opponent"
+    local tour = type(raw.tournament) == "table" and raw.tournament or {}
+    local stake = type(tour.stake) == "table" and tour.stake or (raw.stake or {})
+    local amount = tonumber(stake.amount) or 0
+    local fmt = tonumber(tour.matchFormat) or 3
+    local gt = raw.gameType or "TOURNAMENT"
+
+    local title = gt == "BATTLE" and ("BATTLE  -  "..name) or ("TOURNAMENT  -  "..name)
+    local parts = { string.format("Best of %d", fmt) }
+    if amount > 0 then parts[#parts+1] = commas(amount).." Coins" else parts[#parts+1] = "Practice Mode" end
+
+    local rid = raw.requestId or ""
+    self.banners = self.banners or {}
+    for _, ex in ipairs(self.banners) do if rid ~= "" and ex.request_id == rid then return end end
+    self.banners[#self.banners+1] = {
+        title = title:upper(), desc = table.concat(parts, "   -   "),
+        request_id = rid, time_left = 10, max_time = 10, alpha = 0, y_off = 1,
+    }
+    if self._active then rebuild(self) end
+end
+
+function init(self)
+    self.nodes, self.buttons = {}, {}
+    self.stake_index, self.tab = 1, TAB_QUICK
+    self.dialog, self.banners, self.list_scroll, self._tick, self._dlg_tick = nil, nil, 0, 0, 0
+    refresh_wh()
+    update_season(self)
+end
+
+function update(self, dt)
+    if not self._active then return end
+    if self.banners and #self.banners > 0 then
+        local expired = {}
+        for _, b in ipairs(self.banners) do
+            b.alpha = math.min(1, (b.alpha or 0) + dt * 5)
+            b.y_off = math.max(0, (b.y_off or 0) - dt * 4)
+            b.time_left = (b.time_left or 10) - dt
+            if b.time_left <= 0 then expired[#expired+1] = b end
+        end
+        for _, b in ipairs(expired) do
+            if b.request_id and b.request_id ~= "" then ws.decline_game_request(b.request_id) end
+            close_banner(self, b.request_id)
+        end
+        if self._active then rebuild(self) end
+        return
+    end
+
+    if self.dialog then
+        self.dlg_alpha = math.min(1, (self.dlg_alpha or 0) + dt * 4)
+        self.dialog.time_left = (self.dialog.time_left or 10) - dt
+        if self.dialog.time_left <= 0 then
+            if self.dialog.kind == "incoming" and self.dialog.request_id then ws.decline_game_request(self.dialog.request_id) end
+            close_dialog(self)
+        else rebuild(self) end
+        return
+    end
+
+    self._tick = self._tick + dt
+    if self._tick >= 1 then self._tick = 0; update_season(self); rebuild(self) end
+end
+
+function on_message(self, message_id, message, sender)
+    if message_id == hash("screen_enter") then
+        msg.post(".", "acquire_input_focus"); self._active = true; self.dialog, self.banners, self.list_scroll = nil, nil, 0
+        refresh_wh(); rebuild(self)
+    elseif message_id == hash("enable") then
+        refresh_wh(); self._active = true
+    elseif message_id == hash("disable") then
+        self._active = false; clear(self)
+    elseif message_id == hash("layout_changed") then
+        refresh_wh(); if self._active then rebuild(self) end
+    elseif message_id == hash("user_data_updated") or message_id == hash("ws_online_users") then
+        if self._active then rebuild(self) end
+    elseif message_id == hash("ws_connected") then
+        self.status_text, self.status_color = "Connected - looking for players...", COL_GREEN
+        if self._active then rebuild(self) end
+    elseif message_id == hash("ws_disconnected") then
+        self.status_text, self.status_color = "Disconnected. Reconnecting...", COL_RED
+        if self._active then rebuild(self) end
+    elseif message_id == hash("ws_game_request") then
+        local r = ws.last_game_request or {}; local raw = r.raw or {}
+        if type(raw) == "table" and (raw.gameType == "TOURNAMENT" or raw.gameType == "BATTLE" or raw.tournament) then
+            open_banner(self, raw)
+        else open_dialog(self, "incoming", (r.user or {}).username or "A player", r.stake or {}, r.requestId) end
+    elseif message_id == hash("ws_request_declined") or message_id == hash("ws_request_cancelled") then
+        local rid = message and message.request_id
+        if self.banners then close_banner(self, rid) end
+        close_dialog(self)
+    end
+end
+
+local function handle(self, b)
+    local id = b.id
+    if id == "tab_quick" then self.tab = TAB_QUICK; self.list_scroll = 0; rebuild(self)
+    elseif id == "tab_battles" then self.tab = TAB_BATTLES; self.list_scroll = 0; rebuild(self)
+    elseif type(id) == "string" and id:sub(1,6) == "stake_" then
+        self.stake_index = b.data
+        app_state.selected_stake = config.STAKE_LEVELS[self.stake_index]
+        ws.update_stake(config.STAKE_LEVELS[self.stake_index]); rebuild(self)
+    elseif id == "challenge" then
+        local u = b.data or {}
+        ws.send_game_request({ _id=u._id, username=u.username, isAI=u.isAI, avatar=u.avatar }, app_state.selected_stake)
+        open_dialog(self, "challenging", u.username or "opponent", app_state.selected_stake)
+    elseif id == "accept" then
+        if self.dialog and self.dialog.request_id then ws.accept_game_request(self.dialog.request_id) end; close_dialog(self)
+    elseif id == "decline" or id == "cancel_wait" then
+        if self.dialog and self.dialog.request_id then ws.decline_game_request(self.dialog.request_id) end; close_dialog(self)
+    elseif id == "banner_accept" then
+        if b.data and b.data ~= "" then ws.accept_game_request(b.data) end; close_banner(self, b.data)
+    elseif id == "banner_decline" then
+        if b.data and b.data ~= "" then ws.decline_game_request(b.data) end; close_banner(self, b.data)
+    elseif id == "nav_payments"    then msg.post("#controller", "goto_payments")
+    elseif id == "nav_themes"      then msg.post("#controller", "goto_themes")
+    elseif id == "nav_tournaments" then msg.post("#controller", "goto_tournaments")
+    elseif id == "nav_support"     then msg.post("#controller", "goto_support")
+    elseif id == "nav_account"     then msg.post("#controller", "goto_account")
+    elseif id == "nav_invite"      then msg.post("#controller", "goto_invite")
+    elseif id == "create_battle"   then msg.post("#controller", "goto_create_battle")
+    elseif id == "update_battle"   then msg.post("#controller", "goto_update_battle")
+    end
+end
+
+function on_input(self, action_id, action)
+    if action_id == hash("touch") and not self.dialog and not (self.banners and #self.banners > 0) and self.list_region then
+        local reg = self.list_region
+        if action.pressed and action.x >= reg.left and action.x <= reg.right and action.y >= reg.bottom and action.y <= reg.top then
+            self._drag_y = action.y; self._drag_start = action.y; self._dragged = false
+        elseif self._drag_y and not action.released then
+            local dy = action.y - self._drag_y
+            if math.abs(action.y - (self._drag_start or action.y)) > 6 then self._dragged = true end
+            self.list_scroll = (self.list_scroll or 0) - dy
+            self._drag_y = action.y
+            rebuild(self)
+            return true
+        elseif action.released and self._drag_y then
+            local was_drag = self._dragged; self._drag_y = nil; self._dragged = false
+            if was_drag then return true end
+        end
+    end
+
+    if action_id == hash("touch") and action.pressed then
+        for i = #self.buttons, 1, -1 do
+            local b = self.buttons[i]
+            if b.node and gui.pick_node(b.node, action.x, action.y) then handle(self, b); return true end
+        end
+    end
+    return false
+end

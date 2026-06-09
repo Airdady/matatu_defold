@@ -1,0 +1,179 @@
+-- themes.gui_script - Theme select / purchase screen.
+-- texture_bg background anchored to true physical edges. Theme cards use
+-- container_bg / container_bg_active glass panels. Buttons use primary_btn /
+-- secondary_btn 9-slice. Balance shown with the coins icon.
+
+local ui        = require("modules.ui")
+local app_state = require("modules.app_state")
+local ws        = require("modules.websocket_manager")
+local screen    = require("modules.screen")
+
+local LOGICAL_W, LOGICAL_H = 1280, 720
+local VISIBLE_W, VISIBLE_H = 1280, 720
+local EDGE_L, EDGE_R = 0, 1280
+local EDGE_B, EDGE_T = 0, 720
+local CX, CY = 640, 360
+
+local function refresh_wh()
+	local m = screen.metrics()
+	VISIBLE_W, VISIBLE_H = m.VW, m.VH
+	EDGE_L, EDGE_R = m.L, m.R
+	EDGE_B, EDGE_T = m.B, m.T
+	CX, CY = m.CX, m.CY
+end
+
+local PREVIEW = {
+	default    = "red_basic",   blue_basic  = "blue_basic",
+	black_basic= "black_basic", red_drago   = "red_drago",
+	blue_drago = "blue_drago",  batman      = "batman",
+}
+
+local function commas(n)
+	n = tostring(math.floor(tonumber(n) or 0))
+	return (n:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""))
+end
+
+local function clear(self)
+	for _, n in ipairs(self.nodes) do pcall(gui.delete_node, n) end
+	self.nodes, self.buttons = {}, {}
+end
+local function track(self, n) self.nodes[#self.nodes+1] = n return n end
+
+local function get_themes()
+	local u = ws.current_user_data or {}
+	if type(u.themes) == "table" and #u.themes > 0 then return u.themes end
+	local out = {}
+	for _, key in ipairs(app_state.THEME_ORDER) do
+		local t = app_state.THEMES[key]
+		out[#out+1] = { id = t.id, name = t.label, price = (key=="default" and 0 or 2000),
+			purchased = (key=="default"), active = (key == app_state.theme) }
+	end
+	return out
+end
+
+local function rebuild(self)
+	clear(self)
+
+	-- Background.
+	track(self, ui.cover(LOGICAL_W, LOGICAL_H, ui.DARK))
+	track(self, ui.cover_image(LOGICAL_W, LOGICAL_H, "texture_bg"))
+	track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.58)))
+
+	-- Top bar.
+	track(self, ui.text(vmath.vector3(CX, EDGE_T - 44, 0), "THEMES", "title", ui.GOLD))
+	local bb = track(self, ui.btn9(vmath.vector3(EDGE_L + 90, EDGE_T - 44, 0), vmath.vector3(140, 44, 0), "secondary_btn"))
+	track(self, ui.text(vmath.vector3(EDGE_L + 90, EDGE_T - 44, 0), "< BACK", "small", ui.WHITE))
+	self.buttons[#self.buttons+1] = { node = bb, id = "back" }
+
+	local u = ws.current_user_data or {}
+	local balance = tonumber(u.balance) or 0
+	track(self, ui.image(vmath.vector3(EDGE_R - 200, EDGE_T - 44, 0), vmath.vector3(22, 22, 0), "coin_icon"))
+	track(self, ui.text(vmath.vector3(EDGE_R - 130, EDGE_T - 44, 0), commas(balance), "body", ui.GOLD))
+
+	if self._msg then
+		track(self, ui.text(vmath.vector3(CX, EDGE_T - 84, 0), self._msg, "small",
+			self._msg_ok and vmath.vector4(0.4, 0.9, 0.5, 1) or vmath.vector4(0.95, 0.5, 0.3, 1)))
+	end
+
+	-- Theme cards: 3-col grid centred on CX.
+	local themes = get_themes()
+	local cols = 3
+	local cw, ch, gap = 360, 260, 28
+	local gridw = cols * cw + (cols-1) * gap
+	local x0 = CX - gridw / 2 + cw / 2
+	local y0 = EDGE_T - 240
+
+	for i, t in ipairs(themes) do
+		local c  = (i-1) % cols
+		local r  = math.floor((i-1) / cols)
+		local px = x0 + c * (cw + gap)
+		local py = y0 - r * (ch + gap)
+
+		track(self, ui.panel9(vmath.vector3(px, py, 0), vmath.vector3(cw, ch, 0),
+			t.active and "container_bg_active" or "container_bg"))
+
+		local bar_col = t.active and vmath.vector4(0.25,0.55,0.9,1)
+			or (t.purchased and vmath.vector4(0.2,0.7,0.35,1) or vmath.vector4(0.25,0.25,0.30,1))
+		track(self, ui.box(vmath.vector3(px, py+ch/2-3, 0), vmath.vector3(cw-4, 5, 0), bar_col))
+
+		local anim = PREVIEW[t.id]
+		if anim then
+			track(self, ui.image(vmath.vector3(px, py+38, 0), vmath.vector3(cw-48, 110, 0), anim))
+		end
+
+		track(self, ui.text(vmath.vector3(px, py-48, 0), (t.name or t.id or "Theme"):upper(), "body", ui.WHITE))
+		local price = tonumber(t.price) or 0
+		local ptxt = (price == 0) and "FREE" or (commas(price).." COINS")
+		track(self, ui.text(vmath.vector3(px, py-76, 0), ptxt, "small",
+			price == 0 and vmath.vector4(0.4,0.9,0.5,1) or ui.GOLD))
+
+		if t.active then
+			track(self, ui.text(vmath.vector3(px, py-106, 0), "✓ ACTIVE", "body", vmath.vector4(0.4, 0.7, 0.95, 1)))
+		elseif t.purchased then
+			local ab = track(self, ui.btn9(vmath.vector3(px, py-106, 0), vmath.vector3(cw-48, 40, 0), "primary_btn"))
+			track(self, ui.text(vmath.vector3(px, py-106, 0), "ACTIVATE", "body", ui.WHITE))
+			self.buttons[#self.buttons+1] = { node = ab, id = "activate", data = t.id }
+		elseif balance >= price then
+			local pu = track(self, ui.btn9(vmath.vector3(px, py-106, 0), vmath.vector3(cw-48, 40, 0), "primary_btn"))
+			track(self, ui.text(vmath.vector3(px, py-106, 0), "PURCHASE", "body", ui.WHITE))
+			self.buttons[#self.buttons+1] = { node = pu, id = "purchase", data = t.id }
+		else
+			track(self, ui.btn9(vmath.vector3(px, py-106, 0), vmath.vector3(cw-48, 40, 0), "default_btn"))
+			track(self, ui.text(vmath.vector3(px, py-106, 0), "INSUFFICIENT FUNDS", "small",
+				vmath.vector4(0.5, 0.5, 0.5, 1)))
+		end
+	end
+end
+
+function init(self) self.nodes, self.buttons = {}, {}; refresh_wh() end
+
+function on_message(self, message_id, message, sender)
+	if message_id == hash("screen_enter") then
+		refresh_wh()
+		msg.post(".", "acquire_input_focus")
+		self._active = true
+		self._msg = nil
+		rebuild(self)
+	elseif message_id == hash("enable") then
+		self._active = true
+	elseif message_id == hash("disable") then
+		self._active = false
+		clear(self)
+	elseif message_id == hash("layout_changed") then
+		refresh_wh()
+		if self._active then rebuild(self) end
+	elseif message_id == hash("user_data_updated") then
+		if self._active then rebuild(self) end
+	elseif message_id == hash("theme_action_result") then
+		self._msg = message.ok and "Done!" or (message.message or "Failed")
+		self._msg_ok = message.ok
+		if self._active then rebuild(self) end
+	end
+end
+
+local function handle(self, b)
+	if b.id == "back" then
+		msg.post("#controller", "goto_online")
+	elseif b.id == "purchase" then
+		self._msg = "Purchasing..."; self._msg_ok = true
+		msg.post("#controller", "theme_purchase", { theme_id = b.data })
+		rebuild(self)
+	elseif b.id == "activate" then
+		self._msg = "Activating..."; self._msg_ok = true
+		msg.post("#controller", "theme_switch", { theme_id = b.data })
+		app_state.theme = b.data
+		rebuild(self)
+	end
+end
+
+function on_input(self, action_id, action)
+	if action_id == hash("touch") and action.pressed then
+		for i = #self.buttons, 1, -1 do
+			local b = self.buttons[i]
+			if b.node and gui.pick_node(b.node, action.x, action.y) then
+				handle(self, b); return true
+			end
+		end
+	end
+	return false
+end

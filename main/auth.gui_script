@@ -1,0 +1,273 @@
+-- auth.gui_script - Phone + OTP sign-in screen.
+-- texture_bg + themed overlay anchored to true physical screen edges. Keypad
+-- keys use default_btn 9-slice (OK → primary_btn, backspace → secondary_btn).
+-- container_bg glass panels for the card, prefix chip, input field and OTP boxes.
+
+local ui        = require("modules.ui")
+local app_state = require("modules.app_state")
+local screen    = require("modules.screen")
+
+local LOGICAL_W, LOGICAL_H = 1280, 720
+local VISIBLE_W, VISIBLE_H = 1280, 720
+local EDGE_L, EDGE_R = 0, 1280
+local EDGE_B, EDGE_T = 0, 720
+local CX, CY = 640, 360
+
+local function refresh_wh()
+	local m = screen.metrics()
+	VISIBLE_W, VISIBLE_H = m.VW, m.VH
+	EDGE_L, EDGE_R = m.L, m.R
+	EDGE_B, EDGE_T = m.B, m.T
+	CX, CY = m.CX, m.CY
+end
+
+local function fmt_phone(d)
+	local out = ""
+	for i = 1, #d do
+		out = out .. d:sub(i, i)
+		if i == 4 or i == 7 then out = out .. " " end
+	end
+	return out
+end
+local function valid_phone(d) return #d == 10 and d:sub(1, 2) == "07" end
+local function to_intl(d) return d:sub(1,1)=="0" and ("+256"..d:sub(2)) or ("+256"..d) end
+
+local function clear(self)
+	for _, n in ipairs(self.nodes) do pcall(gui.delete_node, n) end
+	self.nodes, self.buttons = {}, {}
+end
+local function track(self, n) self.nodes[#self.nodes+1] = n return n end
+
+local function mkkey(self, id, pos, size, label, anim, data)
+	local bg = track(self, ui.btn9(pos, size, anim or "default_btn"))
+	track(self, ui.text(pos, label, "body", ui.WHITE))
+	self.buttons[#self.buttons+1] = { node = bg, id = id, data = data }
+	return bg
+end
+
+local KEYS = {"1","2","3","4","5","6","7","8","9","<","0","OK"}
+
+local function keypad(self, prefix, cx, ky0, ok_active)
+	local kw, kh, kg = 80, 48, 8
+	local kx0 = cx - kw - kg - kw / 2
+	for i, k in ipairs(KEYS) do
+		local ci = (i-1) % 3
+		local ri = math.floor((i-1) / 3)
+		local pos = vmath.vector3(kx0 + ci*(kw+kg), ky0 - ri*(kh+kg), 0)
+		local size = vmath.vector3(kw, kh, 0)
+		local anim = "default_btn"
+		if k == "OK" then anim = ok_active and "primary_btn" or "default_btn" end
+		if k == "<"  then anim = "secondary_btn" end
+		mkkey(self, prefix..k, pos, size, k, anim, k)
+	end
+end
+
+local function bg_and_header(self)
+	local th = app_state.get_theme()
+	track(self, ui.cover(LOGICAL_W, LOGICAL_H, ui.DARK))
+	track(self, ui.cover_image(LOGICAL_W, LOGICAL_H, "texture_bg"))
+	local b = track(self, ui.cover_image(LOGICAL_W, LOGICAL_H, th.bg_image))
+	gui.set_color(b, vmath.vector4(1, 1, 1, 0.55))
+	track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.62)))
+	-- CANCEL — anchored to the top-left edge.
+	local cb = track(self, ui.btn9(vmath.vector3(EDGE_L + 90, EDGE_T - 44, 0), vmath.vector3(150, 44, 0), "secondary_btn"))
+	track(self, ui.text(vmath.vector3(EDGE_L + 90, EDGE_T - 44, 0), "< CANCEL", "small", ui.WHITE))
+	self.buttons[#self.buttons+1] = { node = cb, id = "cancel" }
+	return th.accent
+end
+
+local function build_phone(self)
+	local a = bg_and_header(self)
+	local py = CY + 30
+	track(self, ui.panel9(vmath.vector3(CX, py, 0), vmath.vector3(700, 380, 0), "container_bg"))
+
+	track(self, ui.text(vmath.vector3(CX, py+160, 0), "SIGN IN", "title", a))
+	track(self, ui.text(vmath.vector3(CX, py+118, 0), "Enter your Ugandan phone number", "small", ui.MUTED))
+
+	track(self, ui.panel9(vmath.vector3(CX-230, py+64, 0), vmath.vector3(120, 56, 0), "container_bg_active"))
+	track(self, ui.text(vmath.vector3(CX-230, py+64, 0), "+256", "body", ui.GOLD))
+	track(self, ui.panel9(vmath.vector3(CX+50, py+64, 0), vmath.vector3(400, 56, 0), "container_bg"))
+	local disp = (self.phone ~= "") and fmt_phone(self.phone) or "07XX XXX XXX"
+	track(self, ui.text(vmath.vector3(CX+50, py+64, 0), disp, "body",
+		(self.phone ~= "") and ui.WHITE or ui.MUTED))
+
+	local hc, ht = ui.MUTED, "Format: 07XX XXX XXX  (10 digits)"
+	if self.phone ~= "" then
+		if not valid_phone(self.phone) then
+			hc, ht = vmath.vector4(0.95, 0.45, 0.25, 1), "Must be 10 digits starting with 07"
+		else
+			hc, ht = vmath.vector4(0.3, 0.9, 0.5, 1), "Send OTP to  " .. to_intl(self.phone)
+		end
+	end
+	track(self, ui.text(vmath.vector3(CX, py+20, 0), ht, "small", hc))
+
+	keypad(self, "key_", CX, py-26, valid_phone(self.phone))
+
+	if app_state.auth_state == "error" then
+		track(self, ui.panel9(vmath.vector3(CX, py-218, 0), vmath.vector3(660, 40, 0), "container_bg"))
+		track(self, ui.text(vmath.vector3(CX, py-218, 0), app_state.auth_error:upper(), "small",
+			vmath.vector4(1, 0.4, 0.4, 1)))
+	elseif app_state.auth_state == "sending" then
+		track(self, ui.text(vmath.vector3(CX, py-218, 0), "Sending OTP...", "small", ui.GOLD))
+	end
+end
+
+local function build_otp(self)
+	local a = bg_and_header(self)
+	local py = CY + 30
+	track(self, ui.panel9(vmath.vector3(CX, py, 0), vmath.vector3(700, 380, 0), "container_bg"))
+
+	track(self, ui.text(vmath.vector3(CX, py+160, 0), "VERIFICATION CODE", "title", a))
+	track(self, ui.text(vmath.vector3(CX, py+118, 0), "Sent to  "..to_intl(app_state.auth_phone), "small", ui.MUTED))
+
+	local bw, gap = 80, 16
+	local ox = CX - (4*bw+3*gap)/2 + bw/2
+	for i = 1, 4 do
+		local has = i <= #self.otp
+		track(self, ui.panel9(vmath.vector3(ox+(i-1)*(bw+gap), py+62, 0), vmath.vector3(bw, 70, 0),
+			has and "container_bg_active" or "container_bg"))
+		track(self, ui.text(vmath.vector3(ox+(i-1)*(bw+gap), py+62, 0),
+			has and self.otp:sub(i,i) or "", "title",
+			has and ui.WHITE or ui.MUTED))
+	end
+
+	keypad(self, "otp_", CX, py-22, #self.otp==4)
+
+	local rlbl = self.resend > 0 and ("Resend in "..self.resend.."s") or "Resend Code"
+	local ractive = self.resend <= 0
+	local rb = track(self, ui.btn9(vmath.vector3(CX-130, py-228, 0), vmath.vector3(210, 40, 0),
+		ractive and "secondary_btn" or "default_btn"))
+	track(self, ui.text(vmath.vector3(CX-130, py-228, 0), rlbl, "small",
+		ractive and ui.WHITE or ui.MUTED))
+	self.buttons[#self.buttons+1] = { node = rb, id = "otp_resend" }
+
+	local wb = track(self, ui.btn9(vmath.vector3(CX+130, py-228, 0), vmath.vector3(210, 40, 0), "secondary_btn"))
+	track(self, ui.text(vmath.vector3(CX+130, py-228, 0), "Wrong Number", "small", ui.WHITE))
+	self.buttons[#self.buttons+1] = { node = wb, id = "otp_wrong" }
+
+	if app_state.auth_state == "verifying" then
+		track(self, ui.text(vmath.vector3(CX, py-272, 0), "Verifying...", "small", ui.GOLD))
+	elseif app_state.auth_state == "error" then
+		track(self, ui.panel9(vmath.vector3(CX, py-272, 0), vmath.vector3(660, 40, 0), "container_bg"))
+		track(self, ui.text(vmath.vector3(CX, py-272, 0), app_state.auth_error:upper(), "small",
+			vmath.vector4(1, 0.4, 0.4, 1)))
+		self.otp = ""
+	end
+end
+
+local function rebuild(self)
+	clear(self)
+	if self._otp_phase then build_otp(self) else build_phone(self) end
+end
+
+function init(self)
+	self.nodes, self.buttons = {}, {}
+	self.phone, self.otp = "", ""
+	self.resend, self._resend_acc = 0, 0
+	self._otp_phase = false
+	refresh_wh()
+end
+
+function update(self, dt)
+	if self.resend > 0 then
+		self._resend_acc = self._resend_acc + dt
+		if self._resend_acc >= 1 then
+			self._resend_acc = 0
+			self.resend = self.resend - 1
+			if self._otp_phase and self._active then rebuild(self) end
+		end
+	end
+end
+
+function on_message(self, message_id, message, sender)
+	if message_id == hash("enable") then
+		self._active = true
+	elseif message_id == hash("disable") then
+		self._active = false
+		clear(self)
+	elseif message_id == hash("layout_changed") then
+		refresh_wh()
+		if self._active then rebuild(self) end
+	elseif message_id == hash("screen_enter") then
+		refresh_wh()
+		self._active = true
+		msg.post(".", "acquire_input_focus")
+		app_state.auth_state = "idle"
+		self._otp_phase = false
+		self.phone, self.otp = "", ""
+		rebuild(self)
+	elseif message_id == hash("auth_state_changed") then
+		local s = app_state.auth_state
+		if s == "otp" then
+			self._otp_phase = true
+			self.otp = ""
+			self.resend, self._resend_acc = 30, 0
+		elseif s == "idle" then
+			self._otp_phase = false
+		end
+		if self._active then rebuild(self) end
+	end
+end
+
+local function handle(self, b)
+	local id = b.id
+	if id == "cancel" then
+		msg.post("#controller", "auth_cancel")
+	elseif id:sub(1,4) == "key_" then
+		local k = b.data
+		if k == "<" then
+			self.phone = self.phone:sub(1,-2); rebuild(self)
+		elseif k == "OK" then
+			if valid_phone(self.phone) then
+				app_state.auth_phone = self.phone
+				msg.post("#controller", "auth_send_otp", { phone = to_intl(self.phone) })
+			end
+		else
+			if #self.phone < 10 then self.phone = self.phone..k end
+			rebuild(self)
+		end
+	elseif id:sub(1,4) == "otp_" then
+		if id == "otp_resend" then
+			if self.resend <= 0 then
+				msg.post("#controller", "auth_send_otp", { phone = to_intl(app_state.auth_phone) })
+				self.resend, self._resend_acc = 30, 0
+			end
+		elseif id == "otp_wrong" then
+			msg.post("#controller", "auth_reset")
+			self._otp_phase = false
+			self.phone = app_state.auth_phone
+			rebuild(self)
+		else
+			local k = b.data
+			if k == "<" then
+				self.otp = self.otp:sub(1,-2); rebuild(self)
+			elseif k == "OK" then
+				if #self.otp == 4 then
+					msg.post("#controller", "auth_verify_otp",
+						{ phone = to_intl(app_state.auth_phone), code = self.otp })
+				end
+			else
+				if #self.otp < 4 then
+					self.otp = self.otp..k
+					rebuild(self)
+					if #self.otp == 4 then
+						msg.post("#controller", "auth_verify_otp",
+							{ phone = to_intl(app_state.auth_phone), code = self.otp })
+					end
+				end
+			end
+		end
+	end
+end
+
+function on_input(self, action_id, action)
+	if action_id == hash("touch") and action.pressed then
+		for i = #self.buttons, 1, -1 do
+			local b = self.buttons[i]
+			if b.node and gui.pick_node(b.node, action.x, action.y) then
+				handle(self, b); return true
+			end
+		end
+	end
+	return false
+end

@@ -1,0 +1,6 @@
+# Defold build artifacts
+/build/
+/bundles
+/.internal/
+.editor_settings
+bob.jar

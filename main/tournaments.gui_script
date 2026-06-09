@@ -1,0 +1,190 @@
+-- tournaments.gui_script - Tournament progress screen.
+-- texture_bg background anchored to true physical edges. Level rows use
+-- container_bg / container_bg_active glass panels with tier accent bars.
+-- PLAY → primary_btn, BACK → secondary_btn.
+
+local ui        = require("modules.ui")
+local app_state = require("modules.app_state")
+local ws        = require("modules.websocket_manager")
+local screen    = require("modules.screen")
+
+local LOGICAL_W, LOGICAL_H = 1280, 720
+local VISIBLE_W, VISIBLE_H = 1280, 720
+local EDGE_L, EDGE_R = 0, 1280
+local EDGE_B, EDGE_T = 0, 720
+local CX, CY = 640, 360
+
+local function refresh_wh()
+	local m = screen.metrics()
+	VISIBLE_W, VISIBLE_H = m.VW, m.VH
+	EDGE_L, EDGE_R = m.L, m.R
+	EDGE_B, EDGE_T = m.B, m.T
+	CX, CY = m.CX, m.CY
+end
+
+local DEFAULT_LEVELS = {
+	{ name = "Qualifier",      coins = 1000,  points = 1 },
+	{ name = "Round of 64",    coins = 2000,  points = 2 },
+	{ name = "Round of 32",    coins = 4000,  points = 3 },
+	{ name = "Round of 16",    coins = 8000,  points = 4 },
+	{ name = "Quarter Finals", coins = 16000, points = 5 },
+	{ name = "Semi Finals",    coins = 32000, points = 6 },
+	{ name = "Finals",         coins = 64000, points = 8 },
+}
+
+local function commas(n)
+	n = tostring(math.floor(tonumber(n) or 0))
+	return (n:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""))
+end
+
+local function pick_tournament()
+	local u = ws.current_user_data or {}
+	local ts = u.tournaments
+	if type(ts) ~= "table" or #ts == 0 then return nil end
+	for _, t in ipairs(ts) do
+		if t.scope == "GLOBAL" and t.status == "active" then return t end
+	end
+	for _, t in ipairs(ts) do if t.status == "active" then return t end end
+	return ts[1]
+end
+
+local function clear(self)
+	for _, n in ipairs(self.nodes) do pcall(gui.delete_node, n) end
+	self.nodes, self.buttons = {}, {}
+end
+local function track(self, n) self.nodes[#self.nodes+1] = n return n end
+
+local function rebuild(self)
+	clear(self)
+	local th = app_state.get_theme()
+
+	-- Background.
+	track(self, ui.cover(LOGICAL_W, LOGICAL_H, ui.DARK))
+	track(self, ui.cover_image(LOGICAL_W, LOGICAL_H, "texture_bg"))
+	track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.58)))
+
+	-- Top bar.
+	track(self, ui.text(vmath.vector3(CX, EDGE_T - 44, 0), "TOURNAMENT", "title", ui.GOLD))
+	local bb = track(self, ui.btn9(vmath.vector3(EDGE_L + 90, EDGE_T - 44, 0), vmath.vector3(140, 44, 0), "secondary_btn"))
+	track(self, ui.text(vmath.vector3(EDGE_L + 90, EDGE_T - 44, 0), "< BACK", "small", ui.WHITE))
+	self.buttons[#self.buttons+1] = { node = bb, id = "back" }
+
+	local t = pick_tournament()
+	if not t then
+		track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(520, 120, 0), "container_bg"))
+		track(self, ui.text(vmath.vector3(CX, CY+22, 0), "No active tournaments right now.", "body", ui.MUTED))
+		track(self, ui.text(vmath.vector3(CX, CY-14, 0), "Check back during a live season.", "small", ui.MUTED))
+		return
+	end
+
+	local levels  = (type(t.levels)=="table" and #t.levels>0) and t.levels or DEFAULT_LEVELS
+	local stake   = t.stake or { amount = 0, points = 0 }
+	local current = tonumber(t.currentLevel) or (t.userProgress and tonumber(t.userProgress.currentLevel)) or 0
+	local grand   = (t.grandPrize and t.grandPrize.value) or (levels[#levels] and levels[#levels].coins) or 0
+
+	-- Header info panel.
+	track(self, ui.panel9(vmath.vector3(CX, EDGE_T - 100, 0), vmath.vector3(700, 70, 0), "container_bg"))
+	track(self, ui.text(vmath.vector3(CX, EDGE_T - 88, 0), (t.name or "Global Tournament"):upper(), "body", th.accent))
+	track(self, ui.image(vmath.vector3(CX-90, EDGE_T - 114, 0), vmath.vector3(18,18,0), "coin_icon"))
+	track(self, ui.text(vmath.vector3(CX+10, EDGE_T - 114, 0),
+		"Grand Prize:  "..commas(grand).." coins", "small", ui.GOLD))
+
+	-- Vertical progress ladder (level 1 at the bottom).
+	local n = #levels
+	local ladder_top    = EDGE_T - 150
+	local ladder_bottom = EDGE_B + 110
+	local step = math.min(68, (ladder_top - ladder_bottom) / n)
+	for i = 1, n do
+		local lv = levels[i]
+		local y  = ladder_bottom + (i-1) * step
+		local done = (i <= current)
+		local at   = (i == current + 1)
+		local anim = at and "container_bg_active" or (done and "container_bg" or nil)
+
+		if anim then
+			track(self, ui.panel9(vmath.vector3(CX, y, 0), vmath.vector3(640, step-8, 0), anim))
+		else
+			track(self, ui.box(vmath.vector3(CX, y, 0), vmath.vector3(640, step-8, 0),
+				vmath.vector4(0.10,0.10,0.13,0.70)))
+		end
+
+		local bar_col = at and ui.GOLD
+			or done and vmath.vector4(0.2,0.7,0.35,1)
+			or vmath.vector4(0.25,0.25,0.30,1)
+		track(self, ui.box(vmath.vector3(CX-317, y, 0), vmath.vector3(4, step-8, 0), bar_col))
+
+		track(self, ui.text(vmath.vector3(CX-290, y, 0), tostring(i), "body",
+			at and ui.GOLD or done and ui.WHITE or ui.MUTED))
+		local nl = track(self, ui.text(vmath.vector3(CX-260, y, 0),
+			(lv.name or "Level "..i):upper(), "small",
+			at and ui.WHITE or done and vmath.vector4(0.8,0.8,0.8,1) or ui.MUTED))
+		gui.set_pivot(nl, gui.PIVOT_W)
+		local rl = track(self, ui.text(vmath.vector3(CX+300, y, 0),
+			commas(lv.coins or 0).."c  /  "..tostring(lv.points or 0).."p", "small",
+			done and ui.GOLD or ui.MUTED))
+		gui.set_pivot(rl, gui.PIVOT_E)
+		if done then
+			track(self, ui.text(vmath.vector3(CX+320, y, 0), "✓", "body", vmath.vector4(0.3,0.9,0.5,1)))
+		end
+	end
+
+	-- PLAY button anchored to the bottom edge.
+	local ready = (next(ws.active_game_state or {}) == nil)
+	local play_btn = track(self, ui.btn9(vmath.vector3(CX, EDGE_B + 64, 0), vmath.vector3(380, 56, 0),
+		ready and "primary_btn" or "default_btn"))
+	track(self, ui.text(vmath.vector3(CX, EDGE_B + 64, 0),
+		"PLAY  (stake "..commas(stake.amount or 0)..")", "body", ui.WHITE))
+	self.buttons[#self.buttons+1] = { node = play_btn, id = "play",
+		data = { id = t._id, name = t.name, stake = stake } }
+
+	if self._msg then
+		track(self, ui.text(vmath.vector3(CX, EDGE_B + 28, 0), self._msg, "small", ui.GOLD))
+	end
+end
+
+function init(self) self.nodes, self.buttons = {}, {}; refresh_wh() end
+
+function on_message(self, message_id, message, sender)
+	if message_id == hash("screen_enter") then
+		refresh_wh()
+		msg.post(".", "acquire_input_focus")
+		self._active = true
+		self._msg = nil
+		rebuild(self)
+	elseif message_id == hash("enable") then
+		self._active = true
+	elseif message_id == hash("disable") then
+		self._active = false
+		clear(self)
+	elseif message_id == hash("layout_changed") then
+		refresh_wh()
+		if self._active then rebuild(self) end
+	elseif message_id == hash("user_data_updated") then
+		if self._active then rebuild(self) end
+	end
+end
+
+local function handle(self, b)
+	if b.id == "back" then
+		msg.post("#controller", "goto_online")
+	elseif b.id == "play" then
+		local d = b.data or {}
+		self._msg = "Searching for an opponent..."
+		msg.post("#controller", "tournament_play", {
+			tournament_id = d.id, tournament_name = d.name, stake = d.stake,
+		})
+		rebuild(self)
+	end
+end
+
+function on_input(self, action_id, action)
+	if action_id == hash("touch") and action.pressed then
+		for i = #self.buttons, 1, -1 do
+			local b = self.buttons[i]
+			if b.node and gui.pick_node(b.node, action.x, action.y) then
+				handle(self, b); return true
+			end
+		end
+	end
+	return false
+end

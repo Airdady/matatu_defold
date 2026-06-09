@@ -1,0 +1,34 @@
+script: "/main/auth.gui_script"
+fonts {
+  name: "title"
+  font: "/fonts/title.font"
+}
+fonts {
+  name: "body"
+  font: "/fonts/body.font"
+}
+fonts {
+  name: "small"
+  font: "/fonts/small.font"
+}
+textures {
+  name: "ui"
+  texture: "/assets/ui/ui.atlas"
+}
+textures {
+  name: "cards"
+  texture: "/assets/cards/cards.atlas"
+}
+textures {
+  name: "avatars"
+  texture: "/assets/avatars/avatars.atlas"
+}
+background_color {
+  x: 0.0
+  y: 0.0
+  z: 0.0
+  w: 0.0
+}
+material: "/builtins/materials/gui.material"
+adjust_reference: ADJUST_REFERENCE_PARENT
+max_nodes: 2048

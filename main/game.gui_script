@@ -1,0 +1,454 @@
+-- game.gui_script — Matatu Main HUD Overlay (Defold)
+
+-- FIXED: Target mapped precisely to the /controller object to guarantee routing.
+local GAME = "/controller#game_logic"
+
+-- Layout constants
+local LOGICAL_W = 1280
+local LOGICAL_H = 720
+local EXIT_BTN_SIZE = 60
+local EXIT_BTN_MARGIN_TOP = 20
+local EXIT_BTN_MARGIN_RIGHT = 20
+local EXIT_POPOVER_WIDTH = 200
+local EXIT_POPOVER_HEIGHT = 120
+local EXIT_POPOVER_OFFSET_Y = -10
+local AVATAR_CONTAINER_SIZE = 100
+local AVATAR_BG_COLOR  = vmath.vector4(0, 0, 0, 0) -- Transparent
+local NETWORK_ICON_BASE_SIZE = 20
+local TIMER_RADIUS = 50
+local STAKE_CHIP_SIZE = 170
+
+-- Colors
+local C_PANEL          = vmath.vector4(0.10, 0.10, 0.10, 0.95)
+local C_PANEL_BORDER   = vmath.vector4(0.30, 0.30, 0.30, 1.0)
+local C_TEXT           = vmath.vector4(0.95, 0.97, 0.95, 1.0)
+local C_SCORE_LBL      = vmath.vector4(0.61, 0.64, 0.68, 1.0)
+local C_WHITE          = vmath.vector4(1.0, 1.0, 1.0, 1.0)
+local C_SKIP_TEXT      = vmath.vector4(0.90, 0.91, 0.92, 1.0)
+local BTN_BG_COLOR     = vmath.vector4(0, 0, 0, 0.25)
+
+-- Timer colors
+local C_T_GREEN  = vmath.vector4(0.13, 0.77, 0.37, 0.6)
+local C_T_ORANGE = vmath.vector4(0.96, 0.62, 0.04, 0.6)
+local C_T_RED    = vmath.vector4(0.94, 0.27, 0.27, 0.6)
+
+local function box(pos, size, color, pivot)
+    local n = gui.new_box_node(pos, size)
+    gui.set_color(n, color)
+    if pivot then gui.set_pivot(n, pivot) end
+    return n
+end
+
+local function label(pos, text, size, color, align)
+    local n = gui.new_text_node(pos, text)
+    gui.set_font(n, "body")
+    gui.set_scale(n, vmath.vector3(size / 24, size / 24, 1.0))
+    gui.set_color(n, color or C_TEXT)
+    gui.set_pivot(n, align or gui.PIVOT_CENTER)
+    return n
+end
+
+----------------------------------------------------------------------
+-- BUILDERS
+----------------------------------------------------------------------
+
+local function build_network_badge(parent, pos)
+    local bg = box(pos, vmath.vector3(80, 24, 0), vmath.vector4(0.1, 0.1, 0.1, 0.6), gui.PIVOT_CENTER)
+    gui.set_parent(bg, parent)
+    local dot = box(vmath.vector3(-20, 0, 0), vmath.vector3(12, 12, 0), C_T_GREEN, gui.PIVOT_CENTER)
+    gui.set_parent(dot, bg)
+    local lbl = label(vmath.vector3(-5, 0, 0), "Good", 12, C_T_GREEN, gui.PIVOT_W)
+    gui.set_parent(lbl, bg)
+    return { bg = bg, dot = dot, lbl = lbl }
+end
+
+local function build_avatars_and_sections(self)
+    -- PLAYER SECTION
+    self.player_section = box(vmath.vector3(20, 20, 0), vmath.vector3(AVATAR_CONTAINER_SIZE, 200, 0), vmath.vector4(0,0,0,0), gui.PIVOT_SW)
+    gui.set_xanchor(self.player_section, gui.ANCHOR_LEFT)
+    gui.set_yanchor(self.player_section, gui.ANCHOR_BOTTOM)
+    
+    self.p_avatar_bg = box(vmath.vector3(AVATAR_CONTAINER_SIZE/2, AVATAR_CONTAINER_SIZE/2 + 30, 0), vmath.vector3(AVATAR_CONTAINER_SIZE, AVATAR_CONTAINER_SIZE, 0), AVATAR_BG_COLOR, gui.PIVOT_CENTER)
+    gui.set_parent(self.p_avatar_bg, self.player_section)
+    
+    -- Create ring/pie BEHIND avatar 
+    self.p_timer = gui.new_pie_node(vmath.vector3(0, 0, 0), vmath.vector3(TIMER_RADIUS*2, TIMER_RADIUS*2, 0))
+    gui.set_rotation(self.p_timer, vmath.vector3(0, 0, 90))
+    gui.set_color(self.p_timer, C_T_GREEN)
+    gui.set_parent(self.p_timer, self.p_avatar_bg)
+    gui.set_enabled(self.p_timer, false)
+
+    -- Avatar rendered on top of timer
+    self.p_avatar_img = box(vmath.vector3(0, 0, 0), vmath.vector3(80, 80, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
+    gui.set_parent(self.p_avatar_img, self.p_avatar_bg)
+    pcall(function()
+        gui.set_texture(self.p_avatar_img, "avatars")
+        gui.play_flipbook(self.p_avatar_img, hash("avatar_1")) 
+    end)
+
+    self.p_avatar_name = label(vmath.vector3(0, -65, 0), "You", 14, C_WHITE, gui.PIVOT_CENTER)
+    gui.set_parent(self.p_avatar_name, self.p_avatar_bg)
+
+    self.p_balance = label(vmath.vector3(AVATAR_CONTAINER_SIZE/2, -10, 0), "Bal: 0", 16, vmath.vector4(1, 0.85, 0.4, 1.0), gui.PIVOT_CENTER)
+    gui.set_parent(self.p_balance, self.player_section)
+    gui.set_enabled(self.p_balance, false)
+    
+    self.p_net = build_network_badge(self.player_section, vmath.vector3(AVATAR_CONTAINER_SIZE/2, -35, 0))
+
+    -- OPPONENT SECTION
+    self.opponent_section = box(vmath.vector3(20, LOGICAL_H - 20, 0), vmath.vector3(AVATAR_CONTAINER_SIZE, 200, 0), vmath.vector4(0,0,0,0), gui.PIVOT_NW)
+    gui.set_xanchor(self.opponent_section, gui.ANCHOR_LEFT)
+    gui.set_yanchor(self.opponent_section, gui.ANCHOR_TOP)
+
+    self.o_avatar_bg = box(vmath.vector3(AVATAR_CONTAINER_SIZE/2, -AVATAR_CONTAINER_SIZE/2, 0), vmath.vector3(AVATAR_CONTAINER_SIZE, AVATAR_CONTAINER_SIZE, 0), AVATAR_BG_COLOR, gui.PIVOT_CENTER)
+    gui.set_parent(self.o_avatar_bg, self.opponent_section)
+
+    -- Create ring/pie BEHIND avatar
+    self.o_timer = gui.new_pie_node(vmath.vector3(0, 0, 0), vmath.vector3(TIMER_RADIUS*2, TIMER_RADIUS*2, 0))
+    gui.set_rotation(self.o_timer, vmath.vector3(0, 0, 90))
+    gui.set_color(self.o_timer, C_T_GREEN)
+    gui.set_parent(self.o_timer, self.o_avatar_bg)
+    gui.set_enabled(self.o_timer, false)
+
+    -- Avatar rendered on top of timer
+    self.o_avatar_img = box(vmath.vector3(0, 0, 0), vmath.vector3(80, 80, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
+    gui.set_parent(self.o_avatar_img, self.o_avatar_bg)
+    pcall(function()
+        gui.set_texture(self.o_avatar_img, "avatars")
+        gui.play_flipbook(self.o_avatar_img, hash("avatar_1")) 
+    end)
+
+    self.o_avatar_name = label(vmath.vector3(AVATAR_CONTAINER_SIZE/2, -AVATAR_CONTAINER_SIZE - 15, 0), "Opponent", 14, vmath.vector4(0.9, 0.9, 0.9, 1), gui.PIVOT_CENTER)
+    gui.set_parent(self.o_avatar_name, self.opponent_section)
+
+    self.o_net = build_network_badge(self.opponent_section, vmath.vector3(AVATAR_CONTAINER_SIZE/2, -AVATAR_CONTAINER_SIZE - 40, 0))
+end
+
+local function build_scoreboard(self)
+    self.sb_root = box(vmath.vector3(10, LOGICAL_H/2, 0), vmath.vector3(40, 320, 0), vmath.vector4(0.04, 0.03, 0.10, 0.85), gui.PIVOT_W)
+    gui.set_xanchor(self.sb_root, gui.ANCHOR_LEFT)
+    gui.set_yanchor(self.sb_root, gui.ANCHOR_NONE)
+
+    local border = box(vmath.vector3(0, 0, 0), vmath.vector3(40, 320, 0), C_PANEL_BORDER, gui.PIVOT_W)
+    local inner = box(vmath.vector3(1, 0, 0), vmath.vector3(38, 318, 0), vmath.vector4(0.04, 0.03, 0.10, 0.85), gui.PIVOT_W)
+    gui.set_parent(border, self.sb_root)
+    gui.set_parent(inner, border)
+
+    self.sb_title = label(vmath.vector3(20, 0, 0), "BEST OF 3", 16, C_WHITE, gui.PIVOT_CENTER)
+    gui.set_rotation(self.sb_title, vmath.vector3(0, 0, 90))
+    gui.set_parent(self.sb_title, self.sb_root)
+
+    self.sb_o_score = label(vmath.vector3(55, 100, 0), "0", 60, C_WHITE, gui.PIVOT_W)
+    self.sb_o_ind = label(vmath.vector3(55, 55, 0), "0 of 2", 16, C_SCORE_LBL, gui.PIVOT_W)
+    gui.set_parent(self.sb_o_score, self.sb_root)
+    gui.set_parent(self.sb_o_ind, self.sb_root)
+
+    self.sb_vs = label(vmath.vector3(55, 0, 0), "-", 24, vmath.vector4(1,1,1,0.3), gui.PIVOT_W)
+    gui.set_parent(self.sb_vs, self.sb_root)
+
+    self.sb_p_ind = label(vmath.vector3(55, -55, 0), "0 of 2", 16, C_SCORE_LBL, gui.PIVOT_W)
+    self.sb_p_score = label(vmath.vector3(55, -100, 0), "0", 60, C_WHITE, gui.PIVOT_W)
+    gui.set_parent(self.sb_p_ind, self.sb_root)
+    gui.set_parent(self.sb_p_score, self.sb_root)
+
+    gui.set_enabled(self.sb_root, false)
+end
+
+local function build_stake_chip(self)
+    self.stake_chip = box(vmath.vector3(20, LOGICAL_H/2, 0), vmath.vector3(STAKE_CHIP_SIZE, STAKE_CHIP_SIZE, 0), vmath.vector4(1,1,1,1), gui.PIVOT_W)
+    gui.set_xanchor(self.stake_chip, gui.ANCHOR_LEFT)
+    gui.set_yanchor(self.stake_chip, gui.ANCHOR_NONE)
+    gui.set_enabled(self.stake_chip, false) 
+end
+
+local function build_standings_ui(self)
+    self.standings_root = box(vmath.vector3(LOGICAL_W - EXIT_BTN_MARGIN_RIGHT - 220, LOGICAL_H - EXIT_BTN_MARGIN_TOP - EXIT_BTN_SIZE - 20, 0), vmath.vector3(220, 200, 0), vmath.vector4(0,0,0,0), gui.PIVOT_NW)
+    gui.set_xanchor(self.standings_root, gui.ANCHOR_RIGHT)
+    gui.set_yanchor(self.standings_root, gui.ANCHOR_TOP)
+    
+    self.standings_rows = {}
+    for i=1, 7 do
+        local row = box(vmath.vector3(0, -(i-1)*24, 0), vmath.vector3(220, 24, 0), vmath.vector4(0,0,0,0), gui.PIVOT_NW)
+        gui.set_parent(row, self.standings_root)
+        local pos_lbl = label(vmath.vector3(0, -12, 0), "", 16, C_WHITE, gui.PIVOT_W)
+        local name_lbl = label(vmath.vector3(35, -12, 0), "", 16, C_WHITE, gui.PIVOT_W)
+        local pts_lbl = label(vmath.vector3(220, -12, 0), "", 16, C_WHITE, gui.PIVOT_E)
+        gui.set_parent(pos_lbl, row); gui.set_parent(name_lbl, row); gui.set_parent(pts_lbl, row)
+        table.insert(self.standings_rows, { bg=row, pos=pos_lbl, name=name_lbl, pts=pts_lbl })
+    end
+end
+
+local function _create_skip_button(self)
+    local width, height = 700.0, LOGICAL_H - 360.0
+    self.skip_btn = box(vmath.vector3(LOGICAL_W/2, LOGICAL_H/2, 0), vmath.vector3(width, height, 0), BTN_BG_COLOR, gui.PIVOT_CENTER)
+    gui.set_xanchor(self.skip_btn, gui.ANCHOR_NONE)
+    gui.set_yanchor(self.skip_btn, gui.ANCHOR_NONE)
+    
+    local inner_border = box(vmath.vector3(0,0,0), vmath.vector3(width - 8, height - 8, 0), vmath.vector4(0,0,0,0), gui.PIVOT_CENTER)
+    gui.set_parent(inner_border, self.skip_btn)
+    
+    local lbl = label(vmath.vector3(width/2 - 15, -height/2 + 10, 0), "TAP TO SKIP >>", 14, C_SKIP_TEXT, gui.PIVOT_SE)
+    gui.set_shadow(lbl, vmath.vector4(0, 0, 0, 0.8))
+    gui.set_parent(lbl, self.skip_btn)
+
+    gui.set_enabled(self.skip_btn, false)
+end
+
+local function build_exit(self)
+    self.exit_btn = box(vmath.vector3(LOGICAL_W - EXIT_BTN_MARGIN_RIGHT, LOGICAL_H - EXIT_BTN_MARGIN_TOP, 0), vmath.vector3(EXIT_BTN_SIZE, EXIT_BTN_SIZE, 0), vmath.vector4(0.8, 0.2, 0.2, 1.0), gui.PIVOT_NE)
+    gui.set_xanchor(self.exit_btn, gui.ANCHOR_RIGHT)
+    gui.set_yanchor(self.exit_btn, gui.ANCHOR_TOP)
+    
+    local l = label(vmath.vector3(-EXIT_BTN_SIZE/2, -EXIT_BTN_SIZE/2, 0), "X", 20, C_WHITE, gui.PIVOT_CENTER)
+    gui.set_parent(l, self.exit_btn)
+
+    self.exit_popover = box(vmath.vector3(LOGICAL_W - EXIT_BTN_MARGIN_RIGHT, LOGICAL_H - EXIT_BTN_MARGIN_TOP - EXIT_BTN_SIZE + EXIT_POPOVER_OFFSET_Y, 0), vmath.vector3(EXIT_POPOVER_WIDTH, EXIT_POPOVER_HEIGHT, 0), C_PANEL, gui.PIVOT_NE)
+    gui.set_xanchor(self.exit_popover, gui.ANCHOR_RIGHT)
+    gui.set_yanchor(self.exit_popover, gui.ANCHOR_TOP)
+    
+    local title = label(vmath.vector3(-EXIT_POPOVER_WIDTH/2, -30, 0), "Exit Game?", 16, C_WHITE, gui.PIVOT_CENTER)
+    gui.set_parent(title, self.exit_popover)
+    
+    self.btn_yes = box(vmath.vector3(-EXIT_POPOVER_WIDTH/2 - 45, -80, 0), vmath.vector3(80, 40, 0), C_PANEL_BORDER, gui.PIVOT_CENTER)
+    local ly = label(vmath.vector3(0,0,0), "Yes", 16, C_WHITE, gui.PIVOT_CENTER)
+    gui.set_parent(ly, self.btn_yes)
+    gui.set_parent(self.btn_yes, self.exit_popover)
+
+    self.btn_no = box(vmath.vector3(-EXIT_POPOVER_WIDTH/2 + 45, -80, 0), vmath.vector3(80, 40, 0), C_PANEL_BORDER, gui.PIVOT_CENTER)
+    local ln = label(vmath.vector3(0,0,0), "No", 16, C_WHITE, gui.PIVOT_CENTER)
+    gui.set_parent(ln, self.btn_no)
+    gui.set_parent(self.btn_no, self.exit_popover)
+
+    gui.set_enabled(self.exit_popover, false)
+end
+
+----------------------------------------------------------------------
+-- LOGIC & UPDATES
+----------------------------------------------------------------------
+
+local function start_timer(self, is_player, duration, expires_at_ms)
+    self.total_duration = duration or 30.0
+    self.is_player_turn = is_player
+    self.alert_played = false
+
+    if expires_at_ms and expires_at_ms > 0 then
+        local now_ms = socket.gettime() * 1000.0
+        local remaining = (expires_at_ms - now_ms) / 1000.0
+        self.timer_remaining = math.max(0, math.min(remaining, self.total_duration))
+    else
+        self.timer_remaining = self.total_duration
+    end
+
+    if is_player then
+        if self.p_timer then
+            gui.set_fill_angle(self.p_timer, (self.timer_remaining / self.total_duration) * 360)
+            gui.set_color(self.p_timer, C_T_GREEN)
+            gui.set_enabled(self.p_timer, true)
+        end
+        if self.o_timer then gui.set_enabled(self.o_timer, false) end
+    else
+        if self.o_timer then
+            gui.set_fill_angle(self.o_timer, (self.timer_remaining / self.total_duration) * 360)
+            gui.set_color(self.o_timer, C_T_GREEN)
+            gui.set_enabled(self.o_timer, true)
+        end
+        if self.p_timer then gui.set_enabled(self.p_timer, false) end
+    end
+end
+
+local function stop_timers(self)
+    if self.p_timer then gui.set_enabled(self.p_timer, false) end
+    if self.o_timer then gui.set_enabled(self.o_timer, false) end
+    self.timer_remaining = 0
+end
+
+local function set_skip_visible(self, visible)
+    if not self.skip_btn then return end
+    
+    if visible and not gui.is_enabled(self.skip_btn) then
+        gui.set_enabled(self.skip_btn, true)
+        gui.set_scale(self.skip_btn, vmath.vector3(0.9, 0.9, 1))
+        local c = gui.get_color(self.skip_btn); c.w = 0; gui.set_color(self.skip_btn, c)
+        
+        gui.animate(self.skip_btn, "scale", vmath.vector3(1.0, 1.0, 1), gui.EASING_OUTBACK, 0.2)
+        gui.animate(self.skip_btn, "color.w", 0.25, gui.EASING_OUTSINE, 0.2, 0, function()
+            gui.animate(self.skip_btn, "scale", vmath.vector3(1.03, 1.03, 1), gui.EASING_INOUTSINE, 0.4, 0, nil, gui.PLAYBACK_LOOP_PINGPONG)
+        end)
+    elseif not visible and gui.is_enabled(self.skip_btn) then
+        gui.cancel_animation(self.skip_btn, "scale")
+        gui.cancel_animation(self.skip_btn, "color.w")
+        gui.set_enabled(self.skip_btn, false)
+    end
+end
+
+function init(self)
+    msg.post(".", "acquire_input_focus")
+    gui.set_render_order(13)
+    
+    self.timer_remaining = 0
+    self.total_duration = 30.0
+    self.is_player_turn = true
+    self.my_id = ""
+
+    build_avatars_and_sections(self)
+    build_scoreboard(self)
+    build_stake_chip(self)
+    build_standings_ui(self)
+    _create_skip_button(self)
+    build_exit(self)
+end
+
+function update(self, dt)
+    if self.timer_remaining and self.timer_remaining > 0 then
+        self.timer_remaining = self.timer_remaining - dt
+        if self.timer_remaining < 0 then self.timer_remaining = 0 end
+        
+        local progress = math.min(1.0, self.timer_remaining / self.total_duration)
+        local active_pie = self.is_player_turn and self.p_timer or self.o_timer
+        
+        if active_pie then
+            gui.set_fill_angle(active_pie, progress * 360)
+            
+            local c = C_T_RED
+            if self.timer_remaining > self.total_duration / 2.0 then
+                c = C_T_GREEN
+            elseif self.timer_remaining > 5.0 then
+                local t = 1.0 - ((self.timer_remaining - 5.0) / (self.total_duration / 2.0 - 5.0))
+                c = vmath.lerp(t, C_T_GREEN, C_T_ORANGE)
+            else
+                local t = 1.0 - (self.timer_remaining / 5.0)
+                c = vmath.lerp(t, C_T_ORANGE, C_T_RED)
+            end
+            gui.set_color(active_pie, c)
+
+            if self.timer_remaining <= 10.0 and self.timer_remaining > 0 and self.is_player_turn and not self.alert_played then
+                self.alert_played = true
+                msg.post(GAME, "play_sound", { sound = "SoundAlertTimer" })
+            end
+
+            if self.timer_remaining <= 0 and self.is_player_turn then
+                msg.post(GAME, "timer_expired")
+            end
+        end
+    end
+end
+
+local function hit(node, action)
+    if not node then return false end
+    return gui.is_enabled(node) and gui.pick_node(node, action.x, action.y)
+end
+
+function on_input(self, action_id, action)
+    if action_id ~= hash("touch") or not action.pressed then return false end
+
+    if self.exit_popover and gui.is_enabled(self.exit_popover) then
+        if hit(self.btn_yes, action) then
+            gui.set_enabled(self.exit_popover, false)
+            msg.post(GAME, "exit_to_lobby")
+            return true
+        elseif hit(self.btn_no, action) then
+            gui.set_enabled(self.exit_popover, false)
+            return true
+        end
+        return true
+    end
+
+    if self.exit_btn and hit(self.exit_btn, action) then
+        if self.exit_popover then gui.set_enabled(self.exit_popover, true) end
+        return true
+    end
+
+    if self.skip_btn and gui.is_enabled(self.skip_btn) and hit(self.skip_btn, action) then
+        msg.post(GAME, "skip_pressed")
+        return true
+    end
+
+    return false
+end
+
+function on_message(self, message_id, message)
+    if message_id == hash("setup_avatars") then
+        local p_name = (message.my_info and message.my_info.username) or (message.my_info and message.my_info.name) or "You"
+        local o_name = (message.op_info and message.op_info.username) or (message.op_info and message.op_info.name) or "Opponent"
+        
+        if string.len(o_name) > 10 then
+            o_name = string.sub(o_name, 1, 10) .. "..."
+        end
+
+        if self.p_avatar_name then gui.set_text(self.p_avatar_name, p_name) end
+        if self.o_avatar_name then gui.set_text(self.o_avatar_name, o_name) end
+        
+        gui.set_enabled(self.p_balance, true)
+        local bal = (message.my_info and message.my_info.balance) or 0
+        if self.p_balance then gui.set_text(self.p_balance, "Bal: " .. tostring(bal)) end
+        self.my_id = (message.my_info and message.my_info.id) or ""
+        
+        local p_av = (message.my_info and message.my_info.avatar) or 1
+        local o_av = (message.op_info and message.op_info.avatar) or 1
+        pcall(function() gui.play_flipbook(self.p_avatar_img, hash("avatar_" .. tostring(p_av))) end)
+        pcall(function() gui.play_flipbook(self.o_avatar_img, hash("avatar_" .. tostring(o_av))) end)
+
+    elseif message_id == hash("turn") then
+        local is_p = (message.who == "player")
+        start_timer(self, is_p, message.duration or 30.0, message.expires_at)
+
+    elseif message_id == hash("skip") then
+        set_skip_visible(self, message.show)
+
+    elseif message_id == hash("update_scoreboard") then
+        if message.show then
+            if self.sb_root then gui.set_enabled(self.sb_root, true) end
+            local best_of = message.best_of or 3
+            local target = math.floor(best_of / 2) + 1
+            
+            if self.sb_p_score then gui.set_text(self.sb_p_score, tostring(message.p_score or 0)) end
+            if self.sb_o_score then gui.set_text(self.sb_o_score, tostring(message.o_score or 0)) end
+            if self.sb_p_ind then gui.set_text(self.sb_p_ind, tostring(message.p_score or 0) .. " of " .. target) end
+            if self.sb_o_ind then gui.set_text(self.sb_o_ind, tostring(message.o_score or 0) .. " of " .. target) end
+            if self.sb_title then gui.set_text(self.sb_title, "BEST OF " .. tostring(best_of)) end
+        else
+            if self.sb_root then gui.set_enabled(self.sb_root, false) end
+        end
+
+    elseif message_id == hash("update_standings") then
+        local ranks = message.ranks or {}
+        table.sort(ranks, function(a, b) return (a.position or 99) < (b.position or 99) end)
+        for i=1, 7 do
+            local row = self.standings_rows[i]
+            if not row then break end
+            if ranks[i] then
+                gui.set_enabled(row.bg, true)
+                gui.set_text(row.pos, "#" .. tostring(ranks[i].position or 0))
+                gui.set_text(row.name, tostring(ranks[i].username or "Player"))
+                gui.set_text(row.pts, tostring(ranks[i].points or 0))
+                
+                local c = C_WHITE
+                if ranks[i].id == self.my_id then c = vmath.vector4(1, 0.84, 0, 1) end
+                gui.set_color(row.pos, c); gui.set_color(row.name, c); gui.set_color(row.pts, c)
+            else
+                gui.set_enabled(row.bg, false)
+            end
+        end
+
+    elseif message_id == hash("network_quality") then
+        local badge = (message.user_id == self.my_id) and self.p_net or self.o_net
+        if not badge then return end
+        local ms = message.latency_ms or 0
+        local txt, col = "Good", C_T_GREEN
+        if ms >= 1000 then txt, col = "Poor", C_T_RED
+        elseif ms >= 500 then txt, col = "Bad", vmath.vector4(0.98, 0.75, 0.14, 1.0) end
+        
+        gui.set_text(badge.lbl, txt)
+        gui.set_color(badge.lbl, col)
+        gui.set_color(badge.dot, col)
+
+    elseif message_id == hash("stop_timers") then
+        stop_timers(self)
+        
+    elseif message_id == hash("reset_hud") then
+        stop_timers(self)
+        set_skip_visible(self, false)
+        if self.exit_popover then gui.set_enabled(self.exit_popover, false) end
+        if self.sb_root then gui.set_enabled(self.sb_root, false) end
+    end
+end
