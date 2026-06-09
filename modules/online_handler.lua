@@ -186,13 +186,17 @@ function M.setup_ws_listeners(self)
     table.insert(self.ws_listeners, ws.on("game_start", function(gs)
         if type(gs) ~= "table" or next(gs) == nil then return end
         local incoming = tostring(gs.id or gs.gameId or "")
-        if incoming ~= "" and incoming ~= tostring(self.online_game_id) then
-            -- We are getting a brand new game (e.g., opponent accepted replay)
-            msg.post("#", "ws_new_game_start", { state = gs })
-        else
-            if not self.game_over then
-                M.sync_timers(self, gs)
-            end
+        local is_new = (incoming ~= "" and incoming ~= tostring(self.online_game_id))
+        -- A brand-new id, OR any START after the current game finished (a
+        -- tournament's next round can reuse the id) => re-init the board. The
+        -- state is parked on ws.active_game_state (set by the WS layer) and read
+        -- back by the board, NOT passed through msg.post (it overflows on big
+        -- nested tables).
+        if is_new or self.game_over then
+            ws.active_game_state = gs
+            msg.post("#", "ws_new_game_start")
+        elseif not self.game_over then
+            M.sync_timers(self, gs)
         end
     end))
 end

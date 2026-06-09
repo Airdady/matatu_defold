@@ -1,7 +1,15 @@
 script: "/main/gameover.gui_script"
 fonts {
   name: "body"
-  font: "/builtins/fonts/default.font"
+  font: "/fonts/body.font"
+}
+fonts {
+  name: "title"
+  font: "/fonts/title.font"
+}
+fonts {
+  name: "small"
+  font: "/fonts/small.font"
 }
 background_color {
   x: 0.0

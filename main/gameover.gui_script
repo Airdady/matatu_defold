@@ -28,13 +28,15 @@ local AVATAR_SIZE = 100
 local AVATAR_IMG  = 84
 
 local GRADIENT_ID = "go_radial_gradient"
-local FONT_NAME   = "body" -- only font guaranteed present in the .gui scene
+
+-- Native point sizes of the bundled .font resources. label() scales a node so
+-- its on-screen size matches the requested pixel size regardless of which font
+-- it uses, so big text (title/scores) can use the crisp title font.
+local FONT_BASE = { body = 26, title = 44, small = 18 }
 
 ----------------------------------------------------------------------
 -- Node helpers
 ----------------------------------------------------------------------
-local function set_font(n) pcall(function() gui.set_font(n, FONT_NAME) end) end
-
 local function box(pos, size, color, pivot)
     local n = gui.new_box_node(pos, size)
     gui.set_color(n, color or vmath.vector4(1, 1, 1, 1))
@@ -42,10 +44,12 @@ local function box(pos, size, color, pivot)
     return n
 end
 
-local function label(pos, text, size, color, pivot)
+local function label(pos, text, size, color, pivot, font)
+    font = font or "body"
     local n = gui.new_text_node(pos, text or "")
-    set_font(n)
-    gui.set_scale(n, vmath.vector3(size / 24, size / 24, 1.0))
+    pcall(function() gui.set_font(n, font) end)
+    local base = FONT_BASE[font] or 26
+    gui.set_scale(n, vmath.vector3(size / base, size / base, 1.0))
     gui.set_color(n, color or C_PRIMARY)
     gui.set_pivot(n, pivot or gui.PIVOT_CENTER)
     return n
@@ -144,25 +148,25 @@ local function build(self)
         return node
     end
 
-    self.n_title = label(vmath.vector3(0, 0, 0), "VICTORY", 46, C_VICTORY, gui.PIVOT_CENTER)
+    self.n_title = label(vmath.vector3(0, 0, 0), "VICTORY", 58, C_VICTORY, gui.PIVOT_CENTER, "title")
     pcall(function() gui.set_tracking(self.n_title, 0.12) end)
     pcall(function() gui.set_outline(self.n_title, vmath.vector4(0, 0, 0, 0.6)) end)
     pcall(function() gui.set_shadow(self.n_title, vmath.vector4(0, 0, 0, 0.5)) end)
     attach(self.n_title, 0, 152)
 
-    self.n_sub = label(vmath.vector3(0, 0, 0), "", 22, C_SECONDARY, gui.PIVOT_CENTER)
+    self.n_sub = label(vmath.vector3(0, 0, 0), "", 26, C_SECONDARY, gui.PIVOT_CENTER, "body")
     attach(self.n_sub, 0, 112)
 
-    self.n_divider = box(vmath.vector3(0, 0, 0), vmath.vector3(200, 2, 0), C_DIVIDER, gui.PIVOT_CENTER)
+    self.n_divider = box(vmath.vector3(0, 0, 0), vmath.vector3(220, 2, 0), C_DIVIDER, gui.PIVOT_CENTER)
     attach(self.n_divider, 0, 84)
 
-    self.n_reason = label(vmath.vector3(0, 0, 0), "Game Over", 16, C_PRIMARY, gui.PIVOT_CENTER)
+    self.n_reason = label(vmath.vector3(0, 0, 0), "Game Over", 22, C_PRIMARY, gui.PIVOT_CENTER, "body")
     attach(self.n_reason, 0, 56)
 
-    self.n_you_name = label(vmath.vector3(0, 0, 0), "YOU", 16, C_SECONDARY, gui.PIVOT_CENTER)
-    attach(self.n_you_name, -160, 42)
-    self.n_opp_name = label(vmath.vector3(0, 0, 0), "OPPONENT", 16, C_SECONDARY, gui.PIVOT_CENTER)
-    attach(self.n_opp_name, 160, 42)
+    self.n_you_name = label(vmath.vector3(0, 0, 0), "YOU", 20, C_SECONDARY, gui.PIVOT_CENTER, "body")
+    attach(self.n_you_name, -160, 44)
+    self.n_opp_name = label(vmath.vector3(0, 0, 0), "OPPONENT", 20, C_SECONDARY, gui.PIVOT_CENTER, "body")
+    attach(self.n_opp_name, 160, 44)
 
     self.n_you_av_bg = circle(vmath.vector3(0, 0, 0), AVATAR_SIZE, C_AVATAR_BG)
     attach(self.n_you_av_bg, -160, -20)
@@ -186,17 +190,17 @@ local function build(self)
         gui.set_enabled(self.n_opp_av, false)
     end
 
-    self.n_you_sum = label(vmath.vector3(0, 0, 0), "", 14, C_ORANGE, gui.PIVOT_CENTER)
-    attach(self.n_you_sum, -160, -82)
-    self.n_opp_sum = label(vmath.vector3(0, 0, 0), "", 14, C_ORANGE, gui.PIVOT_CENTER)
-    attach(self.n_opp_sum, 160, -82)
+    self.n_you_sum = label(vmath.vector3(0, 0, 0), "", 16, C_ORANGE, gui.PIVOT_CENTER, "small")
+    attach(self.n_you_sum, -160, -84)
+    self.n_opp_sum = label(vmath.vector3(0, 0, 0), "", 16, C_ORANGE, gui.PIVOT_CENTER, "small")
+    attach(self.n_opp_sum, 160, -84)
 
-    self.n_you_score = label(vmath.vector3(0, 0, 0), "0", 46, C_PRIMARY, gui.PIVOT_E)
-    attach(self.n_you_score, -20, -20)
-    self.n_colon = label(vmath.vector3(0, 0, 0), ":", 36, C_COLON, gui.PIVOT_CENTER)
+    self.n_you_score = label(vmath.vector3(0, 0, 0), "0", 60, C_PRIMARY, gui.PIVOT_E, "title")
+    attach(self.n_you_score, -22, -20)
+    self.n_colon = label(vmath.vector3(0, 0, 0), ":", 50, C_COLON, gui.PIVOT_CENTER, "title")
     attach(self.n_colon, 0, -20)
-    self.n_opp_score = label(vmath.vector3(0, 0, 0), "0", 46, C_PRIMARY, gui.PIVOT_W)
-    attach(self.n_opp_score, 20, -20)
+    self.n_opp_score = label(vmath.vector3(0, 0, 0), "0", 60, C_PRIMARY, gui.PIVOT_W, "title")
+    attach(self.n_opp_score, 22, -20)
 
     self.score_nodes = {
         self.n_you_name, self.n_opp_name,
@@ -207,9 +211,9 @@ local function build(self)
 
     self.stats = {}
     for i = 1, 3 do
-        local cap = label(vmath.vector3(0, 0, 0), "", 12, C_SECONDARY, gui.PIVOT_CENTER)
+        local cap = label(vmath.vector3(0, 0, 0), "", 15, C_SECONDARY, gui.PIVOT_CENTER, "small")
         attach(cap, 0, -118)
-        local val = label(vmath.vector3(0, 0, 0), "", 24, C_PRIMARY, gui.PIVOT_CENTER)
+        local val = label(vmath.vector3(0, 0, 0), "", 30, C_PRIMARY, gui.PIVOT_CENTER, "title")
         attach(val, 0, -146)
         gui.set_enabled(cap, false)
         gui.set_enabled(val, false)
@@ -224,15 +228,15 @@ local function build(self)
     end
     self.stat_cap_y, self.stat_val_y, self.stat_sep_y = -118, -146, -132
 
-    self.n_again_bg = box(vmath.vector3(0, 0, 0), vmath.vector3(240, 52, 0), C_VICTORY, gui.PIVOT_CENTER)
-    attach(self.n_again_bg, 0, -198)
-    self.n_again_lbl = label(vmath.vector3(0, 0, 0), "PLAY AGAIN", 18, C_BTN_TEXT, gui.PIVOT_CENTER)
+    self.n_again_bg = box(vmath.vector3(0, 0, 0), vmath.vector3(264, 58, 0), C_VICTORY, gui.PIVOT_CENTER)
+    attach(self.n_again_bg, 0, -200)
+    self.n_again_lbl = label(vmath.vector3(0, 0, 0), "PLAY AGAIN", 24, C_BTN_TEXT, gui.PIVOT_CENTER, "body")
     gui.set_parent(self.n_again_lbl, self.n_again_bg)
     gui.set_position(self.n_again_lbl, vmath.vector3(0, 0, 0))
 
-    self.n_exit_hit = box(vmath.vector3(0, 0, 0), vmath.vector3(240, 38, 0), vmath.vector4(0, 0, 0, 0), gui.PIVOT_CENTER)
-    attach(self.n_exit_hit, 0, -250)
-    self.n_exit_lbl = label(vmath.vector3(0, 0, 0), "BACK TO LOBBY", 16, C_SECONDARY, gui.PIVOT_CENTER)
+    self.n_exit_hit = box(vmath.vector3(0, 0, 0), vmath.vector3(264, 42, 0), vmath.vector4(0, 0, 0, 0), gui.PIVOT_CENTER)
+    attach(self.n_exit_hit, 0, -252)
+    self.n_exit_lbl = label(vmath.vector3(0, 0, 0), "BACK TO LOBBY", 20, C_SECONDARY, gui.PIVOT_CENTER, "body")
     gui.set_parent(self.n_exit_lbl, self.n_exit_hit)
     gui.set_position(self.n_exit_lbl, vmath.vector3(0, 0, 0))
 end
@@ -243,21 +247,21 @@ end
 local function apply_layout(self, has_score)
     local set = function(node, x, y) gui.set_position(node, vmath.vector3(x, y, 0)) end
     if has_score then
-        set(self.n_title, 0, 152)
-        set(self.n_sub, 0, 112)
-        set(self.n_divider, 0, 84)
-        set(self.n_reason, 0, 56)
-        self.stat_cap_y, self.stat_val_y, self.stat_sep_y = -118, -146, -132
-        set(self.n_again_bg, 0, -198)
-        set(self.n_exit_hit, 0, -250)
+        set(self.n_title, 0, 158)
+        set(self.n_sub, 0, 116)
+        set(self.n_divider, 0, 90)
+        set(self.n_reason, 0, 62)
+        self.stat_cap_y, self.stat_val_y, self.stat_sep_y = -118, -148, -133
+        set(self.n_again_bg, 0, -200)
+        set(self.n_exit_hit, 0, -252)
     else
-        set(self.n_title, 0, 92)
-        set(self.n_sub, 0, 52)
-        set(self.n_divider, 0, 26)
+        set(self.n_title, 0, 96)
+        set(self.n_sub, 0, 54)
+        set(self.n_divider, 0, 28)
         set(self.n_reason, 0, 0)
-        self.stat_cap_y, self.stat_val_y, self.stat_sep_y = -54, -82, -68
-        set(self.n_again_bg, 0, -132)
-        set(self.n_exit_hit, 0, -182)
+        self.stat_cap_y, self.stat_val_y, self.stat_sep_y = -56, -84, -70
+        set(self.n_again_bg, 0, -136)
+        set(self.n_exit_hit, 0, -188)
     end
     for _, n in ipairs(self.score_nodes) do gui.set_enabled(n, has_score) end
 end

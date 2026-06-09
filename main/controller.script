@@ -106,10 +106,12 @@ function init(self)
 		end
 	end))
 
-	-- Online game start → board screen.
+	-- Online game start → board screen. Only drive the lobby→board transition
+	-- here; an in-game start (e.g. a tournament's NEXT round) is handled by the
+	-- board itself, so re-showing the screen would re-init it twice.
 	table.insert(self.tokens, ws.on("game_start", function()
 		app_state.mode = "online"
-		show(self, "game")
+		if self.screen ~= "game" then show(self, "game") end
 	end))
 	table.insert(self.tokens, ws.on("game_request_accepted", function()
 		app_state.mode = "online"
