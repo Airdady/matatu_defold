@@ -403,6 +403,38 @@ function on_input(self, action_id, action)
 end
 
 ----------------------------------------------------------------------
+-- Replay (rematch) request lifecycle
+-- PLAY AGAIN on the game-over modal fires a fresh game request at the same
+-- opponent. If they accept, a new game state arrives and the board restarts.
+-- If they decline or never answer there is nothing to wait for, so bounce the
+-- player back to the online lobby instead of leaving "WAITING…" up forever.
+----------------------------------------------------------------------
+local REPLAY_TIMEOUT = 12.0
+
+local function replay_failed(self, reason)
+    if not self.awaiting_replay then return end
+    self.awaiting_replay = false
+    log("Replay not answered (" .. tostring(reason) .. ") — returning to lobby")
+    notify_gui(self.gui_over, "reset_hud")
+    msg.post("#controller", "goto_online")
+end
+
+-- Start (or restart) the online board from a fresh server state. De-dupes so a
+-- repeated trigger for the game we're already running is ignored, while a new
+-- game id — or any start after the current game ended (a tournament's next
+-- round) — re-initialises the board cleanly.
+local function start_new_online_game(self, state)
+    if type(state) ~= "table" or next(state) == nil then return end
+    local new_id = tostring(state.id or state.gameId or "")
+    if new_id ~= "" and new_id == tostring(self.online_game_id) and not self.game_over then
+        return
+    end
+    self.awaiting_replay = false
+    ws.active_game_state = state
+    GF.start_game(self)
+end
+
+----------------------------------------------------------------------
 -- Message routing
 ----------------------------------------------------------------------
 function on_message(self, message_id, message, sender)
@@ -414,16 +446,30 @@ function on_message(self, message_id, message, sender)
 
     elseif message_id == hash("screen_enter") then
         self.active = true
+        self.awaiting_replay = false
         msg.post(".", "acquire_input_focus")
         GF.start_game(self)
 
     elseif message_id == hash("ws_new_game_start") then
-        ws.active_game_state = message.state or ws.active_game_state
-        GF.start_game(self)
+        start_new_online_game(self, message.state or ws.get_active_game())
+
+    elseif message_id == hash("ws_round_complete") then
+        -- Tournament next round may arrive as ROUND_COMPLETE carrying the dealt
+        -- state; re-init the board (de-duped against an in-progress round).
+        if self.online_mode then
+            start_new_online_game(self, ws.get_active_game())
+        end
 
     elseif message_id == hash("disable") then
         self.active = false
         self._seq = (self._seq or 0) + 1
+        -- Leaving the board: force-close the auxiliary overlays so a half-open
+        -- suit selector / game-over / disconnect modal can't bleed onto the
+        -- lobby (those guis are not in the controller's screen list).
+        notify_gui(self.gui_suit, "reset_hud")
+        notify_gui(self.gui_over, "reset_hud")
+        notify_gui(self.gui_hud, "reset_hud")
+        self.awaiting_replay = false
         GS.destroy_all(self)
 
     elseif message_id == hash("layout_changed") then
@@ -490,6 +536,13 @@ function on_message(self, message_id, message, sender)
             end
 
             ws.send_game_request(opp_data, stake)
+
+            -- Wait for the opponent's answer; if none comes, go back to lobby.
+            self.awaiting_replay = true
+            local seq = self._seq
+            timer.delay(REPLAY_TIMEOUT, false, function()
+                if seq == self._seq then replay_failed(self, "timeout") end
+            end)
         else
             local series = 1
             if app.offline_game then
@@ -527,10 +580,56 @@ function on_message(self, message_id, message, sender)
         notify_gui(self.gui_hud, "network_quality", message)
 
     elseif message_id == hash("ws_game_over") then
+        -- Clear any disconnect/reconnect overlay so it doesn't linger under the
+        -- game-over modal (e.g. opponent's grace period elapsed into a no-show).
+        notify_gui(self.gui_hud, "conn_overlay", { show = false })
         if self.online_mode and not self.game_over then
             local results = ws.last_game_over or {}
             local is_cut = results.isCut or (results.reason == "CUTTING_CARD")
             self.end_game((results.winner == self.my_player_id), is_cut, results)
+        end
+
+    -- ── Replay declined by the opponent → back to the lobby ──────────────────
+    elseif message_id == hash("ws_replay_declined") then
+        if self.online_mode and self.awaiting_replay then
+            replay_failed(self, (message and message.reason) or "declined")
+        end
+
+    -- ── Opponent dropped: show a grace-period overlay until they return ──────
+    elseif message_id == hash("ws_player_dc") then
+        if self.online_mode and not self.game_over then
+            notify_gui(self.gui_hud, "conn_overlay", {
+                show = true,
+                title = "OPPONENT DISCONNECTED",
+                subtitle = "Waiting for them to reconnect…",
+                grace = (message and message.grace) or 30,
+            })
+        end
+
+    elseif message_id == hash("ws_player_rc") then
+        notify_gui(self.gui_hud, "conn_overlay", { show = false })
+
+    -- ── Our own socket dropped / recovered (Task: current user goes offline) ──
+    elseif message_id == hash("ws_net_down") then
+        if self.online_mode and not self.game_over then
+            notify_gui(self.gui_hud, "conn_overlay", {
+                show = true, title = "CONNECTION LOST", subtitle = "Reconnecting…",
+            })
+        end
+
+    elseif message_id == hash("ws_net_up") then
+        notify_gui(self.gui_hud, "conn_overlay", { show = false })
+
+    elseif message_id == hash("ws_net_failed") then
+        if self.online_mode then
+            notify_gui(self.gui_hud, "conn_overlay", {
+                show = true, danger = true,
+                title = "DISCONNECTED", subtitle = "Couldn't reconnect — returning to lobby…",
+            })
+            local seq = self._seq
+            timer.delay(2.5, false, function()
+                if seq == self._seq then msg.post("#controller", "goto_online") end
+            end)
         end
     end
 end

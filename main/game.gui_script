@@ -162,17 +162,23 @@ local function build_stake_chip(self)
 end
 
 local function build_standings_ui(self)
-    self.standings_root = box(vmath.vector3(LOGICAL_W - EXIT_BTN_MARGIN_RIGHT - 220, LOGICAL_H - EXIT_BTN_MARGIN_TOP - EXIT_BTN_SIZE - 20, 0), vmath.vector3(220, 200, 0), vmath.vector4(0,0,0,0), gui.PIVOT_NW)
+    -- Sits on the right, just below the deck pile (deck is centred vertically on
+    -- the right edge), anchored to the right so it tracks the deck on any screen.
+    self.standings_root = box(vmath.vector3(LOGICAL_W - EXIT_BTN_MARGIN_RIGHT - 196, LOGICAL_H/2 - 86, 0), vmath.vector3(196, 180, 0), vmath.vector4(0,0,0,0), gui.PIVOT_NW)
     gui.set_xanchor(self.standings_root, gui.ANCHOR_RIGHT)
-    gui.set_yanchor(self.standings_root, gui.ANCHOR_TOP)
-    
+    gui.set_yanchor(self.standings_root, gui.ANCHOR_NONE)
+
+    self.standings_title = label(vmath.vector3(0, 2, 0), "STANDINGS", 13, vmath.vector4(0.65, 0.68, 0.72, 1.0), gui.PIVOT_W)
+    gui.set_parent(self.standings_title, self.standings_root)
+    gui.set_enabled(self.standings_title, false)
+
     self.standings_rows = {}
     for i=1, 7 do
-        local row = box(vmath.vector3(0, -(i-1)*24, 0), vmath.vector3(220, 24, 0), vmath.vector4(0,0,0,0), gui.PIVOT_NW)
+        local row = box(vmath.vector3(0, -18 - (i-1)*24, 0), vmath.vector3(196, 24, 0), vmath.vector4(0,0,0,0), gui.PIVOT_NW)
         gui.set_parent(row, self.standings_root)
-        local pos_lbl = label(vmath.vector3(0, -12, 0), "", 16, C_WHITE, gui.PIVOT_W)
-        local name_lbl = label(vmath.vector3(35, -12, 0), "", 16, C_WHITE, gui.PIVOT_W)
-        local pts_lbl = label(vmath.vector3(220, -12, 0), "", 16, C_WHITE, gui.PIVOT_E)
+        local pos_lbl = label(vmath.vector3(0, -12, 0), "", 15, C_WHITE, gui.PIVOT_W)
+        local name_lbl = label(vmath.vector3(32, -12, 0), "", 15, C_WHITE, gui.PIVOT_W)
+        local pts_lbl = label(vmath.vector3(196, -12, 0), "", 15, C_WHITE, gui.PIVOT_E)
         gui.set_parent(pos_lbl, row); gui.set_parent(name_lbl, row); gui.set_parent(pts_lbl, row)
         table.insert(self.standings_rows, { bg=row, pos=pos_lbl, name=name_lbl, pts=pts_lbl })
     end
@@ -220,6 +226,60 @@ local function build_exit(self)
     gui.set_parent(self.btn_no, self.exit_popover)
 
     gui.set_enabled(self.exit_popover, false)
+end
+
+local function build_conn_overlay(self)
+    -- Full-screen dim scrim, centred on the real screen middle and stretched to
+    -- cover any aspect ratio (same pattern as the suit selector overlay).
+    self.conn_scrim = box(vmath.vector3(LOGICAL_W/2, LOGICAL_H/2, 0), vmath.vector3(5000, 5000, 0), vmath.vector4(0, 0, 0, 0.6), gui.PIVOT_CENTER)
+    gui.set_xanchor(self.conn_scrim, gui.ANCHOR_NONE)
+    gui.set_yanchor(self.conn_scrim, gui.ANCHOR_NONE)
+    gui.set_adjust_mode(self.conn_scrim, gui.ADJUST_STRETCH)
+
+    -- Panel must be created at the origin BEFORE parenting; its local position
+    -- is then (0,0) relative to the scrim centre, so it stays centred on screen.
+    self.conn_panel = box(vmath.vector3(0, 0, 0), vmath.vector3(460, 190, 0), vmath.vector4(0.07, 0.08, 0.11, 0.98), gui.PIVOT_CENTER)
+    gui.set_parent(self.conn_panel, self.conn_scrim)
+    gui.set_position(self.conn_panel, vmath.vector3(0, 0, 0))
+    gui.set_adjust_mode(self.conn_panel, gui.ADJUST_FIT)
+    gui.set_xanchor(self.conn_panel, gui.ANCHOR_NONE)
+    gui.set_yanchor(self.conn_panel, gui.ANCHOR_NONE)
+
+    self.conn_title = label(vmath.vector3(0, 48, 0), "RECONNECTING", 24, vmath.vector4(0.0, 0.722, 0.831, 1.0), gui.PIVOT_CENTER)
+    gui.set_parent(self.conn_title, self.conn_panel)
+
+    self.conn_sub = label(vmath.vector3(0, 8, 0), "", 16, vmath.vector4(0.70, 0.74, 0.80, 1.0), gui.PIVOT_CENTER)
+    gui.set_parent(self.conn_sub, self.conn_panel)
+
+    self.conn_count = label(vmath.vector3(0, -44, 0), "", 34, C_WHITE, gui.PIVOT_CENTER)
+    gui.set_parent(self.conn_count, self.conn_panel)
+
+    gui.set_enabled(self.conn_scrim, false)
+    self.conn_count_active = false
+end
+
+local function set_conn_overlay(self, opts)
+    if not self.conn_scrim then return end
+    if opts and opts.show then
+        gui.set_enabled(self.conn_scrim, true)
+        gui.set_text(self.conn_title, opts.title or "RECONNECTING")
+        gui.set_color(self.conn_title, opts.danger and C_T_RED or vmath.vector4(0.0, 0.722, 0.831, 1.0))
+        gui.set_text(self.conn_sub, opts.subtitle or "")
+        local grace = tonumber(opts.grace) or 0
+        if grace > 0 then
+            self.conn_deadline = socket.gettime() + grace
+            self.conn_count_active = true
+            gui.set_enabled(self.conn_count, true)
+            gui.set_text(self.conn_count, string.format("%ds", math.ceil(grace)))
+        else
+            self.conn_count_active = false
+            gui.set_enabled(self.conn_count, false)
+            gui.set_text(self.conn_count, "")
+        end
+    else
+        gui.set_enabled(self.conn_scrim, false)
+        self.conn_count_active = false
+    end
 end
 
 ----------------------------------------------------------------------
@@ -296,9 +356,17 @@ function init(self)
     build_standings_ui(self)
     _create_skip_button(self)
     build_exit(self)
+    build_conn_overlay(self)
 end
 
 function update(self, dt)
+    if self.conn_count_active then
+        local left = (self.conn_deadline or 0) - socket.gettime()
+        if left < 0 then left = 0 end
+        gui.set_text(self.conn_count, string.format("%ds", math.ceil(left)))
+        if left <= 0 then self.conn_count_active = false end
+    end
+
     if self.timer_remaining and self.timer_remaining > 0 then
         self.timer_remaining = self.timer_remaining - dt
         if self.timer_remaining < 0 then self.timer_remaining = 0 end
@@ -405,7 +473,9 @@ function on_message(self, message_id, message)
             if self.sb_o_score then gui.set_text(self.sb_o_score, tostring(message.o_score or 0)) end
             if self.sb_p_ind then gui.set_text(self.sb_p_ind, tostring(message.p_score or 0) .. " of " .. target) end
             if self.sb_o_ind then gui.set_text(self.sb_o_ind, tostring(message.o_score or 0) .. " of " .. target) end
-            if self.sb_title then gui.set_text(self.sb_title, "BEST OF " .. tostring(best_of)) end
+            local title = "BEST OF " .. tostring(best_of)
+            if message.stage and message.stage ~= "" then title = title .. "  •  " .. string.upper(message.stage) end
+            if self.sb_title then gui.set_text(self.sb_title, title) end
         else
             if self.sb_root then gui.set_enabled(self.sb_root, false) end
         end
@@ -413,21 +483,46 @@ function on_message(self, message_id, message)
     elseif message_id == hash("update_standings") then
         local ranks = message.ranks or {}
         table.sort(ranks, function(a, b) return (a.position or 99) < (b.position or 99) end)
+        if self.standings_title then gui.set_enabled(self.standings_title, #ranks > 0) end
         for i=1, 7 do
             local row = self.standings_rows[i]
             if not row then break end
             if ranks[i] then
                 gui.set_enabled(row.bg, true)
                 gui.set_text(row.pos, "#" .. tostring(ranks[i].position or 0))
-                gui.set_text(row.name, tostring(ranks[i].username or "Player"))
+                local nm = tostring(ranks[i].username or "Player")
+                if #nm > 9 then nm = string.sub(nm, 1, 9) .. "…" end
+                gui.set_text(row.name, nm)
                 gui.set_text(row.pts, tostring(ranks[i].points or 0))
-                
+
                 local c = C_WHITE
                 if ranks[i].id == self.my_id then c = vmath.vector4(1, 0.84, 0, 1) end
                 gui.set_color(row.pos, c); gui.set_color(row.name, c); gui.set_color(row.pts, c)
             else
                 gui.set_enabled(row.bg, false)
             end
+        end
+
+    elseif message_id == hash("update_stake") then
+        -- Stake chip on the left of the board (mirrors the Godot HUD).
+        local s = message.amount
+        local amount = (type(s) == "table") and (tonumber(s.amount) or 0) or (tonumber(s) or 0)
+        if not self.stake_chip then
+            -- nothing to do
+        elseif amount <= 0 then
+            gui.set_enabled(self.stake_chip, false)
+        else
+            local img = "stake_200"
+            if     amount >= 10000 then img = "stake_10000"
+            elseif amount >= 5000  then img = "stake_5000"
+            elseif amount >= 2000  then img = "stake_2000"
+            elseif amount >= 1000  then img = "stake_1000"
+            elseif amount >= 500   then img = "stake_500" end
+            local ok = pcall(function()
+                gui.set_texture(self.stake_chip, "ui")
+                gui.play_flipbook(self.stake_chip, hash(img))
+            end)
+            gui.set_enabled(self.stake_chip, ok)
         end
 
     elseif message_id == hash("network_quality") then
@@ -444,11 +539,18 @@ function on_message(self, message_id, message)
 
     elseif message_id == hash("stop_timers") then
         stop_timers(self)
-        
+
+    elseif message_id == hash("conn_overlay") then
+        set_conn_overlay(self, message)
+
     elseif message_id == hash("reset_hud") then
         stop_timers(self)
         set_skip_visible(self, false)
+        set_conn_overlay(self, { show = false })
         if self.exit_popover then gui.set_enabled(self.exit_popover, false) end
         if self.sb_root then gui.set_enabled(self.sb_root, false) end
+        if self.stake_chip then gui.set_enabled(self.stake_chip, false) end
+        if self.standings_title then gui.set_enabled(self.standings_title, false) end
+        for _, row in ipairs(self.standings_rows or {}) do gui.set_enabled(row.bg, false) end
     end
 end
