@@ -173,8 +173,8 @@ function init(self)
 	table.insert(self.tokens, ws.on("reconnect_failed",  function() msg.post("#game_logic", "ws_net_failed") end))
 
 	-- Opponent emoji reactions during a match.
-	table.insert(self.tokens, ws.on("emoji", function(sender, content)
-		msg.post("#game_logic", "ws_emoji", { sender = sender or "", emoji = content or "joy" })
+	table.insert(self.tokens, ws.on("emoji", function(sender, content, sound)
+		msg.post("#game_logic", "ws_emoji", { sender = sender or "", emoji = content or "joy", sound = sound or "" })
 	end))
 
 	-- A declined request also reaches the board: if the player asked for a

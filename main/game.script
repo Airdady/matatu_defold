@@ -612,13 +612,14 @@ function on_message(self, message_id, message, sender)
     -- ── Emoji send (from the HUD) / receive (from the opponent) ──────────────
     elseif message_id == hash("send_emoji") then
         if self.online_mode and message and message.emoji then
-            ws.send_emoji(message.emoji)
+            ws.send_emoji(message.emoji, message.sound, self.opponent_id)
         end
 
     elseif message_id == hash("ws_emoji") then
         local sender = tostring((message and message.sender) or "")
         notify_gui(self.gui_hud, "emoji_received", {
             emoji = (message and message.emoji) or "joy",
+            sound = (message and message.sound) or "",
             is_me = (sender ~= "" and sender == tostring(self.my_player_id)),
         })
 
