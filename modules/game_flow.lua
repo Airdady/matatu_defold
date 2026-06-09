@@ -45,6 +45,15 @@ function M.play_card(self, rec, is_player, result)
 
     notify_gui(self.gui_hud, "skip", { show = false })
     self.chosen_suit = ""
+    -- The freshly played card now defines what matches next, so a chosen-suit
+    -- constraint (from a prior ace) is consumed. Online, get_active_suit reads
+    -- game_state.chosenSuit, so clear it there too — otherwise a continued turn
+    -- after a skip (e.g. chaining 8s) keeps validating against the stale suit
+    -- and the second skip card is wrongly rejected. An ace re-sets the suit via
+    -- the suit-select flow (self.chosen_suit).
+    if is_player and self.online_mode and type(self.game_state) == "table" then
+        self.game_state.chosenSuit = ""
+    end
     notify_gui(self.gui_suit, "suit_select", { mode = "close" })
 
     if is_player then
