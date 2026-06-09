@@ -178,6 +178,102 @@ local function mode_card(self, cfg)
 end
 
 -- ---------------------------------------------------------------------------
+-- New-user walkthrough overlay (self-contained intro tutorial)
+-- ---------------------------------------------------------------------------
+local TUTORIAL_PAGES = {
+    { t = "WELCOME TO MATATU", lines = {
+        "East Africa's favourite card game.",
+        "Match, attack, and be the first to",
+        "empty your hand to win!" } },
+    { t = "GAME MODES", lines = {
+        "PLAY ONLINE  —  live coin matches",
+        "QUICK PLAY  —  practice vs the AI",
+        "BATTLE AI  —  best-of series",
+        "TOURNAMENT  —  bracket of players" } },
+    { t = "HOW TO PLAY", lines = {
+        "On your turn, play a card matching the",
+        "top card's SUIT or NUMBER.",
+        "No match?  Tap the deck to DRAW." } },
+    { t = "SPECIAL CARDS", lines = {
+        "8 / J    skip the opponent (play again)",
+        "2 / 3    opponent draws a penalty",
+        "Ace      choose the next suit",
+        "Joker    pass on a 5-card penalty",
+        "Ace of Spades  cancels any penalty",
+        "7    the cutting card can end a round" } },
+    { t = "WIN & CLIMB", lines = {
+        "Empty your hand to win the round.",
+        "Earn POINTS to climb the weekly rank.",
+        "Prizes are paid every Wednesday midday",
+        "and Saturday midnight (EAT)." } },
+    { t = "YOU'RE READY!", lines = {
+        "Tap PLAY ONLINE to challenge real",
+        "players, or QUICK PLAY to practice.",
+        "Good luck — and have fun!" } },
+}
+
+local function tutorial_seen()
+    local ok, data = pcall(sys.load, sys.get_save_file("matatu_defold", "tutorial"))
+    return ok and type(data) == "table" and data.seen == true
+end
+local function mark_tutorial_seen()
+    pcall(sys.save, sys.get_save_file("matatu_defold", "tutorial"), { seen = true })
+end
+
+local function draw_tutorial(self)
+    if not self.tutorial_active then return end
+    local page = self.tut_page or 1
+    local data = TUTORIAL_PAGES[page]
+    if not data then return end
+    local total = #TUTORIAL_PAGES
+
+    -- Full-screen scrim (absorbs taps) + warm radial gradient, matching the
+    -- game-request dialog / game-over modal look & feel.
+    local scrim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(LOGICAL_W*2, LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.66)))
+    self.buttons[#self.buttons+1] = { node = scrim, id = "tut_block" }
+    track(self, ui.grad_backdrop(LOGICAL_W, LOGICAL_H))
+
+    local pw, ph = 620, 424
+    shadow(self, CX, CY, pw, ph, 14, 0.22)
+    track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), "container_bg"))
+    track(self, ui.box(vmath.vector3(CX, CY + ph/2 - 4, 0), vmath.vector3(pw - 16, 4, 0), ui.CYAN))
+
+    track(self, ui.text(vmath.vector3(CX, CY + ph/2 - 28, 0), string.format("STEP %d OF %d", page, total), "small", C_MUTED))
+    text_sh(self, vmath.vector3(CX, CY + ph/2 - 64, 0), data.t, "title", ui.CYAN, 2, -2)
+
+    local ly = CY + 86
+    for _, line in ipairs(data.lines) do
+        track(self, ui.text(vmath.vector3(CX, ly, 0), line, "small", C_WHITE))
+        ly = ly - 28
+    end
+
+    -- progress dots
+    local dgap = 22
+    local dx0 = CX - ((total - 1) * dgap) / 2
+    local dy = CY - ph/2 + 70
+    for i = 1, total do
+        local sz = (i == page) and 12 or 8
+        track(self, ui.box(vmath.vector3(dx0 + (i-1)*dgap, dy, 0), vmath.vector3(sz, sz, 0),
+            (i == page) and ui.CYAN or vmath.vector4(1, 1, 1, 0.28)))
+    end
+
+    -- Skip (top-left), Back + Next/Start (bottom)
+    local skb = track(self, ui.btn9(vmath.vector3(CX - pw/2 + 64, CY + ph/2 - 26, 0), vmath.vector3(92, 34, 0), "secondary_btn"))
+    track(self, ui.text(vmath.vector3(CX - pw/2 + 64, CY + ph/2 - 28, 0), "SKIP", "small", C_MUTED))
+    self.buttons[#self.buttons+1] = { node = skb, id = "tut_skip" }
+
+    local by = CY - ph/2 + 32
+    if page > 1 then
+        local bkb = track(self, ui.btn9(vmath.vector3(CX - 92, by, 0), vmath.vector3(150, 46, 0), "secondary_btn"))
+        text_sh(self, vmath.vector3(CX - 92, by - 1, 0), "BACK", "body", C_WHITE, 1, -1)
+        self.buttons[#self.buttons+1] = { node = bkb, id = "tut_back" }
+    end
+    local nxb = track(self, ui.btn9(vmath.vector3(CX + 92, by, 0), vmath.vector3(150, 46, 0), "play_btn"))
+    text_sh(self, vmath.vector3(CX + 92, by - 1, 0), (page == total) and "START" or "NEXT", "body", C_WHITE, 1, -1)
+    self.buttons[#self.buttons+1] = { node = nxb, id = "tut_next" }
+end
+
+-- ---------------------------------------------------------------------------
 -- Main rebuild
 -- ---------------------------------------------------------------------------
 local function rebuild(self)
@@ -363,6 +459,15 @@ local function rebuild(self)
             "Sign in to access rankings, records, and prizes", "small",
             vmath.vector4(0.55, 0.50, 0.70, 0.8)))
     end
+
+    -- ===== Help / How-to-play (re-opens the walkthrough) ===================
+    local help = track(self, ui.box(vmath.vector3(EDGE_R - 40, EDGE_T - 40, 0),
+        vmath.vector3(40, 40, 0), vmath.vector4(0.12, 0.08, 0.30, 0.85)))
+    track(self, ui.text(vmath.vector3(EDGE_R - 40, EDGE_T - 42, 0), "?", "body", C_AMBER))
+    self.buttons[#self.buttons + 1] = { node = help, id = "help_open" }
+
+    -- ===== New-user walkthrough overlay (drawn on top) =====================
+    draw_tutorial(self)
 end
 
 -- ---------------------------------------------------------------------------
@@ -525,6 +630,26 @@ end
 -- Input handler
 -- ---------------------------------------------------------------------------
 local function handle(self, b)
+    -- ---- Walkthrough overlay ----------------------------------------------
+    if b.id == "tut_block" then
+        return  -- absorb taps behind the overlay
+    elseif b.id == "help_open" then
+        self.state = STATE_LOBBY
+        self.tut_page, self.tutorial_active = 1, true
+        rebuild(self); return
+    elseif b.id == "tut_skip" then
+        self.tutorial_active = false; mark_tutorial_seen(); rebuild(self); return
+    elseif b.id == "tut_back" then
+        self.tut_page = math.max(1, (self.tut_page or 1) - 1); rebuild(self); return
+    elseif b.id == "tut_next" then
+        if (self.tut_page or 1) >= #TUTORIAL_PAGES then
+            self.tutorial_active = false; mark_tutorial_seen()
+        else
+            self.tut_page = (self.tut_page or 1) + 1
+        end
+        rebuild(self); return
+    end
+
     -- ---- Lobby actions ----------------------------------------------------
     if b.id == "play_online" then
         msg.post("#controller", "play_online")
@@ -589,6 +714,9 @@ end
 function init(self)
     self.nodes, self.buttons = {}, {}
     self.state = STATE_LOBBY
+    -- First-time players get the walkthrough automatically (once).
+    self.tut_page = 1
+    self.tutorial_active = not tutorial_seen()
     refresh_wh()
     if not app_state.ai_series        then app_state.ai_series        = 3 end
     if not app_state.tournament_size  then app_state.tournament_size  = 4 end
