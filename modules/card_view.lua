@@ -25,7 +25,7 @@ local rand_range = util.rand_range
 ----------------------------------------------------------------------
 function M.sprite_url(card) return msg.url(nil, card.id, "sprite") end
 function M.set_face(card) sprite.play_flipbook(M.sprite_url(card), hash(Defs.frame_name(card))) end
-function M.set_back(card) sprite.play_flipbook(M.sprite_url(card), hash(Defs.BACK_FRAME)) end
+function M.set_back(card) sprite.play_flipbook(M.sprite_url(card), hash(Defs.back_frame())) end
 
 ----------------------------------------------------------------------
 -- Spawn a face-down card object

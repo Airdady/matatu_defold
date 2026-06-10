@@ -22,11 +22,9 @@ local function refresh_wh()
 	CX, CY = m.CX, m.CY
 end
 
-local PREVIEW = {
-	default    = "red_basic",   blue_basic  = "blue_basic",
-	black_basic= "black_basic", red_drago   = "red_drago",
-	blue_drago = "blue_drago",  batman      = "batman",
-}
+-- Each theme previews with REAL cards from its own sprite-sheet atlas
+-- (drago/batman restyle every face A→K, jokers and back — Godot parity).
+local CARD_TEX = { default = "cards", drago = "cards_drago", batman = "cards_batman" }
 
 local function commas(n)
 	n = tostring(math.floor(tonumber(n) or 0))
@@ -96,10 +94,26 @@ local function rebuild(self)
 			or (t.purchased and vmath.vector4(0.2,0.7,0.35,1) or vmath.vector4(0.25,0.25,0.30,1))
 		track(self, ui.box(vmath.vector3(px, py+ch/2-3, 0), vmath.vector3(cw-4, 5, 0), bar_col))
 
-		local anim = PREVIEW[t.id]
-		if anim then
-			track(self, ui.image(vmath.vector3(px, py+38, 0), vmath.vector3(cw-48, 110, 0), anim))
+		-- Card fan preview straight from the theme's atlas: Ace + King flank
+		-- the theme's own back, so full-art sets read instantly.
+		local th_def    = app_state.THEMES[t.id]
+		local tex       = CARD_TEX[(th_def and th_def.card_set) or "default"] or "cards"
+		local back_anim = (th_def and th_def.card_back) or "card_back"
+		local card_h    = 116
+		local card_w    = math.floor(card_h * 212 / 238)
+		local function fan_card(dx, dy, anim, rot)
+			local n = gui.new_box_node(vmath.vector3(px + dx, py + dy, 0), vmath.vector3(card_w, card_h, 0))
+			local ok = pcall(function()
+				gui.set_texture(n, tex)
+				gui.play_flipbook(n, hash(anim))
+			end)
+			if not ok then gui.set_color(n, vmath.vector4(0, 0, 0, 0)) end
+			if rot ~= 0 then gui.set_rotation(n, vmath.vector3(0, 0, rot)) end
+			track(self, n)
 		end
+		fan_card(-70, 34, "card_15S", 8)
+		fan_card(70, 34, "card_13H", -8)
+		fan_card(0, 38, back_anim, 0)
 
 		track(self, ui.text(vmath.vector3(px, py-48, 0), (t.name or t.id or "Theme"):upper(), "body", ui.WHITE))
 		local price = tonumber(t.price) or 0
