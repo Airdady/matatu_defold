@@ -1,7 +1,10 @@
 -- auth.gui_script - Phone + OTP sign-in screen.
--- texture_bg + themed overlay anchored to true physical screen edges. Keypad
--- keys use default_btn 9-slice (OK → primary_btn, backspace → secondary_btn).
--- container_bg glass panels for the card, prefix chip, input field and OTP boxes.
+-- Pixel-faithful port of the Godot Authentication.tscn layout: full-bleed
+-- dark screen, top content area (state label, giant phone display with a
+-- blinking cursor over an accent underline, legal links) and a seamless
+-- full-width 6x2 keypad at the bottom (dark keys, cream digits, red DEL,
+-- brown-gold GO). The OTP phase swaps the display for four underlined
+-- 90x90 digit cells, exactly like the Godot screen.
 
 local ui        = require("modules.ui")
 local app_state = require("modules.app_state")
@@ -12,6 +15,21 @@ local VISIBLE_W, VISIBLE_H = 1280, 720
 local EDGE_L, EDGE_R = 0, 1280
 local EDGE_B, EDGE_T = 0, 720
 local CX, CY = 640, 360
+
+-- Godot Authentication palette
+local C_ACCENT     = vmath.vector4(0.502, 0.255, 0.118, 1) -- legal links / GO / underline
+local C_STATE      = vmath.vector4(0.6, 0.6, 0.6, 1)       -- "ENTER PHONE NUMBER"
+local C_CREAM      = vmath.vector4(0.973, 0.925, 0.859, 1) -- key digits
+local C_KEY_BG     = vmath.vector4(0.157, 0.122, 0.094, 1) -- #281F18
+local C_KEY_DEL_BG = vmath.vector4(0.267, 0.039, 0.039, 1) -- #440A0A
+local C_DEL_TEXT   = vmath.vector4(1, 0.267, 0.267, 1)     -- #FF4444
+local C_KB_BG      = vmath.vector4(0.039, 0.039, 0.039, 1) -- #0A0A0A
+local C_CURSOR     = vmath.vector4(0.3, 0.6, 1.0, 1)       -- blinking caret
+local C_ERROR      = vmath.vector4(0.95, 0.45, 0.25, 1)
+local C_OK         = vmath.vector4(0.3, 0.9, 0.5, 1)
+
+local KB_H   = 244 -- keyboard block height (2 rows)
+local SEP_H  = 12  -- separator strip between content and keyboard
 
 local function refresh_wh()
 	local m = screen.metrics()
@@ -35,124 +53,170 @@ local function to_intl(d) return d:sub(1,1)=="0" and ("+256"..d:sub(2)) or ("+25
 local function clear(self)
 	for _, n in ipairs(self.nodes) do pcall(gui.delete_node, n) end
 	self.nodes, self.buttons = {}, {}
+	self._cursor = nil
 end
 local function track(self, n) self.nodes[#self.nodes+1] = n return n end
 
-local function mkkey(self, id, pos, size, label, anim, data)
-	local bg = track(self, ui.btn9(pos, size, anim or "default_btn"))
-	track(self, ui.text(pos, label, "body", ui.WHITE))
-	self.buttons[#self.buttons+1] = { node = bg, id = id, data = data }
-	return bg
+-- Kenney Future Narrow ("body", 26px base) is the Godot project's global
+-- theme font — scale it to the Godot pixel sizes.
+local function ktext(self, pos, str, px, color)
+	return track(self, ui.text(pos, str, "body", color, px / 26))
 end
 
-local KEYS = {"1","2","3","4","5","6","7","8","9","<","0","OK"}
+----------------------------------------------------------------------
+-- Seamless full-width keypad: 6 columns x 2 rows, thin #0A0A0A gaps.
+-- Row 1: 1 2 3 4 5 6   Row 2: 7 8 9 0 DEL GO    (Godot KeypadGrid)
+----------------------------------------------------------------------
+local KEYS = {"1","2","3","4","5","6","7","8","9","0","<","OK"}
 
-local function keypad(self, prefix, cx, ky0, ok_active)
-	local kw, kh, kg = 80, 48, 8
-	local kx0 = cx - kw - kg - kw / 2
+local function keypad(self, prefix)
+	local kb_top = EDGE_B + KB_H
+	-- keyboard area background (the visible 1px seams between keys)
+	track(self, ui.box(vmath.vector3(CX, EDGE_B + KB_H/2, 0), vmath.vector3(VISIBLE_W + 80, KB_H, 0), C_KB_BG))
+
+	local cols, rows = 6, 2
+	local gap = 1
+	local kw = (VISIBLE_W - (cols - 1) * gap) / cols
+	local kh = (KB_H - gap) / rows
 	for i, k in ipairs(KEYS) do
-		local ci = (i-1) % 3
-		local ri = math.floor((i-1) / 3)
-		local pos = vmath.vector3(kx0 + ci*(kw+kg), ky0 - ri*(kh+kg), 0)
-		local size = vmath.vector3(kw, kh, 0)
-		local anim = "default_btn"
-		if k == "OK" then anim = ok_active and "primary_btn" or "default_btn" end
-		if k == "<"  then anim = "secondary_btn" end
-		mkkey(self, prefix..k, pos, size, k, anim, k)
+		local ci = (i - 1) % cols
+		local ri = math.floor((i - 1) / cols)
+		local px = EDGE_L + kw/2 + ci * (kw + gap)
+		local py = kb_top - kh/2 - ri * (kh + gap)
+		local bg_col = C_KEY_BG
+		if k == "<" then bg_col = C_KEY_DEL_BG end
+		if k == "OK" then bg_col = C_ACCENT end
+		local key = track(self, ui.box(vmath.vector3(px, py, 0), vmath.vector3(kw, kh, 0), bg_col))
+		if k == "<" then
+			ktext(self, vmath.vector3(px, py, 0), "DEL", 36, C_DEL_TEXT)
+		elseif k == "OK" then
+			ktext(self, vmath.vector3(px, py, 0), "GO", 36, C_CREAM)
+		else
+			ktext(self, vmath.vector3(px, py, 0), k, 48, C_CREAM)
+		end
+		self.buttons[#self.buttons+1] = { node = key, id = prefix..k, data = k }
 	end
 end
 
+----------------------------------------------------------------------
+-- Shared chrome: full-bleed dark background + top content area
+----------------------------------------------------------------------
 local function bg_and_header(self)
-	local th = app_state.get_theme()
-	track(self, ui.cover(LOGICAL_W, LOGICAL_H, ui.DARK))
-	track(self, ui.cover_image(LOGICAL_W, LOGICAL_H, "texture_bg"))
-	local b = track(self, ui.cover_image(LOGICAL_W, LOGICAL_H, th.bg_image))
-	gui.set_color(b, vmath.vector4(1, 1, 1, 0.55))
-	track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.62)))
-	-- CANCEL — anchored to the top-left edge.
-	local cb = track(self, ui.btn9(vmath.vector3(EDGE_L + 90, EDGE_T - 44, 0), vmath.vector3(150, 44, 0), "secondary_btn"))
-	track(self, ui.text(vmath.vector3(EDGE_L + 90, EDGE_T - 44, 0), "< CANCEL", "small", ui.WHITE))
+	track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 1)))
+	local b = track(self, ui.cover_image(LOGICAL_W, LOGICAL_H, "texture_bg"))
+	gui.set_color(b, vmath.vector4(1, 1, 1, 0.5))
+	track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.55)))
+
+	-- separator strip between content and keyboard
+	track(self, ui.box(vmath.vector3(CX, EDGE_B + KB_H + SEP_H/2, 0),
+		vmath.vector3(VISIBLE_W + 80, SEP_H, 0), vmath.vector4(0.02, 0.02, 0.02, 1)))
+
+	-- small unobtrusive close (back to lobby)
+	local cb = track(self, ui.box(vmath.vector3(EDGE_L + 44, EDGE_T - 40, 0), vmath.vector3(56, 56, 0), vmath.vector4(0, 0, 0, 0.001)))
+	ktext(self, vmath.vector3(EDGE_L + 44, EDGE_T - 40, 0), "X", 26, C_STATE)
 	self.buttons[#self.buttons+1] = { node = cb, id = "cancel" }
-	return th.accent
 end
 
+-- Blinking input caret (Godot phone cursor: blue bar, 75% of font height)
+local function add_cursor(self, x, y, h)
+	local c = track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(4, h, 0), C_CURSOR))
+	self._cursor = c
+	gui.animate(c, "color.w", 0, gui.EASING_INOUTSINE, 0.53, 0, nil, gui.PLAYBACK_LOOP_PINGPONG)
+end
+
+----------------------------------------------------------------------
+-- Phase 1: ENTER PHONE NUMBER
+----------------------------------------------------------------------
 local function build_phone(self)
-	local a = bg_and_header(self)
-	local py = CY + 30
-	track(self, ui.panel9(vmath.vector3(CX, py, 0), vmath.vector3(700, 380, 0), "container_bg"))
+	bg_and_header(self)
 
-	track(self, ui.text(vmath.vector3(CX, py+160, 0), "SIGN IN", "title", a))
-	track(self, ui.text(vmath.vector3(CX, py+118, 0), "Enter your Ugandan phone number", "small", ui.MUTED))
+	local content_b = EDGE_B + KB_H + SEP_H
+	local ccy = content_b + (EDGE_T - content_b) / 2
 
-	track(self, ui.panel9(vmath.vector3(CX-230, py+64, 0), vmath.vector3(120, 56, 0), "container_bg_active"))
-	track(self, ui.text(vmath.vector3(CX-230, py+64, 0), "+256", "body", ui.GOLD))
-	track(self, ui.panel9(vmath.vector3(CX+50, py+64, 0), vmath.vector3(400, 56, 0), "container_bg"))
-	local disp = (self.phone ~= "") and fmt_phone(self.phone) or "07XX XXX XXX"
-	track(self, ui.text(vmath.vector3(CX+50, py+64, 0), disp, "body",
-		(self.phone ~= "") and ui.WHITE or ui.MUTED))
+	ktext(self, vmath.vector3(CX, ccy + 116, 0), "ENTER PHONE NUMBER", 28, C_STATE)
 
-	local hc, ht = ui.MUTED, "Format: 07XX XXX XXX  (10 digits)"
-	if self.phone ~= "" then
+	-- Giant centered phone display with caret + accent underline
+	local has = self.phone ~= ""
+	local disp = has and fmt_phone(self.phone) or ""
+	local dn = ktext(self, vmath.vector3(CX, ccy + 36, 0), disp, 60, ui.WHITE)
+	local tw = 0
+	if has then
+		-- metrics come back in font units; apply the node's 60px scale
+		local tm = gui.get_text_metrics_from_node(dn)
+		tw = tm.width * (60 / 26)
+	end
+	add_cursor(self, CX + tw/2 + 10, ccy + 36, 45)
+
+	local ul_w = math.max(420, tw + 60)
+	track(self, ui.box(vmath.vector3(CX, ccy - 6, 0), vmath.vector3(ul_w, 4, 0), C_ACCENT))
+
+	-- Validation / progress line
+	local hc, ht = C_STATE, "07XX XXX XXX"
+	if has then
 		if not valid_phone(self.phone) then
-			hc, ht = vmath.vector4(0.95, 0.45, 0.25, 1), "Must be 10 digits starting with 07"
+			hc, ht = C_ERROR, "Must be 10 digits starting with 07"
 		else
-			hc, ht = vmath.vector4(0.3, 0.9, 0.5, 1), "Send OTP to  " .. to_intl(self.phone)
+			hc, ht = C_OK, "GO sends a code to  " .. to_intl(self.phone)
 		end
 	end
-	track(self, ui.text(vmath.vector3(CX, py+20, 0), ht, "small", hc))
-
-	keypad(self, "key_", CX, py-26, valid_phone(self.phone))
-
-	if app_state.auth_state == "error" then
-		track(self, ui.panel9(vmath.vector3(CX, py-218, 0), vmath.vector3(660, 40, 0), "container_bg"))
-		track(self, ui.text(vmath.vector3(CX, py-218, 0), app_state.auth_error:upper(), "small",
-			vmath.vector4(1, 0.4, 0.4, 1)))
-	elseif app_state.auth_state == "sending" then
-		track(self, ui.text(vmath.vector3(CX, py-218, 0), "Sending OTP...", "small", ui.GOLD))
+	if app_state.auth_state == "sending" then
+		hc, ht = C_ACCENT, "Sending OTP..."
+	elseif app_state.auth_state == "error" then
+		hc, ht = vmath.vector4(1, 0.4, 0.4, 1), tostring(app_state.auth_error or "Failed"):upper()
 	end
+	ktext(self, vmath.vector3(CX, ccy - 44, 0), ht, 18, hc)
+
+	-- Legal links row (Godot LegalLinksContainer)
+	local tos = ktext(self, vmath.vector3(CX - 110, content_b + 34, 0), "Terms of Service", 18, C_ACCENT)
+	local priv = ktext(self, vmath.vector3(CX + 110, content_b + 34, 0), "Privacy Policy", 18, C_ACCENT)
+	self.buttons[#self.buttons+1] = { node = tos, id = "legal_tos" }
+	self.buttons[#self.buttons+1] = { node = priv, id = "legal_privacy" }
+
+	keypad(self, "key_")
 end
 
+----------------------------------------------------------------------
+-- Phase 2: ENTER VERIFICATION CODE
+----------------------------------------------------------------------
 local function build_otp(self)
-	local a = bg_and_header(self)
-	local py = CY + 30
-	track(self, ui.panel9(vmath.vector3(CX, py, 0), vmath.vector3(700, 380, 0), "container_bg"))
+	bg_and_header(self)
 
-	track(self, ui.text(vmath.vector3(CX, py+160, 0), "VERIFICATION CODE", "title", a))
-	track(self, ui.text(vmath.vector3(CX, py+118, 0), "Sent to  "..to_intl(app_state.auth_phone), "small", ui.MUTED))
+	local content_b = EDGE_B + KB_H + SEP_H
+	local ccy = content_b + (EDGE_T - content_b) / 2
 
-	local bw, gap = 80, 16
-	local ox = CX - (4*bw+3*gap)/2 + bw/2
+	ktext(self, vmath.vector3(CX, ccy + 124, 0), "ENTER VERIFICATION CODE", 28, C_STATE)
+
+	-- Four 90x90 digit cells with accent underlines (Godot OtpDisplayGroup)
+	local bw, gap = 90, 25
+	local ox = CX - (4*bw + 3*gap)/2 + bw/2
 	for i = 1, 4 do
-		local has = i <= #self.otp
-		track(self, ui.panel9(vmath.vector3(ox+(i-1)*(bw+gap), py+62, 0), vmath.vector3(bw, 70, 0),
-			has and "container_bg_active" or "container_bg"))
-		track(self, ui.text(vmath.vector3(ox+(i-1)*(bw+gap), py+62, 0),
-			has and self.otp:sub(i,i) or "", "title",
-			has and ui.WHITE or ui.MUTED))
+		local x = ox + (i-1) * (bw + gap)
+		local hasd = i <= #self.otp
+		ktext(self, vmath.vector3(x, ccy + 44, 0), hasd and self.otp:sub(i,i) or "", 60, C_CREAM)
+		track(self, ui.box(vmath.vector3(x, ccy + 4, 0), vmath.vector3(bw, 4, 0), C_ACCENT))
 	end
 
-	keypad(self, "otp_", CX, py-22, #self.otp==4)
+	ktext(self, vmath.vector3(CX, ccy - 40, 0), "Sent to  " .. to_intl(app_state.auth_phone), 20, C_ACCENT)
 
-	local rlbl = self.resend > 0 and ("Resend in "..self.resend.."s") or "Resend Code"
+	-- Resend (accent, disabled while counting down) + Wrong Number?
 	local ractive = self.resend <= 0
-	local rb = track(self, ui.btn9(vmath.vector3(CX-130, py-228, 0), vmath.vector3(210, 40, 0),
-		ractive and "secondary_btn" or "default_btn"))
-	track(self, ui.text(vmath.vector3(CX-130, py-228, 0), rlbl, "small",
-		ractive and ui.WHITE or ui.MUTED))
+	local rlbl = ractive and "Resend Code" or ("Resend in " .. self.resend .. "s")
+	local rc = ractive and C_ACCENT or vmath.vector4(0.502, 0.255, 0.118, 0.6)
+	local rb = ktext(self, vmath.vector3(CX, ccy - 84, 0), rlbl, 24, rc)
 	self.buttons[#self.buttons+1] = { node = rb, id = "otp_resend" }
 
-	local wb = track(self, ui.btn9(vmath.vector3(CX+130, py-228, 0), vmath.vector3(210, 40, 0), "secondary_btn"))
-	track(self, ui.text(vmath.vector3(CX+130, py-228, 0), "Wrong Number", "small", ui.WHITE))
+	local wb = ktext(self, vmath.vector3(CX, content_b + 34, 0), "Wrong Number?", 18, C_STATE)
 	self.buttons[#self.buttons+1] = { node = wb, id = "otp_wrong" }
 
 	if app_state.auth_state == "verifying" then
-		track(self, ui.text(vmath.vector3(CX, py-272, 0), "Verifying...", "small", ui.GOLD))
+		ktext(self, vmath.vector3(CX, ccy - 122, 0), "Verifying...", 18, C_ACCENT)
 	elseif app_state.auth_state == "error" then
-		track(self, ui.panel9(vmath.vector3(CX, py-272, 0), vmath.vector3(660, 40, 0), "container_bg"))
-		track(self, ui.text(vmath.vector3(CX, py-272, 0), app_state.auth_error:upper(), "small",
-			vmath.vector4(1, 0.4, 0.4, 1)))
+		ktext(self, vmath.vector3(CX, ccy - 122, 0), tostring(app_state.auth_error or "Failed"):upper(), 18,
+			vmath.vector4(1, 0.4, 0.4, 1))
 		self.otp = ""
 	end
+
+	keypad(self, "otp_")
 end
 
 local function rebuild(self)
@@ -213,6 +277,10 @@ local function handle(self, b)
 	local id = b.id
 	if id == "cancel" then
 		msg.post("#controller", "auth_cancel")
+	elseif id == "legal_tos" then
+		pcall(sys.open_url, "https://matatu.app/terms")
+	elseif id == "legal_privacy" then
+		pcall(sys.open_url, "https://matatu.app/privacy")
 	elseif id:sub(1,4) == "key_" then
 		local k = b.data
 		if k == "<" then

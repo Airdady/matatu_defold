@@ -15,6 +15,9 @@ local function show(self, screen)
 		if s == screen then
 			msg.post("#" .. s, "enable")
 			msg.post("#" .. s, "screen_enter")
+		elseif screen == "payments" and s == "online" then
+			-- Payments is a DIALOG, not a screen: the online lobby stays
+			-- alive (and visible) underneath the modal dim.
 		else
 			msg.post("#" .. s, "disable")
 		end
