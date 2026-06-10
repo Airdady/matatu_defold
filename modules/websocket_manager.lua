@@ -285,6 +285,18 @@ local function parse_message(json_string)
     })
   elseif t == "EMOJI_MESSAGE" then
     emit("emoji", d._id or d.from or "", d.emoji or d.name or "", d.sound or "")
+  elseif t == "AI_PLAYED_ON_YOUR_BEHALF" then
+    -- The backend AI covered this player's seat: either a one-shot move after
+    -- a turn timeout (mode=SINGLE_MOVE) or a full takeover while they were
+    -- offline (mode=TAKEOVER, delivered on reconnect).
+    emit("ai_played_for_you", {
+      mode = tostring(d.mode or "SINGLE_MOVE"),
+      moves = tonumber(d.aiMovesPlayed) or 0,
+      message = tostring(d.message or ""),
+    })
+  elseif t == "GAME_STATE_SYNC" then
+    local gs = M.extract_game_state(d)
+    if next(gs) ~= nil then M.active_game_state = gs end
   elseif t == "ROUND_COMPLETE" then
     local gs = M.extract_game_state(d)
     if next(gs) ~= nil then M.active_game_state = gs end

@@ -1,3 +1,7 @@
+components {
+  id: "script"
+  component: "/main/card.script"
+}
 embedded_components {
   id: "sprite"
   type: "sprite"

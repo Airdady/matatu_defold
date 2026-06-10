@@ -23,16 +23,20 @@ M.auth_error = ""
 
 -- Themes table – each entry defines the visual style applied across lobby + game.
 -- bg_image  : animation name in the ui atlas
--- card_back : animation name in the cards atlas
+-- card_set  : which card sprite sheet the deck uses ("default"|"drago"|"batman")
+--             — mirrors the Godot THEME_TEXTURE_PATHS model where drago and
+--             batman themes restyle EVERY card face (A→K, jokers, back)
+-- card_back : back animation id inside that card set's atlas
+--             (mirrors Godot's THEME_BACK_CARD_MAP)
 -- accent    : vmath.vector4 accent colour for buttons / highlights
 -- panel     : vmath.vector4 primary panel colour
 M.THEMES = {
-	default    = { id = "default",     label = "Classic Red",  bg_image = "bg_1",        card_back = "card_back",       accent = vmath.vector4(0.85, 0.25, 0.25, 1), panel = vmath.vector4(0.12, 0.14, 0.20, 1) },
-	blue_basic = { id = "blue_basic",  label = "Classic Blue", bg_image = "bg_2",        card_back = "card_back_blue",  accent = vmath.vector4(0.25, 0.55, 0.90, 1), panel = vmath.vector4(0.08, 0.12, 0.22, 1) },
-	black_basic= { id = "black_basic", label = "Classic Black",bg_image = "bg_3",        card_back = "card_back_black", accent = vmath.vector4(0.50, 0.50, 0.55, 1), panel = vmath.vector4(0.10, 0.10, 0.12, 1) },
-	red_drago  = { id = "red_drago",   label = "Red Dragon",   bg_image = "bg_1",        card_back = "card_back",       accent = vmath.vector4(0.95, 0.30, 0.10, 1), panel = vmath.vector4(0.15, 0.06, 0.06, 1) },
-	blue_drago = { id = "blue_drago",  label = "Blue Dragon",  bg_image = "bg_2",        card_back = "card_back_blue",  accent = vmath.vector4(0.20, 0.60, 1.00, 1), panel = vmath.vector4(0.05, 0.10, 0.20, 1) },
-	batman     = { id = "batman",      label = "Dark Knight",  bg_image = "bg_3",        card_back = "card_back_black", accent = vmath.vector4(0.95, 0.75, 0.05, 1), panel = vmath.vector4(0.06, 0.06, 0.08, 1) },
+	default    = { id = "default",     label = "Classic Red",  bg_image = "bg_1", card_set = "default", card_back = "card_back",       accent = vmath.vector4(0.85, 0.25, 0.25, 1), panel = vmath.vector4(0.12, 0.14, 0.20, 1) },
+	blue_basic = { id = "blue_basic",  label = "Classic Blue", bg_image = "bg_2", card_set = "default", card_back = "card_back_blue",  accent = vmath.vector4(0.25, 0.55, 0.90, 1), panel = vmath.vector4(0.08, 0.12, 0.22, 1) },
+	black_basic= { id = "black_basic", label = "Classic Black",bg_image = "bg_3", card_set = "default", card_back = "card_back_black", accent = vmath.vector4(0.50, 0.50, 0.55, 1), panel = vmath.vector4(0.10, 0.10, 0.12, 1) },
+	red_drago  = { id = "red_drago",   label = "Red Dragon",   bg_image = "bg_1", card_set = "drago",   card_back = "card_back",       accent = vmath.vector4(0.95, 0.30, 0.10, 1), panel = vmath.vector4(0.15, 0.06, 0.06, 1) },
+	blue_drago = { id = "blue_drago",  label = "Blue Dragon",  bg_image = "bg_2", card_set = "drago",   card_back = "card_back_blue",  accent = vmath.vector4(0.20, 0.60, 1.00, 1), panel = vmath.vector4(0.05, 0.10, 0.20, 1) },
+	batman     = { id = "batman",      label = "Dark Knight",  bg_image = "bg_3", card_set = "batman",  card_back = "card_back",       accent = vmath.vector4(0.95, 0.75, 0.05, 1), panel = vmath.vector4(0.06, 0.06, 0.08, 1) },
 }
 
 -- Ordered list so cycling is deterministic.
