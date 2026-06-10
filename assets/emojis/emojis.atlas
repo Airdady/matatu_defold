@@ -3,666 +3,596 @@ images {
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/emojis/emoji_joy.png"
+  image: "/assets/emojis/face_with_tears_of_joy_00.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/emojis/emoji_tongue.png"
+  image: "/assets/emojis/face_with_tongue_00.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/emojis/emoji_hot.png"
+  image: "/assets/emojis/hot_face_00.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/emojis/emoji_money.png"
+  image: "/assets/emojis/money_mouth_face_00.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/emojis/emoji_party.png"
+  image: "/assets/emojis/partying_face_00.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/emojis/emoji_sleep.png"
+  image: "/assets/emojis/sleeping_face_00.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/emojis/emoji_thumbsdown.png"
+  image: "/assets/emojis/thumbs_down_00.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/emojis/emoji_wave.png"
+  image: "/assets/emojis/waving_hand_animated_default_00.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 animations {
-  id: "anim_joy"
-  images {
-    image: "/assets/emojis/anim_joy_00.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_joy_01.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_joy_02.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_joy_03.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_joy_04.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_joy_05.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_joy_06.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_joy_07.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_joy_08.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_joy_09.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_joy_10.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_joy_11.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_joy_12.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_joy_13.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_joy_14.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_joy_15.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_joy_16.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_joy_17.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
+  id: "face_with_tears_of_joy"
+  images { image: "/assets/emojis/face_with_tears_of_joy_00.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_01.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_02.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_03.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_04.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_05.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_06.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_07.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_08.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_09.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_10.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_11.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_12.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_13.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_14.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_15.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_16.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_17.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_18.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_19.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_20.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_21.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_22.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_23.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_24.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_25.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_26.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_27.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_28.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_29.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_30.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_31.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_32.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_33.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_34.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_35.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_36.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_37.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_38.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_39.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_40.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_41.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_42.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_43.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_44.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_45.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_46.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tears_of_joy_47.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
   playback: PLAYBACK_LOOP_FORWARD
-  fps: 18
+  fps: 30
   flip_horizontal: 0
   flip_vertical: 0
 }
 animations {
-  id: "anim_tongue"
-  images {
-    image: "/assets/emojis/anim_tongue_00.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_tongue_01.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_tongue_02.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_tongue_03.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_tongue_04.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_tongue_05.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_tongue_06.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_tongue_07.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_tongue_08.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_tongue_09.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_tongue_10.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_tongue_11.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_tongue_12.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_tongue_13.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_tongue_14.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_tongue_15.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_tongue_16.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_tongue_17.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
+  id: "face_with_tongue"
+  images { image: "/assets/emojis/face_with_tongue_00.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_01.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_02.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_03.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_04.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_05.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_06.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_07.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_08.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_09.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_10.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_11.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_12.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_13.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_14.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_15.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_16.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_17.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_18.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_19.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_20.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_21.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_22.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_23.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_24.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_25.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_26.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_27.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_28.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_29.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_30.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_31.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_32.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_33.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_34.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_35.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_36.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_37.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_38.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_39.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_40.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_41.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_42.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_43.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_44.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_45.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_46.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_47.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_48.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_49.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_50.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_51.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_52.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_53.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_54.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_55.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_56.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_57.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_58.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_59.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_60.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_61.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_62.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_63.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/face_with_tongue_64.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
   playback: PLAYBACK_LOOP_FORWARD
-  fps: 18
+  fps: 30
   flip_horizontal: 0
   flip_vertical: 0
 }
 animations {
-  id: "anim_hot"
-  images {
-    image: "/assets/emojis/anim_hot_00.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_hot_01.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_hot_02.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_hot_03.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_hot_04.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_hot_05.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_hot_06.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_hot_07.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_hot_08.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_hot_09.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_hot_10.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_hot_11.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_hot_12.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_hot_13.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_hot_14.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_hot_15.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_hot_16.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_hot_17.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
+  id: "hot_face"
+  images { image: "/assets/emojis/hot_face_00.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_01.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_02.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_03.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_04.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_05.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_06.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_07.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_08.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_09.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_10.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_11.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_12.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_13.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_14.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_15.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_16.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_17.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_18.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_19.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_20.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_21.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_22.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_23.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_24.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_25.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_26.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_27.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_28.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_29.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_30.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_31.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_32.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_33.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_34.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_35.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_36.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_37.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_38.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_39.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_40.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_41.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_42.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_43.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_44.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_45.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_46.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_47.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_48.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_49.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_50.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_51.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_52.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_53.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_54.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_55.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_56.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_57.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_58.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_59.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_60.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_61.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_62.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_63.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_64.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_65.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_66.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_67.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_68.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_69.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_70.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/hot_face_71.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
   playback: PLAYBACK_LOOP_FORWARD
-  fps: 18
+  fps: 30
   flip_horizontal: 0
   flip_vertical: 0
 }
 animations {
-  id: "anim_money"
-  images {
-    image: "/assets/emojis/anim_money_00.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_money_01.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_money_02.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_money_03.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_money_04.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_money_05.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_money_06.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_money_07.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_money_08.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_money_09.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_money_10.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_money_11.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_money_12.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_money_13.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_money_14.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_money_15.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_money_16.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_money_17.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
+  id: "money_mouth_face"
+  images { image: "/assets/emojis/money_mouth_face_00.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_01.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_02.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_03.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_04.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_05.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_06.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_07.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_08.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_09.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_10.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_11.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_12.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_13.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_14.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_15.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_16.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_17.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_18.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_19.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_20.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_21.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_22.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_23.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_24.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_25.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_26.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_27.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_28.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_29.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_30.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_31.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_32.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_33.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_34.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_35.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_36.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_37.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_38.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_39.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_40.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_41.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_42.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_43.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_44.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_45.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_46.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_47.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_48.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_49.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_50.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_51.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_52.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_53.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_54.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_55.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_56.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_57.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_58.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_59.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_60.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_61.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_62.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_63.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/money_mouth_face_64.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
   playback: PLAYBACK_LOOP_FORWARD
-  fps: 18
+  fps: 30
   flip_horizontal: 0
   flip_vertical: 0
 }
 animations {
-  id: "anim_party"
-  images {
-    image: "/assets/emojis/anim_party_00.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_party_01.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_party_02.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_party_03.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_party_04.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_party_05.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_party_06.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_party_07.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_party_08.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_party_09.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_party_10.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_party_11.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_party_12.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_party_13.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_party_14.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_party_15.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_party_16.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_party_17.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
+  id: "partying_face"
+  images { image: "/assets/emojis/partying_face_00.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_01.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_02.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_03.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_04.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_05.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_06.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_07.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_08.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_09.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_10.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_11.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_12.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_13.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_14.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_15.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_16.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_17.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_18.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_19.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_20.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_21.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_22.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_23.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_24.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_25.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_26.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_27.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_28.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_29.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_30.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_31.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_32.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_33.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_34.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_35.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_36.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_37.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_38.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_39.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_40.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_41.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_42.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_43.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_44.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_45.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_46.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_47.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_48.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_49.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_50.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_51.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_52.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_53.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_54.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_55.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_56.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_57.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_58.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_59.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_60.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_61.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_62.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_63.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_64.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_65.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_66.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_67.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_68.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_69.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_70.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_71.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/partying_face_72.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
   playback: PLAYBACK_LOOP_FORWARD
-  fps: 18
+  fps: 30
   flip_horizontal: 0
   flip_vertical: 0
 }
 animations {
-  id: "anim_sleep"
-  images {
-    image: "/assets/emojis/anim_sleep_00.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_sleep_01.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_sleep_02.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_sleep_03.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_sleep_04.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_sleep_05.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_sleep_06.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_sleep_07.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_sleep_08.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_sleep_09.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_sleep_10.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_sleep_11.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_sleep_12.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_sleep_13.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_sleep_14.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_sleep_15.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_sleep_16.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_sleep_17.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
+  id: "sleeping_face"
+  images { image: "/assets/emojis/sleeping_face_00.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_01.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_02.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_03.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_04.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_05.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_06.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_07.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_08.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_09.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_10.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_11.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_12.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_13.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_14.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_15.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_16.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_17.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_18.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_19.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_20.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_21.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_22.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_23.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_24.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_25.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_26.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_27.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_28.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_29.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_30.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_31.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_32.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_33.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_34.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_35.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_36.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_37.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_38.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_39.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_40.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_41.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_42.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_43.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_44.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_45.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_46.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_47.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_48.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_49.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_50.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_51.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_52.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_53.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_54.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_55.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_56.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_57.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_58.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_59.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_60.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_61.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_62.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_63.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_64.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_65.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_66.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_67.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_68.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_69.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_70.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_71.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/sleeping_face_72.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
   playback: PLAYBACK_LOOP_FORWARD
-  fps: 18
+  fps: 30
   flip_horizontal: 0
   flip_vertical: 0
 }
 animations {
-  id: "anim_thumbsdown"
-  images {
-    image: "/assets/emojis/anim_thumbsdown_00.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_thumbsdown_01.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_thumbsdown_02.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_thumbsdown_03.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_thumbsdown_04.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_thumbsdown_05.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_thumbsdown_06.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_thumbsdown_07.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_thumbsdown_08.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_thumbsdown_09.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_thumbsdown_10.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_thumbsdown_11.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_thumbsdown_12.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_thumbsdown_13.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_thumbsdown_14.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_thumbsdown_15.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_thumbsdown_16.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_thumbsdown_17.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
+  id: "thumbs_down"
+  images { image: "/assets/emojis/thumbs_down_00.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_01.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_02.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_03.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_04.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_05.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_06.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_07.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_08.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_09.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_10.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_11.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_12.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_13.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_14.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_15.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_16.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_17.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_18.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_19.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_20.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_21.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_22.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_23.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_24.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_25.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_26.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_27.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_28.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_29.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_30.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_31.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_32.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_33.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_34.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_35.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_36.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_37.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_38.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_39.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_40.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_41.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_42.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_43.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_44.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_45.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_46.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_47.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_48.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_49.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_50.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_51.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_52.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_53.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_54.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_55.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_56.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_57.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_58.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_59.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/thumbs_down_60.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
   playback: PLAYBACK_LOOP_FORWARD
-  fps: 18
+  fps: 30
   flip_horizontal: 0
   flip_vertical: 0
 }
 animations {
-  id: "anim_wave"
-  images {
-    image: "/assets/emojis/anim_wave_00.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_wave_01.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_wave_02.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_wave_03.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_wave_04.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_wave_05.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_wave_06.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_wave_07.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_wave_08.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_wave_09.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_wave_10.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_wave_11.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_wave_12.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_wave_13.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_wave_14.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_wave_15.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_wave_16.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
-  images {
-    image: "/assets/emojis/anim_wave_17.png"
-    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-  }
+  id: "waving_hand_animated_default"
+  images { image: "/assets/emojis/waving_hand_animated_default_00.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_01.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_02.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_03.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_04.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_05.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_06.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_07.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_08.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_09.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_10.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_11.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_12.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_13.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_14.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_15.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_16.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_17.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_18.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_19.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_20.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_21.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_22.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_23.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_24.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_25.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_26.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_27.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_28.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_29.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_30.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_31.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_32.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_33.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_34.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_35.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_36.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_37.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_38.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_39.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_40.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_41.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_42.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_43.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_44.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_45.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_46.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_47.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
+  images { image: "/assets/emojis/waving_hand_animated_default_48.png" sprite_trim_mode: SPRITE_TRIM_MODE_OFF }
   playback: PLAYBACK_LOOP_FORWARD
-  fps: 18
+  fps: 30
   flip_horizontal: 0
   flip_vertical: 0
 }
