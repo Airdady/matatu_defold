@@ -432,6 +432,9 @@ local function start_new_online_game(self, state)
     self.awaiting_replay = false
     ws.active_game_state = state
     GF.start_game(self)
+    if self._ai_notice then
+        notify_gui(self.gui_hud, "ai_takeover_notice", self._ai_notice)
+    end
 end
 
 ----------------------------------------------------------------------
@@ -449,6 +452,11 @@ function on_message(self, message_id, message, sender)
         self.awaiting_replay = false
         msg.post(".", "acquire_input_focus")
         GF.start_game(self)
+        -- Reconnect resume: surface the un-acknowledged AI takeover notice on
+        -- top of the rebuilt board (reset_hud just cleared the HUD layer).
+        if self._ai_notice then
+            notify_gui(self.gui_hud, "ai_takeover_notice", self._ai_notice)
+        end
 
     elseif message_id == hash("ws_new_game_start") then
         start_new_online_game(self, message.state or ws.get_active_game())
@@ -595,19 +603,34 @@ function on_message(self, message_id, message, sender)
             replay_failed(self, (message and message.reason) or "declined")
         end
 
-    -- ── Opponent dropped: show a grace-period overlay until they return ──────
+    -- ── Opponent dropped: deliberately NO overlay or cue. The backend AI
+    -- covers their seat and keeps playing standard moves, and the takeover
+    -- must stay invisible — this client just keeps showing normal gameplay.
+    -- (Kept as a handler so older backends that still broadcast the event
+    -- don't fall through to anything visible.)
     elseif message_id == hash("ws_player_dc") then
-        if self.online_mode and not self.game_over then
-            notify_gui(self.gui_hud, "conn_overlay", {
-                show = true,
-                title = "OPPONENT DISCONNECTED",
-                subtitle = "Waiting for them to reconnect…",
-                grace = (message and message.grace) or 30,
-            })
-        end
+        -- masked: seamless gameplay for the opponent
 
     elseif message_id == hash("ws_player_rc") then
         notify_gui(self.gui_hud, "conn_overlay", { show = false })
+
+    -- ── The backend AI covered OUR seat ──────────────────────────────────────
+    -- SINGLE_MOVE: connected but the turn timer ran out (brief banner).
+    -- TAKEOVER: we were offline and just reconnected (blocking notice). The
+    -- notice is re-posted after any board re-init until the player taps
+    -- GOT IT, because the reconnect resume rebuilds the HUD around it.
+    elseif message_id == hash("ws_ai_played") then
+        local mode = (message and message.mode) or "SINGLE_MOVE"
+        if mode == "TAKEOVER" then
+            self._ai_notice = { mode = "TAKEOVER", moves = (message and message.moves) or 0 }
+        end
+        notify_gui(self.gui_hud, "ai_takeover_notice", {
+            mode = mode,
+            moves = (message and message.moves) or 0,
+        })
+
+    elseif message_id == hash("ai_notice_ack") then
+        self._ai_notice = nil
 
     -- ── Emoji send (from the HUD) / receive (from the opponent) ──────────────
     elseif message_id == hash("send_emoji") then

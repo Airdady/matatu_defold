@@ -413,8 +413,6 @@ function M.start_game(self, state)
     self.is_processing_move = false
     self.is_waiting_for_server_response = false
     self._online_reshuffling = false
-    self._sb_active, self._sb_format, self._sb_stage = false, nil, nil
-    self._sb_p, self._sb_o = nil, nil
 
     M.setup_ws_listeners(self)
 
@@ -434,6 +432,28 @@ function M.start_game(self, state)
             op = v
         end
     end
+
+    -- ── Scoreboard persistence across series rounds ──────────────────────────
+    -- The board's running score (_sb_*) initializes once, at the very start of
+    -- the first match of a series, and is only UPDATED on later rounds. It
+    -- resets exclusively when a different series begins (another tournament,
+    -- or another opponent/format pairing for battles).
+    local ts = (type(state.tournamentScore) == "table") and state.tournamentScore or nil
+    local fmt = (ts and ts.matchFormat) or state.matchFormat
+        or (type(state.tournament) == "table" and state.tournament.matchFormat) or nil
+    local series_key = ""
+    local t_id = tostring(state.tournamentId or "")
+    if t_id ~= "" then
+        series_key = "t:" .. t_id
+    elseif fmt then
+        series_key = "b:" .. tostring(self.opponent_id) .. ":" .. tostring(fmt)
+    end
+    local is_continuation = (series_key ~= "" and series_key == self._sb_series_key)
+    if not is_continuation then
+        self._sb_active, self._sb_format, self._sb_stage = false, nil, nil
+        self._sb_p, self._sb_o = nil, nil
+    end
+    self._sb_series_key = series_key
 
     local hand_data = mp.hand or {}
     local opp_hand  = (type(op.hand) == "table") and op.hand or nil
@@ -514,7 +534,12 @@ function M.start_game(self, state)
 
     local seq = self._seq
 
-    self.animate_shuffle(mock_deck, function()
+    -- Between rounds of a running series the next game must initialize the
+    -- moment the server sends it: skip the riffle-shuffle intro and deal at
+    -- a tighter cadence so play resumes almost instantly.
+    local deal_step = is_continuation and 0.04 or DEAL_DELAY
+
+    local function run_deal()
         if seq ~= self._seq then return end
 
         local delay = 0.0
@@ -538,7 +563,7 @@ function M.start_game(self, state)
                 go.animate(pc.id, "position", go.PLAYBACK_ONCE_FORWARD, pt, go.EASING_OUTCUBIC, 0.3, delay)
                 timer.delay(delay, false, function() if seq == self._seq then self.play_sound("SoundDraw") end end)
                 timer.delay(delay + 0.15, false, function() if seq == self._seq then self.set_face(pc) end end)
-                delay = delay + DEAL_DELAY
+                delay = delay + deal_step
             end
 
             if i <= a_count then
@@ -552,7 +577,7 @@ function M.start_game(self, state)
                 go.set_position(vmath.vector3(self.CENTER.x, self.CENTER.y, self.Z_FLY), ac.id)
                 go.animate(ac.id, "position", go.PLAYBACK_ONCE_FORWARD, at, go.EASING_OUTCUBIC, 0.3, delay)
                 timer.delay(delay, false, function() if seq == self._seq then self.play_sound("SoundDraw") end end)
-                delay = delay + DEAL_DELAY
+                delay = delay + deal_step
             end
         end
 
@@ -605,7 +630,13 @@ function M.start_game(self, state)
                 ws.send_message("PLAYER_READY", { gameId = gid, _id = self.my_player_id })
             end
         end)
-    end)
+    end
+
+    if is_continuation then
+        run_deal()
+    else
+        self.animate_shuffle(mock_deck, run_deal)
+    end
 end
 
 return M

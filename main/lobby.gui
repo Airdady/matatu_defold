@@ -11,6 +11,14 @@ fonts {
   name: "small"
   font: "/fonts/small.font"
 }
+fonts {
+  name: "poppins"
+  font: "/fonts/poppins.font"
+}
+fonts {
+  name: "poppins_bold"
+  font: "/fonts/poppins_bold.font"
+}
 textures {
   name: "ui"
   texture: "/assets/ui/ui.atlas"
