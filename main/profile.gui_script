@@ -1,7 +1,9 @@
 -- profile.gui_script - Username + avatar picker (account completion).
--- texture_bg background anchored to true physical edges. Keyboard keys use
--- default_btn 9-slice. SAVE → primary_btn, BACK/DELETE → secondary_btn.
--- Avatar cells & input field use container_bg / container_bg_active glass panels.
+-- Pixel-faithful port of the Godot ProfileScreen's luxury dark-gold design:
+-- flat #0B0809 background, layered gold-framed avatar preview (82px outer,
+-- #C79229 gold border over #1F180B avatar wells), and a borderless
+-- 15-column avatar grid whose cells carry faint #8C661B gold-line borders
+-- with a solid 2px gold border on the selected cell.
 
 local ui        = require("modules.ui")
 local app_state = require("modules.app_state")
@@ -14,6 +16,24 @@ local EDGE_L, EDGE_R = 0, 1280
 local EDGE_B, EDGE_T = 0, 720
 local CX, CY = 640, 360
 local AVATARS = 60
+
+-- Godot ProfileScreen palette (luxury dark-gold)
+local P_BG        = vmath.vector4(0.042, 0.033, 0.027, 1) -- #0B0809
+local P_PANEL     = vmath.vector4(0.082, 0.063, 0.051, 1) -- #151010
+local P_AVATAR_BG = vmath.vector4(0.118, 0.094, 0.071, 1) -- #1F180B
+local P_GOLD      = vmath.vector4(0.784, 0.573, 0.165, 1) -- #C79229
+local P_GOLD_LIGHT= vmath.vector4(0.941, 0.753, 0.376, 1) -- #F0C060
+local P_GOLD_LINE = vmath.vector4(0.549, 0.404, 0.141, 0.28) -- #8C661B faded
+local P_CREAM     = vmath.vector4(0.957, 0.925, 0.843, 1) -- #F4EDD7
+local P_CREAM_DIM = vmath.vector4(0.682, 0.627, 0.541, 1) -- #AEA08A
+local P_MUTED     = vmath.vector4(0.455, 0.400, 0.325, 1) -- #746B53
+local P_BORDER    = vmath.vector4(0.165, 0.129, 0.102, 1) -- #2A2119
+local P_BADGE_BG  = vmath.vector4(0.157, 0.118, 0.078, 1) -- #251E14
+local P_B_OUTER   = vmath.vector4(0.027, 0.020, 0.016, 1) -- #070504
+local P_B_MID     = vmath.vector4(0.012, 0.008, 0.008, 1) -- #030202
+local P_ERROR     = vmath.vector4(0.820, 0.231, 0.231, 1) -- #D13B3B
+local P_SUCCESS   = vmath.vector4(0.275, 0.624, 0.388, 1) -- #469F63
+local P_DARK_TXT  = vmath.vector4(0.06, 0.045, 0.02, 1)
 
 local function refresh_wh()
 	local m = screen.metrics()
@@ -46,55 +66,71 @@ local function track(self, n) self.nodes[#self.nodes+1] = n return n end
 
 local KB = { "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM" }
 
+-- Solid rectangle with a flat border (Godot panels are flat StyleBoxFlats).
+local function framed(self, x, y, w, h, border_col, bw, bg_col)
+	track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), border_col))
+	track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w - bw*2, h - bw*2, 0), bg_col))
+end
+
+-- Godot ProfileScreen layered avatar frame:
+-- gold 1px → #070504 → #030202 → #1F180B well → avatar (82px outer, 72 avatar)
+local function gold_avatar_frame(self, x, y, avatar_id)
+	track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(82, 82, 0), P_GOLD))
+	track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(80, 80, 0), P_B_OUTER))
+	track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(76, 76, 0), P_B_MID))
+	track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(72, 72, 0), P_AVATAR_BG))
+	track(self, ui.avatar(vmath.vector3(x, y, 0), vmath.vector3(72, 72, 0), avatar_id))
+end
+
 local function rebuild(self)
 	clear(self)
 
-	-- Background.
-	track(self, ui.cover(LOGICAL_W, LOGICAL_H, ui.DARK))
-	track(self, ui.cover_image(LOGICAL_W, LOGICAL_H, "texture_bg"))
-	track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.58)))
+	-- Flat luxury-dark background.
+	track(self, ui.cover(LOGICAL_W, LOGICAL_H, P_BG))
 
 	local ok, msg_txt = validate(self.username)
 
-	-- Top bar — anchored to edges.
-	track(self, ui.text(vmath.vector3(CX, EDGE_T - 40, 0), "COMPLETE YOUR PROFILE", "title", ui.GOLD))
+	-- Top bar — gold title, flat gold SAVE, bordered BACK.
+	track(self, ui.text(vmath.vector3(CX, EDGE_T - 40, 0), "COMPLETE YOUR PROFILE", "title", P_GOLD_LIGHT))
 	if ok then
-		local back_btn = track(self, ui.btn9(vmath.vector3(EDGE_L + 90, EDGE_T - 40, 0), vmath.vector3(140, 44, 0), "secondary_btn"))
-		track(self, ui.text(vmath.vector3(EDGE_L + 90, EDGE_T - 40, 0), "< BACK", "small", ui.WHITE))
+		framed(self, EDGE_L + 90, EDGE_T - 40, 140, 44, P_BORDER, 1, P_PANEL)
+		local back_btn = track(self, ui.box(vmath.vector3(EDGE_L + 90, EDGE_T - 40, 0), vmath.vector3(140, 44, 0), vmath.vector4(0,0,0,0.001)))
+		track(self, ui.text(vmath.vector3(EDGE_L + 90, EDGE_T - 40, 0), "< BACK", "small", P_CREAM_DIM))
 		self.buttons[#self.buttons+1] = { node = back_btn, id = "back" }
 	end
-	local save_btn = track(self, ui.btn9(vmath.vector3(EDGE_R - 110, EDGE_T - 40, 0), vmath.vector3(170, 48, 0),
-		ok and "primary_btn" or "default_btn"))
-	track(self, ui.text(vmath.vector3(EDGE_R - 110, EDGE_T - 40, 0), "SAVE", "body", ui.WHITE))
+	local save_btn = track(self, ui.box(vmath.vector3(EDGE_R - 110, EDGE_T - 40, 0), vmath.vector3(170, 48, 0),
+		ok and P_GOLD or P_BADGE_BG))
+	track(self, ui.text(vmath.vector3(EDGE_R - 110, EDGE_T - 40, 0), "SAVE", "body", ok and P_DARK_TXT or P_MUTED))
 	self.buttons[#self.buttons+1] = { node = save_btn, id = "save" }
 
-	-- ── Left column: preview + username field + keyboard (left of centre) ────
+	-- ── Left column: gold-framed preview + username field + keyboard ─────────
 	local lx = CX - 340
 
-	track(self, ui.panel9(vmath.vector3(lx, EDGE_T - 170, 0), vmath.vector3(132, 132, 0), "container_bg"))
-	track(self, ui.avatar(vmath.vector3(lx, EDGE_T - 170, 0), vmath.vector3(120, 120, 0), self.avatar))
+	gold_avatar_frame(self, lx, EDGE_T - 160, self.avatar)
 
-	track(self, ui.text(vmath.vector3(lx, EDGE_T - 258, 0), "USERNAME", "small", ui.MUTED))
-	track(self, ui.panel9(vmath.vector3(lx, EDGE_T - 298, 0), vmath.vector3(360, 52, 0), "container_bg_active"))
+	track(self, ui.text(vmath.vector3(lx, EDGE_T - 240, 0), "USERNAME", "small", P_MUTED))
+	framed(self, lx, EDGE_T - 280, 360, 52, ok and P_GOLD or P_BORDER, 1, P_PANEL)
 	local shown = (self.username ~= "") and self.username or "Enter name..."
-	track(self, ui.text(vmath.vector3(lx, EDGE_T - 298, 0), shown, "body",
-		(self.username ~= "") and ui.WHITE or ui.MUTED))
-	track(self, ui.text(vmath.vector3(lx, EDGE_T - 334, 0), ok and "Looks good!" or msg_txt, "small",
-		ok and vmath.vector4(0.3, 0.9, 0.5, 1) or vmath.vector4(0.95, 0.5, 0.3, 1)))
+	track(self, ui.text(vmath.vector3(lx, EDGE_T - 280, 0), shown, "body",
+		(self.username ~= "") and P_CREAM or P_MUTED))
+	track(self, ui.text(vmath.vector3(lx, EDGE_T - 316, 0), ok and "Looks good!" or msg_txt, "small",
+		ok and P_SUCCESS or P_ERROR))
 
-	-- On-screen keyboard.
+	-- On-screen keyboard (flat dark keys with gold-line borders).
 	local kw, kh, kg = 42, 42, 6
-	local ky = EDGE_T - 398
+	local ky = EDGE_T - 380
+	local function key(px, py, w, ch, label)
+		framed(self, px, py, w, kh, P_BORDER, 1, P_BADGE_BG)
+		track(self, ui.text(vmath.vector3(px, py, 0), label or ch, "small", P_CREAM))
+		local hit = track(self, ui.box(vmath.vector3(px, py, 0), vmath.vector3(w, kh, 0), vmath.vector4(0, 0, 0, 0.001)))
+		self.buttons[#self.buttons+1] = { node = hit, id = "k_"..ch, data = (ch ~= "back") and ch or nil }
+	end
 	for r, row in ipairs(KB) do
 		local n = #row
 		local roww = n*(kw+kg) - kg
 		local kx0  = lx - roww/2 + kw/2
 		for i = 1, n do
-			local ch = row:sub(i, i)
-			local kb = track(self, ui.btn9(vmath.vector3(kx0+(i-1)*(kw+kg), ky-(r-1)*(kh+kg), 0),
-				vmath.vector3(kw, kh, 0), "default_btn"))
-			track(self, ui.text(vmath.vector3(kx0+(i-1)*(kw+kg), ky-(r-1)*(kh+kg), 0), ch, "small", ui.WHITE))
-			self.buttons[#self.buttons+1] = { node = kb, id = "k_"..ch, data = ch }
+			key(kx0+(i-1)*(kw+kg), ky-(r-1)*(kh+kg), kw, row:sub(i, i))
 		end
 	end
 	local digits = "0123456789"
@@ -102,32 +138,30 @@ local function rebuild(self)
 	local roww = 10*(kw+kg) - kg
 	local kx0 = lx - roww/2 + kw/2
 	for i = 1, 10 do
-		local ch = digits:sub(i, i)
-		local kb = track(self, ui.btn9(vmath.vector3(kx0+(i-1)*(kw+kg), ny, 0),
-			vmath.vector3(kw, kh, 0), "default_btn"))
-		track(self, ui.text(vmath.vector3(kx0+(i-1)*(kw+kg), ny, 0), ch, "small", ui.WHITE))
-		self.buttons[#self.buttons+1] = { node = kb, id = "k_"..ch, data = ch }
+		key(kx0+(i-1)*(kw+kg), ny, kw, digits:sub(i, i))
 	end
-	local del_btn = track(self, ui.btn9(vmath.vector3(lx, ny-(kh+kg), 0), vmath.vector3(180, kh, 0), "secondary_btn"))
-	track(self, ui.text(vmath.vector3(lx, ny-(kh+kg), 0), "DELETE", "small", ui.WHITE))
-	self.buttons[#self.buttons+1] = { node = del_btn, id = "k_back" }
+	key(lx, ny-(kh+kg), 180, "back", "DELETE")
 
-	-- ── Right: avatar grid (10×6), right of centre, reaching the right edge ──
-	local cols = 10
-	local cellw, cellh, gap = 54, 54, 6
-	local gx0 = CX + 70 + cellw/2
+	-- ── Right: Godot avatar grid — 15 columns, no separation, gold borders ───
+	local cols = 15
+	local cellw, cellh = 46, 46
+	local gridw = cols * cellw
+	local gx0 = EDGE_R - 24 - gridw + cellw/2
 	local gy0 = EDGE_T - 120
-	track(self, ui.text(vmath.vector3(CX + 70 + (cols*(cellw+gap)-gap)/2, EDGE_T - 70, 0),
-		"SELECT AVATAR   ("..self.avatar.." / "..AVATARS..")", "small", ui.MUTED))
+	track(self, ui.text(vmath.vector3(gx0 - cellw/2 + gridw/2, EDGE_T - 76, 0),
+		"SELECT AVATAR   ("..self.avatar.." / "..AVATARS..")", "small", P_MUTED))
 	for i = 1, AVATARS do
 		local c  = (i-1) % cols
 		local rr = math.floor((i-1) / cols)
-		local px = gx0 + c*(cellw+gap)
-		local py = gy0 - rr*(cellh+gap)
+		local px = gx0 + c*cellw
+		local py = gy0 - rr*cellh
 		local sel = (i == self.avatar)
-		track(self, ui.panel9(vmath.vector3(px, py, 0), vmath.vector3(cellw, cellh, 0),
-			sel and "container_bg_active" or "container_bg"))
-		track(self, ui.avatar(vmath.vector3(px, py, 0), vmath.vector3(cellw-8, cellh-8, 0), i))
+		if sel then
+			framed(self, px, py, cellw, cellh, P_GOLD, 2, P_AVATAR_BG)
+		else
+			framed(self, px, py, cellw, cellh, P_GOLD_LINE, 1, P_AVATAR_BG)
+		end
+		track(self, ui.avatar(vmath.vector3(px, py, 0), vmath.vector3(40, 40, 0), i))
 		local hit = track(self, ui.box(vmath.vector3(px, py, 0), vmath.vector3(cellw, cellh, 0),
 			vmath.vector4(0, 0, 0, 0)))
 		self.buttons[#self.buttons+1] = { node = hit, id = "avatar", data = i }

@@ -220,6 +220,62 @@ local function mark_tutorial_seen()
     pcall(sys.save, sys.get_save_file("matatu_defold", "tutorial"), { seen = true })
 end
 
+-- ---------------------------------------------------------------------------
+-- First-time AI-takeover consent popover.
+-- Asks the user, once, to allow the backend AI to play their turns whenever
+-- they go offline or time out mid-match — protecting their entry tokens.
+-- Flat design: Poppins type, sharp rectangles, no rounded corners, no shadows.
+-- ---------------------------------------------------------------------------
+local CONSENT_PANEL  = vmath.vector4(0.086, 0.098, 0.118, 1.0) -- #16191E
+local CONSENT_ACCENT = vmath.vector4(0.949, 0.702, 0.020, 1.0) -- #F2B305
+local CONSENT_BODY_C = vmath.vector4(0.788, 0.812, 0.839, 1.0) -- #C9CFD6
+local CONSENT_DARK   = vmath.vector4(0.082, 0.094, 0.110, 1.0)
+local CONSENT_NEUTRAL= vmath.vector4(0.153, 0.173, 0.200, 1.0) -- #272C33
+
+local function ai_consent_given()
+    local ok, data = pcall(sys.load, sys.get_save_file("matatu_defold", "ai_consent"))
+    return ok and type(data) == "table" and data.agreed == true
+end
+local function mark_ai_consent()
+    pcall(sys.save, sys.get_save_file("matatu_defold", "ai_consent"), { agreed = true })
+end
+
+local function draw_consent(self)
+    if not self.consent_active then return end
+
+    -- Flat scrim — absorbs every tap behind the popover.
+    local scrim = track(self, ui.box(vmath.vector3(CX, CY, 0),
+        vmath.vector3(LOGICAL_W * 2, LOGICAL_H * 2, 0), vmath.vector4(0, 0, 0, 0.82)))
+    self.buttons[#self.buttons + 1] = { node = scrim, id = "consent_block" }
+
+    local pw, ph = 660, 420
+    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), CONSENT_PANEL))
+    track(self, ui.box(vmath.vector3(CX, CY + ph/2 - 3, 0), vmath.vector3(pw, 6, 0), CONSENT_ACCENT))
+
+    track(self, ui.text(vmath.vector3(CX, CY + ph/2 - 64, 0), "AI GAME PROTECTION", "poppins_bold", C_WHITE, 30 / 34))
+
+    local lines = {
+        "Connections can drop mid-match.",
+        "Do you allow the AI to play your turns if you",
+        "go offline or run out of time? This prevents",
+        "you from losing your entry tokens.",
+    }
+    local ly = CY + ph/2 - 124
+    for _, line in ipairs(lines) do
+        track(self, ui.text(vmath.vector3(CX, ly, 0), line, "poppins", CONSENT_BODY_C, 20 / 28))
+        ly = ly - 36
+    end
+
+    local by = CY - ph/2 + 64
+    local agree = track(self, ui.box(vmath.vector3(CX + 130, by, 0), vmath.vector3(228, 58, 0), CONSENT_ACCENT))
+    track(self, ui.text(vmath.vector3(CX + 130, by - 2, 0), "I AGREE", "poppins_bold", CONSENT_DARK, 21 / 34))
+    self.buttons[#self.buttons + 1] = { node = agree, id = "consent_agree" }
+
+    local later = track(self, ui.box(vmath.vector3(CX - 130, by, 0), vmath.vector3(228, 58, 0), CONSENT_NEUTRAL))
+    track(self, ui.text(vmath.vector3(CX - 130, by - 2, 0), "NOT NOW", "poppins_bold", CONSENT_BODY_C, 21 / 34))
+    self.buttons[#self.buttons + 1] = { node = later, id = "consent_later" }
+end
+
 local function draw_tutorial(self)
     if not self.tutorial_active then return end
     local page = self.tut_page or 1
@@ -468,6 +524,9 @@ local function rebuild(self)
 
     -- ===== New-user walkthrough overlay (drawn on top) =====================
     draw_tutorial(self)
+
+    -- ===== First-time AI consent popover (topmost) =========================
+    draw_consent(self)
 end
 
 -- ---------------------------------------------------------------------------
@@ -630,6 +689,19 @@ end
 -- Input handler
 -- ---------------------------------------------------------------------------
 local function handle(self, b)
+    -- ---- First-time AI consent popover --------------------------------------
+    if b.id == "consent_block" then
+        return  -- absorb taps behind the popover
+    elseif b.id == "consent_agree" then
+        mark_ai_consent()
+        self.consent_active = false
+        rebuild(self); return
+    elseif b.id == "consent_later" then
+        -- Not persisted: the popover asks again on the next app launch.
+        self.consent_active = false
+        rebuild(self); return
+    end
+
     -- ---- Walkthrough overlay ----------------------------------------------
     if b.id == "tut_block" then
         return  -- absorb taps behind the overlay
@@ -717,6 +789,8 @@ function init(self)
     -- First-time players get the walkthrough automatically (once).
     self.tut_page = 1
     self.tutorial_active = not tutorial_seen()
+    -- ...and the AI-takeover consent popover, shown on top until answered.
+    self.consent_active = not ai_consent_given()
     refresh_wh()
     if not app_state.ai_series        then app_state.ai_series        = 3 end
     if not app_state.tournament_size  then app_state.tournament_size  = 4 end

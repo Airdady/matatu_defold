@@ -20,6 +20,14 @@ textures {
   texture: "/assets/cards/cards.atlas"
 }
 textures {
+  name: "cards_drago"
+  texture: "/assets/cards/cards_drago.atlas"
+}
+textures {
+  name: "cards_batman"
+  texture: "/assets/cards/cards_batman.atlas"
+}
+textures {
   name: "avatars"
   texture: "/assets/avatars/avatars.atlas"
 }

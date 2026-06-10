@@ -15,6 +15,9 @@ local function show(self, screen)
 		if s == screen then
 			msg.post("#" .. s, "enable")
 			msg.post("#" .. s, "screen_enter")
+		elseif screen == "payments" and s == "online" then
+			-- Payments is a DIALOG, not a screen: the online lobby stays
+			-- alive (and visible) underneath the modal dim.
 		else
 			msg.post("#" .. s, "disable")
 		end
@@ -175,6 +178,15 @@ function init(self)
 	-- Opponent emoji reactions during a match.
 	table.insert(self.tokens, ws.on("emoji", function(sender, content, sound)
 		msg.post("#game_logic", "ws_emoji", { sender = sender or "", emoji = content or "joy", sound = sound or "" })
+	end))
+
+	-- The backend AI covered our seat (turn timeout or offline takeover).
+	table.insert(self.tokens, ws.on("ai_played_for_you", function(info)
+		info = info or {}
+		msg.post("#game_logic", "ws_ai_played", {
+			mode = info.mode or "SINGLE_MOVE",
+			moves = info.moves or 0,
+		})
 	end))
 
 	-- A declined request also reaches the board: if the player asked for a
