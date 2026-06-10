@@ -38,3 +38,6 @@ input_method = INPUT_METHOD_HIDDEN
 [websocket]
 debug = 0
 socket_timeout = 10000000
+
+[sound]
+max_component_count = 128

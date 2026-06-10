@@ -1,4 +1,5 @@
 -- game.gui_script — Matatu Main HUD Overlay (Defold)
+local emoji_popover = require("modules.emoji_popover")
 
 -- FIXED: Target mapped precisely to the /controller object to guarantee routing.
 local GAME = "/controller#game_logic"
@@ -162,8 +163,6 @@ local function build_stake_chip(self)
 end
 
 local function build_standings_ui(self)
-    -- Sits on the right, just below the deck pile (deck is centred vertically on
-    -- the right edge), anchored to the right so it tracks the deck on any screen.
     self.standings_root = box(vmath.vector3(LOGICAL_W - EXIT_BTN_MARGIN_RIGHT - 196, LOGICAL_H/2 - 86, 0), vmath.vector3(196, 180, 0), vmath.vector4(0,0,0,0), gui.PIVOT_NW)
     gui.set_xanchor(self.standings_root, gui.ANCHOR_RIGHT)
     gui.set_yanchor(self.standings_root, gui.ANCHOR_NONE)
@@ -229,15 +228,11 @@ local function build_exit(self)
 end
 
 local function build_conn_overlay(self)
-    -- Full-screen dim scrim, centred on the real screen middle and stretched to
-    -- cover any aspect ratio (same pattern as the suit selector overlay).
     self.conn_scrim = box(vmath.vector3(LOGICAL_W/2, LOGICAL_H/2, 0), vmath.vector3(5000, 5000, 0), vmath.vector4(0, 0, 0, 0.6), gui.PIVOT_CENTER)
     gui.set_xanchor(self.conn_scrim, gui.ANCHOR_NONE)
     gui.set_yanchor(self.conn_scrim, gui.ANCHOR_NONE)
     gui.set_adjust_mode(self.conn_scrim, gui.ADJUST_STRETCH)
 
-    -- Panel must be created at the origin BEFORE parenting; its local position
-    -- is then (0,0) relative to the scrim centre, so it stays centred on screen.
     self.conn_panel = box(vmath.vector3(0, 0, 0), vmath.vector3(460, 190, 0), vmath.vector4(0.07, 0.08, 0.11, 0.98), gui.PIVOT_CENTER)
     gui.set_parent(self.conn_panel, self.conn_scrim)
     gui.set_position(self.conn_panel, vmath.vector3(0, 0, 0))
@@ -280,146 +275,6 @@ local function set_conn_overlay(self, opts)
         gui.set_enabled(self.conn_scrim, false)
         self.conn_count_active = false
     end
-end
-
-----------------------------------------------------------------------
--- Emoji selector (ported from the Godot EmojiSelector)
--- Tap the button -> emoji grid. Tap an emoji with multiple voices -> a sound
--- list; pick one to send (single-voice emojis send immediately). Sending flies
--- the animated emoji up to the opponent avatar; receiving pops an animated
--- bubble there. Each emoji plays its looping frame animation (anim_<name>).
-----------------------------------------------------------------------
-local EMOJI_SERIES = {
-    { name = "joy",        sounds = { "LaughMzeei", "Kawedemu", "Igoing", "AvugaObula" } },
-    { name = "tongue",     sounds = { "Kawedemu", "Mbooko", "Kasongo", "Towedde", "ToweddeAlt" } },
-    { name = "hot",        sounds = { "Banamwe", "OhMyGod", "Abarongo", "Eheh", "IWonder" } },
-    { name = "money",      sounds = { "Kigozi", "Olyaa", "Connecting" } },
-    { name = "party",      sounds = { "Bamukubye", "Omukwomu", "Kigozi", "Kawedemu", "Towedde", "ToweddeAlt" } },
-    { name = "sleep",      sounds = { "Snoring" } },
-    { name = "thumbsdown", sounds = { "ICantAcceptThat", "TogendaKuba", "Tokirizibwa" } },
-    { name = "wave",       sounds = { "Goodbye" } },
-}
-local EMOJI_VALID = {}
-for _, e in ipairs(EMOJI_SERIES) do EMOJI_VALID[e.name] = true end
-local EMOJI_MAX_SOUNDS = 6
-
-local function build_emoji_selector(self)
-    local size = 64
-    self.emoji_btn = box(vmath.vector3(LOGICAL_W - 22 - size/2, 22 + size/2, 0), vmath.vector3(size, size, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
-    gui.set_xanchor(self.emoji_btn, gui.ANCHOR_RIGHT)
-    gui.set_yanchor(self.emoji_btn, gui.ANCHOR_BOTTOM)
-    pcall(function() gui.set_texture(self.emoji_btn, "emojis"); gui.play_flipbook(self.emoji_btn, hash("emoji_btn")) end)
-
-    -- ── Grid panel (4 x 2 thumbnails) ──
-    local cols, rows, cell, pad = 4, 2, 62, 12
-    local gpw, gph = cols*cell + pad*2, rows*cell + pad*2
-    self.emoji_grid_panel = box(vmath.vector3(LOGICAL_W - 22 - gpw/2, 22 + size + 12 + gph/2, 0), vmath.vector3(gpw, gph, 0), vmath.vector4(0.07, 0.08, 0.11, 0.97), gui.PIVOT_CENTER)
-    gui.set_xanchor(self.emoji_grid_panel, gui.ANCHOR_RIGHT)
-    gui.set_yanchor(self.emoji_grid_panel, gui.ANCHOR_BOTTOM)
-    self.emoji_cells = {}
-    for i, e in ipairs(EMOJI_SERIES) do
-        local c, r = (i-1) % cols, math.floor((i-1)/cols)
-        local ex = -gpw/2 + pad + cell/2 + c*cell
-        local ey =  gph/2 - pad - cell/2 - r*cell
-        local n = box(vmath.vector3(ex, ey, 0), vmath.vector3(cell-12, cell-12, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
-        gui.set_parent(n, self.emoji_grid_panel)
-        pcall(function() gui.set_texture(n, "emojis"); gui.play_flipbook(n, hash("emoji_"..e.name)) end)
-        self.emoji_cells[i] = { node = n, idx = i }
-    end
-    gui.set_enabled(self.emoji_grid_panel, false)
-
-    -- ── Sound-list panel (emoji preview + close, then a row per voice) ──
-    local spw, row_h = 232, 32
-    local sph = 40 + EMOJI_MAX_SOUNDS*row_h + 10
-    self.emoji_sound_panel = box(vmath.vector3(LOGICAL_W - 22 - spw/2, 22 + size + 12 + sph/2, 0), vmath.vector3(spw, sph, 0), vmath.vector4(0.07, 0.08, 0.11, 0.98), gui.PIVOT_CENTER)
-    gui.set_xanchor(self.emoji_sound_panel, gui.ANCHOR_RIGHT)
-    gui.set_yanchor(self.emoji_sound_panel, gui.ANCHOR_BOTTOM)
-    self.emoji_sound_thumb = box(vmath.vector3(-spw/2 + 26, sph/2 - 22, 0), vmath.vector3(30, 30, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
-    gui.set_parent(self.emoji_sound_thumb, self.emoji_sound_panel)
-    self.emoji_back = box(vmath.vector3(spw/2 - 20, sph/2 - 22, 0), vmath.vector3(28, 28, 0), vmath.vector4(1,1,1,0.08), gui.PIVOT_CENTER)
-    gui.set_parent(self.emoji_back, self.emoji_sound_panel)
-    local bx = label(vmath.vector3(0, 0, 0), "BACK", 11, C_SCORE_LBL, gui.PIVOT_CENTER)
-    gui.set_parent(bx, self.emoji_back)
-    self.emoji_sound_rows = {}
-    for i = 1, EMOJI_MAX_SOUNDS do
-        local ry = sph/2 - 44 - (i-1)*row_h - row_h/2
-        local rbg = box(vmath.vector3(0, ry, 0), vmath.vector3(spw-20, row_h-5, 0), vmath.vector4(1,1,1,0.06), gui.PIVOT_CENTER)
-        gui.set_parent(rbg, self.emoji_sound_panel)
-        local rlbl = label(vmath.vector3(-(spw-20)/2 + 14, 0, 0), "", 14, C_TEXT, gui.PIVOT_W)
-        gui.set_parent(rlbl, rbg)
-        self.emoji_sound_rows[i] = { bg = rbg, lbl = rlbl }
-    end
-    gui.set_enabled(self.emoji_sound_panel, false)
-
-    self.emoji_open = false
-    self.emoji_view = "grid"
-    self.emoji_fx = {}
-end
-
-local function emoji_close(self)
-    self.emoji_open = false
-    if self.emoji_grid_panel then gui.set_enabled(self.emoji_grid_panel, false) end
-    if self.emoji_sound_panel then gui.set_enabled(self.emoji_sound_panel, false) end
-end
-
-local function emoji_show_grid(self)
-    self.emoji_open, self.emoji_view = true, "grid"
-    gui.set_enabled(self.emoji_sound_panel, false)
-    gui.set_enabled(self.emoji_grid_panel, true)
-    gui.set_scale(self.emoji_grid_panel, vmath.vector3(0.85, 0.85, 1))
-    gui.animate(self.emoji_grid_panel, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTBACK, 0.16)
-end
-
-local function emoji_show_sounds(self, idx)
-    local e = EMOJI_SERIES[idx]
-    if not e then return end
-    self.emoji_open, self.emoji_view, self.emoji_sel = true, "sounds", idx
-    pcall(function() gui.set_texture(self.emoji_sound_thumb, "emojis"); gui.play_flipbook(self.emoji_sound_thumb, hash("emoji_"..e.name)) end)
-    for i, row in ipairs(self.emoji_sound_rows) do
-        local snd = e.sounds[i]
-        if snd then gui.set_text(row.lbl, snd); gui.set_enabled(row.bg, true)
-        else gui.set_enabled(row.bg, false) end
-    end
-    gui.set_enabled(self.emoji_grid_panel, false)
-    gui.set_enabled(self.emoji_sound_panel, true)
-    gui.set_scale(self.emoji_sound_panel, vmath.vector3(0.9, 0.9, 1))
-    gui.animate(self.emoji_sound_panel, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTBACK, 0.16)
-end
-
--- Animated emoji FX: a sent emoji flies from the button up to the opponent
--- avatar; a received one pops in there. Both loop the emoji's frame animation.
-local function show_emoji_anim(self, name, fly)
-    if not EMOJI_VALID[name] then name = "joy" end
-    local key = fly and "send" or "recv"
-    self.emoji_fx = self.emoji_fx or {}
-    if self.emoji_fx[key] then pcall(gui.delete_node, self.emoji_fx[key]); self.emoji_fx[key] = nil end
-
-    local opp = vmath.vector3(150, LOGICAL_H - 92, 0)
-    local startp = fly and vmath.vector3(LOGICAL_W - 54, 54, 0) or opp
-    local n = box(startp, vmath.vector3(96, 96, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
-    pcall(function() gui.set_texture(n, "emojis"); gui.play_flipbook(n, hash("anim_"..name)) end)
-    self.emoji_fx[key] = n
-    local function done() pcall(gui.delete_node, n); if self.emoji_fx[key] == n then self.emoji_fx[key] = nil end end
-
-    if fly then
-        gui.set_scale(n, vmath.vector3(1.15, 1.15, 1))
-        gui.animate(n, "position", opp, gui.EASING_INQUAD, 1.2)
-        gui.animate(n, "scale", vmath.vector3(0.72, 0.72, 1), gui.EASING_OUTSINE, 1.2)
-        gui.animate(n, "color.w", 0.0, gui.EASING_INSINE, 0.4, 1.0, done)
-    else
-        gui.set_scale(n, vmath.vector3(0.3, 0.3, 1))
-        gui.animate(n, "scale", vmath.vector3(1.0, 1.0, 1), gui.EASING_OUTBACK, 0.3)
-        gui.animate(n, "color.w", 0.0, gui.EASING_INSINE, 0.5, 1.7, done)
-    end
-end
-
-local function emoji_send(self, idx, sound)
-    local e = EMOJI_SERIES[idx]
-    if not e then return end
-    emoji_close(self)
-    show_emoji_anim(self, e.name, true)
-    msg.post(GAME, "send_emoji", { emoji = e.name, sound = sound or e.sounds[1] or "" })
-    msg.post(GAME, "play_sound", { sound = "SoundRequestSuit" })
 end
 
 ----------------------------------------------------------------------
@@ -497,7 +352,8 @@ function init(self)
     _create_skip_button(self)
     build_exit(self)
     build_conn_overlay(self)
-    build_emoji_selector(self)
+    
+    emoji_popover.init(self)
 end
 
 function update(self, dt)
@@ -530,9 +386,12 @@ function update(self, dt)
             end
             gui.set_color(active_pie, c)
 
+            -- FIX: was msg.post(GAME, "play_sound", { sound = "SoundAlertTimer" })
+            -- "SoundAlertTimer" is not a valid component ID, and game.script has no play_sound handler.
+            -- Post directly to the embedded sound component on /controller instead.
             if self.timer_remaining <= 10.0 and self.timer_remaining > 0 and self.is_player_turn and not self.alert_played then
                 self.alert_played = true
-                msg.post(GAME, "play_sound", { sound = "SoundAlertTimer" })
+                msg.post("/controller#snd_alert", "play_sound")
             end
 
             if self.timer_remaining <= 0 and self.is_player_turn then
@@ -550,6 +409,10 @@ end
 function on_input(self, action_id, action)
     if action_id ~= hash("touch") or not action.pressed then return false end
 
+    if emoji_popover.on_input(self, action_id, action) then
+        return true
+    end
+
     if self.exit_popover and gui.is_enabled(self.exit_popover) then
         if hit(self.btn_yes, action) then
             gui.set_enabled(self.exit_popover, false)
@@ -564,36 +427,6 @@ function on_input(self, action_id, action)
 
     if self.exit_btn and hit(self.exit_btn, action) then
         if self.exit_popover then gui.set_enabled(self.exit_popover, true) end
-        return true
-    end
-
-    -- Emoji selector: handle the open panel (grid or sound list), then the button.
-    if self.emoji_open then
-        if self.emoji_view == "grid" then
-            for _, cell in ipairs(self.emoji_cells or {}) do
-                if hit(cell.node, action) then
-                    local e = EMOJI_SERIES[cell.idx]
-                    if #e.sounds <= 1 then emoji_send(self, cell.idx, e.sounds[1])
-                    else emoji_show_sounds(self, cell.idx) end
-                    return true
-                end
-            end
-        else
-            if hit(self.emoji_back, action) then emoji_show_grid(self); return true end
-            for i, row in ipairs(self.emoji_sound_rows or {}) do
-                if gui.is_enabled(row.bg) and hit(row.bg, action) then
-                    emoji_send(self, self.emoji_sel, EMOJI_SERIES[self.emoji_sel].sounds[i])
-                    return true
-                end
-            end
-        end
-        if not (self.emoji_btn and hit(self.emoji_btn, action)) then
-            emoji_close(self)
-            return true
-        end
-    end
-    if self.emoji_btn and hit(self.emoji_btn, action) then
-        if self.emoji_open then emoji_close(self) else emoji_show_grid(self) end
         return true
     end
 
@@ -675,12 +508,9 @@ function on_message(self, message_id, message)
         end
 
     elseif message_id == hash("update_stake") then
-        -- Stake chip on the left of the board (mirrors the Godot HUD, which only
-        -- shows a chip from 200 coins up; free + 50-coin games show nothing).
         local s = message.amount
         local amount = (type(s) == "table") and (tonumber(s.amount) or 0) or (tonumber(s) or 0)
         if not self.stake_chip then
-            -- nothing to do
         elseif amount < 200 then
             gui.set_enabled(self.stake_chip, false)
         else
@@ -716,11 +546,7 @@ function on_message(self, message_id, message)
         set_conn_overlay(self, message)
 
     elseif message_id == hash("emoji_received") then
-        -- Opponent reacted: pop the animated emoji at their avatar + play a sound.
-        if not message.is_me then
-            show_emoji_anim(self, message.emoji or "joy", false)
-            msg.post(GAME, "play_sound", { sound = "SoundRequestSuit" })
-        end
+        emoji_popover.on_message(self, message_id, message)
 
     elseif message_id == hash("reset_hud") then
         stop_timers(self)
@@ -731,7 +557,7 @@ function on_message(self, message_id, message)
         if self.stake_chip then gui.set_enabled(self.stake_chip, false) end
         if self.standings_title then gui.set_enabled(self.standings_title, false) end
         for _, row in ipairs(self.standings_rows or {}) do gui.set_enabled(row.bg, false) end
-        emoji_close(self)
-        for k, n in pairs(self.emoji_fx or {}) do pcall(gui.delete_node, n); self.emoji_fx[k] = nil end
+        
+        emoji_popover.reset(self)
     end
 end
