@@ -1,7 +1,11 @@
--- payments.gui_script - Mobile-money transaction screen.
--- texture_bg background anchored to true physical edges. Method tabs and input
--- fields use container_bg / container_bg_active glass panels. Numpad uses
--- default_btn 9-slice (PAY → primary_btn, backspace → secondary_btn).
+-- payments.gui_script - Mobile-money transaction DIALOG.
+-- Pixel-faithful port of the Godot TransactionModal: not a screen — a
+-- centered 600px modal over a 75% black dim, floating above the live
+-- online lobby (the controller keeps the lobby enabled underneath).
+-- Header + close ✕, segmented transaction tabs, phone (1.3x) + amount
+-- inputs with focus borders and a blinking caret, Min/Fee/Total row,
+-- status line, and a seamless 3-column numpad (border-only keys, red ⌫,
+-- green PAY).
 
 local ui        = require("modules.ui")
 local ws        = require("modules.websocket_manager")
@@ -12,6 +16,33 @@ local VISIBLE_W, VISIBLE_H = 1280, 720
 local EDGE_L, EDGE_R = 0, 1280
 local EDGE_B, EDGE_T = 0, 720
 local CX, CY = 640, 360
+
+-- Godot TransactionModal palette
+local M_DIM        = vmath.vector4(0, 0, 0, 0.75)
+local M_PANEL      = vmath.vector4(0.12, 0.12, 0.13, 1)    -- #1F1F21
+local M_PANEL_BD   = vmath.vector4(0.35, 0.35, 0.38, 1)    -- #595961
+local M_IN_BG      = vmath.vector4(0.12, 0.12, 0.14, 1)    -- #1F1F24
+local M_IN_BD      = vmath.vector4(0.25, 0.25, 0.28, 1)    -- #3F3F47
+local M_IN_BG_F    = vmath.vector4(0.15, 0.15, 0.18, 1)    -- focused bg
+local M_FOCUS      = vmath.vector4(0.3, 0.6, 1.0, 1)       -- #4D99FF
+local M_TAB_BG     = vmath.vector4(0.18, 0.18, 0.20, 1)    -- #2D2D33
+local M_TAB_BD     = vmath.vector4(0.3, 0.3, 0.32, 1)      -- #4D4D51
+local M_TAB_TXT    = vmath.vector4(0.6, 0.6, 0.6, 1)       -- #999999
+local M_LABEL      = vmath.vector4(0.75, 0.75, 0.75, 1)    -- #BFBFBF
+local M_PLACEHOLDER= vmath.vector4(0.65, 0.65, 0.65, 1)    -- #A6A6A6
+local M_FEE        = vmath.vector4(0.8, 0.8, 0.8, 1)       -- #CCCCCC
+local M_TOTAL      = vmath.vector4(0.5, 1.0, 0.6, 1)       -- #80FF99
+local M_MIN_WARN   = vmath.vector4(1, 0.45, 0.45, 1)       -- #FF7373
+local M_KEY_BD     = vmath.vector4(1, 1, 1, 0.04)
+local M_DEL_TINT   = vmath.vector4(0.8, 0.2, 0.2, 0.10)
+local M_DEL_TXT    = vmath.vector4(1, 0.6, 0.6, 1)
+local M_PAY_TINT   = vmath.vector4(0.1, 0.65, 0.35, 0.20)
+local M_PAY_BD     = vmath.vector4(0.1, 0.65, 0.35, 0.50)
+local M_PAY_TXT    = vmath.vector4(0.4, 0.9, 0.6, 1)
+local M_CLOSE      = vmath.vector4(0.6, 0.6, 0.6, 1)
+local M_ERR        = vmath.vector4(1, 0.3, 0.3, 1)         -- #FF4D4D
+local M_OKC        = vmath.vector4(0.3, 1.0, 0.5, 1)       -- #4DFF80
+local M_PROC       = vmath.vector4(1, 0.9, 0.4, 1)         -- #FFE666
 
 local function refresh_wh()
 	local m = screen.metrics()
@@ -53,25 +84,43 @@ local function clear(self)
 end
 local function track(self, n) self.nodes[#self.nodes+1] = n return n end
 
+-- Kenney ("body", 26px base) scaled to Godot pixel sizes.
+local function ktext(self, pos, str, px, color, pivot)
+	local n = track(self, ui.text(pos, str, "body", color, px / 26))
+	if pivot then gui.set_pivot(n, pivot) end
+	return n
+end
+
+-- Flat rectangle with border (Godot StyleBoxFlat).
+local function framed(self, x, y, w, h, border_col, bw, bg_col)
+	track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), border_col))
+	track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w - bw*2, h - bw*2, 0), bg_col))
+end
+
 local NUM = {"1","2","3","4","5","6","7","8","9","<","0","PAY"}
 
 local function rebuild(self)
 	clear(self)
 
-	-- Background.
-	track(self, ui.cover(LOGICAL_W, LOGICAL_H, ui.DARK))
-	track(self, ui.cover_image(LOGICAL_W, LOGICAL_H, "texture_bg"))
-	track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.58)))
+	-- 75% dim over the live lobby; absorbs every outside tap (closes dialog).
+	local dim = track(self, ui.box(vmath.vector3(CX, CY, 0),
+		vmath.vector3(LOGICAL_W * 2, LOGICAL_H * 2, 0), M_DIM))
+	self.buttons[#self.buttons+1] = { node = dim, id = "dim" }
 
-	-- Top bar — anchored to edges.
-	track(self, ui.text(vmath.vector3(CX, EDGE_T - 44, 0), "PAYMENTS", "title", ui.GOLD))
-	local bb = track(self, ui.btn9(vmath.vector3(EDGE_L + 90, EDGE_T - 44, 0), vmath.vector3(140, 44, 0), "secondary_btn"))
-	track(self, ui.text(vmath.vector3(EDGE_L + 90, EDGE_T - 44, 0), "< BACK", "small", ui.WHITE))
-	self.buttons[#self.buttons+1] = { node = bb, id = "back" }
+	-- Modal panel: 600 wide, #1F1F21 with a 2px #595961 border.
+	local pw, ph = 600, 596
+	local px0, py0 = CX, CY
+	framed(self, px0, py0, pw, ph, M_PANEL_BD, 2, M_PANEL)
+	local top = py0 + ph/2
+
+	-- Header: title + close ✕ (44px hit).
+	ktext(self, vmath.vector3(px0 - pw/2 + 32, top - 46, 0), "NEW TRANSACTION", 26, ui.WHITE, gui.PIVOT_W)
+	local close_hit = track(self, ui.box(vmath.vector3(px0 + pw/2 - 38, top - 44, 0), vmath.vector3(44, 44, 0), vmath.vector4(0, 0, 0, 0.001)))
+	ktext(self, vmath.vector3(px0 + pw/2 - 38, top - 44, 0), "X", 28, M_CLOSE)
+	self.buttons[#self.buttons+1] = { node = close_hit, id = "back" }
 
 	local u = ws.current_user_data or {}
-	track(self, ui.image(vmath.vector3(EDGE_R - 200, EDGE_T - 44, 0), vmath.vector3(22, 22, 0), "coin_icon"))
-	track(self, ui.text(vmath.vector3(EDGE_R - 130, EDGE_T - 44, 0), commas(u.balance or 0), "body", ui.GOLD))
+	ktext(self, vmath.vector3(px0 - pw/2 + 32, top - 76, 0), "Balance: " .. commas(u.balance or 0) .. " UGX", 15, M_LABEL, gui.PIVOT_W)
 
 	local ms = methods()
 	local method = ms[self.method_index] or ms[1]
@@ -80,71 +129,85 @@ local function rebuild(self)
 	local total = amount + fee
 	local minv = tonumber(method.min) or 0
 
-	-- Method tabs.
-	local tabw = math.min(200, (VISIBLE_W - 80) / #ms)
-	local tx0 = CX - (#ms * tabw) / 2 + tabw / 2
+	-- Segmented tabs (0 separation, blue selected — Godot PaymentTabs).
+	local tabs_y = top - 118
+	local tabw = (pw - 64) / #ms
+	local tx0 = px0 - (pw - 64)/2 + tabw/2
 	for i, m in ipairs(ms) do
 		local sel = (i == self.method_index)
-		track(self, ui.panel9(vmath.vector3(tx0+(i-1)*tabw, EDGE_T - 100, 0), vmath.vector3(tabw-8, 48, 0),
-			sel and "container_bg_active" or "container_bg"))
-		track(self, ui.text(vmath.vector3(tx0+(i-1)*tabw, EDGE_T - 100, 0), m.type or ("M"..i), "body",
-			sel and vmath.vector4(0.9, 0.2, 0.2, 1) or ui.WHITE))
-		local hit = track(self, ui.box(vmath.vector3(tx0+(i-1)*tabw, EDGE_T - 100, 0), vmath.vector3(tabw-8, 48, 0),
-			vmath.vector4(0, 0, 0, 0)))
+		local x = tx0 + (i-1) * tabw
+		framed(self, x, tabs_y, tabw, 48, M_TAB_BD, 1, sel and M_FOCUS or M_TAB_BG)
+		ktext(self, vmath.vector3(x, tabs_y, 0), tostring(m.type or ("M"..i)), 16, sel and ui.WHITE or M_TAB_TXT)
+		local hit = track(self, ui.box(vmath.vector3(x, tabs_y, 0), vmath.vector3(tabw, 48, 0), vmath.vector4(0, 0, 0, 0)))
 		self.buttons[#self.buttons+1] = { node = hit, id = "method", data = i }
 	end
 
-	-- Input row.
-	local field_y = EDGE_T - 175
-	track(self, ui.text(vmath.vector3(CX-240, field_y+36, 0), "PHONE", "small", ui.MUTED))
-	track(self, ui.panel9(vmath.vector3(CX-200, field_y, 0), vmath.vector3(300, 50, 0),
-		self.field=="phone" and "container_bg_active" or "container_bg"))
-	local ph_disp = (self.phone ~= "") and self.phone or "07XX XXX XXX"
-	track(self, ui.text(vmath.vector3(CX-200, field_y, 0), ph_disp, "body",
-		self.phone ~= "" and ui.WHITE or ui.MUTED))
-	local ph_hit = track(self, ui.box(vmath.vector3(CX-200, field_y, 0), vmath.vector3(300, 50, 0),
-		vmath.vector4(0, 0, 0, 0)))
-	self.buttons[#self.buttons+1] = { node = ph_hit, id = "focus_phone" }
+	-- Inputs: phone 1.3x amount, 64px tall, focus = blue 2px border.
+	local in_y = tabs_y - 80
+	local gapx = 12
+	local in_w_total = pw - 64
+	local ph_w = in_w_total * 0.565 - gapx/2
+	local am_w = in_w_total * 0.435 - gapx/2
+	local ph_x = px0 - in_w_total/2 + ph_w/2
+	local am_x = px0 + in_w_total/2 - am_w/2
 
-	track(self, ui.text(vmath.vector3(CX+180, field_y+36, 0), "AMOUNT (UGX)", "small", ui.MUTED))
-	track(self, ui.panel9(vmath.vector3(CX+200, field_y, 0), vmath.vector3(300, 50, 0),
-		self.field=="amount" and "container_bg_active" or "container_bg"))
-	local am_disp = (self.amount ~= "") and commas(self.amount) or "0"
-	track(self, ui.text(vmath.vector3(CX+200, field_y, 0), am_disp, "body",
-		self.amount ~= "" and ui.WHITE or ui.MUTED))
-	local am_hit = track(self, ui.box(vmath.vector3(CX+200, field_y, 0), vmath.vector3(300, 50, 0),
-		vmath.vector4(0, 0, 0, 0)))
-	self.buttons[#self.buttons+1] = { node = am_hit, id = "focus_amount" }
+	local function input_field(x, w, label, value, placeholder, focused, id)
+		ktext(self, vmath.vector3(x - w/2, in_y + 46, 0), label, 14, M_LABEL, gui.PIVOT_W)
+		framed(self, x, in_y, w, 64, focused and M_FOCUS or M_IN_BD, 2, focused and M_IN_BG_F or M_IN_BG)
+		local has = value ~= ""
+		local dn = ktext(self, vmath.vector3(x - w/2 + 16, in_y, 0), has and value or placeholder, 26,
+			has and ui.WHITE or M_PLACEHOLDER, gui.PIVOT_W)
+		if focused then
+			local tm = gui.get_text_metrics_from_node(dn)
+			local tw = has and (tm.width * (26 / 26)) or 0
+			local caret = track(self, ui.box(vmath.vector3(x - w/2 + 16 + tw + 4, in_y, 0), vmath.vector3(2, 28, 0), M_FOCUS))
+			gui.animate(caret, "color.w", 0, gui.EASING_INOUTSINE, 0.5, 0, nil, gui.PLAYBACK_LOOP_PINGPONG)
+		end
+		local hit = track(self, ui.box(vmath.vector3(x, in_y, 0), vmath.vector3(w, 64, 0), vmath.vector4(0, 0, 0, 0)))
+		self.buttons[#self.buttons+1] = { node = hit, id = id }
+	end
 
-	-- Fee / total row.
-	local info_y = field_y - 36
-	track(self, ui.text(vmath.vector3(CX-200, info_y, 0), "Min: "..commas(minv).." UGX", "small",
-		amount < minv and vmath.vector4(0.95, 0.4, 0.4, 1) or ui.MUTED))
-	track(self, ui.text(vmath.vector3(CX, info_y, 0), "Fee: "..commas(fee).." UGX", "small", ui.MUTED))
-	track(self, ui.text(vmath.vector3(CX+200, info_y, 0), "Total: "..commas(total).." UGX", "small",
-		vmath.vector4(0.4, 0.9, 0.5, 1)))
+	input_field(ph_x, ph_w, "PHONE NUMBER", self.phone, "07XX XXX XXX", self.field == "phone", "focus_phone")
+	input_field(am_x, am_w, "AMOUNT (UGX)", (self.amount ~= "") and commas(self.amount) or "", "0", self.field == "amount", "focus_amount")
 
-	-- Numpad.
-	local kw, kh, kg = 110, 56, 10
-	local kx0 = CX - kw - kg - kw / 2
-	local ky0 = EDGE_T - 310
+	-- Min / Fee / Total inline row.
+	local info_y = in_y - 52
+	ktext(self, vmath.vector3(px0 - in_w_total/2, info_y, 0), "Min: " .. commas(minv) .. " UGX", 15,
+		(amount > 0 and amount < minv) and M_MIN_WARN or M_FEE, gui.PIVOT_W)
+	ktext(self, vmath.vector3(px0, info_y, 0), "Fee: " .. commas(fee) .. " UGX", 15, M_FEE)
+	ktext(self, vmath.vector3(px0 + in_w_total/2, info_y, 0), "Total: " .. commas(total) .. " UGX", 15, M_TOTAL, gui.PIVOT_E)
+
+	-- Status line (error red / success green / processing yellow).
+	if self._msg then
+		local col = self._msg_ok and (self._msg_proc and M_PROC or M_OKC) or M_ERR
+		ktext(self, vmath.vector3(px0, info_y - 28, 0), self._msg, 15, col)
+	end
+
+	-- Seamless 3-column numpad: border-only keys, red-tint ⌫, green PAY.
+	local np_top = info_y - 48
+	local kw = (pw - 64) / 3
+	local kh = 60
 	local ready = amount >= minv and amount > 0 and self.phone ~= ""
 	for i, k in ipairs(NUM) do
 		local ci = (i-1) % 3
 		local ri = math.floor((i-1) / 3)
-		local pos  = vmath.vector3(kx0 + ci*(kw+kg), ky0 - ri*(kh+kg), 0)
-		local size = vmath.vector3(kw, kh, 0)
-		local anim = "default_btn"
-		if k == "PAY" then anim = ready and "primary_btn" or "default_btn" end
-		if k == "<"  then anim = "secondary_btn" end
-		local kb = track(self, ui.btn9(pos, size, anim))
-		track(self, ui.text(pos, k, "body", ui.WHITE))
-		self.buttons[#self.buttons+1] = { node = kb, id = "num_"..k, data = k }
-	end
-
-	if self._msg then
-		track(self, ui.text(vmath.vector3(CX, EDGE_B + 52, 0), self._msg, "small",
-			self._msg_ok and vmath.vector4(0.4, 0.9, 0.5, 1) or vmath.vector4(0.95, 0.5, 0.3, 1)))
+		local x = px0 - (pw - 64)/2 + kw/2 + ci * kw
+		local y = np_top - kh/2 - ri * kh
+		if k == "<" then
+			framed(self, x, y, kw, kh, M_KEY_BD, 1, M_PANEL)
+			track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(kw - 2, kh - 2, 0), M_DEL_TINT))
+			ktext(self, vmath.vector3(x, y, 0), "DEL", 22, M_DEL_TXT)
+		elseif k == "PAY" then
+			framed(self, x, y, kw, kh, M_PAY_BD, 1, M_PANEL)
+			track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(kw - 2, kh - 2, 0),
+				ready and M_PAY_TINT or vmath.vector4(0.1, 0.65, 0.35, 0.06)))
+			ktext(self, vmath.vector3(x, y, 0), "PAY", 18, ready and M_PAY_TXT or M_TAB_TXT)
+		else
+			framed(self, x, y, kw, kh, M_KEY_BD, 1, M_PANEL)
+			ktext(self, vmath.vector3(x, y, 0), k, 24, ui.WHITE)
+		end
+		local hit = track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(kw, kh, 0), vmath.vector4(0, 0, 0, 0)))
+		self.buttons[#self.buttons+1] = { node = hit, id = "num_"..k, data = k }
 	end
 end
 
@@ -153,6 +216,8 @@ function init(self)
 	self.method_index = 1
 	self.phone, self.amount = "", ""
 	self.field = "amount"
+	-- The dialog floats above the online lobby gui.
+	gui.set_render_order(14)
 	refresh_wh()
 end
 
@@ -181,6 +246,7 @@ function on_message(self, message_id, message, sender)
 	elseif message_id == hash("payment_result") then
 		self._msg = message.ok and "Request sent - check your phone." or (message.message or "Failed")
 		self._msg_ok = message.ok
+		self._msg_proc = false
 		if message.ok then self.amount = "" end
 		if self._active then rebuild(self) end
 	end
@@ -188,7 +254,7 @@ end
 
 local function handle(self, b)
 	local id = b.id
-	if id == "back" then
+	if id == "back" or id == "dim" then
 		msg.post("#controller", "goto_online")
 	elseif id == "method" then
 		self.method_index = b.data; rebuild(self)
@@ -208,7 +274,7 @@ local function handle(self, b)
 			local amount = tonumber(self.amount) or 0
 			local fee = calc_fee(method, amount)
 			if amount >= (tonumber(method.min) or 0) and amount > 0 and self.phone ~= "" then
-				self._msg = "Processing..."; self._msg_ok = true
+				self._msg = "Processing..."; self._msg_ok = true; self._msg_proc = true
 				msg.post("#controller", "submit_payment", {
 					phone = self.phone, amount = amount + fee, ptype = method.type or "",
 				})
@@ -226,6 +292,7 @@ local function handle(self, b)
 end
 
 function on_input(self, action_id, action)
+	if not self._active then return false end
 	if action_id == hash("touch") and action.pressed then
 		for i = #self.buttons, 1, -1 do
 			local b = self.buttons[i]
@@ -233,6 +300,8 @@ function on_input(self, action_id, action)
 				handle(self, b); return true
 			end
 		end
+		-- Modal: swallow everything while the dialog is open.
+		return true
 	end
 	return false
 end
