@@ -261,7 +261,7 @@ local function parse_message(json_string)
       print(string.format("[PIPE-1] decoded from=%s actions=%d turn=%s suit=%s",
         tostring(from_id), #actions, tostring(gs.currentTurn), tostring(gs.chosenSuit)))
       pprint("[PIPE-1] gs.actions:", actions)
-      local processed = { _id = from_id, from = from_id, actions = actions, chosenSuit = gs.chosenSuit or "", gameState = gs }
+      local processed = { _id = from_id, from = from_id, actions = actions, chosenSuit = gs.chosenSuit or "", gameState = gs, aiOnBehalf = (d.aiOnBehalf == true) }
       emit("game_move", processed, gs)
     else
       print("[PIPE-1] DROPPED — gs decoded empty")
@@ -287,11 +287,12 @@ local function parse_message(json_string)
     emit("emoji", d._id or d.from or "", d.emoji or d.name or "", d.sound or "")
   elseif t == "AI_PLAYED_ON_YOUR_BEHALF" then
     -- The backend AI covered this player's seat: either a one-shot move after
-    -- a turn timeout (mode=SINGLE_MOVE) or a full takeover while they were
-    -- offline (mode=TAKEOVER, delivered on reconnect).
+    -- a turn timeout (mode=SINGLE_MOVE, capped per game) or a full takeover
+    -- while they were offline (mode=TAKEOVER, delivered on reconnect).
     emit("ai_played_for_you", {
       mode = tostring(d.mode or "SINGLE_MOVE"),
-      moves = tonumber(d.aiMovesPlayed) or 0,
+      moves = tonumber(d.aiMovesUsed or d.aiMovesPlayed) or 0,
+      max = tonumber(d.aiMovesMax) or 3,
       message = tostring(d.message or ""),
     })
   elseif t == "GAME_STATE_SYNC" then

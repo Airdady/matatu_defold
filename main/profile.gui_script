@@ -99,9 +99,15 @@ local function rebuild(self)
 		self.buttons[#self.buttons+1] = { node = back_btn, id = "back" }
 	end
 	local save_btn = track(self, ui.box(vmath.vector3(EDGE_R - 110, EDGE_T - 40, 0), vmath.vector3(170, 48, 0),
-		ok and P_GOLD or P_BADGE_BG))
-	track(self, ui.text(vmath.vector3(EDGE_R - 110, EDGE_T - 40, 0), "SAVE", "body", ok and P_DARK_TXT or P_MUTED))
+		(ok and not self._saving) and P_GOLD or P_BADGE_BG))
+	track(self, ui.text(vmath.vector3(EDGE_R - 110, EDGE_T - 40, 0), self._saving and "SAVING..." or "SAVE", "body",
+		(ok and not self._saving) and P_DARK_TXT or P_MUTED))
 	self.buttons[#self.buttons+1] = { node = save_btn, id = "save" }
+
+	-- Save feedback (failures were previously swallowed silently).
+	if self._error then
+		track(self, ui.text(vmath.vector3(EDGE_R - 110, EDGE_T - 76, 0), tostring(self._error), "small", P_ERROR))
+	end
 
 	-- ── Left column: gold-framed preview + username field + keyboard ─────────
 	local lx = CX - 340
@@ -183,6 +189,8 @@ function on_message(self, message_id, message, sender)
 		self.avatar = tonumber(u.avatar) or 1
 		if self.avatar < 1 then self.avatar = 1 end
 		self._active = true
+		self._saving = false
+		self._error = nil
 		rebuild(self)
 	elseif message_id == hash("enable") then
 		self._active = true
@@ -195,17 +203,19 @@ function on_message(self, message_id, message, sender)
 	elseif message_id == hash("user_data_updated") then
 		if self._active then rebuild(self) end
 	elseif message_id == hash("profile_saved") then
-		if not message.ok then
-			self._error = message.message
-			if self._active then rebuild(self) end
-		end
+		self._saving = false
+		self._error = message.ok and nil or (message.message or "Save failed")
+		if self._active then rebuild(self) end
 	end
 end
 
 local function handle(self, b)
 	if b.id == "save" then
-		if validate(self.username) then
+		if validate(self.username) and not self._saving then
+			self._saving = true
+			self._error = nil
 			msg.post("#controller", "profile_save", { username = self.username, avatar = self.avatar })
+			rebuild(self)
 		end
 	elseif b.id == "back" then
 		if validate(self.username) then msg.post("#controller", "goto_online") end
