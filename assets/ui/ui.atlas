@@ -91,10 +91,6 @@ images {
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/ui/table_bg.png"
-  sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-}
-images {
   image: "/assets/ui/texture_bg.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
@@ -104,30 +100,6 @@ images {
 }
 images {
   image: "/assets/ui/vs.png"
-  sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-}
-images {
-  image: "/assets/ui/red_basic.png"
-  sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-}
-images {
-  image: "/assets/ui/blue_basic.png"
-  sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-}
-images {
-  image: "/assets/ui/black_basic.png"
-  sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-}
-images {
-  image: "/assets/ui/red_drago.png"
-  sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-}
-images {
-  image: "/assets/ui/blue_drago.png"
-  sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-}
-images {
-  image: "/assets/ui/batman.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
