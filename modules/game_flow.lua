@@ -512,7 +512,10 @@ function M.start_game(self)
     GS.destroy_all(self)
     GS.fresh_state(self)
 
-    notify_gui(self.gui_hud, "reset_hud")
+    -- keep_scoreboard: a board (re)start inside the same series must not
+    -- blank the running match score — online_handler refreshes or hides it
+    -- right after, based on the incoming state.
+    notify_gui(self.gui_hud, "reset_hud", { keep_scoreboard = true })
     notify_gui(self.gui_suit, "reset_hud")
     notify_gui(self.gui_over, "reset_hud")
 
