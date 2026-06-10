@@ -1,33 +1,33 @@
 script: "/main/profile.gui_script"
 fonts {
-  name: "title"
-  font: "/fonts/title.font"
+name: "poppins"
+font: "/fonts/poppins.font"
 }
 fonts {
-  name: "body"
-  font: "/fonts/body.font"
+name: "poppins_bold"
+font: "/fonts/poppins_bold.font"
 }
 fonts {
-  name: "small"
-  font: "/fonts/small.font"
+name: "poppins_black"
+font: "/fonts/poppins_black.font"
 }
 textures {
-  name: "ui"
-  texture: "/assets/ui/ui.atlas"
+name: "ui"
+texture: "/assets/ui/ui.atlas"
 }
 textures {
-  name: "cards"
-  texture: "/assets/cards/cards.atlas"
+name: "cards"
+texture: "/assets/cards/cards.atlas"
 }
 textures {
-  name: "avatars"
-  texture: "/assets/avatars/avatars.atlas"
+name: "avatars"
+texture: "/assets/avatars/avatars.atlas"
 }
 background_color {
-  x: 0.0
-  y: 0.0
-  z: 0.0
-  w: 0.0
+x: 0.0
+y: 0.0
+z: 0.0
+w: 0.0
 }
 material: "/builtins/materials/gui.material"
 adjust_reference: ADJUST_REFERENCE_PARENT
