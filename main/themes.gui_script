@@ -73,20 +73,27 @@ local function rebuild(self)
 			self._msg_ok and vmath.vector4(0.4, 0.9, 0.5, 1) or vmath.vector4(0.95, 0.5, 0.3, 1)))
 	end
 
-	-- Theme cards: 3-col grid centred on CX.
+	-- Theme cards organised into two labelled shelves: CLASSIC (recolours of
+	-- the standard deck) on top, PREMIUM FULL-ART sets (every card A→K gets
+	-- its own artwork) below. Within each shelf the cards sit in a 3-col row.
 	local themes = get_themes()
+	local classic, premium = {}, {}
+	for _, t in ipairs(themes) do
+		local th_def = app_state.THEMES[t.id]
+		if th_def and th_def.card_set and th_def.card_set ~= "default" then
+			premium[#premium+1] = t
+		else
+			classic[#classic+1] = t
+		end
+	end
+
 	local cols = 3
-	local cw, ch, gap = 360, 260, 28
+	local cw, ch, gap = 360, 238, 28
 	local gridw = cols * cw + (cols-1) * gap
 	local x0 = CX - gridw / 2 + cw / 2
-	local y0 = EDGE_T - 240
+	local section_h = 26
 
-	for i, t in ipairs(themes) do
-		local c  = (i-1) % cols
-		local r  = math.floor((i-1) / cols)
-		local px = x0 + c * (cw + gap)
-		local py = y0 - r * (ch + gap)
-
+	local function draw_card(t, px, py)
 		track(self, ui.panel9(vmath.vector3(px, py, 0), vmath.vector3(cw, ch, 0),
 			t.active and "container_bg_active" or "container_bg"))
 
@@ -99,7 +106,7 @@ local function rebuild(self)
 		local th_def    = app_state.THEMES[t.id]
 		local tex       = CARD_TEX[(th_def and th_def.card_set) or "default"] or "cards"
 		local back_anim = (th_def and th_def.card_back) or "card_back"
-		local card_h    = 116
+		local card_h    = 104
 		local card_w    = math.floor(card_h * 212 / 238)
 		local function fan_card(dx, dy, anim, rot)
 			local n = gui.new_box_node(vmath.vector3(px + dx, py + dy, 0), vmath.vector3(card_w, card_h, 0))
@@ -111,32 +118,49 @@ local function rebuild(self)
 			if rot ~= 0 then gui.set_rotation(n, vmath.vector3(0, 0, rot)) end
 			track(self, n)
 		end
-		fan_card(-70, 34, "card_15S", 8)
-		fan_card(70, 34, "card_13H", -8)
-		fan_card(0, 38, back_anim, 0)
+		fan_card(-64, 30, "card_15S", 8)
+		fan_card(64, 30, "card_13H", -8)
+		fan_card(0, 34, back_anim, 0)
 
-		track(self, ui.text(vmath.vector3(px, py-48, 0), (t.name or t.id or "Theme"):upper(), "body", ui.WHITE))
+		track(self, ui.text(vmath.vector3(px, py-44, 0), (t.name or t.id or "Theme"):upper(), "body", ui.WHITE))
 		local price = tonumber(t.price) or 0
 		local ptxt = (price == 0) and "FREE" or (commas(price).." COINS")
-		track(self, ui.text(vmath.vector3(px, py-76, 0), ptxt, "small",
+		track(self, ui.text(vmath.vector3(px, py-70, 0), ptxt, "small",
 			price == 0 and vmath.vector4(0.4,0.9,0.5,1) or ui.GOLD))
 
 		if t.active then
-			track(self, ui.text(vmath.vector3(px, py-106, 0), "✓ ACTIVE", "body", vmath.vector4(0.4, 0.7, 0.95, 1)))
+			track(self, ui.text(vmath.vector3(px, py-98, 0), "ACTIVE", "body", vmath.vector4(0.4, 0.7, 0.95, 1)))
 		elseif t.purchased then
-			local ab = track(self, ui.btn9(vmath.vector3(px, py-106, 0), vmath.vector3(cw-48, 40, 0), "primary_btn"))
-			track(self, ui.text(vmath.vector3(px, py-106, 0), "ACTIVATE", "body", ui.WHITE))
+			local ab = track(self, ui.btn9(vmath.vector3(px, py-98, 0), vmath.vector3(cw-48, 38, 0), "primary_btn"))
+			track(self, ui.text(vmath.vector3(px, py-98, 0), "ACTIVATE", "body", ui.WHITE))
 			self.buttons[#self.buttons+1] = { node = ab, id = "activate", data = t.id }
 		elseif balance >= price then
-			local pu = track(self, ui.btn9(vmath.vector3(px, py-106, 0), vmath.vector3(cw-48, 40, 0), "primary_btn"))
-			track(self, ui.text(vmath.vector3(px, py-106, 0), "PURCHASE", "body", ui.WHITE))
+			local pu = track(self, ui.btn9(vmath.vector3(px, py-98, 0), vmath.vector3(cw-48, 38, 0), "primary_btn"))
+			track(self, ui.text(vmath.vector3(px, py-98, 0), "PURCHASE", "body", ui.WHITE))
 			self.buttons[#self.buttons+1] = { node = pu, id = "purchase", data = t.id }
 		else
-			track(self, ui.btn9(vmath.vector3(px, py-106, 0), vmath.vector3(cw-48, 40, 0), "default_btn"))
-			track(self, ui.text(vmath.vector3(px, py-106, 0), "INSUFFICIENT FUNDS", "small",
+			track(self, ui.btn9(vmath.vector3(px, py-98, 0), vmath.vector3(cw-48, 38, 0), "default_btn"))
+			track(self, ui.text(vmath.vector3(px, py-98, 0), "INSUFFICIENT FUNDS", "small",
 				vmath.vector4(0.5, 0.5, 0.5, 1)))
 		end
 	end
+
+	local function draw_shelf(label, label_col, list, top_y)
+		local lt = track(self, ui.text(vmath.vector3(x0 - cw/2, top_y, 0), label, "small", label_col))
+		gui.set_pivot(lt, gui.PIVOT_W)
+		track(self, ui.box(vmath.vector3(CX, top_y - section_h/2 - 2, 0), vmath.vector3(gridw, 1, 0), vmath.vector4(1, 1, 1, 0.10)))
+		local py = top_y - section_h - ch/2
+		for i, t in ipairs(list) do
+			local c = (i-1) % cols
+			local px = x0 + c * (cw + gap)
+			draw_card(t, px, py)
+		end
+		return top_y - section_h - ch - 20
+	end
+
+	local y = EDGE_T - 96
+	y = draw_shelf("CLASSIC", vmath.vector4(0.65, 0.65, 0.65, 1), classic, y)
+	draw_shelf("PREMIUM  —  FULL CARD ART", ui.GOLD, premium, y)
 end
 
 function init(self) self.nodes, self.buttons = {}, {}; refresh_wh() end
