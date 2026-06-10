@@ -4,10 +4,19 @@
 -- This build is Matatu-only (no Kadi deck).
 
 local deck = require("modules.deck")
+local app  = require("modules.app_state")
 
 local M = {}
 
 M.BACK_FRAME = "card_back"
+
+-- Back frame for the ACTIVE theme (mirrors Godot's THEME_BACK_CARD_MAP).
+-- Within each theme atlas the frame ids are identical, so this just picks
+-- which back variant of the active card set to show.
+function M.back_frame()
+	local th = app.get_theme()
+	return (th and th.card_back) or M.BACK_FRAME
+end
 
 local VALUE_NAMES = {
 	[2] = "2", [3] = "3", [4] = "4", [5] = "5", [6] = "6", [7] = "7",
