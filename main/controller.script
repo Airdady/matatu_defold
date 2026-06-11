@@ -146,6 +146,13 @@ function init(self)
 	broadcast("user_updated")
 	broadcast("transaction_completed")
 
+	-- Head-to-head stats response (sender-side dialogs/banners). The stats
+	-- table is parked on the ws module (too big for msg.post); only a wake
+	-- signal travels here.
+	table.insert(self.tokens, ws.on("head_to_head", function()
+		msg.post("#online", "ws_head_to_head")
+	end))
+
 	-- Online lobby + auth notifications.
 	forward("online_users",           "#online", "ws_online_users")
 	forward("connected",              "#online", "ws_connected")
