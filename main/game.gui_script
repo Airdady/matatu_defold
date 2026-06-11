@@ -1,7 +1,6 @@
--- game.gui_script — Matatu Main HUD Overlay (Defold)
 local emoji_popover = require("modules.emoji_popover")
 
--- FIXED: Target mapped precisely to the /controller object to guarantee routing.
+-- Target mapped precisely to the /controller object to guarantee routing.
 local GAME = "/controller#game_logic"
 
 -- Layout constants
@@ -13,30 +12,35 @@ local EXIT_BTN_MARGIN_RIGHT = 20
 local EXIT_POPOVER_WIDTH = 200
 local EXIT_POPOVER_HEIGHT = 120
 local EXIT_POPOVER_OFFSET_Y = -10
-local AVATAR_CONTAINER_SIZE = 100
+local AVATAR_CONTAINER_SIZE = 80
 local AVATAR_BG_COLOR  = vmath.vector4(0, 0, 0, 0) -- Transparent
-local NETWORK_ICON_BASE_SIZE = 20
-local TIMER_RADIUS = 50
+local TIMER_RADIUS = 46
 local STAKE_CHIP_SIZE = 170
--- Godot HudUI parity: in a series (tournament/battle) layout the stake chip
--- slides right so it doesn't sit on top of the scoreboard column at the
--- left edge (STAKE_CHIP_OFFSET_DEFAULT / STAKE_CHIP_OFFSET_TOURNAMENT).
-local STAKE_CHIP_X_DEFAULT    = 20
-local STAKE_CHIP_X_TOURNAMENT = 200
 
--- Colors
+-- UI Colors
 local C_PANEL          = vmath.vector4(0.10, 0.10, 0.10, 0.95)
 local C_PANEL_BORDER   = vmath.vector4(0.30, 0.30, 0.30, 1.0)
 local C_TEXT           = vmath.vector4(0.95, 0.97, 0.95, 1.0)
-local C_SCORE_LBL      = vmath.vector4(0.61, 0.64, 0.68, 1.0)
 local C_WHITE          = vmath.vector4(1.0, 1.0, 1.0, 1.0)
 local C_SKIP_TEXT      = vmath.vector4(0.90, 0.91, 0.92, 1.0)
 local BTN_BG_COLOR     = vmath.vector4(0, 0, 0, 0.25)
+
+-- Defining specific colors for the Flip Clock...
+local C_CARD_TOP = vmath.vector4(0.18, 0.18, 0.18, 1.0)
+local C_CARD_BOT = vmath.vector4(0.12, 0.12, 0.12, 1.0)
+local C_ACCENT   = vmath.vector4(0.906, 0.298, 0.235, 1.0) -- Match Point Red
+local C_ORANGE   = vmath.vector4(0.953, 0.612, 0.071, 1.0) -- Needs Wins Orange
 
 -- Timer colors
 local C_T_GREEN  = vmath.vector4(0.13, 0.77, 0.37, 0.6)
 local C_T_ORANGE = vmath.vector4(0.96, 0.62, 0.04, 0.6)
 local C_T_RED    = vmath.vector4(0.94, 0.27, 0.27, 0.6)
+
+-- Head-to-head form badges (W green / L red) + rating tiers
+local C_FORM_W   = vmath.vector4(0.15, 0.70, 0.25, 1.0)
+local C_FORM_L   = vmath.vector4(0.90, 0.25, 0.25, 1.0)
+local C_H2H_GOLD = vmath.vector4(1.00, 0.84, 0.20, 1.0)
+local C_H2H_DIM  = vmath.vector4(0.55, 0.58, 0.62, 1.0)
 
 local function box(pos, size, color, pivot)
     local n = gui.new_box_node(pos, size)
@@ -45,141 +49,360 @@ local function box(pos, size, color, pivot)
     return n
 end
 
-local function label(pos, text, size, color, align)
+local function label(pos, text, size, color, align, font_name)
     local n = gui.new_text_node(pos, text)
-    gui.set_font(n, "body")
-    gui.set_scale(n, vmath.vector3(size / 24, size / 24, 1.0))
+    gui.set_font(n, font_name or "body")
+
+    -- To fix text blurring, we assume large fonts like poppins_bold have a higher native size.
+    -- If your text is still slightly blurry, increase the native "size" property in your Defold .font file.
+    local base_size = 24
+    if font_name == "poppins_bold" or font_name == "title" then
+        base_size = 36
+    end
+
+    gui.set_scale(n, vmath.vector3(size / base_size, size / base_size, 1.0))
     gui.set_color(n, color or C_TEXT)
     gui.set_pivot(n, align or gui.PIVOT_CENTER)
     return n
 end
 
-----------------------------------------------------------------------
+-- FLIP CLOCK LOGIC
+
+-- Constructing the highly realistic 3D flip clock nodes...
+local function create_flipper(parent, pos)
+    -- Increased container size from 90x130 to 120x150 to completely prevent text cutoff
+    local root = box(pos, vmath.vector3(120, 150, 0), vmath.vector4(0.06, 0.06, 0.06, 1.0), gui.PIVOT_CENTER)
+    gui.set_parent(root, parent)
+
+    -- Hinges
+    local gear_l = box(vmath.vector3(-60, 0, 0), vmath.vector3(10, 24, 0), vmath.vector4(0.04, 0.04, 0.04, 1.0), gui.PIVOT_CENTER)
+    local gear_r = box(vmath.vector3(60, 0, 0), vmath.vector3(10, 24, 0), vmath.vector4(0.04, 0.04, 0.04, 1.0), gui.PIVOT_CENTER)
+    gui.set_parent(gear_l, root)
+    gui.set_parent(gear_r, root)
+
+    -- Stencil mask to slice the cards perfectly in half
+    local function make_half(pivot, color)
+        local half = box(vmath.vector3(0, 0, 0), vmath.vector3(120, 75, 0), color, pivot)
+        gui.set_clipping_mode(half, gui.CLIPPING_MODE_STENCIL)
+        gui.set_parent(half, root)
+
+        -- Text placed precisely in the center; using poppins_bold
+        local lbl = label(vmath.vector3(0, 0, 0), "00", 64, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
+        -- Add text shadow for realistic engraved look
+        gui.set_shadow(lbl, vmath.vector4(0, 0, 0, 0.6))
+        gui.set_parent(lbl, half)
+
+        -- Lighting Shadow Overlay box
+        local shadow = box(vmath.vector3(0, 0, 0), vmath.vector3(120, 75, 0), vmath.vector4(0,0,0,0), pivot)
+        gui.set_parent(shadow, half)
+
+        return half, lbl, shadow
+    end
+
+    -- Create layers (Back static layer, Front animating layer)
+    local stat_top, stat_top_lbl, _ = make_half(gui.PIVOT_S, C_CARD_TOP)
+    local stat_bot, stat_bot_lbl, stat_bot_shd = make_half(gui.PIVOT_N, C_CARD_BOT)
+    local flip_top, flip_top_lbl, flip_top_shd = make_half(gui.PIVOT_S, C_CARD_TOP)
+    local flip_bot, flip_bot_lbl, flip_bot_shd = make_half(gui.PIVOT_N, C_CARD_BOT)
+
+    gui.set_enabled(flip_top, false)
+    gui.set_enabled(flip_bot, false)
+
+    -- Card middle crease separator
+    local div = box(vmath.vector3(0, 0, 0), vmath.vector3(120, 2, 0), vmath.vector4(0,0,0,0.8), gui.PIVOT_CENTER)
+    gui.set_parent(div, root)
+
+    return {
+        root = root,
+        val = "00",
+        stat_top = stat_top_lbl,
+        stat_bot = stat_bot_lbl,
+        stat_bot_shd = stat_bot_shd,
+        flip_top_bg = flip_top,
+        flip_top_lbl = flip_top_lbl,
+        flip_top_shd = flip_top_shd,
+        flip_bot_bg = flip_bot,
+        flip_bot_lbl = flip_bot_lbl,
+        flip_bot_shd = flip_bot_shd,
+        is_flipping = false
+    }
+end
+
+-- Animating the flip with realistic 3D lighting shadows...
+local function animate_flipper(flipper, new_val)
+    if flipper.val == new_val then return end
+
+    -- Fast forward if it is already mid-animation to prevent weird visual overlaps
+    if flipper.is_flipping then
+        gui.cancel_animation(flipper.flip_top_bg, "euler.x")
+        gui.cancel_animation(flipper.flip_bot_bg, "euler.x")
+        gui.cancel_animation(flipper.flip_top_shd, "color.w")
+        gui.cancel_animation(flipper.flip_bot_shd, "color.w")
+        gui.cancel_animation(flipper.stat_bot_shd, "color.w")
+
+        gui.set_enabled(flipper.flip_top_bg, false)
+        gui.set_enabled(flipper.flip_bot_bg, false)
+        gui.set_text(flipper.stat_top, flipper.val)
+        gui.set_text(flipper.stat_bot, flipper.val)
+        flipper.is_flipping = false
+    end
+
+    flipper.is_flipping = true
+    local old_val = flipper.val
+    flipper.val = new_val
+
+    -- 1. Setup Starting States
+    gui.set_text(flipper.stat_top, new_val)
+    gui.set_text(flipper.stat_bot, old_val)
+
+    -- The old top card that will fall down
+    gui.set_text(flipper.flip_top_lbl, old_val)
+    gui.set_rotation(flipper.flip_top_bg, vmath.vector3(0,0,0))
+    local c_t_shd = gui.get_color(flipper.flip_top_shd); c_t_shd.w = 0; gui.set_color(flipper.flip_top_shd, c_t_shd)
+    gui.set_enabled(flipper.flip_top_bg, true)
+
+    -- The new bottom card that will swing into place
+    gui.set_text(flipper.flip_bot_lbl, new_val)
+    gui.set_rotation(flipper.flip_bot_bg, vmath.vector3(90,0,0))
+    local c_b_shd = gui.get_color(flipper.flip_bot_shd); c_b_shd.w = 0.8; gui.set_color(flipper.flip_bot_shd, c_b_shd)
+    gui.set_enabled(flipper.flip_bot_bg, true)
+
+    -- Static back shadow that darkens while the top falls
+    local c_s_shd = gui.get_color(flipper.stat_bot_shd); c_s_shd.w = 0; gui.set_color(flipper.stat_bot_shd, c_s_shd)
+
+    -- 2. Execute Animation Step 1: Top card falls fast (gravity)
+    gui.animate(flipper.flip_top_bg, "euler.x", -90, gui.EASING_INQUAD, 0.15, 0, function()
+        gui.set_enabled(flipper.flip_top_bg, false)
+        gui.set_text(flipper.stat_bot, new_val)
+
+        -- Step 2: Bottom card swings out and bounces mechanically like real paper
+        gui.animate(flipper.flip_bot_bg, "euler.x", 0, gui.EASING_OUTBOUNCE, 0.40, 0, function()
+            gui.set_enabled(flipper.flip_bot_bg, false)
+            flipper.is_flipping = false
+        end)
+        -- Shadow fades out as it lands
+        gui.animate(flipper.flip_bot_shd, "color.w", 0.0, gui.EASING_OUTBOUNCE, 0.40)
+        gui.animate(flipper.stat_bot_shd, "color.w", 0.0, gui.EASING_OUTBOUNCE, 0.40)
+    end)
+
+    -- Top card gets darker as it falls towards the bottom
+    gui.animate(flipper.flip_top_shd, "color.w", 0.8, gui.EASING_INQUAD, 0.15)
+    -- Static bottom gets darker as top falls over it
+    gui.animate(flipper.stat_bot_shd, "color.w", 0.6, gui.EASING_INQUAD, 0.15)
+end
+
+-- Snap a flipper to a value with no animation (used by resets).
+local function snap_flipper(flipper, new_val)
+    if not flipper then return end
+    gui.cancel_animation(flipper.flip_top_bg, "euler.x")
+    gui.cancel_animation(flipper.flip_bot_bg, "euler.x")
+    gui.set_enabled(flipper.flip_top_bg, false)
+    gui.set_enabled(flipper.flip_bot_bg, false)
+    flipper.is_flipping = false
+    flipper.val = new_val
+    gui.set_text(flipper.stat_top, new_val)
+    gui.set_text(flipper.stat_bot, new_val)
+end
+
 -- BUILDERS
-----------------------------------------------------------------------
 
 local function build_network_badge(parent, pos)
     local bg = box(pos, vmath.vector3(80, 24, 0), vmath.vector4(0.1, 0.1, 0.1, 0.6), gui.PIVOT_CENTER)
     gui.set_parent(bg, parent)
     local dot = box(vmath.vector3(-20, 0, 0), vmath.vector3(12, 12, 0), C_T_GREEN, gui.PIVOT_CENTER)
     gui.set_parent(dot, bg)
-    local lbl = label(vmath.vector3(-5, 0, 0), "Good", 12, C_T_GREEN, gui.PIVOT_W)
+    local lbl = label(vmath.vector3(-5, 0, 0), "Good", 12, C_T_GREEN, gui.PIVOT_W, "poppins")
     gui.set_parent(lbl, bg)
     return { bg = bg, dot = dot, lbl = lbl }
 end
 
+-- Win-rate rating chip beside an avatar. Colored by tier.
+local function build_rating_chip(parent, pos)
+    local bg = box(pos, vmath.vector3(58, 20, 0), vmath.vector4(0.05, 0.05, 0.05, 0.75), gui.PIVOT_CENTER)
+    gui.set_parent(bg, parent)
+    local lbl = label(vmath.vector3(0, 0, 0), "WR 0%", 11, C_H2H_DIM, gui.PIVOT_CENTER, "poppins_bold")
+    gui.set_parent(lbl, bg)
+    gui.set_enabled(bg, false)
+    return { bg = bg, lbl = lbl }
+end
+
+local function set_rating_chip(chip, win_rate)
+    if not chip then return end
+    local wr = tonumber(win_rate)
+    if not wr then
+        gui.set_enabled(chip.bg, false)
+        return
+    end
+    local col = C_FORM_L
+    if wr >= 60 then col = C_FORM_W
+    elseif wr >= 40 then col = C_ORANGE end
+    gui.set_text(chip.lbl, "WR " .. tostring(math.floor(wr + 0.5)) .. "%")
+    gui.set_color(chip.lbl, col)
+    gui.set_enabled(chip.bg, true)
+end
+
 local function build_avatars_and_sections(self)
-    -- PLAYER SECTION
-    self.player_section = box(vmath.vector3(20, 20, 0), vmath.vector3(AVATAR_CONTAINER_SIZE, 200, 0), vmath.vector4(0,0,0,0), gui.PIVOT_SW)
-    gui.set_xanchor(self.player_section, gui.ANCHOR_LEFT)
-    gui.set_yanchor(self.player_section, gui.ANCHOR_BOTTOM)
-    
-    self.p_avatar_bg = box(vmath.vector3(AVATAR_CONTAINER_SIZE/2, AVATAR_CONTAINER_SIZE/2 + 30, 0), vmath.vector3(AVATAR_CONTAINER_SIZE, AVATAR_CONTAINER_SIZE, 0), AVATAR_BG_COLOR, gui.PIVOT_CENTER)
-    gui.set_parent(self.p_avatar_bg, self.player_section)
-    
-    -- Create ring/pie BEHIND avatar 
-    self.p_timer = gui.new_pie_node(vmath.vector3(0, 0, 0), vmath.vector3(TIMER_RADIUS*2, TIMER_RADIUS*2, 0))
-    gui.set_rotation(self.p_timer, vmath.vector3(0, 0, 90))
-    gui.set_color(self.p_timer, C_T_GREEN)
-    gui.set_parent(self.p_timer, self.p_avatar_bg)
-    gui.set_enabled(self.p_timer, false)
+    -- Extreme Left placement using anchor logic.
+    -- X is 80 (half of the 160 width) to ensure the left boundary of the box touches x=0
+    local left_edge_x = 80
+    self.hud_root = box(vmath.vector3(left_edge_x, LOGICAL_H/2, 0), vmath.vector3(160, 680, 0), vmath.vector4(0, 0, 0, 0), gui.PIVOT_CENTER)
+    gui.set_xanchor(self.hud_root, gui.ANCHOR_LEFT)
+    gui.set_yanchor(self.hud_root, gui.ANCHOR_NONE)
 
-    -- Avatar rendered on top of timer
-    self.p_avatar_img = box(vmath.vector3(0, 0, 0), vmath.vector3(80, 80, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
-    gui.set_parent(self.p_avatar_img, self.p_avatar_bg)
-    pcall(function()
-        gui.set_texture(self.p_avatar_img, "avatars")
-        gui.play_flipbook(self.p_avatar_img, hash("avatar_1")) 
-    end)
+    -- PLAYER 2 OPPONENT SECTION (MOVED TO TOP OUTER)
+    self.o_avatar_bg = box(vmath.vector3(0, 260, 0), vmath.vector3(AVATAR_CONTAINER_SIZE, AVATAR_CONTAINER_SIZE, 0), AVATAR_BG_COLOR, gui.PIVOT_CENTER)
+    gui.set_parent(self.o_avatar_bg, self.hud_root)
 
-    self.p_avatar_name = label(vmath.vector3(0, -65, 0), "You", 14, C_WHITE, gui.PIVOT_CENTER)
-    gui.set_parent(self.p_avatar_name, self.p_avatar_bg)
-
-    self.p_balance = label(vmath.vector3(AVATAR_CONTAINER_SIZE/2, -10, 0), "Bal: 0", 16, vmath.vector4(1, 0.85, 0.4, 1.0), gui.PIVOT_CENTER)
-    gui.set_parent(self.p_balance, self.player_section)
-    gui.set_enabled(self.p_balance, false)
-    
-    self.p_net = build_network_badge(self.player_section, vmath.vector3(AVATAR_CONTAINER_SIZE/2, -35, 0))
-
-    -- OPPONENT SECTION
-    self.opponent_section = box(vmath.vector3(20, LOGICAL_H - 20, 0), vmath.vector3(AVATAR_CONTAINER_SIZE, 200, 0), vmath.vector4(0,0,0,0), gui.PIVOT_NW)
-    gui.set_xanchor(self.opponent_section, gui.ANCHOR_LEFT)
-    gui.set_yanchor(self.opponent_section, gui.ANCHOR_TOP)
-
-    self.o_avatar_bg = box(vmath.vector3(AVATAR_CONTAINER_SIZE/2, -AVATAR_CONTAINER_SIZE/2, 0), vmath.vector3(AVATAR_CONTAINER_SIZE, AVATAR_CONTAINER_SIZE, 0), AVATAR_BG_COLOR, gui.PIVOT_CENTER)
-    gui.set_parent(self.o_avatar_bg, self.opponent_section)
-
-    -- Create ring/pie BEHIND avatar
     self.o_timer = gui.new_pie_node(vmath.vector3(0, 0, 0), vmath.vector3(TIMER_RADIUS*2, TIMER_RADIUS*2, 0))
     gui.set_rotation(self.o_timer, vmath.vector3(0, 0, 90))
-    gui.set_color(self.o_timer, C_T_GREEN)
     gui.set_parent(self.o_timer, self.o_avatar_bg)
     gui.set_enabled(self.o_timer, false)
 
-    -- Avatar rendered on top of timer
-    self.o_avatar_img = box(vmath.vector3(0, 0, 0), vmath.vector3(80, 80, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
+    self.o_avatar_img = box(vmath.vector3(0, 0, 0), vmath.vector3(AVATAR_CONTAINER_SIZE, AVATAR_CONTAINER_SIZE, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
     gui.set_parent(self.o_avatar_img, self.o_avatar_bg)
-    pcall(function()
-        gui.set_texture(self.o_avatar_img, "avatars")
-        gui.play_flipbook(self.o_avatar_img, hash("avatar_1")) 
-    end)
+    pcall(function() gui.set_texture(self.o_avatar_img, "avatars"); gui.play_flipbook(self.o_avatar_img, hash("avatar_1")) end)
 
-    self.o_avatar_name = label(vmath.vector3(AVATAR_CONTAINER_SIZE/2, -AVATAR_CONTAINER_SIZE - 15, 0), "Opponent", 14, vmath.vector4(0.9, 0.9, 0.9, 1), gui.PIVOT_CENTER)
-    gui.set_parent(self.o_avatar_name, self.opponent_section)
+    self.o_avatar_name = label(vmath.vector3(0, 185, 0), "Opponent", 18, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
+    gui.set_parent(self.o_avatar_name, self.hud_root)
 
-    self.o_net = build_network_badge(self.opponent_section, vmath.vector3(AVATAR_CONTAINER_SIZE/2, -AVATAR_CONTAINER_SIZE - 40, 0))
+    self.o_net = build_network_badge(self.hud_root, vmath.vector3(0, 320, 0))
+    -- Opponent win-rate rating, tucked beside their avatar.
+    self.o_rating = build_rating_chip(self.hud_root, vmath.vector3(62, 222, 0))
+
+    -- PLAYER 1 SECTION (MOVED TO BOTTOM OUTER)
+    self.p_avatar_bg = box(vmath.vector3(0, -260, 0), vmath.vector3(AVATAR_CONTAINER_SIZE, AVATAR_CONTAINER_SIZE, 0), AVATAR_BG_COLOR, gui.PIVOT_CENTER)
+    gui.set_parent(self.p_avatar_bg, self.hud_root)
+
+    self.p_timer = gui.new_pie_node(vmath.vector3(0, 0, 0), vmath.vector3(TIMER_RADIUS*2, TIMER_RADIUS*2, 0))
+    gui.set_rotation(self.p_timer, vmath.vector3(0, 0, 90))
+    gui.set_parent(self.p_timer, self.p_avatar_bg)
+    gui.set_enabled(self.p_timer, false)
+
+    self.p_avatar_img = box(vmath.vector3(0, 0, 0), vmath.vector3(AVATAR_CONTAINER_SIZE, AVATAR_CONTAINER_SIZE, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
+    gui.set_parent(self.p_avatar_img, self.p_avatar_bg)
+    pcall(function() gui.set_texture(self.p_avatar_img, "avatars"); gui.play_flipbook(self.p_avatar_img, hash("avatar_1")) end)
+
+    self.p_avatar_name = label(vmath.vector3(0, -185, 0), "You", 18, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
+    gui.set_parent(self.p_avatar_name, self.hud_root)
+
+    self.p_balance = label(vmath.vector3(0, -210, 0), "Bal: 0", 14, vmath.vector4(1, 0.85, 0.4, 1.0), gui.PIVOT_CENTER, "poppins")
+    gui.set_parent(self.p_balance, self.hud_root)
+    gui.set_enabled(self.p_balance, false)
+
+    self.p_net = build_network_badge(self.hud_root, vmath.vector3(0, -320, 0))
+    -- Your win-rate rating, mirrored beside your avatar.
+    self.p_rating = build_rating_chip(self.hud_root, vmath.vector3(62, -222, 0))
 end
 
+-- Placing the Scoreboard flippers and game indicators...
 local function build_scoreboard(self)
-    self.sb_root = box(vmath.vector3(10, LOGICAL_H/2, 0), vmath.vector3(40, 320, 0), vmath.vector4(0.04, 0.03, 0.10, 0.85), gui.PIVOT_W)
-    gui.set_xanchor(self.sb_root, gui.ANCHOR_LEFT)
-    gui.set_yanchor(self.sb_root, gui.ANCHOR_NONE)
+    -- Build Games Left Series indicators
+    self.o_games_bg = box(vmath.vector3(0, 175, 0), vmath.vector3(120, 22, 0), vmath.vector4(0.95, 0.61, 0.07, 0.15), gui.PIVOT_CENTER)
+    self.o_games_lbl = label(vmath.vector3(0, 0, 0), "NEEDS 2 WINS", 12, C_ORANGE, gui.PIVOT_CENTER, "poppins_bold")
+    gui.set_parent(self.o_games_lbl, self.o_games_bg)
+    gui.set_parent(self.o_games_bg, self.hud_root)
 
-    local border = box(vmath.vector3(0, 0, 0), vmath.vector3(40, 320, 0), C_PANEL_BORDER, gui.PIVOT_W)
-    local inner = box(vmath.vector3(1, 0, 0), vmath.vector3(38, 318, 0), vmath.vector4(0.04, 0.03, 0.10, 0.85), gui.PIVOT_W)
-    gui.set_parent(border, self.sb_root)
-    gui.set_parent(inner, border)
+    self.p_games_bg = box(vmath.vector3(0, -175, 0), vmath.vector3(120, 22, 0), vmath.vector4(0.95, 0.61, 0.07, 0.15), gui.PIVOT_CENTER)
+    self.p_games_lbl = label(vmath.vector3(0, 0, 0), "NEEDS 2 WINS", 12, C_ORANGE, gui.PIVOT_CENTER, "poppins_bold")
+    gui.set_parent(self.p_games_lbl, self.p_games_bg)
+    gui.set_parent(self.p_games_bg, self.hud_root)
 
-    self.sb_title = label(vmath.vector3(20, 0, 0), "BEST OF 3", 16, C_WHITE, gui.PIVOT_CENTER)
-    gui.set_rotation(self.sb_title, vmath.vector3(0, 0, 90))
-    gui.set_parent(self.sb_title, self.sb_root)
+    -- Flip Clocks Stacked Vertically in Center (Opponent Top, Player Bottom)
+    self.o_flipper = create_flipper(self.hud_root, vmath.vector3(0, 90, 0))
+    self.p_flipper = create_flipper(self.hud_root, vmath.vector3(0, -90, 0))
 
-    self.sb_o_score = label(vmath.vector3(55, 100, 0), "0", 60, C_WHITE, gui.PIVOT_W)
-    self.sb_o_ind = label(vmath.vector3(55, 55, 0), "0 of 2", 16, C_SCORE_LBL, gui.PIVOT_W)
-    gui.set_parent(self.sb_o_score, self.sb_root)
-    gui.set_parent(self.sb_o_ind, self.sb_root)
+    -- Central Divider & Text
+    self.sb_div1 = box(vmath.vector3(0, 15, 0), vmath.vector3(120, 2, 0), vmath.vector4(0.2,0.2,0.2,1), gui.PIVOT_CENTER)
+    self.sb_div2 = box(vmath.vector3(0, -15, 0), vmath.vector3(120, 2, 0), vmath.vector4(0.2,0.2,0.2,1), gui.PIVOT_CENTER)
+    gui.set_parent(self.sb_div1, self.hud_root)
+    gui.set_parent(self.sb_div2, self.hud_root)
 
-    self.sb_vs = label(vmath.vector3(55, 0, 0), "-", 24, vmath.vector4(1,1,1,0.3), gui.PIVOT_W)
-    gui.set_parent(self.sb_vs, self.sb_root)
+    self.sb_title = label(vmath.vector3(0, 0, 0), "BEST OF 3", 15, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
+    gui.set_parent(self.sb_title, self.hud_root)
 
-    self.sb_p_ind = label(vmath.vector3(55, -55, 0), "0 of 2", 16, C_SCORE_LBL, gui.PIVOT_W)
-    self.sb_p_score = label(vmath.vector3(55, -100, 0), "0", 60, C_WHITE, gui.PIVOT_W)
-    gui.set_parent(self.sb_p_ind, self.sb_root)
-    gui.set_parent(self.sb_p_score, self.sb_root)
+    -- ── Head-to-head strip ────────────────────────────────────────────────
+    -- A thin vertical column hugging the left gutter of the HUD: rotated
+    -- "LAST 5" header, the last-5 form vs this opponent as W/L badges
+    -- (newest on top, W green / L red), and the rotated all-time score.
+    self.h2h_form_lbl = label(vmath.vector3(-72, 86, 0), "LAST 5", 11, C_H2H_DIM, gui.PIVOT_CENTER, "poppins_bold")
+    gui.set_rotation(self.h2h_form_lbl, vmath.vector3(0, 0, 90))
+    gui.set_parent(self.h2h_form_lbl, self.hud_root)
+    gui.set_enabled(self.h2h_form_lbl, false)
 
-    gui.set_enabled(self.sb_root, false)
+    self.h2h_badges = {}
+    for i = 1, 5 do
+        local bg = box(vmath.vector3(-72, 52 - (i - 1) * 26, 0), vmath.vector3(18, 18, 0), vmath.vector4(0.2, 0.2, 0.2, 0.5), gui.PIVOT_CENTER)
+        gui.set_parent(bg, self.hud_root)
+        local lbl = label(vmath.vector3(0, 0, 0), "", 11, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
+        gui.set_parent(lbl, bg)
+        gui.set_enabled(bg, false)
+        self.h2h_badges[i] = { bg = bg, lbl = lbl }
+    end
+
+    self.h2h_alltime_lbl = label(vmath.vector3(-72, -86, 0), "H2H 0-0", 11, C_H2H_GOLD, gui.PIVOT_CENTER, "poppins_bold")
+    gui.set_rotation(self.h2h_alltime_lbl, vmath.vector3(0, 0, 90))
+    gui.set_parent(self.h2h_alltime_lbl, self.hud_root)
+    gui.set_enabled(self.h2h_alltime_lbl, false)
+
+    -- Set fallbacks backwards compatibility
+    self.sb_root = self.hud_root
+end
+
+-- Show/hide the series scoreboard pieces (flippers, title, needs-wins).
+local function set_series_visible(self, board_visible, badges_visible)
+    if self.o_flipper then gui.set_enabled(self.o_flipper.root, board_visible) end
+    if self.p_flipper then gui.set_enabled(self.p_flipper.root, board_visible) end
+    if self.sb_div1 then gui.set_enabled(self.sb_div1, board_visible) end
+    if self.sb_div2 then gui.set_enabled(self.sb_div2, board_visible) end
+    if self.sb_title then gui.set_enabled(self.sb_title, board_visible) end
+    local bv = board_visible and badges_visible
+    if self.o_games_bg then gui.set_enabled(self.o_games_bg, bv) end
+    if self.p_games_bg then gui.set_enabled(self.p_games_bg, bv) end
+end
+
+-- Apply head-to-head data to the strip. h2h = { p, o, form = {"W","L",...} }
+-- (viewer perspective, newest first) or nil to hide it.
+local function set_h2h_strip(self, h2h)
+    local has = type(h2h) == "table"
+    local form = has and type(h2h.form) == "table" and h2h.form or {}
+    if self.h2h_form_lbl then gui.set_enabled(self.h2h_form_lbl, has and #form > 0) end
+    for i = 1, 5 do
+        local badge = self.h2h_badges and self.h2h_badges[i]
+        if badge then
+            local r = form[i]
+            if has and (r == "W" or r == "L") then
+                gui.set_text(badge.lbl, r)
+                gui.set_color(badge.bg, r == "W" and C_FORM_W or C_FORM_L)
+                gui.set_enabled(badge.bg, true)
+            else
+                gui.set_enabled(badge.bg, false)
+            end
+        end
+    end
+    if self.h2h_alltime_lbl then
+        if has then
+            gui.set_text(self.h2h_alltime_lbl, "H2H " .. tostring(h2h.p or 0) .. "-" .. tostring(h2h.o or 0))
+            gui.set_enabled(self.h2h_alltime_lbl, true)
+        else
+            gui.set_enabled(self.h2h_alltime_lbl, false)
+        end
+    end
 end
 
 local function build_stake_chip(self)
-    self.stake_chip = box(vmath.vector3(STAKE_CHIP_X_DEFAULT, LOGICAL_H/2, 0), vmath.vector3(STAKE_CHIP_SIZE, STAKE_CHIP_SIZE, 0), vmath.vector4(1,1,1,1), gui.PIVOT_W)
+    self.stake_chip = box(vmath.vector3(220, LOGICAL_H/2, 0), vmath.vector3(STAKE_CHIP_SIZE, STAKE_CHIP_SIZE, 0), vmath.vector4(1,1,1,1), gui.PIVOT_W)
     gui.set_xanchor(self.stake_chip, gui.ANCHOR_LEFT)
     gui.set_yanchor(self.stake_chip, gui.ANCHOR_NONE)
     gui.set_enabled(self.stake_chip, false)
 end
 
--- Series layout: with the scoreboard up, the chip moves out of its way.
-local function apply_stake_layout(self)
-    if not self.stake_chip then return end
-    local x = self.sb_visible and STAKE_CHIP_X_TOURNAMENT or STAKE_CHIP_X_DEFAULT
-    gui.set_position(self.stake_chip, vmath.vector3(x, LOGICAL_H/2, 0))
-end
-
+-- Building Standings UI (Ensured it stays on the right side)
 local function build_standings_ui(self)
     self.standings_root = box(vmath.vector3(LOGICAL_W - EXIT_BTN_MARGIN_RIGHT - 196, LOGICAL_H/2 - 86, 0), vmath.vector3(196, 180, 0), vmath.vector4(0,0,0,0), gui.PIVOT_NW)
     gui.set_xanchor(self.standings_root, gui.ANCHOR_RIGHT)
     gui.set_yanchor(self.standings_root, gui.ANCHOR_NONE)
 
-    self.standings_title = label(vmath.vector3(0, 2, 0), "STANDINGS", 13, vmath.vector4(0.65, 0.68, 0.72, 1.0), gui.PIVOT_W)
+    self.standings_title = label(vmath.vector3(0, 2, 0), "STANDINGS", 13, vmath.vector4(0.65, 0.68, 0.72, 1.0), gui.PIVOT_W, "poppins_bold")
     gui.set_parent(self.standings_title, self.standings_root)
     gui.set_enabled(self.standings_title, false)
 
@@ -187,9 +410,9 @@ local function build_standings_ui(self)
     for i=1, 7 do
         local row = box(vmath.vector3(0, -18 - (i-1)*24, 0), vmath.vector3(196, 24, 0), vmath.vector4(0,0,0,0), gui.PIVOT_NW)
         gui.set_parent(row, self.standings_root)
-        local pos_lbl = label(vmath.vector3(0, -12, 0), "", 15, C_WHITE, gui.PIVOT_W)
-        local name_lbl = label(vmath.vector3(32, -12, 0), "", 15, C_WHITE, gui.PIVOT_W)
-        local pts_lbl = label(vmath.vector3(196, -12, 0), "", 15, C_WHITE, gui.PIVOT_E)
+        local pos_lbl = label(vmath.vector3(0, -12, 0), "", 15, C_WHITE, gui.PIVOT_W, "poppins")
+        local name_lbl = label(vmath.vector3(32, -12, 0), "", 15, C_WHITE, gui.PIVOT_W, "poppins")
+        local pts_lbl = label(vmath.vector3(196, -12, 0), "", 15, C_WHITE, gui.PIVOT_E, "poppins_bold")
         gui.set_parent(pos_lbl, row); gui.set_parent(name_lbl, row); gui.set_parent(pts_lbl, row)
         table.insert(self.standings_rows, { bg=row, pos=pos_lbl, name=name_lbl, pts=pts_lbl })
     end
@@ -200,11 +423,11 @@ local function _create_skip_button(self)
     self.skip_btn = box(vmath.vector3(LOGICAL_W/2, LOGICAL_H/2, 0), vmath.vector3(width, height, 0), BTN_BG_COLOR, gui.PIVOT_CENTER)
     gui.set_xanchor(self.skip_btn, gui.ANCHOR_NONE)
     gui.set_yanchor(self.skip_btn, gui.ANCHOR_NONE)
-    
+
     local inner_border = box(vmath.vector3(0,0,0), vmath.vector3(width - 8, height - 8, 0), vmath.vector4(0,0,0,0), gui.PIVOT_CENTER)
     gui.set_parent(inner_border, self.skip_btn)
-    
-    local lbl = label(vmath.vector3(width/2 - 15, -height/2 + 10, 0), "TAP TO SKIP >>", 14, C_SKIP_TEXT, gui.PIVOT_SE)
+
+    local lbl = label(vmath.vector3(width/2 - 15, -height/2 + 10, 0), "TAP TO SKIP >>", 14, C_SKIP_TEXT, gui.PIVOT_SE, "poppins_bold")
     gui.set_shadow(lbl, vmath.vector4(0, 0, 0, 0.8))
     gui.set_parent(lbl, self.skip_btn)
 
@@ -215,30 +438,31 @@ local function build_exit(self)
     self.exit_btn = box(vmath.vector3(LOGICAL_W - EXIT_BTN_MARGIN_RIGHT, LOGICAL_H - EXIT_BTN_MARGIN_TOP, 0), vmath.vector3(EXIT_BTN_SIZE, EXIT_BTN_SIZE, 0), vmath.vector4(0.8, 0.2, 0.2, 1.0), gui.PIVOT_NE)
     gui.set_xanchor(self.exit_btn, gui.ANCHOR_RIGHT)
     gui.set_yanchor(self.exit_btn, gui.ANCHOR_TOP)
-    
-    local l = label(vmath.vector3(-EXIT_BTN_SIZE/2, -EXIT_BTN_SIZE/2, 0), "X", 20, C_WHITE, gui.PIVOT_CENTER)
+
+    local l = label(vmath.vector3(-EXIT_BTN_SIZE/2, -EXIT_BTN_SIZE/2, 0), "X", 20, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
     gui.set_parent(l, self.exit_btn)
 
     self.exit_popover = box(vmath.vector3(LOGICAL_W - EXIT_BTN_MARGIN_RIGHT, LOGICAL_H - EXIT_BTN_MARGIN_TOP - EXIT_BTN_SIZE + EXIT_POPOVER_OFFSET_Y, 0), vmath.vector3(EXIT_POPOVER_WIDTH, EXIT_POPOVER_HEIGHT, 0), C_PANEL, gui.PIVOT_NE)
     gui.set_xanchor(self.exit_popover, gui.ANCHOR_RIGHT)
     gui.set_yanchor(self.exit_popover, gui.ANCHOR_TOP)
-    
-    local title = label(vmath.vector3(-EXIT_POPOVER_WIDTH/2, -30, 0), "Exit Game?", 16, C_WHITE, gui.PIVOT_CENTER)
+
+    local title = label(vmath.vector3(-EXIT_POPOVER_WIDTH/2, -30, 0), "Exit Game?", 16, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
     gui.set_parent(title, self.exit_popover)
-    
+
     self.btn_yes = box(vmath.vector3(-EXIT_POPOVER_WIDTH/2 - 45, -80, 0), vmath.vector3(80, 40, 0), C_PANEL_BORDER, gui.PIVOT_CENTER)
-    local ly = label(vmath.vector3(0,0,0), "Yes", 16, C_WHITE, gui.PIVOT_CENTER)
+    local ly = label(vmath.vector3(0,0,0), "Yes", 16, C_WHITE, gui.PIVOT_CENTER, "poppins")
     gui.set_parent(ly, self.btn_yes)
     gui.set_parent(self.btn_yes, self.exit_popover)
 
     self.btn_no = box(vmath.vector3(-EXIT_POPOVER_WIDTH/2 + 45, -80, 0), vmath.vector3(80, 40, 0), C_PANEL_BORDER, gui.PIVOT_CENTER)
-    local ln = label(vmath.vector3(0,0,0), "No", 16, C_WHITE, gui.PIVOT_CENTER)
+    local ln = label(vmath.vector3(0,0,0), "No", 16, C_WHITE, gui.PIVOT_CENTER, "poppins")
     gui.set_parent(ln, self.btn_no)
     gui.set_parent(self.btn_no, self.exit_popover)
 
     gui.set_enabled(self.exit_popover, false)
 end
 
+-- Building Overlays and Modal elements...
 local function build_conn_overlay(self)
     self.conn_scrim = box(vmath.vector3(LOGICAL_W/2, LOGICAL_H/2, 0), vmath.vector3(5000, 5000, 0), vmath.vector4(0, 0, 0, 0.6), gui.PIVOT_CENTER)
     gui.set_xanchor(self.conn_scrim, gui.ANCHOR_NONE)
@@ -252,22 +476,21 @@ local function build_conn_overlay(self)
     gui.set_xanchor(self.conn_panel, gui.ANCHOR_NONE)
     gui.set_yanchor(self.conn_panel, gui.ANCHOR_NONE)
 
-    self.conn_title = label(vmath.vector3(0, 48, 0), "RECONNECTING", 24, vmath.vector4(0.0, 0.722, 0.831, 1.0), gui.PIVOT_CENTER)
+    self.conn_title = label(vmath.vector3(0, 48, 0), "RECONNECTING", 24, vmath.vector4(0.0, 0.722, 0.831, 1.0), gui.PIVOT_CENTER, "poppins_bold")
     gui.set_parent(self.conn_title, self.conn_panel)
 
-    self.conn_sub = label(vmath.vector3(0, 8, 0), "", 16, vmath.vector4(0.70, 0.74, 0.80, 1.0), gui.PIVOT_CENTER)
+    self.conn_sub = label(vmath.vector3(0, 8, 0), "", 16, vmath.vector4(0.70, 0.74, 0.80, 1.0), gui.PIVOT_CENTER, "poppins")
     gui.set_parent(self.conn_sub, self.conn_panel)
 
-    self.conn_count = label(vmath.vector3(0, -44, 0), "", 34, C_WHITE, gui.PIVOT_CENTER)
+    self.conn_count = label(vmath.vector3(0, -44, 0), "", 34, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
     gui.set_parent(self.conn_count, self.conn_panel)
 
     gui.set_enabled(self.conn_scrim, false)
     self.conn_count_active = false
 end
 
-----------------------------------------------------------------------
 -- AI takeover notices (flat design: Poppins, sharp corners, no shadows)
-----------------------------------------------------------------------
+
 local AI_C_PANEL  = vmath.vector4(0.086, 0.098, 0.118, 1.0) -- #16191E
 local AI_C_ACCENT = vmath.vector4(0.949, 0.702, 0.020, 1.0) -- #F2B305
 local AI_C_BODY   = vmath.vector4(0.788, 0.812, 0.839, 1.0) -- #C9CFD6
@@ -283,7 +506,6 @@ local function poppins(pos, text, px, color, bold, align)
     return n
 end
 
--- Blocking notice shown when reconnecting into a match the AI kept alive.
 local function build_ai_takeover_modal(self)
     self.ai_scrim = box(vmath.vector3(LOGICAL_W/2, LOGICAL_H/2, 0), vmath.vector3(5000, 5000, 0), vmath.vector4(0, 0, 0, 0.78), gui.PIVOT_CENTER)
     gui.set_adjust_mode(self.ai_scrim, gui.ADJUST_STRETCH)
@@ -314,7 +536,6 @@ local function build_ai_takeover_modal(self)
     gui.set_enabled(self.ai_scrim, false)
 end
 
--- Brief banner for a one-shot AI move after a turn timeout (player online).
 local function build_ai_assist_banner(self)
     local bw, bh = 660, 56
     self.ai_banner = box(vmath.vector3(LOGICAL_W/2, LOGICAL_H - 52, 0), vmath.vector3(bw, bh, 0), AI_C_PANEL, gui.PIVOT_CENTER)
@@ -329,12 +550,26 @@ local function build_ai_assist_banner(self)
     gui.set_enabled(self.ai_banner, false)
 end
 
+-- Timer Initialization and GUI Updating...
 local function show_ai_notice(self, opts)
     opts = opts or {}
     if opts.mode == "TAKEOVER" then
         if self.ai_scrim then gui.set_enabled(self.ai_scrim, true) end
     else
         if not self.ai_banner then return end
+        local used = tonumber(opts.moves) or 0
+        local max = tonumber(opts.max) or 3
+        if self.ai_banner_lbl then
+            if used > 0 then
+                local txt = string.format("Time ran out — AI played for you (%d of %d).", used, max)
+                if used >= max then
+                    txt = string.format("AI played for you (%d of %d) — next timeout forfeits!", used, max)
+                end
+                gui.set_text(self.ai_banner_lbl, txt)
+            else
+                gui.set_text(self.ai_banner_lbl, "Time ran out — AI played this move to protect your token.")
+            end
+        end
         gui.set_enabled(self.ai_banner, true)
         self._ai_banner_seq = (self._ai_banner_seq or 0) + 1
         local seq = self._ai_banner_seq
@@ -376,10 +611,6 @@ local function set_conn_overlay(self, opts)
     end
 end
 
-----------------------------------------------------------------------
--- LOGIC & UPDATES
-----------------------------------------------------------------------
-
 local function start_timer(self, is_player, duration, expires_at_ms)
     self.total_duration = duration or 30.0
     self.is_player_turn = is_player
@@ -418,12 +649,12 @@ end
 
 local function set_skip_visible(self, visible)
     if not self.skip_btn then return end
-    
+
     if visible and not gui.is_enabled(self.skip_btn) then
         gui.set_enabled(self.skip_btn, true)
         gui.set_scale(self.skip_btn, vmath.vector3(0.9, 0.9, 1))
         local c = gui.get_color(self.skip_btn); c.w = 0; gui.set_color(self.skip_btn, c)
-        
+
         gui.animate(self.skip_btn, "scale", vmath.vector3(1.0, 1.0, 1), gui.EASING_OUTBACK, 0.2)
         gui.animate(self.skip_btn, "color.w", 0.25, gui.EASING_OUTSINE, 0.2, 0, function()
             gui.animate(self.skip_btn, "scale", vmath.vector3(1.03, 1.03, 1), gui.EASING_INOUTSINE, 0.4, 0, nil, gui.PLAYBACK_LOOP_PINGPONG)
@@ -435,15 +666,15 @@ local function set_skip_visible(self, visible)
     end
 end
 
+-- Script Hooks: init, update, and input handling...
 function init(self)
     msg.post(".", "acquire_input_focus")
     gui.set_render_order(13)
-    
+
     self.timer_remaining = 0
     self.total_duration = 30.0
     self.is_player_turn = true
     self.my_id = ""
-    self.sb_visible = false
 
     build_avatars_and_sections(self)
     build_scoreboard(self)
@@ -454,6 +685,10 @@ function init(self)
     build_conn_overlay(self)
     build_ai_takeover_modal(self)
     build_ai_assist_banner(self)
+
+    -- Series UI hidden until a scoreboard update arrives.
+    set_series_visible(self, false, false)
+    set_h2h_strip(self, nil)
 
     emoji_popover.init(self)
 end
@@ -469,13 +704,13 @@ function update(self, dt)
     if self.timer_remaining and self.timer_remaining > 0 then
         self.timer_remaining = self.timer_remaining - dt
         if self.timer_remaining < 0 then self.timer_remaining = 0 end
-        
+
         local progress = math.min(1.0, self.timer_remaining / self.total_duration)
         local active_pie = self.is_player_turn and self.p_timer or self.o_timer
-        
+
         if active_pie then
             gui.set_fill_angle(active_pie, progress * 360)
-            
+
             local c = C_T_RED
             if self.timer_remaining > self.total_duration / 2.0 then
                 c = C_T_GREEN
@@ -488,9 +723,6 @@ function update(self, dt)
             end
             gui.set_color(active_pie, c)
 
-            -- FIX: was msg.post(GAME, "play_sound", { sound = "SoundAlertTimer" })
-            -- "SoundAlertTimer" is not a valid component ID, and game.script has no play_sound handler.
-            -- Post directly to the embedded sound component on /controller instead.
             if self.timer_remaining <= 10.0 and self.timer_remaining > 0 and self.is_player_turn and not self.alert_played then
                 self.alert_played = true
                 msg.post("/controller#snd_alert", "play_sound")
@@ -515,7 +747,6 @@ function on_input(self, action_id, action)
         return true
     end
 
-    -- AI takeover notice is modal: only GOT IT dismisses it.
     if self.ai_scrim and gui.is_enabled(self.ai_scrim) then
         if hit(self.ai_ok_btn, action) then
             gui.set_enabled(self.ai_scrim, false)
@@ -549,23 +780,28 @@ function on_input(self, action_id, action)
     return false
 end
 
+-- Message passing router to process external Game State data...
 function on_message(self, message_id, message)
     if message_id == hash("setup_avatars") then
         local p_name = (message.my_info and message.my_info.username) or (message.my_info and message.my_info.name) or "You"
         local o_name = (message.op_info and message.op_info.username) or (message.op_info and message.op_info.name) or "Opponent"
-        
+
         if string.len(o_name) > 10 then
             o_name = string.sub(o_name, 1, 10) .. "..."
         end
 
         if self.p_avatar_name then gui.set_text(self.p_avatar_name, p_name) end
         if self.o_avatar_name then gui.set_text(self.o_avatar_name, o_name) end
-        
+
         gui.set_enabled(self.p_balance, true)
         local bal = (message.my_info and message.my_info.balance) or 0
         if self.p_balance then gui.set_text(self.p_balance, "Bal: " .. tostring(bal)) end
         self.my_id = (message.my_info and message.my_info.id) or ""
-        
+
+        -- Win-rate rating badges beside both avatars.
+        set_rating_chip(self.p_rating, message.my_info and message.my_info.winRate)
+        set_rating_chip(self.o_rating, message.op_info and message.op_info.winRate)
+
         local p_av = (message.my_info and message.my_info.avatar) or 1
         local o_av = (message.op_info and message.op_info.avatar) or 1
         pcall(function() gui.play_flipbook(self.p_avatar_img, hash("avatar_" .. tostring(p_av))) end)
@@ -578,25 +814,123 @@ function on_message(self, message_id, message)
     elseif message_id == hash("skip") then
         set_skip_visible(self, message.show)
 
+    elseif message_id == hash("update_balance") then
+        -- Settled balance pushed the moment a game ends.
+        local bal = tonumber(message.balance)
+        if bal and self.p_balance then
+            gui.set_text(self.p_balance, "Bal: " .. tostring(bal))
+            gui.set_enabled(self.p_balance, true)
+        end
+
     elseif message_id == hash("update_scoreboard") then
-        if message.show then
-            self.sb_visible = true
-            if self.sb_root then gui.set_enabled(self.sb_root, true) end
-            local best_of = message.best_of or 3
+        if message.show == false then
+            set_series_visible(self, false, false)
+            set_h2h_strip(self, nil)
+            return
+        end
+
+        -- series=false renders the head-to-head ALL-TIME score on the flip
+        -- clocks ("ALL TIME" board for normal games); series=true (or legacy
+        -- posts without the flag) renders the live series score.
+        local series = message.series
+        if series == nil then series = true end
+
+        local state = message.state or message.game_state or message
+
+        -- Default Score Variables
+        local best_of = 3
+        local p_score = 0
+        local o_score = 0
+        local stage = "Match"
+
+        -- Extract Match Format dynamically
+        if state and type(state) == "table" then
+            if state.matchFormat then best_of = state.matchFormat end
+
+            if state.tournamentScore and type(state.tournamentScore) == "table" then
+                best_of = state.tournamentScore.matchFormat or best_of
+                stage = "Level " .. tostring(state.tournamentScore.currentLevel or 1)
+                local scores = state.tournamentScore.scores
+                if scores and type(scores) == "table" then
+                    p_score = scores[self.my_id] or p_score
+                    for k, v in pairs(scores) do
+                        if k ~= self.my_id then o_score = v; break end
+                    end
+                end
+            end
+
+            if state.tournament and type(state.tournament) == "table" then
+                best_of = state.tournament.matchFormat or best_of
+                local stg = state.tournament.stageName
+                if stg and stg ~= "" then stage = stg
+                elseif state.tournament.level then stage = "Level " .. tostring(state.tournament.level) end
+            end
+
+            if state.gameOverState and type(state.gameOverState) == "table" then
+                local scores = state.gameOverState.currentScores
+                if scores and type(scores) == "table" then
+                    p_score = scores[self.my_id] or p_score
+                    for k, v in pairs(scores) do
+                        if k ~= self.my_id then o_score = v; break end
+                    end
+                end
+            end
+        end
+
+        -- Safe Overrides
+        if message.p_score then p_score = message.p_score end
+        if message.o_score then o_score = message.o_score end
+        if message.best_of then best_of = message.best_of end
+        if message.stage then stage = message.stage end
+
+        local h2h = (type(message.h2h) == "table") and message.h2h or nil
+
+        set_series_visible(self, true, series and true or false)
+        set_h2h_strip(self, h2h)
+
+        if series then
+            -- Calculate Required Wins
             local target = math.floor(best_of / 2) + 1
 
-            if self.sb_p_score then gui.set_text(self.sb_p_score, tostring(message.p_score or 0)) end
-            if self.sb_o_score then gui.set_text(self.sb_o_score, tostring(message.o_score or 0)) end
-            if self.sb_p_ind then gui.set_text(self.sb_p_ind, tostring(message.p_score or 0) .. " of " .. target) end
-            if self.sb_o_ind then gui.set_text(self.sb_o_ind, tostring(message.o_score or 0) .. " of " .. target) end
+            -- Run the 3D Flip Anim logic
+            animate_flipper(self.o_flipper, string.format("%02d", o_score))
+            animate_flipper(self.p_flipper, string.format("%02d", p_score))
+
+            -- Format Title Details
             local title = "BEST OF " .. tostring(best_of)
-            if message.stage and message.stage ~= "" then title = title .. "  •  " .. string.upper(message.stage) end
+            if stage and stage ~= "" then title = title .. "  •  " .. string.upper(stage) end
             if self.sb_title then gui.set_text(self.sb_title, title) end
+
+            -- Calculate Games Left
+            local left_p = math.max(0, target - p_score)
+            local left_o = math.max(0, target - o_score)
+
+            if left_p == 1 then
+                gui.set_text(self.p_games_lbl, "MATCH POINT!")
+                gui.set_color(self.p_games_lbl, C_ACCENT)
+                gui.set_color(self.p_games_bg, vmath.vector4(0.9, 0.3, 0.23, 0.15))
+            else
+                gui.set_text(self.p_games_lbl, "NEEDS " .. left_p .. " WINS")
+                gui.set_color(self.p_games_lbl, C_ORANGE)
+                gui.set_color(self.p_games_bg, vmath.vector4(0.95, 0.61, 0.07, 0.15))
+            end
+
+            if left_o == 1 then
+                gui.set_text(self.o_games_lbl, "MATCH POINT!")
+                gui.set_color(self.o_games_lbl, C_ACCENT)
+                gui.set_color(self.o_games_bg, vmath.vector4(0.9, 0.3, 0.23, 0.15))
+            else
+                gui.set_text(self.o_games_lbl, "NEEDS " .. left_o .. " WINS")
+                gui.set_color(self.o_games_lbl, C_ORANGE)
+                gui.set_color(self.o_games_bg, vmath.vector4(0.95, 0.61, 0.07, 0.15))
+            end
         else
-            self.sb_visible = false
-            if self.sb_root then gui.set_enabled(self.sb_root, false) end
+            -- Normal game: the flip clocks display the all-time head-to-head
+            -- score between the two players.
+            animate_flipper(self.o_flipper, string.format("%02d", (h2h and h2h.o) or 0))
+            animate_flipper(self.p_flipper, string.format("%02d", (h2h and h2h.p) or 0))
+            if self.sb_title then gui.set_text(self.sb_title, "ALL TIME") end
         end
-        apply_stake_layout(self)
 
     elseif message_id == hash("update_standings") then
         local ranks = message.ranks or {}
@@ -629,7 +963,7 @@ function on_message(self, message_id, message)
             gui.set_enabled(self.stake_chip, false)
         else
             local img = "stake_200"
-            if     amount >= 10000 then img = "stake_10000"
+            if      amount >= 10000 then img = "stake_10000"
             elseif amount >= 5000  then img = "stake_5000"
             elseif amount >= 2000  then img = "stake_2000"
             elseif amount >= 1000  then img = "stake_1000"
@@ -639,7 +973,6 @@ function on_message(self, message_id, message)
                 gui.play_flipbook(self.stake_chip, hash(img))
             end)
             gui.set_enabled(self.stake_chip, ok)
-            apply_stake_layout(self)
         end
 
     elseif message_id == hash("network_quality") then
@@ -649,7 +982,7 @@ function on_message(self, message_id, message)
         local txt, col = "Good", C_T_GREEN
         if ms >= 1000 then txt, col = "Poor", C_T_RED
         elseif ms >= 500 then txt, col = "Bad", vmath.vector4(0.98, 0.75, 0.14, 1.0) end
-        
+
         gui.set_text(badge.lbl, txt)
         gui.set_color(badge.lbl, col)
         gui.set_color(badge.dot, col)
@@ -672,15 +1005,20 @@ function on_message(self, message_id, message)
         set_conn_overlay(self, { show = false })
         hide_ai_notices(self)
         if self.exit_popover then gui.set_enabled(self.exit_popover, false) end
+
         -- A round transition inside the same series keeps the live scoreboard
-        -- on screen (numbers are updated in place); only a full reset —
-        -- leaving the board — clears it.
+        -- and head-to-head strip on screen (values are updated in place);
+        -- only a full reset — leaving the board — clears them.
         if not (message and message.keep_scoreboard) then
-            self.sb_visible = false
-            if self.sb_root then gui.set_enabled(self.sb_root, false) end
+            set_series_visible(self, false, false)
+            set_h2h_strip(self, nil)
+            snap_flipper(self.o_flipper, "00")
+            snap_flipper(self.p_flipper, "00")
+            if self.p_rating then gui.set_enabled(self.p_rating.bg, false) end
+            if self.o_rating then gui.set_enabled(self.o_rating.bg, false) end
         end
+
         if self.stake_chip then gui.set_enabled(self.stake_chip, false) end
-        apply_stake_layout(self)
         if self.standings_title then gui.set_enabled(self.standings_title, false) end
         for _, row in ipairs(self.standings_rows or {}) do gui.set_enabled(row.bg, false) end
 

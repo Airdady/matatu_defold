@@ -106,13 +106,15 @@ end
 function M.public_player_info(p)
     p = p or {}
     return {
-        id       = p.id or p._id or "",
-        _id      = p._id or p.id or "",
-        username = p.username or p.name,
-        name     = p.name,
-        avatar   = p.avatar or 1,
-        balance  = p.balance,
-        isAI     = p.isAI or false,
+        id          = p.id or p._id or "",
+        _id         = p._id or p.id or "",
+        username    = p.username or p.name,
+        name        = p.name,
+        avatar      = p.avatar or 1,
+        balance     = p.balance,
+        winRate     = p.winRate,
+        gamesPlayed = p.gamesPlayed,
+        isAI        = p.isAI or false,
     }
 end
 
@@ -204,6 +206,26 @@ function M.process_scoreboard(self, state)
     if t_id ~= "" then self._sb_tid = t_id else t_id = tostring(self._sb_tid or "") end
     if p_score == nil then p_score, o_score = read_scores(scores_from_user_data(t_id)) end
 
+    -- ── Head-to-head (all-time scores + last-5 form vs this opponent) ───────
+    -- Carried on the state by the backend (game init / game over); persisted
+    -- on self like the series score so intermediate states without it don't
+    -- blank the strip.
+    if type(state.headToHead) == "table" then self._h2h = state.headToHead end
+    local h2h_msg = nil
+    if type(self._h2h) == "table" then
+        local hp, ho = read_scores(self._h2h.scores)
+        local form = nil
+        if type(self._h2h.form) == "table" then
+            form = self._h2h.form[tostring(self.my_player_id)]
+        end
+        h2h_msg = {
+            p = hp or 0,
+            o = ho or 0,
+            total = self._h2h.totalGames or 0,
+            form = (type(form) == "table") and form or {},
+        }
+    end
+
     local is_series = (ts ~= nil)
         or (state.gameType == "TOURNAMENT")
         or (type(state.tournamentId) == "string" and state.tournamentId ~= "")
@@ -213,17 +235,31 @@ function M.process_scoreboard(self, state)
     if is_series then
         self._sb_active = true
         self._sb_format = fmt or self._sb_format or 3
-        if p_score ~= nil then self._sb_p, self._sb_o = p_score, o_score end
         if stage then self._sb_stage = stage end
+    end
+    -- Fresh scores update an already-active board too: the game-over refresh
+    -- carries only currentScores/headToHead, without the series markers.
+    if self._sb_active and p_score ~= nil then
+        self._sb_p, self._sb_o = p_score, o_score
     end
 
     if self._sb_active then
         msg.post(GUI_HUD, "update_scoreboard", {
             show = true,
+            series = true,
             p_score = self._sb_p or 0,
             o_score = self._sb_o or 0,
             best_of = self._sb_format or 3,
             stage = self._sb_stage,
+            h2h = h2h_msg,
+        })
+    elseif h2h_msg then
+        -- Normal (non-series) game: the board shows the ALL-TIME score
+        -- between the two players plus the last-5 form strip.
+        msg.post(GUI_HUD, "update_scoreboard", {
+            show = true,
+            series = false,
+            h2h = h2h_msg,
         })
     else
         msg.post(GUI_HUD, "update_scoreboard", { show = false })
@@ -528,6 +564,9 @@ function M.start_game(self, state)
         self._sb_active, self._sb_format, self._sb_stage = false, nil, nil
         self._sb_p, self._sb_o = nil, nil
         self._sb_tid = (t_id ~= "" and t_id) or nil
+        -- Different opponent/series: drop the previous pair's head-to-head;
+        -- the fresh state carries this pairing's own snapshot.
+        self._h2h = nil
     end
     self._sb_series_key = series_key
 
