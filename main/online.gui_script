@@ -334,68 +334,85 @@ local function draw_right(self)
     local cx = (div_rx + EDGE_R) / 2
     local cy = EDGE_T - 16
 
-    -- ── Profile card (HORIZONTAL: avatar left, info right) ─────────────
-    local prof_h = 142  -- taller for clearer top/bottom padding
-    local pcy = cy - prof_h / 2
-    glass(self, vmath.vector3(cx, pcy, 0), vmath.vector3(pw, prof_h, 0), "container_bg")
+    -- ── User info container (Godot UserInfoContainer: profile section,
+    --    standing badge and MAKE PAYMENTS all live in ONE panel) ─────────
+    local margin   = 15
+    local av_size  = 96
+    local name_h   = 30
+    local stat_h   = 32
+    local name_gap = 8      -- tight username ↔ balance gap (Godot VBox)
+    local badge_h  = 84
+    local pay_h    = 44
+    local gap      = 12
+    local prof_h   = math.max(av_size, name_h + name_gap + stat_h)
+    local cont_h   = margin + prof_h + gap + badge_h + gap + pay_h + margin
+    local ccy      = cy - cont_h / 2
+    glass(self, vmath.vector3(cx, ccy, 0), vmath.vector3(pw, cont_h, 0), "container_bg")
 
-    local av_size = math.max(72, math.min(106, pw * 0.32))
-    local av_x = cx - pw/2 + 18 + av_size/2
-    track(self, ui.avatar(vmath.vector3(av_x, pcy, 0), vmath.vector3(av_size, av_size, 0), u.avatar or 1))
+    local inner_l = cx - pw/2 + margin
+    local inner_r = cx + pw/2 - margin
+    local top_y   = cy - margin
 
-    local info_l = av_x + av_size/2 + 14
-    local info_r = cx + pw/2 - 16
-    local info_w = info_r - info_l
-    local info_cx = (info_l + info_r) / 2
+    -- Avatar (Godot 120px, scaled to the sidebar width)
+    local av_x  = inner_l + av_size/2
+    local av_cy = top_y - prof_h/2
+    track(self, ui.avatar(vmath.vector3(av_x, av_cy, 0), vmath.vector3(av_size, av_size, 0), u.avatar or 1))
 
-    -- Name pill (+ gear)
-    local name_y = pcy + prof_h/2 - 30
-    track(self, ui.box(vmath.vector3(info_cx, name_y, 0), vmath.vector3(info_w, 32, 0), COL_NAMEID_BG))
+    local info_l  = av_x + av_size/2 + 12
+    local info_w  = inner_r - info_l
+    local info_cx = (info_l + inner_r) / 2
+
+    -- Name pill (+ account affordance, font-independent hamburger glyph)
+    local name_y = top_y - name_h/2
+    track(self, ui.box(vmath.vector3(info_cx, name_y, 0), vmath.vector3(info_w, name_h, 0), COL_NAMEID_BG))
     txtL(self, info_l + 10, name_y, string.upper(u.username or "PLAYER"), "body", COL_BRIGHT)
-    mkbtn(self, "nav_account", vmath.vector3(info_r - 16, name_y, 0), vmath.vector3(28, 28, 0), nil, vmath.vector4(0,0,0,0))
-    track(self, ui.text(vmath.vector3(info_r - 16, name_y, 0), "⚙", "body", COL_MID))
+    mkbtn(self, "nav_account", vmath.vector3(inner_r - 16, name_y, 0), vmath.vector3(28, 28, 0), nil, vmath.vector4(0,0,0,0))
+    for li = -1, 1 do
+        track(self, ui.box(vmath.vector3(inner_r - 16, name_y + li * 5, 0), vmath.vector3(14, 2, 0), COL_MID))
+    end
 
-    -- Balance / Points — stacked full-width rows so big amounts aren't squeezed
-    -- by the label (label left, amount right, each on its own line).
-    local bal_y = pcy - prof_h/2 + 44
-    local pts_y = pcy - prof_h/2 + 14
-    track(self, ui.box(vmath.vector3(info_cx, bal_y, 0), vmath.vector3(info_w, 26, 0), COL_STAT_BG))
-    txtL(self, info_l + 10, bal_y, "BAL", "small", COL_GOLD)
-    txtR(self, info_r - 10, bal_y, commas(u.balance or 0), "body", COL_GOLD)
+    -- Balance + Points on ONE row right under the name (Godot bottom row:
+    -- Bal pill expands, Pts pill fixed 90px)
+    local stat_y = name_y - name_h/2 - name_gap - stat_h/2
+    local pts_w  = 90
+    local bal_w  = info_w - pts_w - 8
+    local bal_cx = info_l + bal_w/2
+    local pts_cx = inner_r - pts_w/2
+    local COL_ORANGE = vmath.vector4(1.0, 0.6, 0.0, 1.0)
+    track(self, ui.box(vmath.vector3(bal_cx, stat_y, 0), vmath.vector3(bal_w, stat_h, 0), COL_STAT_BG))
+    txtL(self, info_l + 8, stat_y, "BAL.", "small", COL_ORANGE)
+    txtR(self, info_l + bal_w - 6, stat_y, commas(u.balance or 0), "body", COL_ORANGE)
+    track(self, ui.box(vmath.vector3(pts_cx, stat_y, 0), vmath.vector3(pts_w, stat_h, 0), COL_STAT_BG))
+    txtL(self, pts_cx - pts_w/2 + 8, stat_y, "PTS.", "small", COL_DIM)
+    txtR(self, pts_cx + pts_w/2 - 8, stat_y, commas(u.points or 0), "body", COL_CYAN)
 
-    track(self, ui.box(vmath.vector3(info_cx, pts_y, 0), vmath.vector3(info_w, 26, 0), COL_STAT_BG))
-    txtL(self, info_l + 10, pts_y, "PTS", "small", COL_DIM)
-    txtR(self, info_r - 10, pts_y, commas(u.points or 0), "body", COL_CYAN)
-
-    cy = cy - prof_h - BLOCK_GAP
-
-    -- ── Compact standing badge (sharp corners, gold border) ────────────
+    -- Standing badge INSIDE the container (sharp corners, 1px gold border)
     local pos = tonumber(u.position) or -1
     local has_rank = pos > 0
-    local badge_h = 86  -- increased from 78
-    local bcy = cy - badge_h/2
+    local bw  = pw - margin * 2
+    local bcy = top_y - prof_h - gap - badge_h/2
 
-    track(self, ui.box(vmath.vector3(cx, bcy, 0), vmath.vector3(pw, badge_h, 0), COL_BADGE_BG))
-    -- 1px gold (or dim) border frame
+    track(self, ui.box(vmath.vector3(cx, bcy, 0), vmath.vector3(bw, badge_h, 0), COL_BADGE_BG))
     local bdr = has_rank and COL_GOLD_BDR_D or vmath.vector4(0.5, 0.5, 0.5, 0.3)
-    track(self, ui.box(vmath.vector3(cx, bcy + badge_h/2 - 0.5, 0), vmath.vector3(pw, 1, 0), bdr))
-    track(self, ui.box(vmath.vector3(cx, bcy - badge_h/2 + 0.5, 0), vmath.vector3(pw, 1, 0), bdr))
-    track(self, ui.box(vmath.vector3(cx - pw/2 + 0.5, bcy, 0), vmath.vector3(1, badge_h, 0), bdr))
-    track(self, ui.box(vmath.vector3(cx + pw/2 - 0.5, bcy, 0), vmath.vector3(1, badge_h, 0), bdr))
+    track(self, ui.box(vmath.vector3(cx, bcy + badge_h/2 - 0.5, 0), vmath.vector3(bw, 1, 0), bdr))
+    track(self, ui.box(vmath.vector3(cx, bcy - badge_h/2 + 0.5, 0), vmath.vector3(bw, 1, 0), bdr))
+    track(self, ui.box(vmath.vector3(cx - bw/2 + 0.5, bcy, 0), vmath.vector3(1, badge_h, 0), bdr))
+    track(self, ui.box(vmath.vector3(cx + bw/2 - 0.5, bcy, 0), vmath.vector3(1, badge_h, 0), bdr))
 
-    track(self, ui.text(vmath.vector3(cx, bcy + 28, 0), "Your current position", "small", has_rank and vmath.vector4(1, 0.84, 0, 0.8) or vmath.vector4(0.7, 0.7, 0.7, 0.7)))
-    track(self, ui.text(vmath.vector3(cx, bcy,      0), has_rank and ("#"..pos) or "Unranked", "title", has_rank and COL_GOLD or COL_MID))
+    track(self, ui.text(vmath.vector3(cx, bcy + 27, 0), "Your current position", "small", has_rank and vmath.vector4(1, 0.84, 0, 0.8) or vmath.vector4(0.7, 0.7, 0.7, 0.7)))
+    track(self, ui.text(vmath.vector3(cx, bcy - 2, 0), has_rank and ("#"..pos) or "Unranked", "title", has_rank and COL_GOLD or COL_MID))
     if has_rank then
         local val = prize_for_position(self, pos)
         if val ~= "" then
-            track(self, ui.text(vmath.vector3(cx, bcy - 30, 0), "Current value is: "..val, "small", vmath.vector4(1, 0.84, 0, 0.9)))
+            track(self, ui.text(vmath.vector3(cx, bcy - 29, 0), "Current value is: "..val, "small", vmath.vector4(1, 0.84, 0, 0.9)))
         end
     end
-    cy = cy - badge_h - BLOCK_GAP
 
-    -- ── Make Payments ─────────────────────────────────────────────────
-    mkbtn(self, "nav_payments", vmath.vector3(cx, cy - 24, 0), vmath.vector3(pw, 46, 0), "MAKE PAYMENTS", "primary_btn")
-    cy = cy - 58
+    -- MAKE PAYMENTS inside the container (Godot PaymentsBtn)
+    local pay_y = bcy - badge_h/2 - gap - pay_h/2
+    mkbtn(self, "nav_payments", vmath.vector3(cx, pay_y, 0), vmath.vector3(bw, pay_h, 0), "MAKE PAYMENTS", "primary_btn")
+
+    cy = cy - cont_h - BLOCK_GAP
 
     -- ── Battles panel ─────────────────────────────────────────────────
     local battle_h = 150  -- taller for clearer top/bottom padding
@@ -520,19 +537,23 @@ local function draw_center(self)
             local is_active = (config.STAKE_LEVELS[self.stake_index] and config.STAKE_LEVELS[self.stake_index].amount == st)
             local affordable = (my_balance >= st)
 
-            -- No per-tile background: just the value. The active stake gets a
-            -- subtle tint + gold underline.
+            -- Godot: every stake card carries the container texture; the
+            -- active one swaps to the active variant with a warm tint and a
+            -- gold underline.
+            track(self, ui.btn9(vmath.vector3(sx, cy - stake_card_h/2, 0), vmath.vector3(st_w, stake_card_h, 0),
+                is_active and "container_bg_active" or "container_bg"))
             if is_active then
-                track(self, ui.box(vmath.vector3(sx, cy - stake_card_h/2, 0), vmath.vector3(st_w, stake_card_h, 0), vmath.vector4(0.20, 0.16, 0.03, 0.55)))
+                track(self, ui.box(vmath.vector3(sx, cy - stake_card_h/2, 0), vmath.vector3(st_w - 8, stake_card_h - 8, 0), vmath.vector4(0.165, 0.145, 0.133, 0.85)))
                 track(self, ui.box(vmath.vector3(sx, cy - stake_card_h + 3, 0), vmath.vector3(st_w - 6, 3, 0), COL_GOLD))
             end
             -- transparent hit target sized exactly to this column
             local btn = track(self, ui.box(vmath.vector3(sx, cy - stake_card_h/2, 0), vmath.vector3(st_w, stake_card_h, 0), vmath.vector4(0, 0, 0, 0)))
             self.buttons[#self.buttons+1] = { node = btn, id = "stake_"..i, data = level_idx }
 
-            -- "200" stake is themed red (Godot scene), active stake also red
-            local amt_red = (st == 200) or is_active
-            track(self, ui.text(vmath.vector3(sx, cy - stake_card_h/2 - 6, 0), tostring(st), "body", amt_red and COL_RED or (affordable and COL_WHITE or COL_DIM)))
+            -- Only the ACTIVE stake reads red (Godot active style) — a fixed
+            -- red 200 made it look permanently selected.
+            local amt_col = is_active and COL_RED or (affordable and COL_WHITE or COL_DIM)
+            track(self, ui.text(vmath.vector3(sx, cy - stake_card_h/2 - 6, 0), tostring(st), "body", amt_col))
             track(self, ui.text(vmath.vector3(sx, cy - stake_card_h/2 + 16, 0), "COINS", "small", COL_DIM))
         end
         cy = cy - stake_card_h - 10
@@ -759,7 +780,146 @@ local function draw_banner(self)
     for i, b in ipairs(self.banners or {}) do draw_one_banner(self, b, i) end
 end
 
-local function rebuild(self)
+-- ── Battle modal (create / edit "My Battle") ─────────────────────────────────
+-- 1:1 port of the Godot CreateBattleModal: 500px panel over an 80% dim,
+-- ENTRY FEE and GAME FORMAT steppers driven by the fixed prize config, a
+-- "Winner Takes" info line and a single submit button.
+local rebuild -- forward declaration: modal callbacks re-render the screen
+
+local BATTLE_TIERS = {
+    { amount = 500,   formats = { { games = 3, charge = 75,  points = 9 } } },
+    { amount = 1000,  formats = { { games = 3, charge = 75,  points = 9 }, { games = 5, charge = 125, points = 15 } } },
+    { amount = 2000,  formats = { { games = 3, charge = 75,  points = 9 }, { games = 5, charge = 125, points = 15 },
+                                  { games = 7, charge = 175, points = 21 }, { games = 9, charge = 225, points = 27 } } },
+    { amount = 5000,  formats = { { games = 3, charge = 150, points = 9 }, { games = 5, charge = 250, points = 15 },
+                                  { games = 7, charge = 350, points = 21 }, { games = 9, charge = 400, points = 27 },
+                                  { games = 11, charge = 500, points = 33 }, { games = 13, charge = 600, points = 39 } } },
+    { amount = 10000, formats = { { games = 3, charge = 300, points = 9 }, { games = 5, charge = 500, points = 15 },
+                                  { games = 7, charge = 700, points = 21 }, { games = 9, charge = 800, points = 27 },
+                                  { games = 11, charge = 1000, points = 33 }, { games = 13, charge = 1200, points = 39 } } },
+}
+
+local BM_TAN = vmath.vector4(0.702, 0.604, 0.467, 1)  -- Godot button text
+
+local function draw_battle_modal(self)
+    local bm = self.battle_modal
+    if not bm then return end
+
+    -- 80% dim that absorbs all background taps
+    local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(LOGICAL_W*2, LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.8)))
+    self.buttons[#self.buttons+1] = { node = dim, id = "bm_block" }
+
+    local pw, ph = 500, 440
+    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), COL_BG))
+    track(self, ui.btn9(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), "container_bg"))
+
+    local l = CX - pw/2 + 30
+    local r = CX + pw/2 - 30
+    local top = CY + ph/2 - 30
+
+    -- Header + close
+    txtL(self, l, top - 8, bm.editing and "UPDATE BATTLE" or "CREATE BATTLE", "body", COL_WHITE)
+    local xb = mkbtn(self, "bm_close", vmath.vector3(r - 10, top - 8, 0), vmath.vector3(30, 30, 0), nil, vmath.vector4(0,0,0,0.001))
+    track(self, ui.text(vmath.vector3(r - 10, top - 8, 0), "X", "body", COL_MID))
+
+    local tier = BATTLE_TIERS[bm.stake_i] or BATTLE_TIERS[1]
+    local fmts = tier.formats
+    if bm.fmt_i > #fmts then bm.fmt_i = #fmts end
+    local fmt = fmts[bm.fmt_i] or fmts[1]
+    local winner_takes = tier.amount * 2 - fmt.charge
+
+    -- ENTRY FEE stepper
+    local fee_y = top - 70
+    txtL(self, l, fee_y + 28, "ENTRY FEE", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
+    mkbtn(self, "bm_fee_minus", vmath.vector3(l + 20, fee_y - 8, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
+    track(self, ui.box(vmath.vector3(CX, fee_y - 8, 0), vmath.vector3(pw - 200, 40, 0), COL_NAMEID_BG))
+    track(self, ui.text(vmath.vector3(CX, fee_y - 8, 0), commas(tier.amount) .. " COINS", "body", vmath.vector4(1, 0.8, 0.4, 1)))
+    mkbtn(self, "bm_fee_plus", vmath.vector3(r - 20, fee_y - 8, 0), vmath.vector3(40, 40, 0), "+", "secondary_btn")
+    track(self, ui.text(vmath.vector3(CX, fee_y - 44, 0),
+        string.format("Winner Takes: %s + %d Pts", commas(winner_takes), fmt.points), "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+
+    -- GAME FORMAT stepper
+    local fmt_y = top - 168
+    txtL(self, l, fmt_y + 28, "GAME FORMAT", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
+    mkbtn(self, "bm_fmt_minus", vmath.vector3(l + 20, fmt_y - 8, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
+    track(self, ui.box(vmath.vector3(CX, fmt_y - 8, 0), vmath.vector3(pw - 200, 40, 0), COL_NAMEID_BG))
+    track(self, ui.text(vmath.vector3(CX, fmt_y - 8, 0), "BEST OF " .. fmt.games, "body", COL_WHITE))
+    mkbtn(self, "bm_fmt_plus", vmath.vector3(r - 20, fmt_y - 8, 0), vmath.vector3(40, 40, 0), "+", "secondary_btn")
+    track(self, ui.text(vmath.vector3(CX, fmt_y - 44, 0),
+        string.format("Charge: %s  ·  %d Pts to the winner", commas(fmt.charge), fmt.points), "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+
+    -- Feedback line
+    if bm.msg then
+        track(self, ui.text(vmath.vector3(CX, CY - ph/2 + 118, 0), bm.msg, "small",
+            bm.msg_ok and vmath.vector4(0.3, 1.0, 0.3, 1) or vmath.vector4(1, 0.3, 0.3, 1)))
+    end
+
+    -- Submit (64px high, tan label — Godot create button)
+    local sub_label = bm.submitting and "SUBMITTING..."
+        or (bm.editing and "UPDATE BATTLE" or "CREATE BATTLE")
+    mkbtn(self, "bm_submit", vmath.vector3(CX, CY - ph/2 + 62, 0), vmath.vector3(pw - 60, 64, 0), sub_label, "secondary_btn", nil, "body", BM_TAN)
+end
+
+local function close_battle_modal(self)
+    self.battle_modal = nil
+end
+
+local function bm_submit(self)
+    local bm = self.battle_modal
+    if not bm or bm.submitting then return end
+    local tier = BATTLE_TIERS[bm.stake_i] or BATTLE_TIERS[1]
+    local fmt = tier.formats[math.min(bm.fmt_i, #tier.formats)]
+    local uid = ws.get_current_user_id()
+    if uid == "" then
+        bm.msg, bm.msg_ok = "User ID missing. Please log in.", false
+        rebuild(self)
+        return
+    end
+
+    bm.submitting = true
+    bm.msg, bm.msg_ok = nil, nil
+    rebuild(self)
+
+    local payload = {
+        userId = uid,
+        amount = tier.amount,
+        matchFormat = fmt.games,
+        rules = "JOKERS",
+    }
+
+    local function on_result(result)
+        local cur = self.battle_modal
+        if not cur then return end
+        cur.submitting = false
+        if result.success then
+            local data = result.data or {}
+            local battle = data.tournament or data.data or data
+            local u = ws.current_user_data or {}
+            u.myBattle = battle
+            ws.current_user_data = u
+            cur.msg, cur.msg_ok = bm.editing and "Battle updated successfully!" or "Battle created successfully!", true
+            if self._active then rebuild(self) end
+            timer.delay(1.0, false, function()
+                if self.battle_modal == cur then
+                    close_battle_modal(self)
+                    if self._active then rebuild(self) end
+                end
+            end)
+        else
+            cur.msg, cur.msg_ok = result.message or "Request failed", false
+            if self._active then rebuild(self) end
+        end
+    end
+
+    local api = require("modules.api_service")
+    if bm.editing and bm.id and bm.id ~= "" then
+        api.update_tournament(bm.id, payload, on_result)
+    else
+        api.create_tournament(payload, on_result)
+    end
+end
+
+rebuild = function(self)
     clear(self)
     local _, _, div_lx, div_rx = get_layout()
 
@@ -779,6 +939,7 @@ local function rebuild(self)
     draw_right(self)
     draw_banner(self)
     draw_dialog(self)
+    draw_battle_modal(self)
 end
 
 -- ── Loops & Control (EAT Season Logic) ───────────────────────────────────────
@@ -929,6 +1090,7 @@ end
 function on_message(self, message_id, message, sender)
     if message_id == hash("screen_enter") then
         msg.post(".", "acquire_input_focus"); self._active = true; self.dialog, self.banners, self.list_scroll = nil, nil, 0
+        self.battle_modal = nil
         refresh_wh(); rebuild(self)
     elseif message_id == hash("enable") then
         refresh_wh(); self._active = true
@@ -982,13 +1144,50 @@ local function handle(self, b)
     elseif id == "nav_support"     then msg.post("#controller", "goto_support")
     elseif id == "nav_account"     then msg.post("#controller", "goto_account")
     elseif id == "nav_invite"      then msg.post("#controller", "goto_invite")
-    elseif id == "create_battle"   then msg.post("#controller", "goto_create_battle")
-    elseif id == "update_battle"   then msg.post("#controller", "goto_update_battle")
+
+    -- ── Battle modal (create / edit My Battle) ─────────────────────────
+    elseif id == "create_battle" then
+        self.battle_modal = { editing = false, stake_i = 1, fmt_i = 1 }
+        rebuild(self)
+    elseif id == "update_battle" then
+        local u = ws.current_user_data or {}
+        local mb = u.myBattle or u.myTournament or {}
+        local amt = tonumber(mb.stakeAmount) or tonumber((mb.stake or {}).amount)
+            or tonumber((mb.grandPrize or {}).value) or 0
+        local fmtv = tonumber(mb.matchFormat) or 3
+        local stake_i, fmt_i = 1, 1
+        for i, t in ipairs(BATTLE_TIERS) do
+            if t.amount == amt then stake_i = i break end
+        end
+        for i, fdef in ipairs(BATTLE_TIERS[stake_i].formats) do
+            if fdef.games == fmtv then fmt_i = i break end
+        end
+        self.battle_modal = { editing = true, id = tostring(mb._id or mb.id or ""), stake_i = stake_i, fmt_i = fmt_i }
+        rebuild(self)
+    elseif id == "bm_block" then
+        -- absorb taps behind the modal
+    elseif id == "bm_close" then
+        close_battle_modal(self); rebuild(self)
+    elseif id == "bm_fee_minus" or id == "bm_fee_plus" then
+        local bm = self.battle_modal
+        if bm and not bm.submitting then
+            bm.stake_i = math.max(1, math.min(#BATTLE_TIERS, bm.stake_i + (id == "bm_fee_plus" and 1 or -1)))
+            bm.fmt_i = math.min(bm.fmt_i, #BATTLE_TIERS[bm.stake_i].formats)
+            rebuild(self)
+        end
+    elseif id == "bm_fmt_minus" or id == "bm_fmt_plus" then
+        local bm = self.battle_modal
+        if bm and not bm.submitting then
+            bm.fmt_i = math.max(1, math.min(#BATTLE_TIERS[bm.stake_i].formats, bm.fmt_i + (id == "bm_fmt_plus" and 1 or -1)))
+            rebuild(self)
+        end
+    elseif id == "bm_submit" then
+        bm_submit(self)
     end
 end
 
 function on_input(self, action_id, action)
-    if action_id == hash("touch") and not self.dialog and not (self.banners and #self.banners > 0) and self.list_region then
+    if action_id == hash("touch") and not self.dialog and not self.battle_modal and not (self.banners and #self.banners > 0) and self.list_region then
         local reg = self.list_region
         if action.pressed and action.x >= reg.left and action.x <= reg.right and action.y >= reg.bottom and action.y <= reg.top then
             self._drag_y = action.y; self._drag_start = action.y; self._dragged = false
