@@ -459,6 +459,25 @@ function M.end_game(self, player_won, is_cut, backend_results)
     self.game_over = true
     notify_gui(self.gui_hud, "stop_timers")
 
+    if self.online_mode and type(backend_results) == "table" then
+        -- Balance updated there and then: the backend settles wallets before
+        -- GAME_OVER and ships post-game balances in the payload.
+        if type(backend_results.balances) == "table" then
+            local bal = tonumber(backend_results.balances[tostring(self.my_player_id)])
+            if bal ~= nil then
+                notify_gui(self.gui_hud, "update_balance", { balance = bal })
+            end
+        end
+        -- Refresh the board immediately with the final series score and the
+        -- updated all-time head-to-head / form the backend just recorded.
+        if backend_results.currentScores or backend_results.headToHead then
+            OnlineHandler.process_scoreboard(self, {
+                currentScores = backend_results.currentScores,
+                headToHead    = backend_results.headToHead,
+            })
+        end
+    end
+
     local p_score = RE.hand_score(self.player_hand)
     local a_score = RE.hand_score(self.ai_hand)
 
