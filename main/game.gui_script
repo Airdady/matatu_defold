@@ -557,6 +557,7 @@ local function show_ai_notice(self, opts)
         if self.ai_scrim then gui.set_enabled(self.ai_scrim, true) end
     else
         if not self.ai_banner then return end
+        -- The assist allowance is capped: surface how much is left.
         local used = tonumber(opts.moves) or 0
         local max = tonumber(opts.max) or 3
         if self.ai_banner_lbl then
