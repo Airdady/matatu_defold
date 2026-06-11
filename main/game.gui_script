@@ -18,6 +18,11 @@ local AVATAR_BG_COLOR  = vmath.vector4(0, 0, 0, 0) -- Transparent
 local NETWORK_ICON_BASE_SIZE = 20
 local TIMER_RADIUS = 50
 local STAKE_CHIP_SIZE = 170
+-- Godot HudUI parity: in a series (tournament/battle) layout the stake chip
+-- slides right so it doesn't sit on top of the scoreboard column at the
+-- left edge (STAKE_CHIP_OFFSET_DEFAULT / STAKE_CHIP_OFFSET_TOURNAMENT).
+local STAKE_CHIP_X_DEFAULT    = 20
+local STAKE_CHIP_X_TOURNAMENT = 200
 
 -- Colors
 local C_PANEL          = vmath.vector4(0.10, 0.10, 0.10, 0.95)
@@ -156,10 +161,17 @@ local function build_scoreboard(self)
 end
 
 local function build_stake_chip(self)
-    self.stake_chip = box(vmath.vector3(20, LOGICAL_H/2, 0), vmath.vector3(STAKE_CHIP_SIZE, STAKE_CHIP_SIZE, 0), vmath.vector4(1,1,1,1), gui.PIVOT_W)
+    self.stake_chip = box(vmath.vector3(STAKE_CHIP_X_DEFAULT, LOGICAL_H/2, 0), vmath.vector3(STAKE_CHIP_SIZE, STAKE_CHIP_SIZE, 0), vmath.vector4(1,1,1,1), gui.PIVOT_W)
     gui.set_xanchor(self.stake_chip, gui.ANCHOR_LEFT)
     gui.set_yanchor(self.stake_chip, gui.ANCHOR_NONE)
-    gui.set_enabled(self.stake_chip, false) 
+    gui.set_enabled(self.stake_chip, false)
+end
+
+-- Series layout: with the scoreboard up, the chip moves out of its way.
+local function apply_stake_layout(self)
+    if not self.stake_chip then return end
+    local x = self.sb_visible and STAKE_CHIP_X_TOURNAMENT or STAKE_CHIP_X_DEFAULT
+    gui.set_position(self.stake_chip, vmath.vector3(x, LOGICAL_H/2, 0))
 end
 
 local function build_standings_ui(self)
@@ -445,6 +457,7 @@ function init(self)
     self.total_duration = 30.0
     self.is_player_turn = true
     self.my_id = ""
+    self.sb_visible = false
 
     build_avatars_and_sections(self)
     build_scoreboard(self)
@@ -581,10 +594,11 @@ function on_message(self, message_id, message)
 
     elseif message_id == hash("update_scoreboard") then
         if message.show then
+            self.sb_visible = true
             if self.sb_root then gui.set_enabled(self.sb_root, true) end
             local best_of = message.best_of or 3
             local target = math.floor(best_of / 2) + 1
-            
+
             if self.sb_p_score then gui.set_text(self.sb_p_score, tostring(message.p_score or 0)) end
             if self.sb_o_score then gui.set_text(self.sb_o_score, tostring(message.o_score or 0)) end
             if self.sb_p_ind then gui.set_text(self.sb_p_ind, tostring(message.p_score or 0) .. " of " .. target) end
@@ -593,8 +607,10 @@ function on_message(self, message_id, message)
             if message.stage and message.stage ~= "" then title = title .. "  •  " .. string.upper(message.stage) end
             if self.sb_title then gui.set_text(self.sb_title, title) end
         else
+            self.sb_visible = false
             if self.sb_root then gui.set_enabled(self.sb_root, false) end
         end
+        apply_stake_layout(self)
 
     elseif message_id == hash("update_standings") then
         local ranks = message.ranks or {}
@@ -637,6 +653,7 @@ function on_message(self, message_id, message)
                 gui.play_flipbook(self.stake_chip, hash(img))
             end)
             gui.set_enabled(self.stake_chip, ok)
+            apply_stake_layout(self)
         end
 
     elseif message_id == hash("network_quality") then
@@ -673,9 +690,11 @@ function on_message(self, message_id, message)
         -- on screen (numbers are updated in place); only a full reset —
         -- leaving the board — clears it.
         if not (message and message.keep_scoreboard) then
+            self.sb_visible = false
             if self.sb_root then gui.set_enabled(self.sb_root, false) end
         end
         if self.stake_chip then gui.set_enabled(self.stake_chip, false) end
+        apply_stake_layout(self)
         if self.standings_title then gui.set_enabled(self.standings_title, false) end
         for _, row in ipairs(self.standings_rows or {}) do gui.set_enabled(row.bg, false) end
 
