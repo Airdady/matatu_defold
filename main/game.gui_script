@@ -216,35 +216,10 @@ local function build_network_badge(parent, pos)
     return { bg = bg, dot = dot, lbl = lbl }
 end
 
--- Win-rate rating chip beside an avatar. Colored by tier.
-local function build_rating_chip(parent, pos)
-    local bg = box(pos, vmath.vector3(58, 20, 0), vmath.vector4(0.05, 0.05, 0.05, 0.75), gui.PIVOT_CENTER)
-    gui.set_parent(bg, parent)
-    local lbl = label(vmath.vector3(0, 0, 0), "WR 0%", 11, C_H2H_DIM, gui.PIVOT_CENTER, "poppins_bold")
-    gui.set_parent(lbl, bg)
-    gui.set_enabled(bg, false)
-    return { bg = bg, lbl = lbl }
-end
-
-local function set_rating_chip(chip, win_rate)
-    if not chip then return end
-    local wr = tonumber(win_rate)
-    if not wr then
-        gui.set_enabled(chip.bg, false)
-        return
-    end
-    local col = C_FORM_L
-    if wr >= 60 then col = C_FORM_W
-    elseif wr >= 40 then col = C_ORANGE end
-    gui.set_text(chip.lbl, "WR " .. tostring(math.floor(wr + 0.5)) .. "%")
-    gui.set_color(chip.lbl, col)
-    gui.set_enabled(chip.bg, true)
-end
-
 local function build_avatars_and_sections(self)
     -- Extreme Left placement using anchor logic.
-    -- X is 80 (half of the 160 width) to ensure the left boundary of the box touches x=0
-    local left_edge_x = 80
+    -- Added more padding on the left side: increased left_edge_x from 80 to 120
+    local left_edge_x = 120
     self.hud_root = box(vmath.vector3(left_edge_x, LOGICAL_H/2, 0), vmath.vector3(160, 680, 0), vmath.vector4(0, 0, 0, 0), gui.PIVOT_CENTER)
     gui.set_xanchor(self.hud_root, gui.ANCHOR_LEFT)
     gui.set_yanchor(self.hud_root, gui.ANCHOR_NONE)
@@ -266,8 +241,6 @@ local function build_avatars_and_sections(self)
     gui.set_parent(self.o_avatar_name, self.hud_root)
 
     self.o_net = build_network_badge(self.hud_root, vmath.vector3(0, 320, 0))
-    -- Opponent win-rate rating, tucked beside their avatar.
-    self.o_rating = build_rating_chip(self.hud_root, vmath.vector3(62, 222, 0))
 
     -- PLAYER 1 SECTION (MOVED TO BOTTOM OUTER)
     self.p_avatar_bg = box(vmath.vector3(0, -260, 0), vmath.vector3(AVATAR_CONTAINER_SIZE, AVATAR_CONTAINER_SIZE, 0), AVATAR_BG_COLOR, gui.PIVOT_CENTER)
@@ -290,8 +263,6 @@ local function build_avatars_and_sections(self)
     gui.set_enabled(self.p_balance, false)
 
     self.p_net = build_network_badge(self.hud_root, vmath.vector3(0, -320, 0))
-    -- Your win-rate rating, mirrored beside your avatar.
-    self.p_rating = build_rating_chip(self.hud_root, vmath.vector3(62, -222, 0))
 end
 
 -- Placing the Scoreboard flippers and game indicators...
@@ -321,26 +292,32 @@ local function build_scoreboard(self)
     gui.set_parent(self.sb_title, self.hud_root)
 
     -- ── Head-to-head strip ────────────────────────────────────────────────
-    -- A thin vertical column hugging the left gutter of the HUD: rotated
+    -- A thin vertical column hugging the RIGHT gutter of the HUD: rotated
     -- "LAST 5" header, the last-5 form vs this opponent as W/L badges
-    -- (newest on top, W green / L red), and the rotated all-time score.
-    self.h2h_form_lbl = label(vmath.vector3(-72, 86, 0), "LAST 5", 11, C_H2H_DIM, gui.PIVOT_CENTER, "poppins_bold")
-    gui.set_rotation(self.h2h_form_lbl, vmath.vector3(0, 0, 90))
+    -- (newest on bottom, W green / L red), and the rotated all-time score.
+    self.h2h_form_lbl = label(vmath.vector3(76, 105, 0), "LAST 5", 14, C_H2H_DIM, gui.PIVOT_CENTER, "poppins_bold")
+    gui.set_rotation(self.h2h_form_lbl, vmath.vector3(0, 0, -90))
     gui.set_parent(self.h2h_form_lbl, self.hud_root)
     gui.set_enabled(self.h2h_form_lbl, false)
 
     self.h2h_badges = {}
     for i = 1, 5 do
-        local bg = box(vmath.vector3(-72, 52 - (i - 1) * 26, 0), vmath.vector3(18, 18, 0), vmath.vector4(0.2, 0.2, 0.2, 0.5), gui.PIVOT_CENTER)
+        -- Reverse layout: i=1 (most recent) at bottom (-30), i=5 (oldest) at top (66)
+        local y_pos = -30 + (i - 1) * 24
+        local bg = box(vmath.vector3(76, y_pos, 0), vmath.vector3(18, 18, 0), vmath.vector4(0.2, 0.2, 0.2, 0.5), gui.PIVOT_CENTER)
         gui.set_parent(bg, self.hud_root)
-        local lbl = label(vmath.vector3(0, 0, 0), "", 11, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
+        local lbl = label(vmath.vector3(0, 0, 0), "", 13, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
         gui.set_parent(lbl, bg)
         gui.set_enabled(bg, false)
         self.h2h_badges[i] = { bg = bg, lbl = lbl }
     end
 
-    self.h2h_alltime_lbl = label(vmath.vector3(-72, -86, 0), "H2H 0-0", 11, C_H2H_GOLD, gui.PIVOT_CENTER, "poppins_bold")
-    gui.set_rotation(self.h2h_alltime_lbl, vmath.vector3(0, 0, 90))
+    self.h2h_divider = box(vmath.vector3(76, -54, 0), vmath.vector3(20, 2, 0), vmath.vector4(0.3, 0.3, 0.3, 1), gui.PIVOT_CENTER)
+    gui.set_parent(self.h2h_divider, self.hud_root)
+    gui.set_enabled(self.h2h_divider, false)
+
+    self.h2h_alltime_lbl = label(vmath.vector3(76, -108, 0), "ALL TIME 0-0", 14, C_H2H_GOLD, gui.PIVOT_CENTER, "poppins_bold")
+    gui.set_rotation(self.h2h_alltime_lbl, vmath.vector3(0, 0, -90))
     gui.set_parent(self.h2h_alltime_lbl, self.hud_root)
     gui.set_enabled(self.h2h_alltime_lbl, false)
 
@@ -365,7 +342,11 @@ end
 local function set_h2h_strip(self, h2h)
     local has = type(h2h) == "table"
     local form = has and type(h2h.form) == "table" and h2h.form or {}
-    if self.h2h_form_lbl then gui.set_enabled(self.h2h_form_lbl, has and #form > 0) end
+    local has_form = has and #form > 0
+    
+    if self.h2h_form_lbl then gui.set_enabled(self.h2h_form_lbl, has_form) end
+    if self.h2h_divider then gui.set_enabled(self.h2h_divider, has) end
+    
     for i = 1, 5 do
         local badge = self.h2h_badges and self.h2h_badges[i]
         if badge then
@@ -381,7 +362,7 @@ local function set_h2h_strip(self, h2h)
     end
     if self.h2h_alltime_lbl then
         if has then
-            gui.set_text(self.h2h_alltime_lbl, "H2H " .. tostring(h2h.p or 0) .. "-" .. tostring(h2h.o or 0))
+            gui.set_text(self.h2h_alltime_lbl, "ALL TIME " .. tostring(h2h.p or 0) .. "-" .. tostring(h2h.o or 0))
             gui.set_enabled(self.h2h_alltime_lbl, true)
         else
             gui.set_enabled(self.h2h_alltime_lbl, false)
@@ -390,7 +371,8 @@ local function set_h2h_strip(self, h2h)
 end
 
 local function build_stake_chip(self)
-    self.stake_chip = box(vmath.vector3(220, LOGICAL_H/2, 0), vmath.vector3(STAKE_CHIP_SIZE, STAKE_CHIP_SIZE, 0), vmath.vector4(1,1,1,1), gui.PIVOT_W)
+    -- Shift stake chip right to accommodate the 40px shift of the scoreboard padding
+    self.stake_chip = box(vmath.vector3(260, LOGICAL_H/2, 0), vmath.vector3(STAKE_CHIP_SIZE, STAKE_CHIP_SIZE, 0), vmath.vector4(1,1,1,1), gui.PIVOT_W)
     gui.set_xanchor(self.stake_chip, gui.ANCHOR_LEFT)
     gui.set_yanchor(self.stake_chip, gui.ANCHOR_NONE)
     gui.set_enabled(self.stake_chip, false)
@@ -799,10 +781,6 @@ function on_message(self, message_id, message)
         if self.p_balance then gui.set_text(self.p_balance, "Bal: " .. tostring(bal)) end
         self.my_id = (message.my_info and message.my_info.id) or ""
 
-        -- Win-rate rating badges beside both avatars.
-        set_rating_chip(self.p_rating, message.my_info and message.my_info.winRate)
-        set_rating_chip(self.o_rating, message.op_info and message.op_info.winRate)
-
         local p_av = (message.my_info and message.my_info.avatar) or 1
         local o_av = (message.op_info and message.op_info.avatar) or 1
         pcall(function() gui.play_flipbook(self.p_avatar_img, hash("avatar_" .. tostring(p_av))) end)
@@ -830,13 +808,27 @@ function on_message(self, message_id, message)
             return
         end
 
-        -- series=false renders the head-to-head ALL-TIME score on the flip
-        -- clocks ("ALL TIME" board for normal games); series=true (or legacy
-        -- posts without the flag) renders the live series score.
+        local state = message.state or message.game_state or message
+        local is_tournament = false
+
+        if state and type(state) == "table" then
+            if state.tournamentId or state.tournament or state.tournamentScore then
+                is_tournament = true
+            end
+            if state.gameOverState and type(state.gameOverState) == "table" then
+                if state.gameOverState.tournamentId or state.gameOverState.tournamentData then
+                    is_tournament = true
+                end
+            end
+        end
+
         local series = message.series
         if series == nil then series = true end
 
-        local state = message.state or message.game_state or message
+        -- Override if it's a tournament: it behaves like a 'series' because we show progress on the flippers
+        if is_tournament then
+            series = true
+        end
 
         -- Default Score Variables
         local best_of = 3
@@ -887,19 +879,25 @@ function on_message(self, message_id, message)
         local h2h = (type(message.h2h) == "table") and message.h2h or nil
 
         set_series_visible(self, true, series and true or false)
+        
+        -- Show H2H side-strip (Last 5 & All Time) whenever h2h data is available
         set_h2h_strip(self, h2h)
 
         if series then
             -- Calculate Required Wins
             local target = math.floor(best_of / 2) + 1
 
-            -- Run the 3D Flip Anim logic
+            -- Run the 3D Flip Anim logic for tournament/series progress
             animate_flipper(self.o_flipper, string.format("%02d", o_score))
             animate_flipper(self.p_flipper, string.format("%02d", p_score))
 
             -- Format Title Details
             local title = "BEST OF " .. tostring(best_of)
-            if stage and stage ~= "" then title = title .. "  •  " .. string.upper(stage) end
+            if is_tournament then
+                if stage and stage ~= "" then title = title .. "  •  " .. string.upper(stage) end
+            else
+                if stage and stage ~= "Match" then title = title .. "  •  " .. string.upper(stage) end
+            end
             if self.sb_title then gui.set_text(self.sb_title, title) end
 
             -- Calculate Games Left
@@ -926,8 +924,7 @@ function on_message(self, message_id, message)
                 gui.set_color(self.o_games_bg, vmath.vector4(0.95, 0.61, 0.07, 0.15))
             end
         else
-            -- Normal game: the flip clocks display the all-time head-to-head
-            -- score between the two players.
+            -- Normal game (not series/tournament): flip clocks display all-time head-to-head score
             animate_flipper(self.o_flipper, string.format("%02d", (h2h and h2h.o) or 0))
             animate_flipper(self.p_flipper, string.format("%02d", (h2h and h2h.p) or 0))
             if self.sb_title then gui.set_text(self.sb_title, "ALL TIME") end
@@ -1015,8 +1012,6 @@ function on_message(self, message_id, message)
             set_h2h_strip(self, nil)
             snap_flipper(self.o_flipper, "00")
             snap_flipper(self.p_flipper, "00")
-            if self.p_rating then gui.set_enabled(self.p_rating.bg, false) end
-            if self.o_rating then gui.set_enabled(self.o_rating.bg, false) end
         end
 
         if self.stake_chip then gui.set_enabled(self.stake_chip, false) end
