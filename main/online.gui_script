@@ -1210,8 +1210,29 @@ local function handle(self, b)
         ws.update_stake(config.STAKE_LEVELS[self.stake_index]); rebuild(self)
     elseif id == "challenge" then
         local u = b.data or {}
-        ws.send_game_request({ _id=u._id, username=u.username, isAI=u.isAI, avatar=u.avatar }, app_state.selected_stake)
-        open_dialog(self, "challenging", u.username or "opponent", app_state.selected_stake, nil, u.avatar, u._id, nil)
+        local stake_data = app_state.selected_stake
+        local extra_payload = nil
+
+        -- IF WE ARE IN THE BATTLE TAB AND OPPONENT HAS A BATTLE, USE ITS SETTINGS + ID
+        if self.tab == TAB_BATTLES and type(u.myBattle) == "table" then
+            local mb = u.myBattle
+            if type(mb.stake) == "table" then
+                stake_data = mb.stake
+            else
+                local amt = tonumber(mb.stakeAmount) or 0
+                stake_data = { amount = amt, charge = 0, points = 0 }
+            end
+            
+            extra_payload = {
+                gameType = "TOURNAMENT",
+                tournamentId = mb._id or mb.id,
+                rules = mb.rules
+            }
+        end
+
+        ws.send_game_request({ _id=u._id, username=u.username, isAI=u.isAI, avatar=u.avatar }, stake_data, extra_payload)
+        open_dialog(self, "challenging", u.username or "opponent", stake_data, nil, u.avatar, u._id, nil)
+        
         -- The sender's side fetches the head-to-head form for this opponent;
         -- the HEAD_TO_HEAD response fills the open dialog in place.
         ws.request_head_to_head(u._id)
