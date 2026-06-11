@@ -109,16 +109,31 @@ function init(self)
 		end
 	end))
 
-	-- Online game start → board screen. Only drive the lobby→board transition
-	-- here; an in-game start (e.g. a tournament's NEXT round) is handled by the
-	-- board itself, so re-showing the screen would re-init it twice.
+	-- Online game start → board screen. From any other screen this drives the
+	-- lobby→board transition. While ALREADY on the board (a tournament's next
+	-- round arriving mid-session) the screen must not be re-shown — instead the
+	-- event is forwarded to the board, which de-dupes by game id and re-inits
+	-- only for a genuinely new round. This forward is the reliable path: the
+	-- board's own ws listeners are torn down/re-registered between rounds, so
+	-- a START landing in that gap would otherwise be lost entirely.
 	table.insert(self.tokens, ws.on("game_start", function()
 		app_state.mode = "online"
-		if self.screen ~= "game" then show(self, "game") end
+		if self.screen ~= "game" then
+			show(self, "game")
+		else
+			msg.post("#game_logic", "ws_new_game_start")
+		end
 	end))
 	table.insert(self.tokens, ws.on("game_request_accepted", function()
 		app_state.mode = "online"
-		show(self, "game")
+		if self.screen ~= "game" then
+			show(self, "game")
+		else
+			-- Auto-accepted tournament continuation while the board is up:
+			-- hand the fresh state to the board (it reads ws.active_game_state)
+			-- instead of re-entering the screen, which would double-init.
+			msg.post("#game_logic", "ws_new_game_start")
+		end
 	end))
 
 	-- Broadcast user-data refreshes to data-driven screens.
@@ -157,7 +172,9 @@ function init(self)
 	-- Game notifications go to the logic script that owns the sprite board.
 	forward("game_move",           "#game_logic", "ws_game_move")
 	forward("game_over",           "#game_logic", "ws_game_over")
-	forward("timer_update",        "#game_logic", "ws_timer")
+	-- timer_update is delivered by the board's own listener (online_handler)
+	-- which carries the payload; a bare forward here would arrive without
+	-- message.data and sync_timers would read it as "no turn" → stop_timers.
 	forward("round_complete",      "#game_logic", "ws_round_complete")
 
 	-- Opponent connection state during a live match (carries grace + player id).

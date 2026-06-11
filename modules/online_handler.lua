@@ -100,11 +100,73 @@ function M.sync_deck_size(self, target_size)
     end
 end
 
+-- Display-only projection of a player object. The raw entries in
+-- state.players carry hands/deck/theme tables that overflow Defold's
+-- message buffer when posted to a gui, so guis only ever get this slice.
+function M.public_player_info(p)
+    p = p or {}
+    return {
+        id       = p.id or p._id or "",
+        _id      = p._id or p.id or "",
+        username = p.username or p.name,
+        name     = p.name,
+        avatar   = p.avatar or 1,
+        balance  = p.balance,
+        isAI     = p.isAI or false,
+    }
+end
+
+-- Standings rows trimmed to what the HUD renders (and capped at its 7 rows);
+-- the full rank list is the documented msg.post overflow case.
+function M.slim_ranks(ranks)
+    local out = {}
+    if type(ranks) ~= "table" then return out end
+    for i, r in ipairs(ranks) do
+        if i > 7 then break end
+        out[#out + 1] = {
+            position = r.position,
+            username = r.username,
+            points   = r.points,
+            id       = r.id or r._id,
+        }
+    end
+    return out
+end
+
 -- Tournament / battle scoreboard, ported from the Godot Scoreboard.update_state.
 -- A live tournament game carries its running match score in state.tournamentScore
 -- (scores + matchFormat + currentLevel). Plain MOVE states often omit it, so once
 -- we've recognised a series game we PERSIST the board and only refresh values when
 -- new ones arrive — otherwise the board would flicker off between moves.
+-- Godot Scoreboard parity: when neither the live state nor the move carries
+-- scores, read them from the cached user data — tournaments[] matched by id
+-- (userProgress.currentScores) or myBattle — like _sync_scores_from_user_data.
+local function scores_from_user_data(t_id)
+    if not t_id or t_id == "" then return nil end
+    local u = ws.current_user_data or {}
+    local function progress_scores(obj)
+        if type(obj) ~= "table" then return nil end
+        local up = obj.userProgress
+        if type(up) == "table" and type(up.currentScores) == "table" then
+            return up.currentScores
+        end
+        return nil
+    end
+    if type(u.tournaments) == "table" then
+        for _, t in ipairs(u.tournaments) do
+            if type(t) == "table" and tostring(t._id or t.tournamentId or "") == t_id then
+                local sc = progress_scores(t)
+                if sc then return sc end
+            end
+        end
+    end
+    local mb = u.myBattle
+    if type(mb) == "table" and tostring(mb._id or "") == t_id then
+        return progress_scores(mb)
+    end
+    return nil
+end
+
 function M.process_scoreboard(self, state)
     state = state or {}
 
@@ -135,6 +197,12 @@ function M.process_scoreboard(self, state)
     if not fmt then fmt = tonumber(state.matchFormat) end
     if not fmt and type(state.tournament) == "table" then fmt = tonumber(state.tournament.matchFormat) end
     if p_score == nil then p_score, o_score = read_scores(state.currentScores) end
+
+    -- Track the series' tournament id across moves (states between moves often
+    -- drop it) so the user-data fallback keeps working mid-series.
+    local t_id = tostring(state.tournamentId or "")
+    if t_id ~= "" then self._sb_tid = t_id else t_id = tostring(self._sb_tid or "") end
+    if p_score == nil then p_score, o_score = read_scores(scores_from_user_data(t_id)) end
 
     local is_series = (ts ~= nil)
         or (state.gameType == "TOURNAMENT")
@@ -168,19 +236,26 @@ function M.setup_ws_listeners(self)
     end
     self.ws_listeners = {}
 
+    -- Resolve the board's url NOW, while we run inside game.script. The
+    -- listener closures below execute later from the WebSocket callback,
+    -- whose script context is controller.script (it called ws.connect()),
+    -- so a relative msg.post("#", ...) there would land on #controller and
+    -- be silently dropped — the next-round START was lost exactly this way.
+    local board = msg.url()
+
     table.insert(self.ws_listeners, ws.on("game_move", function(move_data, gs)
         ws.queue_move(move_data, gs)
-        msg.post("#", "ws_game_move")
+        msg.post(board, "ws_game_move")
     end))
     table.insert(self.ws_listeners, ws.on("timer_update", function(d)
-        msg.post("#", "ws_timer_update", { data = d })
+        msg.post(board, "ws_timer_update", { data = d })
     end))
     table.insert(self.ws_listeners, ws.on("game_over", function(results)
         ws.last_game_over = results or {}
-        msg.post("#", "ws_game_over")
+        msg.post(board, "ws_game_over")
     end))
     table.insert(self.ws_listeners, ws.on("network_quality", function(d)
-        msg.post("#", "ws_network_quality", d)
+        msg.post(board, "ws_network_quality", d)
     end))
 
     table.insert(self.ws_listeners, ws.on("game_start", function(gs)
@@ -194,7 +269,7 @@ function M.setup_ws_listeners(self)
         -- nested tables).
         if is_new or self.game_over then
             ws.active_game_state = gs
-            msg.post("#", "ws_new_game_start")
+            msg.post(board, "ws_new_game_start")
         elseif not self.game_over then
             M.sync_timers(self, gs)
         end
@@ -308,7 +383,7 @@ function M.finalize_state_sync(self, state, on_complete)
         msg.post(GUI_SUIT, "suit_select", { mode = "close" })
     end
 
-    if state.rank then msg.post(GUI_HUD, "update_standings", { ranks = state.rank }) end
+    if state.rank then msg.post(GUI_HUD, "update_standings", { ranks = M.slim_ranks(state.rank) }) end
     M.process_scoreboard(self, state)
 
     -- ── Deck + opponent-hand reconciliation (deferred behind a reshuffle) ────
@@ -452,6 +527,7 @@ function M.start_game(self, state)
     if not is_continuation then
         self._sb_active, self._sb_format, self._sb_stage = false, nil, nil
         self._sb_p, self._sb_o = nil, nil
+        self._sb_tid = (t_id ~= "" and t_id) or nil
     end
     self._sb_series_key = series_key
 
@@ -465,10 +541,14 @@ function M.start_game(self, state)
     self.chosen_suit    = state.chosenSuit or ""
 
     if state.stake then msg.post(GUI_HUD, "update_stake", { amount = state.stake }) end
-    if state.rank then msg.post(GUI_HUD, "update_standings", { ranks = state.rank }) end
+    if state.rank then msg.post(GUI_HUD, "update_standings", { ranks = M.slim_ranks(state.rank) }) end
 
-    msg.post(GUI_HUD, "setup_avatars", { my_info = mp, op_info = op })
-    msg.post(GUI_OVER, "setup_avatars", { my_info = mp, op_info = op })
+    -- Defold rejects script messages over ~2KB. Full player objects carry the
+    -- hand, theme object, stake, etc., so only the display fields travel.
+    local my_pub = M.public_player_info(mp)
+    local op_pub = M.public_player_info(op)
+    msg.post(GUI_HUD, "setup_avatars", { my_info = my_pub, op_info = op_pub })
+    msg.post(GUI_OVER, "setup_avatars", { my_info = my_pub, op_info = op_pub })
     M.process_scoreboard(self, state)
 
     local p_count = #hand_data
