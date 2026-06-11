@@ -418,6 +418,42 @@ function M.check_win(self, rec, is_player, result)
     return false
 end
 
+-- Only the fields the game-over modal renders. The raw gameOverState of a
+-- tournament round also carries tournamentData.levels and friends, which can
+-- push the table past Defold's ~2KB message ceiling — the post would then
+-- fail and the modal silently never appear.
+local function slim_results(res)
+    res = type(res) == "table" and res or {}
+    local function two_player_map(m)
+        if type(m) ~= "table" then return nil end
+        local c = {}
+        for k, v in pairs(m) do c[tostring(k)] = v end
+        return c
+    end
+    local out = {
+        reason                   = res.reason,
+        isNoShowScenario         = res.isNoShowScenario,
+        gameType                 = res.gameType,
+        points                   = res.points,
+        tournamentCompleted      = res.tournamentCompleted,
+        tournamentEndedByTimeout = res.tournamentEndedByTimeout,
+        isMatchComplete          = res.isMatchComplete,
+        rewards                  = two_player_map(res.rewards),
+        currentScores            = two_player_map(res.currentScores),
+        cardTotals               = two_player_map(res.cardTotals),
+    }
+    if type(res.stake) == "table" then
+        out.stake = { amount = res.stake.amount, charge = res.stake.charge, points = res.stake.points }
+    end
+    if type(res.tournamentData) == "table" and type(res.tournamentData.grandPrize) == "table" then
+        out.tournamentData = { grandPrize = {
+            value  = res.tournamentData.grandPrize.value,
+            points = res.tournamentData.grandPrize.points,
+        } }
+    end
+    return out
+end
+
 function M.end_game(self, player_won, is_cut, backend_results)
     if self.game_over then return end
     self.game_over = true
@@ -492,7 +528,7 @@ function M.end_game(self, player_won, is_cut, backend_results)
             ai_score = a_score,
             is_cut = is_cut,
             my_id = self.my_player_id,
-            results = backend_results or {},
+            results = slim_results(backend_results),
             series_active = is_series_active,
             series_over = is_series_over
         })
