@@ -274,6 +274,20 @@ function M.setup_ws_listeners(self)
             M.sync_timers(self, gs)
         end
     end))
+
+    -- A tournament's NEXT round arrives as an auto-accepted
+    -- GAME_REQUEST_ACCEPTED carrying the freshly dealt state. While the
+    -- board is live, initialize the new round HERE the moment it lands —
+    -- no taps, no waiting on the controller's screen routing.
+    table.insert(self.ws_listeners, ws.on("game_request_accepted", function(gs)
+        if type(gs) ~= "table" or next(gs) == nil then return end
+        local incoming = tostring(gs.id or gs.gameId or "")
+        local is_new = (incoming ~= "" and incoming ~= tostring(self.online_game_id))
+        if is_new or self.game_over then
+            ws.active_game_state = gs
+            msg.post("#", "ws_new_game_start")
+        end
+    end))
 end
 
 local function stamp_ai_hand(self, real_hand)
@@ -438,6 +452,107 @@ function M.finalize_state_sync(self, state, on_complete)
     end
 end
 
+-- The backend AI played OUR cards (timeout assist or offline takeover).
+-- Animate the move on our own hand so the player SEES the AI take over —
+-- their cards fly to the pile / draws land in their hand — and they can
+-- resume playing themselves on the next turn.
+function M.process_my_actions(self, actions, done)
+    local idx = 1
+    local seq = self._seq
+    local INTER  = 0.24
+    local SETTLE = 0.30
+
+    local function next_act()
+        if seq ~= self._seq then return end
+        if idx > #actions then
+            timer.delay(SETTLE, false, function()
+                if seq == self._seq then if done then done() end end
+            end)
+            return
+        end
+
+        local act = actions[idx]
+        idx = idx + 1
+
+        if act.type == "PLAY" then
+            local v = tonumber(act.v) or 10
+            local s = tostring(act.s or "H")
+            local rec = nil
+            for i, c in ipairs(self.player_hand) do
+                if tonumber(c.v) == v and tostring(c.s) == s then
+                    rec = table.remove(self.player_hand, i)
+                    break
+                end
+            end
+            if not rec and #self.player_hand > 0 then
+                rec = table.remove(self.player_hand, #self.player_hand)
+                rec.v, rec.s = v, s
+                self.set_face(rec)
+            elseif not rec then
+                rec = self.spawn_card(v, s, vmath.vector3(self.CENTER.x, self.PLAYER_HAND_Y, self.Z_FLY))
+                self.set_face(rec)
+            end
+
+            msg.post(GUI_SUIT, "suit_select", { mode = "close" })
+            self.trigger_play_effects({ v = v, s = s })
+            self.animate_to_pile(rec, true)
+            self.position_hands(true)
+            timer.delay(INTER, false, next_act)
+
+        elseif act.type == "DRAW" then
+            local count = tonumber(act.count) or 1
+            self.draw_to_hand(self.player_hand, true, count, function()
+                if seq == self._seq then next_act() end
+            end)
+        else
+            next_act()
+        end
+    end
+
+    if #actions == 0 then
+        if done then done() end
+    else
+        next_act()
+    end
+end
+
+-- Exact own-hand reconciliation against the server state (used after the
+-- AI moved for us, where the local hand must mirror the authoritative one).
+local function sync_my_hand(self, state)
+    local me = (state.players or {})[self.my_player_id] or {}
+    local real = (type(me.hand) == "table") and me.hand or nil
+    if not real then return end
+    while #self.player_hand > #real do
+        local c = table.remove(self.player_hand)
+        pcall(go.delete, c.id)
+    end
+    for i, c in ipairs(self.player_hand) do
+        local rc = real[i]
+        if rc then
+            c.v = tonumber(rc.v) or c.v
+            c.s = tostring(rc.s or c.s)
+            self.set_face(c)
+        end
+    end
+    if #self.player_hand < #real then
+        local diff = #real - #self.player_hand
+        self.draw_to_hand(self.player_hand, true, diff, function()
+            for i, c in ipairs(self.player_hand) do
+                local rc = real[i]
+                if rc then
+                    c.v = tonumber(rc.v) or c.v
+                    c.s = tostring(rc.s or c.s)
+                    self.set_face(c)
+                end
+            end
+            self.pre_validate_hand()
+        end)
+    else
+        self.position_hands(true)
+        self.pre_validate_hand()
+    end
+end
+
 function M.handle_single_move(self, move_data, new_state, done)
     if self.game_over then done(); return end
 
@@ -445,12 +560,22 @@ function M.handle_single_move(self, move_data, new_state, done)
     local is_my_move  = (sender ~= "" and sender == tostring(self.my_player_id))
     local actions     = (move_data and move_data.actions) or {}
     local has_actions = #actions > 0
+    local ai_for_me   = is_my_move and (move_data and move_data.aiOnBehalf) and true or false
 
     if not is_my_move and has_actions then
         local suit = move_data.chosenSuit
         if (not suit or suit == "") and new_state then suit = new_state.chosenSuit end
         M.process_opponent_actions(self, actions, suit or "", new_state, function()
             M.finalize_state_sync(self, new_state, function() done() end)
+        end)
+    elseif ai_for_me and has_actions then
+        -- AI covered our seat: play the move out on OUR cards, then snap the
+        -- hand to the authoritative state.
+        M.process_my_actions(self, actions, function()
+            M.finalize_state_sync(self, new_state, function()
+                sync_my_hand(self, new_state or {})
+                done()
+            end)
         end)
     else
         M.finalize_state_sync(self, new_state, function() done() end)

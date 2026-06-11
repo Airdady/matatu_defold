@@ -134,7 +134,6 @@ function init(self)
 			-- instead of re-entering the screen, which would double-init.
 			msg.post("#game_logic", "ws_new_game_start")
 		end
-	end))
 
 	-- Broadcast user-data refreshes to data-driven screens.
 	local function broadcast(evt)
@@ -203,6 +202,7 @@ function init(self)
 		msg.post("#game_logic", "ws_ai_played", {
 			mode = info.mode or "SINGLE_MOVE",
 			moves = info.moves or 0,
+			max = info.max or 3,
 		})
 	end))
 
@@ -335,6 +335,10 @@ function on_message(self, message_id, message, sender)
 				user.avatar      = message.avatar
 				ws.current_user_data = user
 				api.save_session(user)
+				-- Refresh every data-driven screen with the new identity.
+				for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile", "lobby" }) do
+					msg.post("#" .. s, "user_data_updated")
+				end
 				msg.post("#profile", "profile_saved", { ok = true })
 				show(self, "online")
 			else

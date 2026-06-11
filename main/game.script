@@ -627,6 +627,7 @@ function on_message(self, message_id, message, sender)
         notify_gui(self.gui_hud, "ai_takeover_notice", {
             mode = mode,
             moves = (message and message.moves) or 0,
+            max = (message and message.max) or 3,
         })
 
     elseif message_id == hash("ai_notice_ack") then

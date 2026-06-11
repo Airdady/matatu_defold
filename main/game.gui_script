@@ -335,6 +335,20 @@ local function show_ai_notice(self, opts)
         if self.ai_scrim then gui.set_enabled(self.ai_scrim, true) end
     else
         if not self.ai_banner then return end
+        -- The assist allowance is capped: surface how much is left.
+        local used = tonumber(opts.moves) or 0
+        local max = tonumber(opts.max) or 3
+        if self.ai_banner_lbl then
+            if used > 0 then
+                local txt = string.format("Time ran out — AI played for you (%d of %d).", used, max)
+                if used >= max then
+                    txt = string.format("AI played for you (%d of %d) — next timeout forfeits!", used, max)
+                end
+                gui.set_text(self.ai_banner_lbl, txt)
+            else
+                gui.set_text(self.ai_banner_lbl, "Time ran out — AI played this move to protect your token.")
+            end
+        end
         gui.set_enabled(self.ai_banner, true)
         self._ai_banner_seq = (self._ai_banner_seq or 0) + 1
         local seq = self._ai_banner_seq
