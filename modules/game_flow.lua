@@ -478,6 +478,40 @@ function M.end_game(self, player_won, is_cut, backend_results)
         end
     end
 
+    -- Mid-series round (tournament/battle match continues): instead of the
+    -- game-over modal we play the round-story interstitial, and game.script
+    -- holds the incoming next-round state until it finishes — the backend
+    -- often auto-accepts the continuation before the animations are done.
+    local round_continues = false
+    local story = nil
+    if self.online_mode and type(backend_results) == "table" then
+        round_continues = tostring(backend_results.gameType or "") == "TOURNAMENT"
+            and not backend_results.isMatchComplete
+            and not backend_results.tournamentCompleted
+            and not backend_results.isNoShowScenario
+        if round_continues then
+            local p_sc, o_sc = 0, 0
+            for pid, sc in pairs(backend_results.currentScores or {}) do
+                if tostring(pid) == tostring(self.my_player_id) then p_sc = tonumber(sc) or 0
+                else o_sc = tonumber(sc) or 0 end
+            end
+            local target = tonumber(backend_results.requiredWins) or 0
+            if target <= 0 then target = math.max(p_sc, o_sc) + 1 end
+            story = {
+                won = player_won and true or false,
+                p_score = p_sc,
+                o_score = o_sc,
+                target = target,
+                next_round = p_sc + o_sc + 1,
+                last_round = (p_sc == target - 1) and (o_sc == target - 1),
+            }
+            -- Arm the hold NOW: the auto-accepted next round can land within
+            -- ~2s, well before the reveal + story complete.
+            self.round_story_active = true
+            self.round_story_deadline = socket.gettime() + 9.0
+        end
+    end
+
     local p_score = RE.hand_score(self.player_hand)
     local a_score = RE.hand_score(self.ai_hand)
 
@@ -541,6 +575,14 @@ function M.end_game(self, player_won, is_cut, backend_results)
 
     timer.delay(delay + 0.5, false, function()
         if seq ~= self._seq then return end
+
+        if round_continues and story then
+            -- The round story owns the screen; the modal stays out of the
+            -- way until the match itself is decided.
+            notify_gui(self.gui_hud, "round_story", story)
+            return
+        end
+
         notify_gui(self.gui_over, "game_over", {
             won = player_won,
             player_score = p_score,

@@ -343,9 +343,10 @@ local function draw_right(self)
     local name_gap = 8      -- tight username ↔ balance gap (Godot VBox)
     local badge_h  = 84
     local pay_h    = 44
+    local form_h   = 30
     local gap      = 12
     local prof_h   = math.max(av_size, name_h + name_gap + stat_h)
-    local cont_h   = margin + prof_h + gap + badge_h + gap + pay_h + margin
+    local cont_h   = margin + prof_h + gap + badge_h + gap + form_h + gap + pay_h + margin
     local ccy      = cy - cont_h / 2
     glass(self, vmath.vector3(cx, ccy, 0), vmath.vector3(pw, cont_h, 0), "container_bg")
 
@@ -366,6 +367,13 @@ local function draw_right(self)
     local name_y = top_y - name_h/2
     track(self, ui.box(vmath.vector3(info_cx, name_y, 0), vmath.vector3(info_w, name_h, 0), COL_NAMEID_BG))
     txtL(self, info_l + 10, name_y, string.upper(u.username or "PLAYER"), "body", COL_BRIGHT)
+    -- Player rating: win rate mapped to a 0–10 scale (55% → 5.5), as a badge
+    -- beside the username.
+    local rating = (tonumber(u.winRate) or 0) / 10
+    local r_col = rating >= 6 and COL_GREEN or (rating >= 4 and COL_GOLD or COL_RED)
+    local r_x = inner_r - 58
+    track(self, ui.box(vmath.vector3(r_x, name_y, 0), vmath.vector3(44, 22, 0), vmath.vector4(0, 0, 0, 0.55)))
+    track(self, ui.text(vmath.vector3(r_x, name_y, 0), string.format("%.1f", rating), "small", r_col))
     mkbtn(self, "nav_account", vmath.vector3(inner_r - 16, name_y, 0), vmath.vector3(28, 28, 0), nil, vmath.vector4(0,0,0,0))
     for li = -1, 1 do
         track(self, ui.box(vmath.vector3(inner_r - 16, name_y + li * 5, 0), vmath.vector3(14, 2, 0), COL_MID))
@@ -408,8 +416,28 @@ local function draw_right(self)
         end
     end
 
+    -- Global last-5 form (across all opponents, newest first) just above
+    -- the payments button: W green / L red badges.
+    local form_y = bcy - badge_h/2 - gap - form_h/2
+    track(self, ui.box(vmath.vector3(cx, form_y, 0), vmath.vector3(bw, form_h, 0), COL_STAT_BG))
+    txtL(self, cx - bw/2 + 8, form_y, "FORM", "small", COL_DIM)
+    local form = type(u.recentForm) == "table" and u.recentForm or {}
+    local fsz, fgap = 20, 5
+    local fx0 = cx + bw/2 - 8 - fsz/2
+    for i = 1, 5 do
+        local r = form[i]
+        local bx = fx0 - (i - 1) * (fsz + fgap)
+        if r == "W" or r == "L" then
+            track(self, ui.box(vmath.vector3(bx, form_y, 0), vmath.vector3(fsz, fsz, 0),
+                r == "W" and vmath.vector4(0.15, 0.70, 0.25, 0.92) or vmath.vector4(0.90, 0.25, 0.25, 0.92)))
+            track(self, ui.text(vmath.vector3(bx, form_y, 0), r, "small", COL_WHITE))
+        else
+            track(self, ui.box(vmath.vector3(bx, form_y, 0), vmath.vector3(fsz, fsz, 0), vmath.vector4(1, 1, 1, 0.06)))
+        end
+    end
+
     -- MAKE PAYMENTS inside the container (Godot PaymentsBtn)
-    local pay_y = bcy - badge_h/2 - gap - pay_h/2
+    local pay_y = form_y - form_h/2 - gap - pay_h/2
     mkbtn(self, "nav_payments", vmath.vector3(cx, pay_y, 0), vmath.vector3(bw, pay_h, 0), "MAKE PAYMENTS", "primary_btn")
 
     cy = cy - cont_h - BLOCK_GAP

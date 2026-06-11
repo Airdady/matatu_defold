@@ -339,6 +339,8 @@ local function parse_message(json_string)
       end
     end
     emit("game_over", results)
+  elseif t == "TOURNAMENT_NO_OPPONENTS_FOUND" or t == "TOURNAMENT_REQUESTS_CANCELLED" then
+    emit("tournament_no_opponents", d)
   elseif t == "HEAD_TO_HEAD" then
     -- All-time scores + last-5 form vs a specific opponent (response to
     -- GET_HEAD_TO_HEAD). Parked here — the nested stats table is too big to
