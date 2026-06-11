@@ -253,17 +253,17 @@ check("A3: stake chip clear of the HUD column (x >= 190)",
 
 check("A4: head-to-head strip shows all-time 3-2 and 5 form badges",
   hud("h2h_alltime_lbl") and hud("h2h_alltime_lbl").enabled == true
-  and hud("h2h_alltime_lbl").text == "H2H 3-2"
+  and hud("h2h_alltime_lbl").text == "ALL TIME 3-2"
   and hud("h2h_badges")[1].bg.enabled and hud("h2h_badges")[1].lbl.text == "W"
   and hud("h2h_badges")[2].lbl.text == "L"
   and hud("h2h_badges")[5].bg.enabled,
   tostring(hud("h2h_alltime_lbl") and hud("h2h_alltime_lbl").text))
 
-check("A5: win-rate rating chips set from player data",
-  hud("p_rating") and hud("p_rating").bg.enabled and hud("p_rating").lbl.text == "WR 62%"
-  and hud("o_rating") and hud("o_rating").bg.enabled and hud("o_rating").lbl.text == "WR 48%",
-  string.format("p=%s o=%s", tostring(hud("p_rating") and hud("p_rating").lbl.text),
-    tostring(hud("o_rating") and hud("o_rating").lbl.text)))
+check("A5: opponent name bold seat label + YOU under the player seat",
+  hud("p_avatar_name") and hud("p_avatar_name").text == "YOU"
+  and hud("o_avatar_name") and hud("o_avatar_name").text == "ROBOKATO",
+  string.format("p=%s o=%s", tostring(hud("p_avatar_name") and hud("p_avatar_name").text),
+    tostring(hud("o_avatar_name") and hud("o_avatar_name").text)))
 
 print("\n══ GAME 1: START ══")
 local started = mk_state("g1", 0, 0, "STARTED")
@@ -307,7 +307,30 @@ over.gameOverState = {
   },
 }
 SIM.server_send({ type = "GAME_OVER", data = { gameState = over } })
-SIM.pump(4.0)
+SIM.pump(2.6)
+
+check("B1a: round-story interstitial showing (modal stays out of the way)",
+  SIM.components.game.self.story_scrim ~= nil
+  and SIM.components.game.self.story_scrim.enabled == true
+  and (SIM.components.gameover.self.n_content == nil or SIM.components.gameover.self.n_content.enabled == false),
+  "story title=" .. tostring(SIM.components.game.self.story_title and SIM.components.game.self.story_title.text))
+
+-- the auto-accepted next round lands MID-STORY: it must be held, not dealt
+local g2_early = mk_state("g2", 1, 0, "ACTIVE")
+g2_early.players[MY].balance = 5900 -- the backend ships settled balances in the next round's state
+g2_early.headToHead.scores = { [MY] = 4, [OPP] = 2 }
+g2_early.headToHead.totalGames = 6
+g2_early.headToHead.form = { [MY] = { "W", "W", "L", "W", "W" }, [OPP] = { "L", "L", "W", "L", "L" } }
+SIM.server_send({ type = "GAME_REQUEST_ACCEPTED", data = { gameState = g2_early } })
+SIM.pump(0.4)
+
+check("B1b: next round HELD in the queue while the story plays",
+  SIM.components.game_logic.self.round_story_active == true
+  and SIM.components.game_logic.self._pending_next_state ~= nil
+  and SIM.components.game_logic.self.online_game_id == "g1",
+  "online_game_id=" .. tostring(SIM.components.game_logic.self.online_game_id))
+
+SIM.pump(6.0)
 
 check("E1: balance updated there and then on game over",
   hud("p_balance") and hud("p_balance").text == "Bal: 5900"
@@ -317,23 +340,32 @@ check("E1: balance updated there and then on game over",
 check("E2: series score flips to 1-0 and H2H refreshes to 4-2 at game over",
   hud("p_flipper") and hud("p_flipper").val == "01"
   and hud("o_flipper") and hud("o_flipper").val == "00"
-  and hud("h2h_alltime_lbl") and hud("h2h_alltime_lbl").text == "H2H 4-2",
+  and hud("h2h_alltime_lbl") and hud("h2h_alltime_lbl").text == "ALL TIME 4-2",
   string.format("p=%s o=%s h2h=%s", tostring(hud("p_flipper") and hud("p_flipper").val),
     tostring(hud("o_flipper") and hud("o_flipper").val),
     tostring(hud("h2h_alltime_lbl") and hud("h2h_alltime_lbl").text)))
 
 local go_gui = SIM.components.gameover.self
-check("B1: game-over modal visible after tournament round",
-  go_gui.n_content ~= nil and go_gui.n_content.enabled == true,
-  "title=" .. tostring(go_gui.n_title and go_gui.n_title.text))
+check("B1c: game-over modal suppressed for a continuing round",
+  go_gui.n_content == nil or go_gui.n_content.enabled == false)
 
 print("\n══ GAME 2: GAME_REQUEST_ACCEPTED (auto-accept continuation) ══")
+-- duplicate delivery of the same round (already initialised from the held
+-- state above) must de-dupe
 local g2 = mk_state("g2", 1, 0, "ACTIVE")
 g2.headToHead.scores = { [MY] = 4, [OPP] = 2 }
 g2.headToHead.totalGames = 6
 g2.headToHead.form = { [MY] = { "W", "W", "L", "W", "W" }, [OPP] = { "L", "L", "W", "L", "L" } }
 SIM.server_send({ type = "GAME_REQUEST_ACCEPTED", data = { gameState = g2 } })
 SIM.pump(12.0)
+
+check("G1: round dots — best-of-3 shows 2 dots, one checked after the win",
+  SIM.components.game.self.p_flipper
+  and SIM.components.game.self.p_flipper.dots_filled == 1
+  and SIM.components.game.self.p_flipper.dots[1].rim.enabled == true
+  and SIM.components.game.self.p_flipper.dots[2].rim.enabled == true
+  and SIM.components.game.self.p_flipper.dots[3].rim.enabled == false,
+  "filled=" .. tostring(SIM.components.game.self.p_flipper and SIM.components.game.self.p_flipper.dots_filled))
 
 check("B2: PLAYER_READY sent for g2 (round 2 initialised)",
   (function()
@@ -386,7 +418,12 @@ over2.gameOverState = {
   isNoShowScenario = false,
 }
 SIM.server_send({ type = "GAME_OVER", data = { gameState = over2 } })
-SIM.pump(4.0)
+SIM.pump(2.6)
+
+check("H1: both at match point → FINAL ROUND story",
+  SIM.components.game.self.story_scrim and SIM.components.game.self.story_scrim.enabled == true
+  and tostring(SIM.components.game.self.story_title and SIM.components.game.self.story_title.text) ~= "",
+  "title=" .. tostring(SIM.components.game.self.story_title and SIM.components.game.self.story_title.text))
 
 print("\n══ GAME 3: delivered via START with a new id (g3) ══")
 local s3 = mk_state("g3", 1, 1, "STARTED")
@@ -394,7 +431,7 @@ s3.turnExpiresAt = (socket.gettime() + 30) * 1000
 SIM.server_send({ type = "START",
                   data = { gameId = "g3", currentTurn = MY,
                            turnExpiresAt = s3.turnExpiresAt, gameState = s3 } })
-SIM.pump(8.0)
+SIM.pump(12.0)
 
 check("D1: START-delivered round re-initialised the board (was dropped before)",
   SIM.components.game_logic.self.online_game_id == "g3",
@@ -406,6 +443,31 @@ check("D2: flip clocks read 1-1 after START-delivered round",
 check("D3: scoreboard still visible and chip still aside",
   hud("sb_title") and hud("sb_title").enabled == true
   and (not (hud("stake_chip") and hud("stake_chip").enabled) or hud("stake_chip").pos.x >= 190))
+
+----------------------------------------------------------------------
+-- match decided on g3 → the organized game-over modal returns
+----------------------------------------------------------------------
+print("\n══ GAME 3: GAME_OVER (match complete 2-1) ══")
+local over3 = mk_state("g3", 1, 1, "GAME_OVER")
+over3.gameOverState = {
+  winner = MY, loser = OPP, reason = "ALL_CARDS_PLAYED",
+  stake = { amount = 1000, charge = 100, points = 100 },
+  gameType = "TOURNAMENT",
+  tournamentData = over.gameOverState.tournamentData,
+  rewards = { [MY] = 1000, [OPP] = 0 },
+  currentScores = { [MY] = 2, [OPP] = 1 },
+  currentRound = 4, requiredWins = 2,
+  isMatchComplete = true, tournamentCompleted = false,
+  isNoShowScenario = false,
+  balances = { [MY] = 6900, [OPP] = 97899 },
+}
+SIM.server_send({ type = "GAME_OVER", data = { gameState = over3 } })
+SIM.pump(4.0)
+
+check("H2: match complete → game-over modal shown (LEVEL CLEARED)",
+  SIM.components.gameover.self.n_content ~= nil
+  and SIM.components.gameover.self.n_content.enabled == true,
+  "title=" .. tostring(SIM.components.gameover.self.n_title and SIM.components.gameover.self.n_title.text))
 
 ----------------------------------------------------------------------
 -- HEAD_TO_HEAD response routing (sender-side dialog data)
