@@ -42,6 +42,13 @@ local C_FORM_L   = vmath.vector4(0.90, 0.25, 0.25, 1.0)
 local C_H2H_GOLD = vmath.vector4(1.00, 0.84, 0.20, 1.0)
 local C_H2H_DIM  = vmath.vector4(0.55, 0.58, 0.62, 1.0)
 
+-- Round dots (wins needed to take the match, checked off per round won)
+local C_DOT_RIM   = vmath.vector4(0.02, 0.02, 0.02, 0.95)
+local C_DOT_EMPTY = vmath.vector4(0.38, 0.40, 0.43, 0.85)
+local C_DOT_FILL  = vmath.vector4(1.00, 0.84, 0.20, 1.0)
+local C_DOT_FLASH = vmath.vector4(1.00, 1.00, 1.00, 1.0)
+local C_STORY_CYAN = vmath.vector4(0.0, 0.722, 0.831, 1.0)
+
 local function box(pos, size, color, pivot)
     local n = gui.new_box_node(pos, size)
     gui.set_color(n, color)
@@ -191,6 +198,65 @@ local function animate_flipper(flipper, new_val)
     gui.animate(flipper.stat_bot_shd, "color.w", 0.6, gui.EASING_INQUAD, 0.15)
 end
 
+-- ── Round dots ──────────────────────────────────────────────────────────────
+-- Small circles pinned to the bottom of each score card: one per win needed
+-- to take the match (best-of-5 → 3 dots). Grey with a faux inner shadow
+-- until that round is won — then the dot checks off with a pop.
+local function build_round_dots(flipper)
+    flipper.dots = {}
+    flipper.dots_filled = 0
+    for i = 1, 5 do
+        local rim = gui.new_pie_node(vmath.vector3(0, -58, 0), vmath.vector3(14, 14, 0))
+        gui.set_color(rim, C_DOT_RIM)
+        gui.set_parent(rim, flipper.root)
+        -- inner fill sits slightly down-left of the rim centre: cheap inner-shadow
+        local fill = gui.new_pie_node(vmath.vector3(0.8, -1.0, 0), vmath.vector3(9, 9, 0))
+        gui.set_color(fill, C_DOT_EMPTY)
+        gui.set_parent(fill, rim)
+        gui.set_enabled(rim, false)
+        flipper.dots[i] = { rim = rim, fill = fill }
+    end
+end
+
+local function hide_round_dots(flipper)
+    if not (flipper and flipper.dots) then return end
+    for i = 1, 5 do gui.set_enabled(flipper.dots[i].rim, false) end
+    flipper.dots_filled = 0
+end
+
+-- needed = wins required, won = rounds won so far. animate=true pops the
+-- newest checked dot.
+local function set_round_dots(flipper, needed, won, animate)
+    if not (flipper and flipper.dots) then return end
+    needed = math.max(1, math.min(5, tonumber(needed) or 1))
+    won = math.max(0, math.min(tonumber(won) or 0, needed))
+
+    local spacing = 22
+    local x0 = -((needed - 1) * spacing) / 2
+    for i = 1, 5 do
+        local d = flipper.dots[i]
+        gui.set_position(d.rim, vmath.vector3(x0 + (i - 1) * spacing, -58, 0))
+        gui.set_enabled(d.rim, i <= needed)
+        if i <= needed then
+            gui.cancel_animation(d.fill, "scale")
+            gui.set_scale(d.fill, vmath.vector3(1, 1, 1))
+            gui.set_color(d.fill, (i <= won) and C_DOT_FILL or C_DOT_EMPTY)
+        end
+    end
+
+    local prev = flipper.dots_filled or 0
+    if animate and won > prev and flipper.dots[won] then
+        local d = flipper.dots[won]
+        gui.set_color(d.fill, C_DOT_FLASH)
+        gui.set_scale(d.fill, vmath.vector3(0.1, 0.1, 1))
+        gui.animate(d.fill, "scale", vmath.vector3(1.6, 1.6, 1), gui.EASING_OUTBACK, 0.38, 0.05, function()
+            gui.animate(d.fill, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTSINE, 0.20)
+            gui.set_color(d.fill, C_DOT_FILL)
+        end)
+    end
+    flipper.dots_filled = won
+end
+
 -- Snap a flipper to a value with no animation (used by resets).
 local function snap_flipper(flipper, new_val)
     if not flipper then return end
@@ -281,6 +347,8 @@ local function build_scoreboard(self)
     -- Flip Clocks Stacked Vertically in Center (Opponent Top, Player Bottom)
     self.o_flipper = create_flipper(self.hud_root, vmath.vector3(0, 90, 0))
     self.p_flipper = create_flipper(self.hud_root, vmath.vector3(0, -90, 0))
+    build_round_dots(self.o_flipper)
+    build_round_dots(self.p_flipper)
 
     -- Central Divider & Text
     self.sb_div1 = box(vmath.vector3(0, 15, 0), vmath.vector3(120, 2, 0), vmath.vector4(0.2,0.2,0.2,1), gui.PIVOT_CENTER)
@@ -649,6 +717,108 @@ local function set_skip_visible(self, visible)
     end
 end
 
+-- ── Round story overlay ─────────────────────────────────────────────────────
+-- Full-screen interstitial between rounds of a series: "ROUND WON/LOST" →
+-- dissolve → "ROUND 2" / "FINAL ROUND". While it plays, game.script holds the
+-- incoming next-round state so the story finishes before the next deal.
+local function build_round_story(self)
+    self.story_scrim = box(vmath.vector3(LOGICAL_W/2, LOGICAL_H/2, 0), vmath.vector3(5000, 5000, 0), vmath.vector4(0, 0, 0, 0.88), gui.PIVOT_CENTER)
+    gui.set_adjust_mode(self.story_scrim, gui.ADJUST_STRETCH)
+
+    -- text scales via these wrappers so entrance/dissolve animations don't
+    -- fight the font-size scale set by label()
+    self.story_wrap = box(vmath.vector3(LOGICAL_W/2, LOGICAL_H/2 + 14, 0), vmath.vector3(1, 1, 0), vmath.vector4(0, 0, 0, 0), gui.PIVOT_CENTER)
+    self.story_title = label(vmath.vector3(0, 24, 0), "", 54, C_WHITE, gui.PIVOT_CENTER, "title")
+    pcall(function() gui.set_shadow(self.story_title, vmath.vector4(0, 0, 0, 0.7)) end)
+    gui.set_parent(self.story_title, self.story_wrap)
+    self.story_sub = label(vmath.vector3(0, -32, 0), "", 20, C_H2H_DIM, gui.PIVOT_CENTER, "body")
+    gui.set_parent(self.story_sub, self.story_wrap)
+
+    gui.set_enabled(self.story_scrim, false)
+    gui.set_enabled(self.story_wrap, false)
+    self.story_seq = 0
+end
+
+local function story_finish(self, seq)
+    if seq ~= self.story_seq then return end
+    gui.set_enabled(self.story_scrim, false)
+    gui.set_enabled(self.story_wrap, false)
+    self.story_active = false
+    msg.post(GAME, "round_story_done")
+end
+
+-- One staged line: pop in (OUTBACK), hold, dissolve (fade + drift up).
+local function story_phase(self, seq, title, sub, color, hold, next_fn)
+    if seq ~= self.story_seq then return end
+    gui.set_text(self.story_title, title)
+    gui.set_color(self.story_title, color)
+    gui.set_text(self.story_sub, sub or "")
+    gui.set_enabled(self.story_wrap, true)
+
+    gui.cancel_animation(self.story_wrap, "scale")
+    gui.cancel_animation(self.story_wrap, "color.w")
+    gui.set_scale(self.story_wrap, vmath.vector3(0.45, 0.45, 1))
+    local c = gui.get_color(self.story_wrap); c.w = 0; gui.set_color(self.story_wrap, c)
+    gui.animate(self.story_wrap, "color.w", 1.0, gui.EASING_OUTSINE, 0.22)
+    gui.animate(self.story_wrap, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTBACK, 0.42, 0, function()
+        if seq ~= self.story_seq then return end
+        timer.delay(hold, false, function()
+            if seq ~= self.story_seq then return end
+            -- dissolve: fade out while gently scaling up
+            gui.animate(self.story_wrap, "color.w", 0.0, gui.EASING_INSINE, 0.30)
+            gui.animate(self.story_wrap, "scale", vmath.vector3(1.18, 1.18, 1), gui.EASING_INSINE, 0.30, 0, function()
+                if seq ~= self.story_seq then return end
+                next_fn()
+            end)
+        end)
+    end)
+end
+
+local function show_round_story(self, m)
+    self.story_seq = (self.story_seq or 0) + 1
+    local seq = self.story_seq
+    self.story_active = true
+
+    gui.set_enabled(self.story_scrim, true)
+    local sc = gui.get_color(self.story_scrim); sc.w = 0; gui.set_color(self.story_scrim, sc)
+    gui.animate(self.story_scrim, "color.w", 0.88, gui.EASING_OUTSINE, 0.25)
+
+    local p, o = tonumber(m.p_score) or 0, tonumber(m.o_score) or 0
+    local won = m.won and true or false
+    local opp = tostring(m.opp_name or "OPPONENT")
+
+    local t1 = won and "ROUND WON!" or "ROUND LOST"
+    local c1 = won and C_FORM_W or C_FORM_L
+    local s1
+    if p > o then s1 = string.format("You lead %d - %d", p, o)
+    elseif o > p then s1 = string.format("%s leads %d - %d", opp, o, p)
+    else s1 = string.format("All square at %d - %d", p, o) end
+
+    local t2, c2, s2
+    if m.last_round then
+        t2, c2 = "FINAL ROUND", C_H2H_GOLD
+        s2 = "Next win takes the match!"
+    else
+        t2, c2 = "ROUND " .. tostring(m.next_round or (p + o + 1)), C_STORY_CYAN
+        s2 = won and "Keep the streak alive!" or "Time to bounce back!"
+    end
+
+    story_phase(self, seq, t1, s1, c1, 1.35, function()
+        story_phase(self, seq, t2, s2, c2, 1.15, function()
+            gui.animate(self.story_scrim, "color.w", 0.0, gui.EASING_INSINE, 0.28, 0, function()
+                story_finish(self, seq)
+            end)
+        end)
+    end)
+end
+
+local function hide_round_story(self)
+    self.story_seq = (self.story_seq or 0) + 1
+    self.story_active = false
+    if self.story_scrim then gui.set_enabled(self.story_scrim, false) end
+    if self.story_wrap then gui.set_enabled(self.story_wrap, false) end
+end
+
 -- Script Hooks: init, update, and input handling...
 function init(self)
     msg.post(".", "acquire_input_focus")
@@ -668,6 +838,7 @@ function init(self)
     build_conn_overlay(self)
     build_ai_takeover_modal(self)
     build_ai_assist_banner(self)
+    build_round_story(self)
 
     -- Series UI hidden until a scoreboard update arrives.
     set_series_visible(self, false, false)
@@ -726,6 +897,9 @@ end
 function on_input(self, action_id, action)
     if action_id ~= hash("touch") or not action.pressed then return false end
 
+    -- Round story interstitial is modal: swallow taps while it plays.
+    if self.story_active then return true end
+
     if emoji_popover.on_input(self, action_id, action) then
         return true
     end
@@ -766,14 +940,17 @@ end
 -- Message passing router to process external Game State data...
 function on_message(self, message_id, message)
     if message_id == hash("setup_avatars") then
-        local p_name = (message.my_info and message.my_info.username) or (message.my_info and message.my_info.name) or "You"
         local o_name = (message.op_info and message.op_info.username) or (message.op_info and message.op_info.name) or "Opponent"
 
         if string.len(o_name) > 10 then
             o_name = string.sub(o_name, 1, 10) .. "..."
         end
+        o_name = string.upper(o_name)
+        self.opp_display_name = o_name
 
-        if self.p_avatar_name then gui.set_text(self.p_avatar_name, p_name) end
+        -- The bottom seat is always the current user: label it YOU; the
+        -- opponent seat carries their name in bold.
+        if self.p_avatar_name then gui.set_text(self.p_avatar_name, "YOU") end
         if self.o_avatar_name then gui.set_text(self.o_avatar_name, o_name) end
 
         gui.set_enabled(self.p_balance, true)
@@ -805,6 +982,8 @@ function on_message(self, message_id, message)
         if message.show == false then
             set_series_visible(self, false, false)
             set_h2h_strip(self, nil)
+            hide_round_dots(self.o_flipper)
+            hide_round_dots(self.p_flipper)
             return
         end
 
@@ -891,6 +1070,11 @@ function on_message(self, message_id, message)
             animate_flipper(self.o_flipper, string.format("%02d", o_score))
             animate_flipper(self.p_flipper, string.format("%02d", p_score))
 
+            -- Round dots under each score: one per win needed, checked off
+            -- (with a pop) as rounds are taken.
+            set_round_dots(self.o_flipper, target, o_score, true)
+            set_round_dots(self.p_flipper, target, p_score, true)
+
             -- Format Title Details
             local title = "BEST OF " .. tostring(best_of)
             if is_tournament then
@@ -927,8 +1111,15 @@ function on_message(self, message_id, message)
             -- Normal game (not series/tournament): flip clocks display all-time head-to-head score
             animate_flipper(self.o_flipper, string.format("%02d", (h2h and h2h.o) or 0))
             animate_flipper(self.p_flipper, string.format("%02d", (h2h and h2h.p) or 0))
+            hide_round_dots(self.o_flipper)
+            hide_round_dots(self.p_flipper)
             if self.sb_title then gui.set_text(self.sb_title, "ALL TIME") end
         end
+
+    elseif message_id == hash("round_story") then
+        local m = message or {}
+        m.opp_name = m.opp_name or self.opp_display_name
+        show_round_story(self, m)
 
     elseif message_id == hash("update_standings") then
         local ranks = message.ranks or {}
@@ -1007,11 +1198,16 @@ function on_message(self, message_id, message)
         -- A round transition inside the same series keeps the live scoreboard
         -- and head-to-head strip on screen (values are updated in place);
         -- only a full reset — leaving the board — clears them.
+        -- The round-story interstitial survives a keep_scoreboard reset (a
+        -- round transition re-init happens UNDER it); a full reset kills it.
         if not (message and message.keep_scoreboard) then
+            hide_round_story(self)
             set_series_visible(self, false, false)
             set_h2h_strip(self, nil)
             snap_flipper(self.o_flipper, "00")
             snap_flipper(self.p_flipper, "00")
+            hide_round_dots(self.o_flipper)
+            hide_round_dots(self.p_flipper)
         end
 
         if self.stake_chip then gui.set_enabled(self.stake_chip, false) end

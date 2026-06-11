@@ -207,13 +207,24 @@ over.gameOverState = {
 SIM.server_send({ type = "GAME_OVER", data = { gameState = over } })
 SIM.pump(4.0)
 
-check("B1: game-over modal received round result",
-  #SIM.components.gameover.received > 0 and (function()
-    for _, r in ipairs(SIM.components.gameover.received) do
-      if r.mid == hash("game_over") then return true end
+check("B1: HUD received the round-story interstitial (modal suppressed)",
+  (function()
+    for _, r in ipairs(SIM.components.game.received) do
+      if r.mid == hash("round_story") then return true end
     end
     return false
+  end)() and (function()
+    for _, r in ipairs(SIM.components.gameover.received) do
+      if r.mid == hash("game_over") then return false end
+    end
+    return true
   end)())
+
+-- the recorder HUD can't ack the story; do it like the real gui would
+SIM.with_ctx("game", function()
+  msg.post("/controller#game_logic", "round_story_done")
+end)
+SIM.pump(0.5)
 
 ----------------------------------------------------------------------
 -- 6. next round auto-accepted by backend → GAME_REQUEST_ACCEPTED (g2)

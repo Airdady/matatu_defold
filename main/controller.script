@@ -109,6 +109,22 @@ function init(self)
         end
     end))
 
+    -- A matched game while the tournaments screen is running its opponent
+    -- search: land the lottery reel on the real opponent first ("OPPONENT
+    -- FOUND!"), then switch to the board after the beat. Returns true when
+    -- the delayed switch was scheduled.
+    local function intercept_for_search(self_)
+        if not (app_state.searching_tournament and self_.screen == "tournaments") then
+            return false
+        end
+        app_state.searching_tournament = false
+        msg.post("#tournaments", "ws_match_found")
+        timer.delay(1.8, false, function()
+            if self_.screen == "tournaments" then show(self_, "game") end
+        end)
+        return true
+    end
+
     -- Online game start → board screen. 
     -- ✅ FIXED: Capturing the 'gs' payload to update active_game_state BEFORE routing.
     table.insert(self.tokens, ws.on("game_start", function(gs)
@@ -117,6 +133,7 @@ function init(self)
         end
         
         app_state.mode = "online"
+        if intercept_for_search(self) then return end
         if self.screen ~= "game" then
             show(self, "game")
         else
@@ -131,6 +148,7 @@ function init(self)
         end
         
         app_state.mode = "online"
+        if intercept_for_search(self) then return end
         if self.screen ~= "game" then
             show(self, "game")
         else
@@ -151,6 +169,12 @@ function init(self)
     end
     broadcast("user_updated")
     broadcast("transaction_completed")
+
+    -- Tournament matchmaking came back empty.
+    table.insert(self.tokens, ws.on("tournament_no_opponents", function(d)
+        msg.post("#tournaments", "ws_search_failed",
+            { reason = (type(d) == "table" and d.message) or "No opponents available right now" })
+    end))
 
     -- Head-to-head stats response (sender-side dialogs/banners). The stats
     -- table is parked on the ws module (too big for msg.post); only a wake
@@ -223,6 +247,8 @@ function init(self)
     -- replay from the game-over modal, a decline sends them back to the lobby.
     table.insert(self.tokens, ws.on("game_request_declined", function(reason)
         msg.post("#game_logic", "ws_replay_declined", { reason = tostring(reason or "Declined") })
+        -- The tournaments screen shows search failures on its lottery overlay.
+        msg.post("#tournaments", "ws_search_failed", { reason = tostring(reason or "Declined") })
     end))
 end
 
