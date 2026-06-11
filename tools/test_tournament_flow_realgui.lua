@@ -76,6 +76,8 @@ _G.gui = {
   PIVOT_NW = "NW", PIVOT_NE = "NE", PIVOT_SW = "SW", PIVOT_SE = "SE",
   ANCHOR_LEFT = "AL", ANCHOR_RIGHT = "AR", ANCHOR_TOP = "AT", ANCHOR_BOTTOM = "AB", ANCHOR_NONE = "AN",
   ADJUST_FIT = 1, ADJUST_STRETCH = 2, ADJUST_ZOOM = 3,
+  CLIPPING_MODE_STENCIL = 1, CLIPPING_MODE_NONE = 0,
+  EASING_INQUAD = 8, EASING_OUTBOUNCE = 9,
   EASING_OUTSINE = 1, EASING_INSINE = 2, EASING_OUTBACK = 3, EASING_OUTCUBIC = 4,
   EASING_INOUTSINE = 5, EASING_LINEAR = 6, EASING_OUTQUAD = 7,
   PLAYBACK_ONCE_FORWARD = 1, PLAYBACK_LOOP_PINGPONG = 2, PLAYBACK_ONCE_PINGPONG = 3,
@@ -102,6 +104,7 @@ _G.gui = {
   set_fill_angle = function() end, set_perimeter_vertices = function() end,
   set_texture = function() end, play_flipbook = function() end, new_texture = function() return true end,
   pick_node = function() return false end,
+  set_clipping_mode = function() end,
   animate = function(n, prop, to, easing, dur, delay, cb, playback)
     if type(delay) == "function" then cb = delay; delay = 0 end
     if cb then timer.delay((dur or 0) + (delay or 0), false, function() cb(nil, n) end) end
@@ -156,6 +159,7 @@ local function mk_state(gid, my_score, opp_score, status, level)
     players = {
       [MY] = {
         id = MY, _id = MY, username = "Me", avatar = 1, balance = 5000,
+        winRate = 62, gamesPlayed = 124,
         ready = false, isAI = false, status = "WAITING",
         stake = { amount = 1000, charge = 100 }, activeTheme = THEME,
         hand = { {v=4,s="H"}, {v=5,s="S"}, {v=7,s="D"}, {v=10,s="C"},
@@ -163,6 +167,7 @@ local function mk_state(gid, my_score, opp_score, status, level)
       },
       [OPP] = {
         id = OPP, _id = OPP, username = "RoboKato", avatar = 2, balance = 99999,
+        winRate = 48, gamesPlayed = 300,
         ready = true, isAI = true, status = "WAITING",
         stake = { amount = 1000, charge = 100 }, activeTheme = THEME,
         hand = { {v=2,s="H"}, {v=3,s="S"}, {v=6,s="D"}, {v=8,s="C"},
@@ -179,6 +184,13 @@ local function mk_state(gid, my_score, opp_score, status, level)
       scores = { [MY] = my_score, [OPP] = opp_score },
     },
     cuttingCard = { v = 7, s = "H" },
+    headToHead = {
+      scores = { [MY] = 3, [OPP] = 2 },
+      totalGames = 5,
+      lastGames = {},
+      form = { [MY] = { "W", "L", "W", "W", "L" }, [OPP] = { "L", "W", "L", "L", "W" } },
+      ratings = { [MY] = { winRate = 62, gamesPlayed = 124 }, [OPP] = { winRate = 48, gamesPlayed = 300 } },
+    },
     deck = mk_deck(30),
     playedCards = {},
     stake = { amount = 1000, charge = 100, points = 100 },
@@ -228,15 +240,30 @@ check("A1: PLAYER_READY sent for g1",
     return false
   end)())
 
-local sb_root = hud("sb_root")
-check("A2: HUD scoreboard node ENABLED for tournament game 1",
-  sb_root ~= nil and sb_root.enabled == true,
-  sb_root and ("title=" .. tostring(hud("sb_title") and hud("sb_title").text)) or "sb_root missing")
+check("A2: series scoreboard visible with flip clocks at 0-0",
+  hud("sb_title") ~= nil and hud("sb_title").enabled == true
+  and hud("p_flipper") and hud("p_flipper").val == "00"
+  and hud("o_flipper") and hud("o_flipper").val == "00",
+  "title=" .. tostring(hud("sb_title") and hud("sb_title").text))
 
 local chip = hud("stake_chip")
-check("A3: stake chip not covering scoreboard (tournament layout)",
-  not (chip and chip.enabled and sb_root and sb_root.enabled and chip.pos.x < 190),
+check("A3: stake chip clear of the HUD column (x >= 190)",
+  not (chip and chip.enabled and chip.pos.x < 190),
   chip and string.format("chip enabled=%s x=%s", tostring(chip.enabled), tostring(chip.pos.x)) or "no chip")
+
+check("A4: head-to-head strip shows all-time 3-2 and 5 form badges",
+  hud("h2h_alltime_lbl") and hud("h2h_alltime_lbl").enabled == true
+  and hud("h2h_alltime_lbl").text == "H2H 3-2"
+  and hud("h2h_badges")[1].bg.enabled and hud("h2h_badges")[1].lbl.text == "W"
+  and hud("h2h_badges")[2].lbl.text == "L"
+  and hud("h2h_badges")[5].bg.enabled,
+  tostring(hud("h2h_alltime_lbl") and hud("h2h_alltime_lbl").text))
+
+check("A5: win-rate rating chips set from player data",
+  hud("p_rating") and hud("p_rating").bg.enabled and hud("p_rating").lbl.text == "WR 62%"
+  and hud("o_rating") and hud("o_rating").bg.enabled and hud("o_rating").lbl.text == "WR 48%",
+  string.format("p=%s o=%s", tostring(hud("p_rating") and hud("p_rating").lbl.text),
+    tostring(hud("o_rating") and hud("o_rating").lbl.text)))
 
 print("\n══ GAME 1: START ══")
 local started = mk_state("g1", 0, 0, "STARTED")
@@ -270,9 +297,30 @@ over.gameOverState = {
   currentRound = 2, requiredWins = 2,
   isMatchComplete = false, tournamentCompleted = false,
   isNoShowScenario = false,
+  balances = { [MY] = 5900, [OPP] = 98899 },
+  headToHead = {
+    scores = { [MY] = 4, [OPP] = 2 },
+    totalGames = 6,
+    lastGames = {},
+    form = { [MY] = { "W", "W", "L", "W", "W" }, [OPP] = { "L", "L", "W", "L", "L" } },
+    ratings = {},
+  },
 }
 SIM.server_send({ type = "GAME_OVER", data = { gameState = over } })
 SIM.pump(4.0)
+
+check("E1: balance updated there and then on game over",
+  hud("p_balance") and hud("p_balance").text == "Bal: 5900"
+  and (require("modules.websocket_manager").current_user_data.balance == 5900),
+  tostring(hud("p_balance") and hud("p_balance").text))
+
+check("E2: series score flips to 1-0 and H2H refreshes to 4-2 at game over",
+  hud("p_flipper") and hud("p_flipper").val == "01"
+  and hud("o_flipper") and hud("o_flipper").val == "00"
+  and hud("h2h_alltime_lbl") and hud("h2h_alltime_lbl").text == "H2H 4-2",
+  string.format("p=%s o=%s h2h=%s", tostring(hud("p_flipper") and hud("p_flipper").val),
+    tostring(hud("o_flipper") and hud("o_flipper").val),
+    tostring(hud("h2h_alltime_lbl") and hud("h2h_alltime_lbl").text)))
 
 local go_gui = SIM.components.gameover.self
 check("B1: game-over modal visible after tournament round",
@@ -280,8 +328,11 @@ check("B1: game-over modal visible after tournament round",
   "title=" .. tostring(go_gui.n_title and go_gui.n_title.text))
 
 print("\n══ GAME 2: GAME_REQUEST_ACCEPTED (auto-accept continuation) ══")
-SIM.server_send({ type = "GAME_REQUEST_ACCEPTED",
-                  data = { gameState = mk_state("g2", 1, 0, "ACTIVE") } })
+local g2 = mk_state("g2", 1, 0, "ACTIVE")
+g2.headToHead.scores = { [MY] = 4, [OPP] = 2 }
+g2.headToHead.totalGames = 6
+g2.headToHead.form = { [MY] = { "W", "W", "L", "W", "W" }, [OPP] = { "L", "L", "W", "L", "L" } }
+SIM.server_send({ type = "GAME_REQUEST_ACCEPTED", data = { gameState = g2 } })
 SIM.pump(12.0)
 
 check("B2: PLAYER_READY sent for g2 (round 2 initialised)",
@@ -295,13 +346,13 @@ check("B2: PLAYER_READY sent for g2 (round 2 initialised)",
 check("B3: game-over modal dismissed for round 2",
   go_gui.n_content ~= nil and go_gui.n_content.enabled == false)
 
-sb_root = hud("sb_root")
-check("C1: scoreboard still enabled across the round transition",
-  sb_root ~= nil and sb_root.enabled == true)
-check("C2: scoreboard reads 1-0",
-  hud("sb_p_score") and hud("sb_p_score").text == "1" and hud("sb_o_score").text == "0",
-  string.format("p=%s o=%s", tostring(hud("sb_p_score") and hud("sb_p_score").text),
-    tostring(hud("sb_o_score") and hud("sb_o_score").text)))
+check("C1: scoreboard still visible across the round transition",
+  hud("sb_title") ~= nil and hud("sb_title").enabled == true
+  and hud("h2h_alltime_lbl") and hud("h2h_alltime_lbl").enabled == true)
+check("C2: flip clocks read 1-0",
+  hud("p_flipper") and hud("p_flipper").val == "01" and hud("o_flipper").val == "00",
+  string.format("p=%s o=%s", tostring(hud("p_flipper") and hud("p_flipper").val),
+    tostring(hud("o_flipper") and hud("o_flipper").val)))
 
 print("\n══ GAME 2: START ══")
 local s2 = mk_state("g2", 1, 0, "STARTED")
@@ -322,6 +373,7 @@ check("B4: duplicate START for the live game did NOT re-deal (de-dupe)",
 ----------------------------------------------------------------------
 print("\n══ GAME 2: GAME_OVER (1-1, match continues) ══")
 local over2 = mk_state("g2", 1, 0, "GAME_OVER")
+over2.headToHead = nil -- move-style states may omit it; the strip must persist
 over2.gameOverState = {
   winner = OPP, loser = MY, reason = "ALL_CARDS_PLAYED",
   stake = { amount = 1000, charge = 100, points = 100 },
@@ -347,13 +399,34 @@ SIM.pump(8.0)
 check("D1: START-delivered round re-initialised the board (was dropped before)",
   SIM.components.game_logic.self.online_game_id == "g3",
   "online_game_id=" .. tostring(SIM.components.game_logic.self.online_game_id))
-check("D2: scoreboard reads 1-1 after START-delivered round",
-  hud("sb_p_score") and hud("sb_p_score").text == "1" and hud("sb_o_score").text == "1",
-  string.format("p=%s o=%s", tostring(hud("sb_p_score") and hud("sb_p_score").text),
-    tostring(hud("sb_o_score") and hud("sb_o_score").text)))
+check("D2: flip clocks read 1-1 after START-delivered round",
+  hud("p_flipper") and hud("p_flipper").val == "01" and hud("o_flipper") and hud("o_flipper").val == "01",
+  string.format("p=%s o=%s", tostring(hud("p_flipper") and hud("p_flipper").val),
+    tostring(hud("o_flipper") and hud("o_flipper").val)))
 check("D3: scoreboard still visible and chip still aside",
-  hud("sb_root") and hud("sb_root").enabled == true
+  hud("sb_title") and hud("sb_title").enabled == true
   and (not (hud("stake_chip") and hud("stake_chip").enabled) or hud("stake_chip").pos.x >= 190))
+
+----------------------------------------------------------------------
+-- HEAD_TO_HEAD response routing (sender-side dialog data)
+----------------------------------------------------------------------
+print("\n══ HEAD_TO_HEAD response ══")
+SIM.server_send({ type = "HEAD_TO_HEAD", data = { opponentId = OPP, headToHead = {
+  scores = { [MY] = 4, [OPP] = 3 }, totalGames = 7, lastGames = {},
+  form = { [MY] = { "L", "W", "W", "L", "W" }, [OPP] = { "W", "L", "L", "W", "L" } },
+  ratings = { [OPP] = { winRate = 48, gamesPlayed = 301 } },
+} } })
+SIM.pump(0.5)
+check("F1: HEAD_TO_HEAD parked on ws module and forwarded to the lobby",
+  (function()
+    local wsm = require("modules.websocket_manager")
+    if type(wsm.last_head_to_head) ~= "table" then return false end
+    if tostring(wsm.last_head_to_head.opponentId) ~= OPP then return false end
+    for _, r in ipairs(SIM.components.online.received) do
+      if r.mid == hash("ws_head_to_head") then return true end
+    end
+    return false
+  end)())
 
 ----------------------------------------------------------------------
 -- summary
