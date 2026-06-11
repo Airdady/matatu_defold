@@ -180,6 +180,17 @@ function M.update_stake(stake_data)
   M.send_message("UPDATE_STAKE", { _id = M.current_user_id, stake = stake_data })
 end
 
+-- Ask the backend for the head-to-head stats vs a specific opponent
+-- (all-time scores, last-5 form, win-rate ratings). The HEAD_TO_HEAD
+-- response lands on M.last_head_to_head and fires the "head_to_head" event.
+function M.request_head_to_head(opponent_id)
+  if not opponent_id or opponent_id == "" then return end
+  M.send_message("GET_HEAD_TO_HEAD", {
+    _id = M.current_user_id,
+    opponentId = tostring(opponent_id),
+  })
+end
+
 -- ── message parsing ─────────────────────────────────────────────────────────
 local function handle_online_users(msg_data)
   local users = {}
@@ -316,7 +327,24 @@ local function parse_message(json_string)
       elseif next(gs) ~= nil then results = gs end
     end
     M.last_game_over = results
+    -- The backend settles wallets before sending GAME_OVER and ships the
+    -- post-game balances in gameOverState.balances — apply ours immediately
+    -- so every screen shows the updated balance there and then (the IDENTIFY
+    -- refresh is suppressed for zero-stake games and tournament round-continues).
+    if type(results.balances) == "table" then
+      local bal = tonumber(results.balances[M.current_user_id])
+      if bal ~= nil then
+        M.current_user_data.balance = bal
+        emit("user_updated", M.current_user_data)
+      end
+    end
     emit("game_over", results)
+  elseif t == "HEAD_TO_HEAD" then
+    -- All-time scores + last-5 form vs a specific opponent (response to
+    -- GET_HEAD_TO_HEAD). Parked here — the nested stats table is too big to
+    -- ride through msg.post — and read back by the online lobby.
+    M.last_head_to_head = d or {}
+    emit("head_to_head", d or {})
   elseif t == "TRANSACTION_COMPLETED" then
     emit("transaction_completed", d)
   elseif t == "TRANSACTION_FAILED" then
