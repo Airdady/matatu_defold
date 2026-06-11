@@ -737,7 +737,10 @@ function M.start_game(self, state)
     end
 
     local seq = self._seq
-    local deal_step = is_continuation and 0.04 or DEAL_DELAY
+    -- Rounds of a running series deal exactly like a fresh game — the
+    -- round-story interstitial already covers the transition, so nothing is
+    -- rushed; the old 0.04s fast-deal read as glitchy.
+    local deal_step = DEAL_DELAY
 
     local function run_deal()
         if seq ~= self._seq then return end
@@ -832,11 +835,7 @@ function M.start_game(self, state)
         end)
     end
 
-    if is_continuation then
-        run_deal()
-    else
-        self.animate_shuffle(mock_deck, run_deal)
-    end
+    self.animate_shuffle(mock_deck, run_deal)
 end
 
 return M
