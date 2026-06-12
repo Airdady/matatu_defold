@@ -87,52 +87,48 @@ end
 local function rebuild(self)
     clear(self)
 
-    -- Flat luxury-dark background base
-    track(self, ui.cover(LOGICAL_W, LOGICAL_H, P_BG))
-    
-    -- Overall texture background cover image
-    local bg_node = track(self, gui.new_box_node(vmath.vector3(CX, CY, 0), vmath.vector3(VISIBLE_W, VISIBLE_H, 0)))
-    gui.set_texture(bg_node, "ui")
-    gui.play_flipbook(bg_node, "texture_bg")
+    -- ── DIALOG shell (Godot ThemesDialog): the lobby stays alive under a
+    -- dim scrim; everything renders inside a centered, gold-lined panel.
+    -- Tapping outside the panel closes the dialog.
+    local scrim = track(self, ui.box(vmath.vector3(CX, CY, 0),
+        vmath.vector3(LOGICAL_W * 2, LOGICAL_H * 2, 0), vmath.vector4(0, 0, 0, 0.8)))
+    self.buttons[#self.buttons+1] = { node = scrim, id = "back" }
 
-    -- Header Dark Overlay to subtly dim the background texture under top bar
-    local hdr_h = 80
-    track(self, ui.box(vmath.vector3(CX, EDGE_T - hdr_h/2, 0), vmath.vector3(VISIBLE_W, hdr_h, 0), vmath.vector4(0, 0, 0, 0.45)))
+    local pw, ph = 1160, 700
+    framed(self, CX, CY, pw, ph, vmath.vector4(0.549, 0.404, 0.141, 0.6), 1, P_BG)
+    local blocker = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), vmath.vector4(0, 0, 0, 0.001)))
+    self.buttons[#self.buttons+1] = { node = blocker, id = "tm_block" }
 
-    -- Header UI: Horizontal 3-stripe divider separating header from content (4 / 10 / 4)
-    local d_y = EDGE_T - hdr_h - 9
-    track(self, ui.box(vmath.vector3(CX, d_y + 7, 0), vmath.vector3(VISIBLE_W, 4, 0), STRIPE_OUTER))
-    track(self, ui.box(vmath.vector3(CX, d_y,     0), vmath.vector3(VISIBLE_W, 10, 0), STRIPE_MID))
-    track(self, ui.box(vmath.vector3(CX, d_y - 7, 0), vmath.vector3(VISIBLE_W, 4, 0), STRIPE_INNER))
+    local panel_t = CY + ph/2
 
-    -- Top bar — gold title, flat gold SAVE, bordered BACK.
-    track(self, ui.text(vmath.vector3(CX, EDGE_T - 40, 0), "THEMES", "poppins_black", P_GOLD))
-    
-    framed(self, EDGE_L + 90, EDGE_T - 40, 140, 44, P_BORDER, 1, P_PANEL)
-    local back_btn = track(self, ui.box(vmath.vector3(EDGE_L + 90, EDGE_T - 40, 0), vmath.vector3(140, 44, 0), vmath.vector4(0,0,0,0.001)))
-    track(self, ui.text(vmath.vector3(EDGE_L + 90, EDGE_T - 40, 0), "< BACK", "poppins_bold", P_CREAM_DIM))
-    self.buttons[#self.buttons+1] = { node = back_btn, id = "back" }
+    -- Header row inside the panel: title left, balance + close right.
+    track(self, ui.text(vmath.vector3(CX - pw/2 + 110, panel_t - 36, 0), "THEMES", "poppins_black", P_GOLD))
 
     local u = ws.current_user_data or {}
     local balance = tonumber(u.balance) or 0
-    track(self, ui.image(vmath.vector3(EDGE_R - 190, EDGE_T - 40, 0), vmath.vector3(26, 26, 0), "coin_icon"))
-    local bal_txt = txtL(self, EDGE_R - 164, EDGE_T - 40, commas(balance), "poppins_bold", P_GOLD)
-    gui.set_scale(bal_txt, vmath.vector3(1.1, 1.1, 1))
+    track(self, ui.image(vmath.vector3(CX + pw/2 - 200, panel_t - 36, 0), vmath.vector3(26, 26, 0), "coin_icon"))
+    local bal_txt = txtL(self, CX + pw/2 - 176, panel_t - 36, commas(balance), "poppins_bold", P_GOLD)
+    gui.set_scale(bal_txt, vmath.vector3(1.05, 1.05, 1))
+
+    local close_btn = track(self, ui.box(vmath.vector3(CX + pw/2 - 36, panel_t - 36, 0), vmath.vector3(44, 44, 0), vmath.vector4(0, 0, 0, 0.001)))
+    track(self, ui.text(vmath.vector3(CX + pw/2 - 36, panel_t - 36, 0), "X", "poppins_bold", P_CREAM_DIM))
+    self.buttons[#self.buttons+1] = { node = close_btn, id = "back" }
+
+    -- thin gold separator under the header
+    track(self, ui.box(vmath.vector3(CX, panel_t - 64, 0), vmath.vector3(pw - 40, 1, 0), vmath.vector4(0.549, 0.404, 0.141, 0.35)))
 
     if self._msg then
-        local msg_y = d_y - 20
-        track(self, ui.text(vmath.vector3(CX, msg_y, 0), self._msg, "poppins",
+        track(self, ui.text(vmath.vector3(CX, panel_t - 84, 0), self._msg, "poppins",
             self._msg_ok and vmath.vector4(0.3, 0.8, 0.4, 1) or P_ERROR))
     end
 
-    -- Theme cards: 3-col grid centred on CX.
+    -- Theme cards: 3-col grid centred inside the panel.
     local themes = get_themes()
     local cols = 3
-    -- Increased height significantly to ensure no button cutoff
-    local cw, ch, gap = 340, 340, 32
+    local cw, ch, gap = 340, 300, 20
     local gridw = cols * cw + (cols-1) * gap
     local x0 = CX - gridw / 2 + cw / 2
-    local y0 = EDGE_T - 250
+    local y0 = panel_t - 76 - ch / 2
 
     for i, t in ipairs(themes) do
         local c  = (i-1) % cols
@@ -148,11 +144,11 @@ local function rebuild(self)
         local th_def    = app_state.THEMES[t.id]
         local tex       = CARD_TEX[(th_def and th_def.card_set) or "default"] or "cards"
         local back_anim = (th_def and th_def.card_back) or "card_back"
-        local card_h    = 130
+        local card_h    = 118
         local card_w    = math.floor(card_h * 212 / 238)
         
         -- Shift cards slightly up so they sit beautifully inside the top half
-        local fan_y_off = 40 
+        local fan_y_off = 34 
         local function fan_card(dx, dy, anim, rot)
             local n = gui.new_box_node(vmath.vector3(px + dx, py + dy, 0), vmath.vector3(card_w, card_h, 0))
             local ok = pcall(function()
@@ -174,9 +170,9 @@ local function rebuild(self)
                 vmath.vector4(sh_color.x, sh_color.y, sh_color.z, alpha)))
         end
         shadow_box(-10, 20, 0.2)
-        shadow_box(-30, 20, 0.5)
-        shadow_box(-50, 20, 0.8)
-        shadow_box(-110, 100, 0.95) -- Core deep shadow at the very bottom
+        shadow_box(-28, 20, 0.5)
+        shadow_box(-46, 20, 0.8)
+        shadow_box(-104, 80, 0.95) -- Core deep shadow at the very bottom
 
         -- Top-Right Badge (replaces the old top colored line)
         local badge_w, badge_h = 90, 28
@@ -193,17 +189,17 @@ local function rebuild(self)
         end
 
         -- Theme Title
-        track(self, ui.text(vmath.vector3(px, py - 56, 0), (t.name or t.id or "Theme"):upper(), "poppins_bold", P_CREAM))
+        track(self, ui.text(vmath.vector3(px, py - 50, 0), (t.name or t.id or "Theme"):upper(), "poppins_bold", P_CREAM))
         
         -- Theme Price
         local price = tonumber(t.price) or 0
         local ptxt = (price == 0) and "FREE" or (commas(price).." COINS")
-        local price_lbl = track(self, ui.text(vmath.vector3(px, py - 86, 0), ptxt, "poppins",
+        local price_lbl = track(self, ui.text(vmath.vector3(px, py - 80, 0), ptxt, "poppins",
             price == 0 and vmath.vector4(0.4,0.9,0.5,1) or P_GOLD_LIGHT))
         gui.set_scale(price_lbl, vmath.vector3(0.85, 0.85, 1))
 
         -- Action Button (safely within the bounds)
-        local btn_y = py - 134
+        local btn_y = py - 116
         if t.active then
             -- Optional: We don't necessarily need a button if it's active, but we can put a disabled placeholder
             track(self, ui.btn9(vmath.vector3(px, btn_y, 0), vmath.vector3(cw-60, 44, 0), "default_btn"))
@@ -224,7 +220,12 @@ local function rebuild(self)
     end
 end
 
-function init(self) self.nodes, self.buttons = {}, {}; refresh_wh() end
+function init(self)
+	self.nodes, self.buttons = {}, {}
+	-- Dialog: floats above the live online lobby gui.
+	gui.set_render_order(14)
+	refresh_wh()
+end
 
 function on_message(self, message_id, message, sender)
     if message_id == hash("screen_enter") then

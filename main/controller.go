@@ -50,6 +50,10 @@ components {
   id: "gameover"
   component: "/main/gameover.gui"
 }
+components {
+  id: "network"
+  component: "/main/network.gui"
+}
 embedded_components {
   id: "background"
   type: "sprite"

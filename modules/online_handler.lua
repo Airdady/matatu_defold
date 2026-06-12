@@ -1,5 +1,6 @@
 local ws = require "modules.websocket_manager"
 local Defs = require "modules.card_defs"
+local CV = require "modules.card_view"
 
 local GUI_HUD   = "#game"
 local GUI_SUIT  = "#suit_select"
@@ -625,6 +626,11 @@ function M.start_game(self, state)
     self.my_player_id = ws.get_current_user_id()
     self.online_game_id = state.id or state.gameId or ws.active_game_id or ""
 
+    -- Deterministic pile scatter, seeded by the game id: the discard pile's
+    -- random rotations/positions reproduce identically after a resume.
+    self.scatter_seed = CV.seed_from_string(self.online_game_id)
+    self.pile_index_base = 0
+
     local players = state.players or {}
     local mp = {}
     local op = {}
@@ -722,7 +728,26 @@ function M.start_game(self, state)
         end
         stamp_deck(self, state.deck)
 
-        if top_card and top_card.v then
+        -- Rebuild the discard pile EXACTLY as the player left it: each card
+        -- re-lands on its deterministic scatter (seeded by the game id), so
+        -- the random rotations/positions survive an app close + resume.
+        local played = (type(state.playedCards) == "table") and state.playedCards or {}
+        if #played > 0 then
+            local first = math.max(1, #played - 11)
+            self.pile_index_base = first - 1
+            for i = first, #played do
+                local pc = played[i]
+                local rec = self.spawn_card(tonumber(pc.v) or 10, tostring(pc.s or "H"),
+                    vmath.vector3(self.CENTER.x, self.CENTER.y, self.Z_PILE))
+                local ox, oy, rot = CV.pile_scatter(self, i)
+                go.set_position(vmath.vector3(self.CENTER.x + ox, self.CENTER.y + oy,
+                    self.Z_PILE + (i - first + 1) * 0.001), rec.id)
+                go.set(rec.id, "euler.z", rot)
+                rec.pile_offset = vmath.vector3(ox, oy, 0)
+                table.insert(self.played_cards, rec)
+                self.set_face(rec)
+            end
+        elseif top_card and top_card.v then
             local rec = self.spawn_card(tonumber(top_card.v) or 10, tostring(top_card.s or "H"),
                 vmath.vector3(self.CENTER.x, self.CENTER.y, self.Z_PILE))
             table.insert(self.played_cards, rec)
