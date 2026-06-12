@@ -188,6 +188,14 @@ end
 -- Watchdogs (online only): release stale locks the moment it's our turn
 ----------------------------------------------------------------------
 function update(self, dt)
+    if self.round_story_active and socket.gettime() > (self.round_story_deadline or 0) then
+        print("[ROUND-STORY] watchdog released the next-round hold")
+        self.round_story_active = false
+        local pending = self._pending_next_state
+        self._pending_next_state = nil
+        if pending then start_new_online_game(self, pending) end
+    end
+
     if self.online_mode then
         if #self.move_queue == 0 then
             if self.is_processing_move then
@@ -425,6 +433,14 @@ end
 -- round) — re-initialises the board cleanly.
 local function start_new_online_game(self, state)
     if type(state) ~= "table" or next(state) == nil then return end
+    -- Round-story interstitial is playing: even if the backend already sent
+    -- the next round, hold it in the queue so the story (and its breathing
+    -- room) finishes first. The release path re-enters here.
+    if self.round_story_active then
+        ws.active_game_state = state
+        self._pending_next_state = state
+        return
+    end
     local new_id = tostring(state.id or state.gameId or "")
     if new_id ~= "" and new_id == tostring(self.online_game_id) and not self.game_over then
         return
@@ -461,6 +477,14 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("ws_new_game_start") then
         start_new_online_game(self, message.state or ws.get_active_game())
 
+    elseif message_id == hash("round_story_done") then
+        self.round_story_active = false
+        local pending = self._pending_next_state
+        self._pending_next_state = nil
+        if pending then
+            start_new_online_game(self, pending)
+        end
+
     elseif message_id == hash("ws_round_complete") then
         -- Tournament next round may arrive as ROUND_COMPLETE carrying the dealt
         -- state; re-init the board (de-duped against an in-progress round).
@@ -471,6 +495,8 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("disable") then
         self.active = false
         self._seq = (self._seq or 0) + 1
+        self.round_story_active = false
+        self._pending_next_state = nil
         -- Leaving the board: force-close the auxiliary overlays so a half-open
         -- suit selector / game-over / disconnect modal can't bleed onto the
         -- lobby (those guis are not in the controller's screen list).
@@ -593,22 +619,8 @@ function on_message(self, message_id, message, sender)
         notify_gui(self.gui_hud, "conn_overlay", { show = false })
         if self.online_mode and not self.game_over then
             local results = ws.last_game_over or {}
-            -- Round end carries the updated match score (currentScores) —
-            -- bump the sticky tournament scoreboard before the modal shows,
-            -- exactly like the Godot HudUI game-over sync.
-            OnlineHandler.process_scoreboard(self, {
-                gameType = results.gameType,
-                tournamentId = (type(results.tournamentData) == "table" and results.tournamentData.id) or nil,
-                gameOverState = results,
-            })
             local is_cut = results.isCut or (results.reason == "CUTTING_CARD")
             self.end_game((results.winner == self.my_player_id), is_cut, results)
-        end
-
-    -- ── Live user-data refresh: tournament progress carries match scores ─────
-    elseif message_id == hash("user_data_updated") then
-        if self.online_mode and not self.game_over and self.active then
-            OnlineHandler.process_scoreboard(self, ws.get_active_game() or {})
         end
 
     -- ── Replay declined by the opponent → back to the lobby ──────────────────

@@ -11,379 +11,430 @@ local app_state = require("modules.app_state")
 local SCREENS = { "lobby", "auth", "profile", "online", "themes", "payments", "tournaments", "game" }
 
 local function show(self, screen)
-	for _, s in ipairs(SCREENS) do
-		if s == screen then
-			msg.post("#" .. s, "enable")
-			msg.post("#" .. s, "screen_enter")
-		elseif screen == "payments" and s == "online" then
-			-- Payments is a DIALOG, not a screen: the online lobby stays
-			-- alive (and visible) underneath the modal dim.
-		else
-			msg.post("#" .. s, "disable")
-		end
-	end
-	-- The game board is split: "game" is the HUD gui (in SCREENS), while
-	-- "game_logic" drives the sprite cards. Mirror the lifecycle to it.
-	if screen == "game" then
-		msg.post("#game_logic", "screen_enter")
-	else
-		msg.post("#game_logic", "disable")
-	end
-	self.screen = screen
+    for _, s in ipairs(SCREENS) do
+        if s == screen then
+            msg.post("#" .. s, "enable")
+            msg.post("#" .. s, "screen_enter")
+        elseif screen == "payments" and s == "online" then
+            -- Payments is a DIALOG, not a screen: the online lobby stays
+            -- alive (and visible) underneath the modal dim.
+        else
+            msg.post("#" .. s, "disable")
+        end
+    end
+    -- The game board is split: "game" is the HUD gui (in SCREENS), while
+    -- "game_logic" drives the sprite cards. Mirror the lifecycle to it.
+    if screen == "game" then
+        msg.post("#game_logic", "screen_enter")
+    else
+        msg.post("#game_logic", "disable")
+    end
+    self.screen = screen
 end
 
 -- Decide where to go once we have a user identified for online play.
 local function route_after_auth(self)
-	local user = ws.current_user_data or {}
-	app_state.sync_theme_from_user(user)
-	-- Only force a screen change when there's a live game to rejoin, or the
-	-- profile is incomplete. A simple logged-in user is NOT auto-redirected to
-	-- the online lobby — they stay on the main lobby and choose Play Online
-	-- themselves.
-	if ws.active_game_state and next(ws.active_game_state or {}) ~= nil then
-		app_state.mode = "online"
-		show(self, "game")
-	elseif not app_state.profile_complete(user) then
-		show(self, "profile")
-	elseif self._explicit_online then
-		-- User explicitly pressed Play Online and we were waiting on the
-		-- connection/identify to complete; now route them through.
-		self._explicit_online = false
-		show(self, "online")
-	end
-	-- Otherwise: stay put (the main lobby).
+    local user = ws.current_user_data or {}
+    app_state.sync_theme_from_user(user)
+    -- Only force a screen change when there's a live game to rejoin, or the
+    -- profile is incomplete. A simple logged-in user is NOT auto-redirected to
+    -- the online lobby — they stay on the main lobby and choose Play Online
+    -- themselves.
+    if ws.active_game_state and next(ws.active_game_state or {}) ~= nil then
+        app_state.mode = "online"
+        show(self, "game")
+    elseif not app_state.profile_complete(user) then
+        show(self, "profile")
+    elseif self._explicit_online then
+        -- User explicitly pressed Play Online and we were waiting on the
+        -- connection/identify to complete; now route them through.
+        self._explicit_online = false
+        show(self, "online")
+    end
+    -- Otherwise: stay put (the main lobby).
 end
 
 -- Identify + connect using a user object.
 local function identify_and_connect(user)
-	if type(user) ~= "table" then return end
-	ws.current_user_data = user
-	local token = user.idToken or user.token or ""
-	if token ~= "" then api.set_auth_token(token) end
-	api.save_session(user)
-	local id = user._id or user.localId or ""
-	if id ~= "" then
-		ws.identify(id, user.username or "Player",
-			{ amount = user.balance or 0, charge = 0 }, "UG")
-	end
-	ws.connect()
+    if type(user) ~= "table" then return end
+    ws.current_user_data = user
+    local token = user.idToken or user.token or ""
+    if token ~= "" then api.set_auth_token(token) end
+    api.save_session(user)
+    local id = user._id or user.localId or ""
+    if id ~= "" then
+        ws.identify(id, user.username or "Player",
+            { amount = user.balance or 0, charge = 0 }, "UG")
+    end
+    ws.connect()
 end
 
 function init(self)
-	self.screen = "lobby"
-	self.tokens = {}
+    self.screen = "lobby"
+    self.tokens = {}
 
-	for _, s in ipairs(SCREENS) do
-		msg.post("#" .. s, "disable")
-	end
+    for _, s in ipairs(SCREENS) do
+        msg.post("#" .. s, "disable")
+    end
 
-	-- Restore a previously saved session so the user doesn't log in again.
-	local cached = api.load_session()
-	if cached and (cached._id or "") ~= "" then
-		local token = cached.idToken or ""
-		if token ~= "" then api.set_auth_token(token) end
-		ws.current_user_data = cached
-		-- Must call identify BEFORE connect so pending_identity is set when
-		-- the socket opens and the IDENTIFY message is sent immediately.
-		ws.identify(cached._id, cached.username or "Player",
-			{ amount = cached.balance or 0, charge = 0 }, "UG")
-		ws.connect()
-		-- route_after_auth fires once identify_success is received.
-		self._restore_pending = true
-	end
+    -- Restore a previously saved session so the user doesn't log in again.
+    local cached = api.load_session()
+    if cached and (cached._id or "") ~= "" then
+        local token = cached.idToken or ""
+        if token ~= "" then api.set_auth_token(token) end
+        ws.current_user_data = cached
+        -- Must call identify BEFORE connect so pending_identity is set when
+        -- the socket opens and the IDENTIFY message is sent immediately.
+        ws.identify(cached._id, cached.username or "Player",
+            { amount = cached.balance or 0, charge = 0 }, "UG")
+        ws.connect()
+        -- route_after_auth fires once identify_success is received.
+        self._restore_pending = true
+    end
 
-	msg.post("#lobby", "enable")
-	msg.post("#lobby", "screen_enter")
+    msg.post("#lobby", "enable")
+    msg.post("#lobby", "screen_enter")
 
-	local function forward(evt, target, notification)
-		table.insert(self.tokens, ws.on(evt, function()
-			msg.post(target, notification)
-		end))
-	end
+    local function forward(evt, target, notification)
+        table.insert(self.tokens, ws.on(evt, function()
+            msg.post(target, notification)
+        end))
+    end
 
-	-- After a restored session connects and identifies, route automatically.
-	table.insert(self.tokens, ws.on("identify_success", function()
-		if self._restore_pending then
-			self._restore_pending = false
-			route_after_auth(self)
-		end
-	end))
+    -- After a restored session connects and identifies, route automatically.
+    table.insert(self.tokens, ws.on("identify_success", function()
+        if self._restore_pending then
+            self._restore_pending = false
+            route_after_auth(self)
+        end
+    end))
 
-	-- Online game start → board screen. Only drive the lobby→board transition
-	-- here; an in-game start (e.g. a tournament's NEXT round) is handled by the
-	-- board itself, so re-showing the screen would re-init it twice.
-	table.insert(self.tokens, ws.on("game_start", function()
-		app_state.mode = "online"
-		if self.screen ~= "game" then show(self, "game") end
-	end))
-	table.insert(self.tokens, ws.on("game_request_accepted", function()
-		app_state.mode = "online"
-		-- Only drive the lobby→board transition; while already on the board
-		-- (a tournament's next round) the board's own listener re-inits the
-		-- new round instantly, and re-showing would double-init it.
-		if self.screen ~= "game" then show(self, "game") end
-	end))
+    -- A matched game while the tournaments screen is running its opponent
+    -- search: land the lottery reel on the real opponent first ("OPPONENT
+    -- FOUND!"), then switch to the board after the beat. Returns true when
+    -- the delayed switch was scheduled.
+    local function intercept_for_search(self_)
+        if not (app_state.searching_tournament and self_.screen == "tournaments") then
+            return false
+        end
+        app_state.searching_tournament = false
+        msg.post("#tournaments", "ws_match_found")
+        timer.delay(1.8, false, function()
+            if self_.screen == "tournaments" then show(self_, "game") end
+        end)
+        return true
+    end
 
-	-- Broadcast user-data refreshes to data-driven screens (and the live
-	-- board: tournament progress in the user object carries match scores).
-	local function broadcast(evt)
-		table.insert(self.tokens, ws.on(evt, function()
-			for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile", "game_logic" }) do
-				msg.post("#" .. s, "user_data_updated")
-			end
-		end))
-	end
-	broadcast("user_updated")
-	broadcast("transaction_completed")
+    -- Online game start → board screen. 
+    -- ✅ FIXED: Capturing the 'gs' payload to update active_game_state BEFORE routing.
+    table.insert(self.tokens, ws.on("game_start", function(gs)
+        if type(gs) == "table" and next(gs) ~= nil then
+            ws.active_game_state = gs
+        end
+        
+        app_state.mode = "online"
+        if intercept_for_search(self) then return end
+        if self.screen ~= "game" then
+            show(self, "game")
+        else
+            msg.post("#game_logic", "ws_new_game_start")
+        end
+    end))
 
-	-- Online lobby + auth notifications.
-	forward("online_users",           "#online", "ws_online_users")
-	forward("connected",              "#online", "ws_connected")
-	forward("disconnected",           "#online", "ws_disconnected")
-	forward("identify_success",       "#online", "ws_identify")
-	forward("connection_error",       "#online", "ws_error")
-	forward("game_request",           "#online", "ws_game_request")
-	forward("game_request_declined",  "#online", "ws_request_declined")
-	forward("game_request_cancelled", "#online", "ws_request_cancelled")
+    -- ✅ FIXED: Capturing the 'gs' payload to update active_game_state BEFORE routing.
+    table.insert(self.tokens, ws.on("game_request_accepted", function(gs)
+        if type(gs) == "table" and next(gs) ~= nil then
+            ws.active_game_state = gs
+        end
+        
+        app_state.mode = "online"
+        if intercept_for_search(self) then return end
+        if self.screen ~= "game" then
+            show(self, "game")
+        else
+            -- Auto-accepted tournament continuation while the board is up:
+            -- hand the fresh state to the board (it reads ws.active_game_state)
+            -- instead of re-entering the screen, which would double-init.
+            msg.post("#game_logic", "ws_new_game_start")
+        end
+    end))
 
-	-- Auth-required can arrive at any time → bounce user to the auth screen.
-	table.insert(self.tokens, ws.on("auth_required", function()
-		if self.screen == "online" or self.screen == "lobby" then
-			show(self, "auth")
-		end
-	end))
-	table.insert(self.tokens, ws.on("identify_error", function()
-		if self.screen == "online" or self.screen == "lobby" then
-			show(self, "auth")
-		end
-	end))
+    -- Broadcast user-data refreshes to data-driven screens.
+    local function broadcast(evt)
+        table.insert(self.tokens, ws.on(evt, function()
+            for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile" }) do
+                msg.post("#" .. s, "user_data_updated")
+            end
+        end))
+    end
+    broadcast("user_updated")
+    broadcast("transaction_completed")
 
-	-- Game notifications go to the logic script that owns the sprite board.
-	forward("game_move",           "#game_logic", "ws_game_move")
-	forward("game_over",           "#game_logic", "ws_game_over")
-	forward("timer_update",        "#game_logic", "ws_timer")
-	forward("round_complete",      "#game_logic", "ws_round_complete")
+    -- Tournament matchmaking came back empty.
+    table.insert(self.tokens, ws.on("tournament_no_opponents", function(d)
+        msg.post("#tournaments", "ws_search_failed",
+            { reason = (type(d) == "table" and d.message) or "No opponents available right now" })
+    end))
 
-	-- Opponent connection state during a live match (carries grace + player id).
-	table.insert(self.tokens, ws.on("player_disconnected", function(info)
-		info = info or {}
-		msg.post("#game_logic", "ws_player_dc",
-			{ grace = info.grace or 30, player_id = info.player_id or "" })
-	end))
-	table.insert(self.tokens, ws.on("player_reconnected", function(info)
-		msg.post("#game_logic", "ws_player_rc", { player_id = (info or {}).player_id or "" })
-	end))
+    -- Head-to-head stats response (sender-side dialogs/banners). The stats
+    -- table is parked on the ws module (too big for msg.post); only a wake
+    -- signal travels here.
+    table.insert(self.tokens, ws.on("head_to_head", function()
+        msg.post("#online", "ws_head_to_head")
+    end))
 
-	-- Our OWN socket dropping / recovering — the board shows a reconnect overlay.
-	table.insert(self.tokens, ws.on("disconnected",      function() msg.post("#game_logic", "ws_net_down") end))
-	table.insert(self.tokens, ws.on("connected",         function() msg.post("#game_logic", "ws_net_up") end))
-	table.insert(self.tokens, ws.on("reconnect_failed",  function() msg.post("#game_logic", "ws_net_failed") end))
+    -- Online lobby + auth notifications.
+    forward("online_users",           "#online", "ws_online_users")
+    forward("connected",              "#online", "ws_connected")
+    forward("disconnected",           "#online", "ws_disconnected")
+    forward("identify_success",       "#online", "ws_identify")
+    forward("connection_error",       "#online", "ws_error")
+    forward("game_request",           "#online", "ws_game_request")
+    forward("game_request_declined",  "#online", "ws_request_declined")
+    forward("game_request_cancelled", "#online", "ws_request_cancelled")
 
-	-- Opponent emoji reactions during a match.
-	table.insert(self.tokens, ws.on("emoji", function(sender, content, sound)
-		msg.post("#game_logic", "ws_emoji", { sender = sender or "", emoji = content or "joy", sound = sound or "" })
-	end))
+    -- Auth-required can arrive at any time → bounce user to the auth screen.
+    table.insert(self.tokens, ws.on("auth_required", function()
+        if self.screen == "online" or self.screen == "lobby" then
+            show(self, "auth")
+        end
+    end))
+    table.insert(self.tokens, ws.on("identify_error", function()
+        if self.screen == "online" or self.screen == "lobby" then
+            show(self, "auth")
+        end
+    end))
 
-	-- The backend AI covered our seat (turn timeout or offline takeover).
-	table.insert(self.tokens, ws.on("ai_played_for_you", function(info)
-		info = info or {}
-		msg.post("#game_logic", "ws_ai_played", {
-			mode = info.mode or "SINGLE_MOVE",
-			moves = info.moves or 0,
-			max = info.max or 3,
-		})
-	end))
+    -- Game notifications go to the logic script that owns the sprite board.
+    forward("game_move",            "#game_logic", "ws_game_move")
+    forward("game_over",            "#game_logic", "ws_game_over")
+    -- timer_update is delivered by the board's own listener (online_handler)
+    -- which carries the payload; a bare forward here would arrive without
+    -- message.data and sync_timers would read it as "no turn" → stop_timers.
+    forward("round_complete",       "#game_logic", "ws_round_complete")
 
-	-- A declined request also reaches the board: if the player asked for a
-	-- replay from the game-over modal, a decline sends them back to the lobby.
-	table.insert(self.tokens, ws.on("game_request_declined", function(reason)
-		msg.post("#game_logic", "ws_replay_declined", { reason = tostring(reason or "Declined") })
-	end))
+    -- Opponent connection state during a live match (carries grace + player id).
+    table.insert(self.tokens, ws.on("player_disconnected", function(info)
+        info = info or {}
+        msg.post("#game_logic", "ws_player_dc",
+            { grace = info.grace or 30, player_id = info.player_id or "" })
+    end))
+    table.insert(self.tokens, ws.on("player_reconnected", function(info)
+        msg.post("#game_logic", "ws_player_rc", { player_id = (info or {}).player_id or "" })
+    end))
+
+    -- Our OWN socket dropping / recovering — the board shows a reconnect overlay.
+    table.insert(self.tokens, ws.on("disconnected",      function() msg.post("#game_logic", "ws_net_down") end))
+    table.insert(self.tokens, ws.on("connected",         function() msg.post("#game_logic", "ws_net_up") end))
+    table.insert(self.tokens, ws.on("reconnect_failed",  function() msg.post("#game_logic", "ws_net_failed") end))
+
+    -- Opponent emoji reactions during a match.
+    table.insert(self.tokens, ws.on("emoji", function(sender, content, sound)
+        msg.post("#game_logic", "ws_emoji", { sender = sender or "", emoji = content or "joy", sound = sound or "" })
+    end))
+
+    -- The backend AI covered our seat (turn timeout or offline takeover).
+    table.insert(self.tokens, ws.on("ai_played_for_you", function(info)
+        info = info or {}
+        msg.post("#game_logic", "ws_ai_played", {
+            mode = info.mode or "SINGLE_MOVE",
+            moves = info.moves or 0,
+            max = info.max or 3,
+        })
+    end))
+
+    -- A declined request also reaches the board: if the player asked for a
+    -- replay from the game-over modal, a decline sends them back to the lobby.
+    table.insert(self.tokens, ws.on("game_request_declined", function(reason)
+        msg.post("#game_logic", "ws_replay_declined", { reason = tostring(reason or "Declined") })
+        -- The tournaments screen shows search failures on its lottery overlay.
+        msg.post("#tournaments", "ws_search_failed", { reason = tostring(reason or "Declined") })
+    end))
 end
 
 function on_message(self, message_id, message, sender)
-	-- ── Plain screen switches ────────────────────────────────────────────────
-	if message_id == hash("goto_lobby") then
-		show(self, "lobby")
-	elseif message_id == hash("goto_game") then
-		show(self, "game")
-	elseif message_id == hash("goto_online") then
-		show(self, "online")
-	elseif message_id == hash("goto_themes") then
-		show(self, "themes")
-	elseif message_id == hash("goto_payments") then
-		show(self, "payments")
-	elseif message_id == hash("goto_tournaments") then
-		show(self, "tournaments")
-	elseif message_id == hash("goto_profile") then
-		show(self, "profile")
-	elseif message_id == hash("goto_auth") then
-		show(self, "auth")
+    -- ── Plain screen switches ────────────────────────────────────────────────
+    if message_id == hash("goto_lobby") then
+        show(self, "lobby")
+    elseif message_id == hash("goto_game") then
+        show(self, "game")
+    elseif message_id == hash("goto_online") then
+        show(self, "online")
+    elseif message_id == hash("goto_themes") then
+        show(self, "themes")
+    elseif message_id == hash("goto_payments") then
+        show(self, "payments")
+    elseif message_id == hash("goto_tournaments") then
+        show(self, "tournaments")
+    elseif message_id == hash("goto_profile") then
+        show(self, "profile")
+    elseif message_id == hash("goto_auth") then
+        show(self, "auth")
 
-	-- ── Play Online pressed on the main lobby ────────────────────────────────
-	elseif message_id == hash("play_online") then
-		-- Mark this as an explicit Play Online press so route_after_auth knows it
-		-- may switch to the online lobby once identify completes.
-		self._explicit_online = true
-		-- Already identified (connected or mid-restore from cache) → skip auth.
-		if ws.current_user_data and (ws.current_user_data._id or "") ~= "" then
-			if ws.socket_connected then
-				route_after_auth(self)
-			else
-				-- WS is still connecting from a cached session; wait for identify_success.
-				self._restore_pending = true
-			end
-			return
-		end
-		-- Try a silent device login first; if the device is registered we skip
-		-- the OTP screen entirely.
-		api.device_login(function(result)
-			if result.success and type(result.data) == "table" then
-				local user = result.data.user or result.data
-				if type(user) == "table" and (user._id or user.localId) then
-					identify_and_connect(user)
-					route_after_auth(self)
-					return
-				end
-			end
-			-- Not registered on this device → OTP sign-in.
-			show(self, "auth")
-		end)
+    -- ── Play Online pressed on the main lobby ────────────────────────────────
+    elseif message_id == hash("play_online") then
+        -- Mark this as an explicit Play Online press so route_after_auth knows it
+        -- may switch to the online lobby once identify completes.
+        self._explicit_online = true
+        -- Already identified (connected or mid-restore from cache) → skip auth.
+        if ws.current_user_data and (ws.current_user_data._id or "") ~= "" then
+            if ws.socket_connected then
+                route_after_auth(self)
+            else
+                -- WS is still connecting from a cached session; wait for identify_success.
+                self._restore_pending = true
+            end
+            return
+        end
+        -- Try a silent device login first; if the device is registered we skip
+        -- the OTP screen entirely.
+        api.device_login(function(result)
+            if result.success and type(result.data) == "table" then
+                local user = result.data.user or result.data
+                if type(user) == "table" and (user._id or user.localId) then
+                    identify_and_connect(user)
+                    route_after_auth(self)
+                    return
+                end
+            end
+            -- Not registered on this device → OTP sign-in.
+            show(self, "auth")
+        end)
 
-	-- ── OTP auth flow (from the auth screen) ─────────────────────────────────
-	elseif message_id == hash("auth_send_otp") then
-		app_state.auth_state = "sending"
-		msg.post("#auth", "auth_state_changed")
-		api.send_otp(message.phone, false, function(result)
-			if result.success then
-				local d = result.data or {}
-				if (d.status == "DEVICE_BOUND" and d.user) or d.autoLogin then
-					identify_and_connect(d.user or d)
-					app_state.auth_state = "done"
-					msg.post("#auth", "auth_state_changed")
-					route_after_auth(self)
-				else
-					app_state.auth_state = "otp"
-					msg.post("#auth", "auth_state_changed")
-				end
-			else
-				app_state.auth_state = "error"
-				app_state.auth_error = result.message or "Failed to send OTP"
-				msg.post("#auth", "auth_state_changed")
-			end
-		end)
+    -- ── OTP auth flow (from the auth screen) ─────────────────────────────────
+    elseif message_id == hash("auth_send_otp") then
+        app_state.auth_state = "sending"
+        msg.post("#auth", "auth_state_changed")
+        api.send_otp(message.phone, false, function(result)
+            if result.success then
+                local d = result.data or {}
+                if (d.status == "DEVICE_BOUND" and d.user) or d.autoLogin then
+                    identify_and_connect(d.user or d)
+                    app_state.auth_state = "done"
+                    msg.post("#auth", "auth_state_changed")
+                    route_after_auth(self)
+                else
+                    app_state.auth_state = "otp"
+                    msg.post("#auth", "auth_state_changed")
+                end
+            else
+                app_state.auth_state = "error"
+                app_state.auth_error = result.message or "Failed to send OTP"
+                msg.post("#auth", "auth_state_changed")
+            end
+        end)
 
-	elseif message_id == hash("auth_verify_otp") then
-		app_state.auth_state = "verifying"
-		msg.post("#auth", "auth_state_changed")
-		api.verify_otp(message.phone, message.code, function(result)
-			if result.success then
-				local user = result.data
-				if type(user) == "table" then
-					if user.user then user = user.user end
-					identify_and_connect(user)
-				end
-				app_state.auth_state = "done"
-				msg.post("#auth", "auth_state_changed")
-				route_after_auth(self)
-			else
-				app_state.auth_state = "error"
-				app_state.auth_error = result.message or "Invalid code"
-				msg.post("#auth", "auth_state_changed")
-			end
-		end)
+    elseif message_id == hash("auth_verify_otp") then
+        app_state.auth_state = "verifying"
+        msg.post("#auth", "auth_state_changed")
+        api.verify_otp(message.phone, message.code, function(result)
+            if result.success then
+                local user = result.data
+                if type(user) == "table" then
+                    if user.user then user = user.user end
+                    identify_and_connect(user)
+                end
+                app_state.auth_state = "done"
+                msg.post("#auth", "auth_state_changed")
+                route_after_auth(self)
+            else
+                app_state.auth_state = "error"
+                app_state.auth_error = result.message or "Invalid code"
+                msg.post("#auth", "auth_state_changed")
+            end
+        end)
 
-	elseif message_id == hash("auth_reset") then
-		app_state.auth_state = "idle"
-		app_state.auth_phone = ""
-		app_state.auth_error = ""
-		msg.post("#auth", "auth_state_changed")
+    elseif message_id == hash("auth_reset") then
+        app_state.auth_state = "idle"
+        app_state.auth_phone = ""
+        app_state.auth_error = ""
+        msg.post("#auth", "auth_state_changed")
 
-	elseif message_id == hash("auth_cancel") then
-		app_state.auth_state = "idle"
-		show(self, "lobby")
+    elseif message_id == hash("auth_cancel") then
+        app_state.auth_state = "idle"
+        show(self, "lobby")
 
-	-- ── Profile save → PUT /users/:id then continue to the online lobby ───────
-	elseif message_id == hash("profile_save") then
-		local user = ws.current_user_data or {}
-		local payload = {
-			username    = message.username,
-			avatar      = message.avatar,
-			phoneNumber = user.phoneNumber or user.phone or "",
-		}
-		local uid = user._id or user.localId or ""
-		api.update_profile(uid, payload, function(result)
-			if result.success then
-				-- merge returned fields, force our new values
-				local data = result.data or {}
-				local merged = data.user or data.data or data
-				if type(merged) ~= "table" then merged = {} end
-				for k, v in pairs(merged) do user[k] = v end
-				user.username    = message.username
-				user.avatar      = message.avatar
-				ws.current_user_data = user
-				api.save_session(user)
-				-- Refresh every data-driven screen with the new identity.
-				for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile", "lobby" }) do
-					msg.post("#" .. s, "user_data_updated")
-				end
-				msg.post("#profile", "profile_saved", { ok = true })
-				show(self, "online")
-			else
-				msg.post("#profile", "profile_saved",
-					{ ok = false, message = result.message or "Save failed" })
-			end
-		end)
+    -- ── Profile save → PUT /users/:id then continue to the online lobby ───────
+    elseif message_id == hash("profile_save") then
+        local user = ws.current_user_data or {}
+        local payload = {
+            username    = message.username,
+            avatar      = message.avatar,
+            phoneNumber = user.phoneNumber or user.phone or "",
+        }
+        local uid = user._id or user.localId or ""
+        api.update_profile(uid, payload, function(result)
+            if result.success then
+                -- merge returned fields, force our new values
+                local data = result.data or {}
+                local merged = data.user or data.data or data
+                if type(merged) ~= "table" then merged = {} end
+                for k, v in pairs(merged) do user[k] = v end
+                user.username    = message.username
+                user.avatar      = message.avatar
+                ws.current_user_data = user
+                api.save_session(user)
+                -- Refresh every data-driven screen with the new identity.
+                for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile", "lobby" }) do
+                    msg.post("#" .. s, "user_data_updated")
+                end
+                msg.post("#profile", "profile_saved", { ok = true })
+                show(self, "online")
+            else
+                msg.post("#profile", "profile_saved",
+                    { ok = false, message = result.message or "Save failed" })
+            end
+        end)
 
-	-- ── Themes ───────────────────────────────────────────────────────────────
-	elseif message_id == hash("theme_purchase") then
-		local uid = (ws.current_user_data or {})._id or ""
-		api.purchase_theme(uid, message.theme_id, function(result)
-			msg.post("#themes", "theme_action_result",
-				{ ok = result.success, message = result.message })
-		end)
-	elseif message_id == hash("theme_switch") then
-		local uid = (ws.current_user_data or {})._id or ""
-		api.switch_theme(uid, message.theme_id, function(result)
-			if result.success then
-				app_state.theme = message.theme_id
-			end
-			msg.post("#themes", "theme_action_result",
-				{ ok = result.success, message = result.message })
-		end)
+    -- ── Themes ───────────────────────────────────────────────────────────────
+    elseif message_id == hash("theme_purchase") then
+        local uid = (ws.current_user_data or {})._id or ""
+        api.purchase_theme(uid, message.theme_id, function(result)
+            msg.post("#themes", "theme_action_result",
+                { ok = result.success, message = result.message })
+        end)
+    elseif message_id == hash("theme_switch") then
+        local uid = (ws.current_user_data or {})._id or ""
+        api.switch_theme(uid, message.theme_id, function(result)
+            if result.success then
+                app_state.theme = message.theme_id
+            end
+            msg.post("#themes", "theme_action_result",
+                { ok = result.success, message = result.message })
+        end)
 
-	-- ── Payments ─────────────────────────────────────────────────────────────
-	elseif message_id == hash("submit_payment") then
-		local user = ws.current_user_data or {}
-		local payload = {
-			phoneNumber = message.phone,
-			amount      = message.amount,
-			type        = message.ptype,
-			_id         = user._id or "",
-		}
-		api.send_transaction(payload, function(result)
-			msg.post("#payments", "payment_result",
-				{ ok = result.success, message = result.message })
-		end)
+    -- ── Payments ─────────────────────────────────────────────────────────────
+    elseif message_id == hash("submit_payment") then
+        local user = ws.current_user_data or {}
+        local payload = {
+            phoneNumber = message.phone,
+            amount      = message.amount,
+            type        = message.ptype,
+            _id         = user._id or "",
+        }
+        api.send_transaction(payload, function(result)
+            msg.post("#payments", "payment_result",
+                { ok = result.success, message = result.message })
+        end)
 
-	-- ── Tournament play (websocket game request) ─────────────────────────────
-	elseif message_id == hash("tournament_play") then
-		ws.send_game_request({}, message.stake, {
-			gameType       = "TOURNAMENT",
-			tournamentId   = message.tournament_id,
-			tournamentName = message.tournament_name,
-			rules          = "JOKERS",
-		})
+    -- ── Tournament play (websocket game request) ─────────────────────────────
+    elseif message_id == hash("tournament_play") then
+        ws.send_game_request({}, message.stake, {
+            gameType       = "TOURNAMENT",
+            tournamentId   = message.tournament_id,
+            tournamentName = message.tournament_name,
+            rules          = "JOKERS",
+        })
 
-	elseif message_id == hash("connect_online") then
-		if not ws.socket_connected then ws.connect() end
-	elseif message_id == hash("disconnect_online") then
-		ws.disconnect()
-	end
+    elseif message_id == hash("connect_online") then
+        if not ws.socket_connected then ws.connect() end
+    elseif message_id == hash("disconnect_online") then
+        ws.disconnect()
+    end
 end
 
 function final(self)
-	for _, t in ipairs(self.tokens) do
-		ws.off(t)
-	end
+    for _, t in ipairs(self.tokens) do
+        ws.off(t)
+    end
 end

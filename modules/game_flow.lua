@@ -418,10 +418,99 @@ function M.check_win(self, rec, is_player, result)
     return false
 end
 
+-- Only the fields the game-over modal renders. The raw gameOverState of a
+-- tournament round also carries tournamentData.levels and friends, which can
+-- push the table past Defold's ~2KB message ceiling — the post would then
+-- fail and the modal silently never appear.
+local function slim_results(res)
+    res = type(res) == "table" and res or {}
+    local function two_player_map(m)
+        if type(m) ~= "table" then return nil end
+        local c = {}
+        for k, v in pairs(m) do c[tostring(k)] = v end
+        return c
+    end
+    local out = {
+        reason                   = res.reason,
+        isNoShowScenario         = res.isNoShowScenario,
+        gameType                 = res.gameType,
+        points                   = res.points,
+        tournamentCompleted      = res.tournamentCompleted,
+        tournamentEndedByTimeout = res.tournamentEndedByTimeout,
+        isMatchComplete          = res.isMatchComplete,
+        rewards                  = two_player_map(res.rewards),
+        currentScores            = two_player_map(res.currentScores),
+        cardTotals               = two_player_map(res.cardTotals),
+    }
+    if type(res.stake) == "table" then
+        out.stake = { amount = res.stake.amount, charge = res.stake.charge, points = res.stake.points }
+    end
+    if type(res.tournamentData) == "table" and type(res.tournamentData.grandPrize) == "table" then
+        out.tournamentData = { grandPrize = {
+            value  = res.tournamentData.grandPrize.value,
+            points = res.tournamentData.grandPrize.points,
+        } }
+    end
+    return out
+end
+
 function M.end_game(self, player_won, is_cut, backend_results)
     if self.game_over then return end
     self.game_over = true
     notify_gui(self.gui_hud, "stop_timers")
+
+    if self.online_mode and type(backend_results) == "table" then
+        -- Balance updated there and then: the backend settles wallets before
+        -- GAME_OVER and ships post-game balances in the payload.
+        if type(backend_results.balances) == "table" then
+            local bal = tonumber(backend_results.balances[tostring(self.my_player_id)])
+            if bal ~= nil then
+                notify_gui(self.gui_hud, "update_balance", { balance = bal })
+            end
+        end
+        -- Refresh the board immediately with the final series score and the
+        -- updated all-time head-to-head / form the backend just recorded.
+        if backend_results.currentScores or backend_results.headToHead then
+            OnlineHandler.process_scoreboard(self, {
+                currentScores = backend_results.currentScores,
+                headToHead    = backend_results.headToHead,
+            })
+        end
+    end
+
+    -- Mid-series round (tournament/battle match continues): instead of the
+    -- game-over modal we play the round-story interstitial, and game.script
+    -- holds the incoming next-round state until it finishes — the backend
+    -- often auto-accepts the continuation before the animations are done.
+    local round_continues = false
+    local story = nil
+    if self.online_mode and type(backend_results) == "table" then
+        round_continues = tostring(backend_results.gameType or "") == "TOURNAMENT"
+            and not backend_results.isMatchComplete
+            and not backend_results.tournamentCompleted
+            and not backend_results.isNoShowScenario
+        if round_continues then
+            local p_sc, o_sc = 0, 0
+            for pid, sc in pairs(backend_results.currentScores or {}) do
+                if tostring(pid) == tostring(self.my_player_id) then p_sc = tonumber(sc) or 0
+                else o_sc = tonumber(sc) or 0 end
+            end
+            local target = tonumber(backend_results.requiredWins) or 0
+            if target <= 0 then target = math.max(p_sc, o_sc) + 1 end
+            story = {
+                won = player_won and true or false,
+                p_score = p_sc,
+                o_score = o_sc,
+                target = target,
+                next_round = p_sc + o_sc + 1,
+                last_round = (p_sc == target - 1) and (o_sc == target - 1),
+            }
+            -- Arm the hold NOW: the auto-accepted next round can land within
+            -- ~2s, well before the reveal + story complete.
+            self.round_story_active = true
+            self.round_story_deadline = socket.gettime() + 9.0
+        end
+    end
 
     local p_score = RE.hand_score(self.player_hand)
     local a_score = RE.hand_score(self.ai_hand)
@@ -486,13 +575,21 @@ function M.end_game(self, player_won, is_cut, backend_results)
 
     timer.delay(delay + 0.5, false, function()
         if seq ~= self._seq then return end
+
+        if round_continues and story then
+            -- The round story owns the screen; the modal stays out of the
+            -- way until the match itself is decided.
+            notify_gui(self.gui_hud, "round_story", story)
+            return
+        end
+
         notify_gui(self.gui_over, "game_over", {
             won = player_won,
             player_score = p_score,
             ai_score = a_score,
             is_cut = is_cut,
             my_id = self.my_player_id,
-            results = backend_results or {},
+            results = slim_results(backend_results),
             series_active = is_series_active,
             series_over = is_series_over
         })

@@ -100,49 +100,52 @@ function M.sync_deck_size(self, target_size)
     end
 end
 
--- ── Tournament scoreboard — faithful port of Godot Scoreboard.update_state ──
--- Tournament detection is STICKY: the tournament id latches on the first
--- state that carries it and the board stays up (and static) across every
--- round of that tournament. A state that only says gameType == "TOURNAMENT"
--- keeps the latched id (Godot does exactly this), so round transitions and
--- game-over summaries never blank the board.
---
--- Score priority (Godot order):
---   1. state.tournamentScore  { matchFormat, currentLevel, scores }
---   2. gameOverState.currentScores / state.currentScores
---   3. user-data fallback: tournaments[] / myBattle → userProgress.currentScores
--- Scores are monotonic (never go backwards mid-tournament).
-
--- Read a {playerId = wins} map into (mine, theirs). Iterating keys finds the
--- opponent even before self.opponent_id is resolved.
-local function read_scores(self, scores)
-    if type(scores) ~= "table" then return nil, nil end
-    local mine, theirs, found = 0, 0, false
-    for pid, sc in pairs(scores) do
-        found = true
-        if tostring(pid) == tostring(self.my_player_id) then mine = tonumber(sc) or 0
-        else theirs = tonumber(sc) or theirs end
-    end
-    if not found then return nil, nil end
-    return mine, theirs
+function M.public_player_info(p)
+    p = p or {}
+    return {
+        id          = p.id or p._id or "",
+        _id         = p._id or p.id or "",
+        username    = p.username or p.name,
+        name        = p.name,
+        avatar      = p.avatar or 1,
+        balance     = p.balance,
+        winRate     = p.winRate,
+        gamesPlayed = p.gamesPlayed,
+        isAI        = p.isAI or false,
+    }
 end
 
--- Godot _find_tournament_object + _extract_scores_from_user_data: the user
--- object caches per-tournament progress with the running match scores.
+function M.slim_ranks(ranks)
+    local out = {}
+    if type(ranks) ~= "table" then return out end
+    for i, r in ipairs(ranks) do
+        if i > 7 then break end
+        out[#out + 1] = {
+            position = r.position,
+            username = r.username,
+            points   = r.points,
+            id       = r.id or r._id,
+        }
+    end
+    return out
+end
+
 local function scores_from_user_data(t_id)
+    if not t_id or t_id == "" then return nil end
     local u = ws.current_user_data or {}
     local function progress_scores(obj)
         if type(obj) ~= "table" then return nil end
-        local prog = obj.userProgress
-        if type(prog) == "table" and type(prog.currentScores) == "table" then
-            return prog.currentScores
+        local up = obj.userProgress
+        if type(up) == "table" and type(up.currentScores) == "table" then
+            return up.currentScores
         end
         return nil
     end
     if type(u.tournaments) == "table" then
         for _, t in ipairs(u.tournaments) do
-            if type(t) == "table" and tostring(t._id or "") == t_id then
-                return progress_scores(t)
+            if type(t) == "table" and tostring(t._id or t.tournamentId or "") == t_id then
+                local sc = progress_scores(t)
+                if sc then return sc end
             end
         end
     end
@@ -153,83 +156,118 @@ local function scores_from_user_data(t_id)
     return nil
 end
 
--- Resolve the tournament id for a state, with the Godot fallbacks: an
--- explicit tournamentId wins; gameType == "TOURNAMENT" (top-level or inside
--- gameOverState) keeps the latched id, or latches a sentinel so the board
--- still initializes when the id is missing entirely.
-function M.resolve_tournament_id(self, state)
-    local raw = state.tournamentId
-    if type(raw) == "string" and raw ~= "" then return raw end
-    if raw ~= nil and type(raw) ~= "boolean" and tostring(raw) ~= "" and type(raw) ~= "table" then
-        return tostring(raw)
-    end
-    local gt = state.gameType
-    if gt == nil and type(state.gameOverState) == "table" then
-        gt = state.gameOverState.gameType
-    end
-    if tostring(gt or "") == "TOURNAMENT" then
-        if (self._sb_tid or "") ~= "" then return self._sb_tid end
-        return "__tournament__"
-    end
-    -- battles are tournaments under the hood; matchFormat marks a series game
-    if state.isBattle == true or tonumber(state.matchFormat) then
-        if (self._sb_tid or "") ~= "" then return self._sb_tid end
-        if tonumber(state.matchFormat) then return "__series__" end
-    end
-    return ""
-end
-
 function M.process_scoreboard(self, state)
     state = state or {}
-    local tid = M.resolve_tournament_id(self, state)
 
-    if tid == "" then
-        -- Genuinely not a series game: clear the latch and hide the board.
-        self._sb_tid = nil
-        self._sb_p, self._sb_o, self._sb_format, self._sb_stage = nil, nil, nil, nil
-        msg.post(GUI_HUD, "update_scoreboard", { show = false })
-        return
-    end
-
-    if self._sb_tid ~= tid then
-        -- New tournament/battle: initialize the board ONCE, from zero.
-        self._sb_tid = tid
-        self._sb_p, self._sb_o = 0, 0
-        self._sb_format, self._sb_stage = nil, nil
+    local function read_scores(scores)
+        if type(scores) ~= "table" then return nil, nil end
+        local mine, theirs, found = 0, 0, false
+        for pid, sc in pairs(scores) do
+            found = true
+            if tostring(pid) == tostring(self.my_player_id) then mine = tonumber(sc) or 0
+            else theirs = tonumber(sc) or theirs end
+        end
+        if not found then return nil, nil end
+        return mine, theirs
     end
 
     local ts = (type(state.tournamentScore) == "table") and state.tournamentScore or nil
+    local fmt, stage, p_score, o_score
+
     if ts then
-        -- 1) Authoritative live score from the game state: snap to it.
-        self._sb_format = tonumber(ts.matchFormat) or self._sb_format
+        fmt = tonumber(ts.matchFormat)
         local lvl = tonumber(ts.currentLevel)
-        if lvl then self._sb_stage = "Level " .. lvl end
-        local p, o = read_scores(self, ts.scores)
-        if p ~= nil then self._sb_p, self._sb_o = p, o end
-    else
-        self._sb_format = tonumber(state.matchFormat)
-            or (type(state.tournament) == "table" and tonumber(state.tournament.matchFormat))
-            or self._sb_format
-        -- 2) Round results / live state / 3) user-data progress — monotonic.
-        local gos = (type(state.gameOverState) == "table") and state.gameOverState or nil
-        local p, o = read_scores(self, gos and gos.currentScores or nil)
-        if p == nil then p, o = read_scores(self, state.currentScores) end
-        if p == nil and tid ~= "__tournament__" and tid ~= "__series__" then
-            p, o = read_scores(self, scores_from_user_data(tid))
+        if lvl then stage = "Level " .. lvl end
+        p_score, o_score = read_scores(ts.scores)
+    end
+
+    -- ✅ FIXED: Implemented state locking logic from Godot.
+    -- Prevents wiping the final score during the dead time between games.
+    if state.gameOverState and type(state.gameOverState) == "table" then
+        local gos = state.gameOverState
+        if gos.isMatchComplete == true or gos.tournamentCompleted == true then
+            self._final_state_locked = true
+            local final_scores = gos.currentScores
+            if type(final_scores) == "table" then
+                p_score, o_score = read_scores(final_scores)
+            end
         end
-        if p ~= nil then
-            self._sb_p = math.max(self._sb_p or 0, p)
-            self._sb_o = math.max(self._sb_o or 0, o or 0)
+    else
+        if self._final_state_locked then
+            self._final_state_locked = false
         end
     end
 
-    msg.post(GUI_HUD, "update_scoreboard", {
-        show = true,
-        p_score = self._sb_p or 0,
-        o_score = self._sb_o or 0,
-        best_of = self._sb_format or 3,
-        stage = self._sb_stage,
-    })
+    if not fmt then fmt = tonumber(state.matchFormat) end
+    if not fmt and type(state.tournament) == "table" then fmt = tonumber(state.tournament.matchFormat) end
+    
+    -- Only fallback to currentScores if not locked
+    if p_score == nil and not self._final_state_locked then 
+        p_score, o_score = read_scores(state.currentScores) 
+    end
+
+    -- Track the series' tournament id across moves...
+    local t_id = tostring(state.tournamentId or "")
+    if t_id ~= "" then self._sb_tid = t_id else t_id = tostring(self._sb_tid or "") end
+    
+    -- Only fallback to user data if not locked
+    if p_score == nil and not self._final_state_locked then 
+        p_score, o_score = read_scores(scores_from_user_data(t_id)) 
+    end
+
+    if type(state.headToHead) == "table" then self._h2h = state.headToHead end
+    local h2h_msg = nil
+    if type(self._h2h) == "table" then
+        local hp, ho = read_scores(self._h2h.scores)
+        local form = nil
+        if type(self._h2h.form) == "table" then
+            form = self._h2h.form[tostring(self.my_player_id)]
+        end
+        h2h_msg = {
+            p = hp or 0,
+            o = ho or 0,
+            total = self._h2h.totalGames or 0,
+            form = (type(form) == "table") and form or {},
+        }
+    end
+
+    -- ✅ FIXED: If final state is locked, force `is_series` to true so the HUD stays active
+    local is_series = (ts ~= nil)
+        or (state.gameType == "TOURNAMENT")
+        or (type(state.tournamentId) == "string" and state.tournamentId ~= "")
+        or (fmt ~= nil)
+        or (type(state.tournament) == "table")
+        or self._final_state_locked
+
+    if is_series then
+        self._sb_active = true
+        self._sb_format = fmt or self._sb_format or 3
+        if stage then self._sb_stage = stage end
+    end
+    
+    if self._sb_active and p_score ~= nil then
+        self._sb_p, self._sb_o = p_score, o_score
+    end
+
+    if self._sb_active then
+        msg.post(GUI_HUD, "update_scoreboard", {
+            show = true,
+            series = true,
+            p_score = self._sb_p or 0,
+            o_score = self._sb_o or 0,
+            best_of = self._sb_format or 3,
+            stage = self._sb_stage,
+            h2h = h2h_msg,
+        })
+    elseif h2h_msg then
+        msg.post(GUI_HUD, "update_scoreboard", {
+            show = true,
+            series = false,
+            h2h = h2h_msg,
+        })
+    else
+        msg.post(GUI_HUD, "update_scoreboard", { show = false })
+    end
 end
 
 function M.setup_ws_listeners(self)
@@ -238,58 +276,38 @@ function M.setup_ws_listeners(self)
     end
     self.ws_listeners = {}
 
-    -- IMPORTANT: these listeners fire in the WebSocket owner's script context
-    -- (the controller called ws.connect(), so emit() runs there). A relative
-    -- "#" there addresses the CONTROLLER script — which silently drops the
-    -- board messages. Capture the board's own URL now, while we ARE in the
-    -- game.script context, and post to it explicitly.
-    local LOGIC = msg.url("#")
+    local board = msg.url()
 
     table.insert(self.ws_listeners, ws.on("game_move", function(move_data, gs)
         ws.queue_move(move_data, gs)
-        msg.post(LOGIC, "ws_game_move")
+        msg.post(board, "ws_game_move")
     end))
     table.insert(self.ws_listeners, ws.on("timer_update", function(d)
-        msg.post(LOGIC, "ws_timer_update", { data = d })
+        msg.post(board, "ws_timer_update", { data = d })
     end))
     table.insert(self.ws_listeners, ws.on("game_over", function(results)
         ws.last_game_over = results or {}
-        msg.post(LOGIC, "ws_game_over")
+        msg.post(board, "ws_game_over")
     end))
     table.insert(self.ws_listeners, ws.on("network_quality", function(d)
-        msg.post(LOGIC, "ws_network_quality", d)
+        msg.post(board, "ws_network_quality", d)
     end))
 
     table.insert(self.ws_listeners, ws.on("game_start", function(gs)
         if type(gs) ~= "table" or next(gs) == nil then return end
-        local incoming = tostring(gs.gameId or gs.id or "")
+        local incoming = tostring(gs.id or gs.gameId or "")
         local is_new = (incoming ~= "" and incoming ~= tostring(self.online_game_id))
-        -- A brand-new id, OR any START after the current game finished (a
-        -- tournament's next round can reuse the id) => re-init the board. The
-        -- state is parked on ws.active_game_state (set by the WS layer) and read
-        -- back by the board, NOT passed through msg.post (it overflows on big
-        -- nested tables).
+        
         if is_new or self.game_over then
             ws.active_game_state = gs
-            msg.post(LOGIC, "ws_new_game_start")
+            msg.post(board, "ws_new_game_start")
         elseif not self.game_over then
             M.sync_timers(self, gs)
         end
     end))
 
-    -- A tournament's NEXT round arrives as an auto-accepted
-    -- GAME_REQUEST_ACCEPTED carrying the freshly dealt state. While the
-    -- board is live, initialize the new round HERE the moment it lands —
-    -- no taps, no waiting on the controller's screen routing.
-    table.insert(self.ws_listeners, ws.on("game_request_accepted", function(gs)
-        if type(gs) ~= "table" or next(gs) == nil then return end
-        local incoming = tostring(gs.gameId or gs.id or "")
-        local is_new = (incoming ~= "" and incoming ~= tostring(self.online_game_id))
-        if is_new or self.game_over then
-            ws.active_game_state = gs
-            msg.post(LOGIC, "ws_new_game_start")
-        end
-    end))
+    -- ✅ FIXED: Removed redundant `game_request_accepted` listener to prevent double-firing race conditions.
+    -- Controller.script is now solely responsible for hearing accepted requests and telling the board to restart.
 end
 
 local function stamp_ai_hand(self, real_hand)
@@ -399,10 +417,9 @@ function M.finalize_state_sync(self, state, on_complete)
         msg.post(GUI_SUIT, "suit_select", { mode = "close" })
     end
 
-    if state.rank then msg.post(GUI_HUD, "update_standings", { ranks = state.rank }) end
+    if state.rank then msg.post(GUI_HUD, "update_standings", { ranks = M.slim_ranks(state.rank) }) end
     M.process_scoreboard(self, state)
 
-    -- ── Deck + opponent-hand reconciliation (deferred behind a reshuffle) ────
     local function do_sync()
         local deck_target = state.deckCount or (state.deck and #state.deck) or #self.deck
         M.sync_deck_size(self, deck_target)
@@ -431,11 +448,6 @@ function M.finalize_state_sync(self, state, on_complete)
         end
     end
 
-    -- Detect a server-side reshuffle: the deck refilled while the discard pile
-    -- was reset to (just) the current card. Recycle the on-screen pile back into
-    -- the deck with the proper riffle animation instead of popping fresh cards
-    -- out of nowhere. (When an animated draw already emptied the local deck it
-    -- reshuffles itself, leaving played_cards small — so this won't double-fire.)
     local deck_target     = state.deckCount or (state.deck and #state.deck) or #self.deck
     local incoming_played = (type(state.playedCards) == "table") and #state.playedCards or nil
     local pile_was_reset  = incoming_played ~= nil and incoming_played <= 1
@@ -454,10 +466,6 @@ function M.finalize_state_sync(self, state, on_complete)
     end
 end
 
--- The backend AI played OUR cards (timeout assist or offline takeover).
--- Animate the move on our own hand so the player SEES the AI take over —
--- their cards fly to the pile / draws land in their hand — and they can
--- resume playing themselves on the next turn.
 function M.process_my_actions(self, actions, done)
     local idx = 1
     local seq = self._seq
@@ -518,8 +526,6 @@ function M.process_my_actions(self, actions, done)
     end
 end
 
--- Exact own-hand reconciliation against the server state (used after the
--- AI moved for us, where the local hand must mirror the authoritative one).
 local function sync_my_hand(self, state)
     local me = (state.players or {})[self.my_player_id] or {}
     local real = (type(me.hand) == "table") and me.hand or nil
@@ -571,8 +577,6 @@ function M.handle_single_move(self, move_data, new_state, done)
             M.finalize_state_sync(self, new_state, function() done() end)
         end)
     elseif ai_for_me and has_actions then
-        -- AI covered our seat: play the move out on OUR cards, then snap the
-        -- hand to the authoritative state.
         M.process_my_actions(self, actions, function()
             M.finalize_state_sync(self, new_state, function()
                 sync_my_hand(self, new_state or {})
@@ -635,12 +639,24 @@ function M.start_game(self, state)
         end
     end
 
-    -- ── Round continuation detection (sticky tournament latch) ───────────────
-    -- The scoreboard latch (self._sb_tid) survives across rounds; a new game
-    -- inside the SAME tournament is a continuation: the board stays static
-    -- (process_scoreboard only refreshes numbers) and the deal runs fast.
-    local tid = M.resolve_tournament_id(self, state)
-    local is_continuation = (tid ~= "" and tid == self._sb_tid)
+    local ts = (type(state.tournamentScore) == "table") and state.tournamentScore or nil
+    local fmt = (ts and ts.matchFormat) or state.matchFormat
+        or (type(state.tournament) == "table" and state.tournament.matchFormat) or nil
+    local series_key = ""
+    local t_id = tostring(state.tournamentId or "")
+    if t_id ~= "" then
+        series_key = "t:" .. t_id
+    elseif fmt then
+        series_key = "b:" .. tostring(self.opponent_id) .. ":" .. tostring(fmt)
+    end
+    local is_continuation = (series_key ~= "" and series_key == self._sb_series_key)
+    if not is_continuation then
+        self._sb_active, self._sb_format, self._sb_stage = false, nil, nil
+        self._sb_p, self._sb_o = nil, nil
+        self._sb_tid = (t_id ~= "" and t_id) or nil
+        self._h2h = nil
+    end
+    self._sb_series_key = series_key
 
     local hand_data = mp.hand or {}
     local opp_hand  = (type(op.hand) == "table") and op.hand or nil
@@ -652,10 +668,12 @@ function M.start_game(self, state)
     self.chosen_suit    = state.chosenSuit or ""
 
     if state.stake then msg.post(GUI_HUD, "update_stake", { amount = state.stake }) end
-    if state.rank then msg.post(GUI_HUD, "update_standings", { ranks = state.rank }) end
+    if state.rank then msg.post(GUI_HUD, "update_standings", { ranks = M.slim_ranks(state.rank) }) end
 
-    msg.post(GUI_HUD, "setup_avatars", { my_info = mp, op_info = op })
-    msg.post(GUI_OVER, "setup_avatars", { my_info = mp, op_info = op })
+    local my_pub = M.public_player_info(mp)
+    local op_pub = M.public_player_info(op)
+    msg.post(GUI_HUD, "setup_avatars", { my_info = my_pub, op_info = op_pub })
+    msg.post(GUI_OVER, "setup_avatars", { my_info = my_pub, op_info = op_pub })
     M.process_scoreboard(self, state)
 
     local p_count = #hand_data
@@ -673,7 +691,6 @@ function M.start_game(self, state)
     local is_resume = (st == "STARTED" or st == "PLAYING" or st == "RESHUFFLING") or (state.playedCards and #state.playedCards > 1)
 
     if is_resume then
-        -- Snap cards directly, skipping double shuffle animation
         for i = 1, p_count do
             local pc = table.remove(mock_deck)
             local hdata = hand_data[i] or {}
@@ -720,11 +737,10 @@ function M.start_game(self, state)
     end
 
     local seq = self._seq
-
-    -- Between rounds of a running series the next game must initialize the
-    -- moment the server sends it: skip the riffle-shuffle intro and deal at
-    -- a tighter cadence so play resumes almost instantly.
-    local deal_step = is_continuation and 0.04 or DEAL_DELAY
+    -- Rounds of a running series deal exactly like a fresh game — the
+    -- round-story interstitial already covers the transition, so nothing is
+    -- rushed; the old 0.04s fast-deal read as glitchy.
+    local deal_step = DEAL_DELAY
 
     local function run_deal()
         if seq ~= self._seq then return end
@@ -819,11 +835,7 @@ function M.start_game(self, state)
         end)
     end
 
-    if is_continuation then
-        run_deal()
-    else
-        self.animate_shuffle(mock_deck, run_deal)
-    end
+    self.animate_shuffle(mock_deck, run_deal)
 end
 
 return M
