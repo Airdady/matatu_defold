@@ -343,9 +343,10 @@ local function draw_right(self)
     local name_gap = 8      -- tight username ↔ balance gap (Godot VBox)
     local badge_h  = 84
     local pay_h    = 44
+    local form_h   = 30
     local gap      = 12
     local prof_h   = math.max(av_size, name_h + name_gap + stat_h)
-    local cont_h   = margin + prof_h + gap + badge_h + gap + pay_h + margin
+    local cont_h   = margin + prof_h + gap + badge_h + gap + form_h + gap + pay_h + margin
     local ccy      = cy - cont_h / 2
     glass(self, vmath.vector3(cx, ccy, 0), vmath.vector3(pw, cont_h, 0), "container_bg")
 
@@ -366,6 +367,13 @@ local function draw_right(self)
     local name_y = top_y - name_h/2
     track(self, ui.box(vmath.vector3(info_cx, name_y, 0), vmath.vector3(info_w, name_h, 0), COL_NAMEID_BG))
     txtL(self, info_l + 10, name_y, string.upper(u.username or "PLAYER"), "body", COL_BRIGHT)
+    -- Player rating: win rate mapped to a 0–10 scale (55% → 5.5), as a badge
+    -- beside the username.
+    local rating = (tonumber(u.winRate) or 0) / 10
+    local r_col = rating >= 6 and COL_GREEN or (rating >= 4 and COL_GOLD or COL_RED)
+    local r_x = inner_r - 58
+    track(self, ui.box(vmath.vector3(r_x, name_y, 0), vmath.vector3(44, 22, 0), vmath.vector4(0, 0, 0, 0.55)))
+    track(self, ui.text(vmath.vector3(r_x, name_y, 0), string.format("%.1f", rating), "small", r_col))
     mkbtn(self, "nav_account", vmath.vector3(inner_r - 16, name_y, 0), vmath.vector3(28, 28, 0), nil, vmath.vector4(0,0,0,0))
     for li = -1, 1 do
         track(self, ui.box(vmath.vector3(inner_r - 16, name_y + li * 5, 0), vmath.vector3(14, 2, 0), COL_MID))
@@ -408,8 +416,28 @@ local function draw_right(self)
         end
     end
 
+    -- Global last-5 form (across all opponents, newest first) just above
+    -- the payments button: W green / L red badges.
+    local form_y = bcy - badge_h/2 - gap - form_h/2
+    track(self, ui.box(vmath.vector3(cx, form_y, 0), vmath.vector3(bw, form_h, 0), COL_STAT_BG))
+    txtL(self, cx - bw/2 + 8, form_y, "FORM", "small", COL_DIM)
+    local form = type(u.recentForm) == "table" and u.recentForm or {}
+    local fsz, fgap = 20, 5
+    local fx0 = cx + bw/2 - 8 - fsz/2
+    for i = 1, 5 do
+        local r = form[i]
+        local bx = fx0 - (i - 1) * (fsz + fgap)
+        if r == "W" or r == "L" then
+            track(self, ui.box(vmath.vector3(bx, form_y, 0), vmath.vector3(fsz, fsz, 0),
+                r == "W" and vmath.vector4(0.15, 0.70, 0.25, 0.92) or vmath.vector4(0.90, 0.25, 0.25, 0.92)))
+            track(self, ui.text(vmath.vector3(bx, form_y, 0), r, "small", COL_WHITE))
+        else
+            track(self, ui.box(vmath.vector3(bx, form_y, 0), vmath.vector3(fsz, fsz, 0), vmath.vector4(1, 1, 1, 0.06)))
+        end
+    end
+
     -- MAKE PAYMENTS inside the container (Godot PaymentsBtn)
-    local pay_y = bcy - badge_h/2 - gap - pay_h/2
+    local pay_y = form_y - form_h/2 - gap - pay_h/2
     mkbtn(self, "nav_payments", vmath.vector3(cx, pay_y, 0), vmath.vector3(bw, pay_h, 0), "MAKE PAYMENTS", "primary_btn")
 
     cy = cy - cont_h - BLOCK_GAP
@@ -687,6 +715,57 @@ local function dlg_timer(self, x, y, time_left, max_time, a)
     track(self, ui.text(vmath.vector3(x, y, 0), tostring(math.ceil(time_left or 0)), "title", with_a(col, a)))
 end
 
+-- ── Head-to-head (all-time scores + last-5 form) ────────────────────────────
+
+-- Reduce a backend headToHead payload into viewer-relative numbers.
+local function h2h_view(h2h)
+    if type(h2h) ~= "table" then return nil end
+    local my_id = tostring(ws.get_current_user_id() or "")
+    local mine, theirs, opp_id = 0, 0, nil
+    if type(h2h.scores) == "table" then
+        for pid, sc in pairs(h2h.scores) do
+            if tostring(pid) == my_id then mine = tonumber(sc) or 0
+            else theirs = tonumber(sc) or 0; opp_id = tostring(pid) end
+        end
+    end
+    local form = (type(h2h.form) == "table") and h2h.form[my_id] or nil
+    local rating = nil
+    if opp_id and type(h2h.ratings) == "table" and type(h2h.ratings[opp_id]) == "table" then
+        rating = tonumber(h2h.ratings[opp_id].winRate)
+    end
+    return {
+        p = mine, o = theirs,
+        total = tonumber(h2h.totalGames) or 0,
+        form = (type(form) == "table") and form or {},
+        opp_winrate = rating,
+    }
+end
+
+-- "H2H 3-2" + the viewer's last-5 form as W/L badges (newest first,
+-- W green / L red), laid out around (cx, y).
+local function draw_h2h_row(self, cx, y, view, a)
+    if not view then return end
+    a = a or 1
+    local score = track(self, ui.text(vmath.vector3(cx - 78, y, 0),
+        string.format("H2H %d - %d", view.p or 0, view.o or 0), "small", with_a(COL_GOLD, a)))
+    gui.set_pivot(score, gui.PIVOT_E)
+
+    local n = math.min(5, #view.form)
+    if n == 0 then
+        local none = track(self, ui.text(vmath.vector3(cx - 64, y, 0), "First meeting", "small", with_a(COL_DIM, a)))
+        gui.set_pivot(none, gui.PIVOT_W)
+        return
+    end
+    local size, gap = 22, 6
+    for i = 1, n do
+        local r = tostring(view.form[i])
+        local col = (r == "W") and COL_GREEN or COL_RED
+        local bx = cx - 64 + (i - 1) * (size + gap) + size / 2
+        track(self, ui.box(vmath.vector3(bx, y, 0), vmath.vector3(size, size, 0), with_a(col, 0.92 * a)))
+        track(self, ui.text(vmath.vector3(bx, y, 0), r, "small", with_a(COL_WHITE, a)))
+    end
+end
+
 local function draw_dialog(self)
     local d = self.dialog
     if not d then return end
@@ -711,6 +790,12 @@ local function draw_dialog(self)
     -- Opponent (left)
     dlg_avatar(self, opp_x, av_y, av_size, d.avatar or 1, a)
     track(self, ui.text(vmath.vector3(opp_x, av_y - av_size/2 - 18, 0), (d.name or "PLAYER"):upper(), "body", with_a(COL_WHITE, a)))
+    local hv = h2h_view(d.h2h)
+    if hv and hv.opp_winrate then
+        local wr = math.floor(hv.opp_winrate + 0.5)
+        local wr_col = wr >= 60 and COL_GREEN or (wr >= 40 and COL_GOLD or COL_RED)
+        track(self, ui.text(vmath.vector3(opp_x, av_y - av_size/2 - 40, 0), "WR "..wr.."%", "small", with_a(wr_col, a)))
+    end
 
     -- You (right)
     local u = ws.current_user_data or {}
@@ -729,12 +814,15 @@ local function draw_dialog(self)
     local status = incoming and "Wants to play!" or "Waiting for player to accept..."
     track(self, ui.text(vmath.vector3(CX, CY - 80, 0), status, "small", with_a(COL_MID, a)))
 
+    -- Head-to-head vs this player: all-time score + your last-5 form.
+    if hv then draw_h2h_row(self, CX, CY - 108, hv, a) end
+
     -- Buttons
     if incoming then
-        mkbtn(self, "decline", vmath.vector3(CX - 95, CY - 138, 0), vmath.vector3(150, 48, 0), "Decline", "secondary_btn")
-        mkbtn(self, "accept",  vmath.vector3(CX + 95, CY - 138, 0), vmath.vector3(150, 48, 0), "Accept",  "primary_btn")
+        mkbtn(self, "decline", vmath.vector3(CX - 95, CY - 148, 0), vmath.vector3(150, 48, 0), "Decline", "secondary_btn")
+        mkbtn(self, "accept",  vmath.vector3(CX + 95, CY - 148, 0), vmath.vector3(150, 48, 0), "Accept",  "primary_btn")
     else
-        mkbtn(self, "cancel_wait", vmath.vector3(CX, CY - 138, 0), vmath.vector3(170, 48, 0), "Cancel", "secondary_btn")
+        mkbtn(self, "cancel_wait", vmath.vector3(CX, CY - 148, 0), vmath.vector3(170, 48, 0), "Cancel", "secondary_btn")
     end
 end
 
@@ -766,6 +854,10 @@ local function draw_one_banner(self, b, idx)
     track(self, decb)
     track(self, ui.text(vmath.vector3(decx, cy, 0), "DECLINE", "small", vmath.vector4(0.82,0.86,0.91,alpha)))
     self.buttons[#self.buttons+1] = { node = decb, id = "banner_decline", data = b.request_id }
+
+    -- Head-to-head form vs the challenger (W green / L red), inline on the banner.
+    local hv = h2h_view(b.h2h)
+    if hv then draw_h2h_row(self, EDGE_R - 430, cy, hv, alpha) end
 
     local frac = math.max(0, math.min(1, (b.time_left or 10) / (b.max_time or 10)))
     local barw = bw * frac
@@ -997,9 +1089,10 @@ local function update_season(self)
     end
 end
 
-local function open_dialog(self, kind, name, stake, request_id, avatar)
+local function open_dialog(self, kind, name, stake, request_id, avatar, opponent_id, h2h)
     self.dialog = { kind = kind, name = name, stake = stake or {}, request_id = request_id,
-        avatar = tonumber(avatar) or 1, time_left = 10, max_time = 10 }
+        avatar = tonumber(avatar) or 1, time_left = 10, max_time = 10,
+        opponent_id = opponent_id and tostring(opponent_id) or nil, h2h = h2h }
     self.dlg_alpha, self.dlg_dots = 0, 0
     if self._active then rebuild(self) end
 end
@@ -1035,12 +1128,19 @@ local function open_banner(self, raw)
     local parts = { string.format("Best of %d", fmt) }
     if amount > 0 then parts[#parts+1] = commas(amount).." Coins" else parts[#parts+1] = "Practice Mode" end
 
+    -- Challenger's win rate rides along in the description line.
+    local hv = h2h_view(raw.headToHead)
+    if hv and hv.opp_winrate then
+        parts[#parts+1] = "WR "..math.floor(hv.opp_winrate + 0.5).."%"
+    end
+
     local rid = raw.requestId or ""
     self.banners = self.banners or {}
     for _, ex in ipairs(self.banners) do if rid ~= "" and ex.request_id == rid then return end end
     self.banners[#self.banners+1] = {
         title = title:upper(), desc = table.concat(parts, "   -   "),
         request_id = rid, time_left = 10, max_time = 10, alpha = 0, y_off = 1,
+        h2h = raw.headToHead,
     }
     if self._active then rebuild(self) end
 end
@@ -1110,7 +1210,17 @@ function on_message(self, message_id, message, sender)
         local r = ws.last_game_request or {}; local raw = r.raw or {}
         if type(raw) == "table" and (raw.gameType == "TOURNAMENT" or raw.gameType == "BATTLE" or raw.tournament) then
             open_banner(self, raw)
-        else open_dialog(self, "incoming", (r.user or {}).username or "A player", r.stake or {}, r.requestId, (r.user or {}).avatar) end
+        else
+            open_dialog(self, "incoming", (r.user or {}).username or "A player", r.stake or {},
+                r.requestId, (r.user or {}).avatar, (r.user or {})._id, raw.headToHead)
+        end
+    elseif message_id == hash("ws_head_to_head") then
+        local d = ws.last_head_to_head or {}
+        if self.dialog and self.dialog.opponent_id
+           and tostring(d.opponentId or "") == self.dialog.opponent_id then
+            self.dialog.h2h = d.headToHead
+            if self._active then rebuild(self) end
+        end
     elseif message_id == hash("ws_request_declined") or message_id == hash("ws_request_cancelled") then
         local rid = message and message.request_id
         if self.banners then close_banner(self, rid) end
@@ -1128,8 +1238,32 @@ local function handle(self, b)
         ws.update_stake(config.STAKE_LEVELS[self.stake_index]); rebuild(self)
     elseif id == "challenge" then
         local u = b.data or {}
-        ws.send_game_request({ _id=u._id, username=u.username, isAI=u.isAI, avatar=u.avatar }, app_state.selected_stake)
-        open_dialog(self, "challenging", u.username or "opponent", app_state.selected_stake, nil, u.avatar)
+        local stake_data = app_state.selected_stake
+        local extra_payload = nil
+
+        -- IF WE ARE IN THE BATTLE TAB AND OPPONENT HAS A BATTLE, USE ITS SETTINGS + ID
+        if self.tab == TAB_BATTLES and type(u.myBattle) == "table" then
+            local mb = u.myBattle
+            if type(mb.stake) == "table" then
+                stake_data = mb.stake
+            else
+                local amt = tonumber(mb.stakeAmount) or 0
+                stake_data = { amount = amt, charge = 0, points = 0 }
+            end
+            
+            extra_payload = {
+                gameType = "TOURNAMENT",
+                tournamentId = mb._id or mb.id,
+                rules = mb.rules
+            }
+        end
+
+        ws.send_game_request({ _id=u._id, username=u.username, isAI=u.isAI, avatar=u.avatar }, stake_data, extra_payload)
+        open_dialog(self, "challenging", u.username or "opponent", stake_data, nil, u.avatar, u._id, nil)
+        
+        -- The sender's side fetches the head-to-head form for this opponent;
+        -- the HEAD_TO_HEAD response fills the open dialog in place.
+        ws.request_head_to_head(u._id)
     elseif id == "accept" then
         if self.dialog and self.dialog.request_id then ws.accept_game_request(self.dialog.request_id) end; close_dialog(self)
     elseif id == "decline" or id == "cancel_wait" then
