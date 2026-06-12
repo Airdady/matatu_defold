@@ -26,7 +26,8 @@ local function box(pos, size, color)
     return n
 end
 
-local function text(pos, str, role, px, color)
+local function text(pos, str, px, color, role)
+    role = role or F.MODAL
     local n = gui.new_text_node(pos, str)
     gui.set_font(n, role.name)
     gui.set_scale(n, vmath.vector3(F.scale(role, px), F.scale(role, px), 1))
@@ -46,7 +47,7 @@ local function build(self)
     self.strip = box(vmath.vector3(0, ph/2 - 3, 0), vmath.vector3(pw, 6, 0), C_ACCENT)
     gui.set_parent(self.strip, self.panel)
 
-    self.title = text(vmath.vector3(0, 64, 0), "CONNECTION LOST", 26, C_WHITE)
+    self.title = text(vmath.vector3(0, 64, 0), "CONNECTION LOST", 26, C_WHITE, F.MODAL_BOLD)
     gui.set_parent(self.title, self.panel)
 
     self.body = text(vmath.vector3(0, 22, 0), "Reconnecting", 19, C_BODY)
@@ -58,13 +59,12 @@ local function build(self)
 
     self.retry_btn = box(vmath.vector3(0, -72, 0), vmath.vector3(200, 52, 0), C_ACCENT)
     gui.set_parent(self.retry_btn, self.panel)
-    self.retry_lbl = text(vmath.vector3(0, -2, 0), "RETRY", 20, C_DARK)
+    self.retry_lbl = text(vmath.vector3(0, -2, 0), "RETRY", 20, C_DARK, F.MODAL_BOLD)
     gui.set_parent(self.retry_lbl, self.retry_btn)
 
     gui.set_enabled(self.scrim, false)
 end
 
--- text() above needs the role table, fix signature use
 function init(self)
     msg.post(".", "acquire_input_focus")
     gui.set_render_order(15)

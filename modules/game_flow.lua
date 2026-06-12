@@ -38,7 +38,9 @@ local log        = util.log
 function M.play_card(self, rec, is_player, result)
     local actor = is_player and "You" or "Opponent"
     log(actor .. " played " .. Defs.card_name(rec))
-    RE.trigger_play_effects(self, rec)
+    local src_hand = is_player and self.player_hand or self.ai_hand
+    local is_last = (#src_hand <= 1)
+    RE.trigger_play_effects(self, rec, is_last)
 
     local src = is_player and self.player_hand or self.ai_hand
     util.remove_from_hand(src, rec)
@@ -78,7 +80,14 @@ function M.after_play_settled(self, rec, is_player, result)
 
     if M.check_win(self, rec, is_player, result) then return end
 
-    self.active_penalty = result.next_player_penalty_count or 0
+    -- A winning LAST card never hands a pick to the opponent: the round is
+    -- over the moment it lands, so no partial (or full) picking can follow.
+    local hand_now = is_player and self.player_hand or self.ai_hand
+    if #hand_now == 0 then
+        self.active_penalty = 0
+    else
+        self.active_penalty = result.next_player_penalty_count or 0
+    end
 
     if result.type == NA.CHOOSE_SUIT then
         if is_player then
@@ -605,9 +614,32 @@ end
 ----------------------------------------------------------------------
 -- Boot dispatcher
 ----------------------------------------------------------------------
+-- Godot update_stake_display parity: the table background follows the
+-- stake — bg_1 up to 200, bg_2 up to 500, bg_3 beyond.
+local function apply_stake_background(self)
+    local amt = 0
+    if app.mode == "online" then
+        local st = (ws.get_active_game() or {}).stake
+        amt = tonumber(type(st) == "table" and st.amount or st) or 0
+    else
+        local sel = app.selected_stake
+        amt = tonumber(type(sel) == "table" and sel.amount or sel) or 0
+    end
+    local bg = "bg_1"
+    if amt > 500 then bg = "bg_3"
+    elseif amt > 200 then bg = "bg_2" end
+    pcall(function()
+        sprite.play_flipbook("#background", hash(bg))
+        local sz = go.get("#background", "size")
+        if sz and sz.x > 0 then self.bg_img_w, self.bg_img_h = sz.x, sz.y end
+    end)
+    BL.fit_background(self)
+end
+
 function M.start_game(self)
     GS.destroy_all(self)
     GS.fresh_state(self)
+    apply_stake_background(self)
 
     -- keep_scoreboard: a board (re)start inside the same series must not
     -- blank the running match score — online_handler refreshes or hides it

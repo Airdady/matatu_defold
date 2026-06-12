@@ -473,7 +473,9 @@ end
 
 -- Building Standings UI
 local function build_standings_ui(self)
-    self.standings_root = box(vmath.vector3(LOGICAL_W - EXIT_BTN_MARGIN_RIGHT - 196, LOGICAL_H/2 - 86, 0), vmath.vector3(196, 180, 0), vmath.vector4(0,0,0,0), gui.PIVOT_NW)
+    -- Rankings live on the RIGHT, stacked ABOVE the deck (which sits at the
+    -- right edge, vertical centre) — Godot HudUI placement.
+    self.standings_root = box(vmath.vector3(LOGICAL_W - EXIT_BTN_MARGIN_RIGHT - 196, LOGICAL_H - 116, 0), vmath.vector3(196, 180, 0), vmath.vector4(0,0,0,0), gui.PIVOT_NW)
     gui.set_xanchor(self.standings_root, gui.ANCHOR_RIGHT)
     gui.set_yanchor(self.standings_root, gui.ANCHOR_NONE)
 
@@ -510,12 +512,19 @@ local function _create_skip_button(self)
 end
 
 local function build_exit(self)
-    self.exit_btn = box(vmath.vector3(LOGICAL_W - EXIT_BTN_MARGIN_RIGHT, LOGICAL_H - EXIT_BTN_MARGIN_TOP, 0), vmath.vector3(EXIT_BTN_SIZE, EXIT_BTN_SIZE, 0), vmath.vector4(0.8, 0.2, 0.2, 1.0), gui.PIVOT_NE)
+    -- Godot's exit_game.png art (same asset, no more red X box)
+    self.exit_btn = box(vmath.vector3(LOGICAL_W - EXIT_BTN_MARGIN_RIGHT, LOGICAL_H - EXIT_BTN_MARGIN_TOP, 0), vmath.vector3(EXIT_BTN_SIZE, EXIT_BTN_SIZE, 0), vmath.vector4(1, 1, 1, 1), gui.PIVOT_NE)
     gui.set_xanchor(self.exit_btn, gui.ANCHOR_RIGHT)
     gui.set_yanchor(self.exit_btn, gui.ANCHOR_TOP)
-
-    local l = label(vmath.vector3(-EXIT_BTN_SIZE/2, -EXIT_BTN_SIZE/2, 0), "X", 20, C_WHITE, gui.PIVOT_CENTER, "luckiest_guy_md")
-    gui.set_parent(l, self.exit_btn)
+    local ok_icon = pcall(function()
+        gui.set_texture(self.exit_btn, "ui")
+        gui.play_flipbook(self.exit_btn, hash("exit_game"))
+    end)
+    if not ok_icon then
+        gui.set_color(self.exit_btn, vmath.vector4(0.8, 0.2, 0.2, 1.0))
+        local l = label(vmath.vector3(-EXIT_BTN_SIZE/2, -EXIT_BTN_SIZE/2, 0), "X", 20, C_WHITE, gui.PIVOT_CENTER, "luckiest_guy_md")
+        gui.set_parent(l, self.exit_btn)
+    end
 
     self.exit_popover = box(vmath.vector3(LOGICAL_W - EXIT_BTN_MARGIN_RIGHT, LOGICAL_H - EXIT_BTN_MARGIN_TOP - EXIT_BTN_SIZE + EXIT_POPOVER_OFFSET_Y, 0), vmath.vector3(EXIT_POPOVER_WIDTH, EXIT_POPOVER_HEIGHT, 0), C_PANEL, gui.PIVOT_NE)
     gui.set_xanchor(self.exit_popover, gui.ANCHOR_RIGHT)
@@ -1181,9 +1190,10 @@ function on_message(self, message_id, message)
         local badge = (message.user_id == self.my_id) and self.p_net or self.o_net
         if not badge then return end
         local ms = message.latency_ms or 0
+        -- Godot thresholds: <200 good, <500 fair, beyond that poor.
         local txt, col = "Good", C_T_GREEN
-        if ms >= 1000 then txt, col = "Poor", C_T_RED
-        elseif ms >= 500 then txt, col = "Bad", vmath.vector4(0.98, 0.75, 0.14, 1.0) end
+        if ms >= 500 then txt, col = "Poor", C_T_RED
+        elseif ms >= 200 then txt, col = "Fair", vmath.vector4(0.98, 0.75, 0.14, 1.0) end
 
         gui.set_text(badge.lbl, txt)
         gui.set_color(badge.lbl, col)
