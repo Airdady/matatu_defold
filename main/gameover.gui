@@ -11,6 +11,26 @@ fonts {
   name: "small"
   font: "/fonts/small.font"
 }
+fonts {
+  name: "helvetica_bold"
+  font: "/fonts/helvetica-bold.font"
+}
+fonts {
+  name: "luckiest_guy_lg"
+  font: "/fonts/luckiest_guy_lg.font"
+}
+fonts {
+  name: "luckiest_guy_md"
+  font: "/fonts/luckiest_guy_md.font"
+}
+fonts {
+  name: "luckiest_guy_sm"
+  font: "/fonts/luckiest_guy_sm.font"
+}
+textures {
+  name: "avatars"
+  texture: "/assets/avatars/avatars.atlas"
+}
 background_color {
   x: 0.0
   y: 0.0
@@ -19,3 +39,4 @@ background_color {
 }
 material: "/builtins/materials/gui.material"
 adjust_reference: ADJUST_REFERENCE_PARENT
+max_nodes: 2048

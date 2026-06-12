@@ -32,7 +32,15 @@ local GRADIENT_ID = "go_radial_gradient"
 -- Native point sizes of the bundled .font resources. label() scales a node so
 -- its on-screen size matches the requested pixel size regardless of which font
 -- it uses, so big text (title/scores) can use the crisp title font.
-local FONT_BASE = { body = 26, title = 44, small = 18 }
+local FONT_BASE = { 
+    body = 26, 
+    title = 44, 
+    small = 18,
+    helvetica_bold = 36,
+    luckiest_guy_lg = 48,
+    luckiest_guy_md = 36,
+    luckiest_guy_sm = 24
+}
 
 ----------------------------------------------------------------------
 -- Node helpers
@@ -123,9 +131,7 @@ local function build_gradient_texture()
 end
 
 ----------------------------------------------------------------------
--- Confetti cannon (port of the Godot ConfettiCannon) — bursts from the
--- bottom-centre on a tournament win, shoots up, falls under gravity with sway
--- and tumble, then settles into a pile. Driven per-frame in update().
+-- Confetti cannon (port of the Godot ConfettiCannon)
 ----------------------------------------------------------------------
 local CONFETTI_N = 150
 local function chex(h)
@@ -144,8 +150,6 @@ end
 local function build_confetti(self)
     self.confetti = {}
     for i = 1, CONFETTI_N do
-        -- Top-level node (not parented) so it positions in absolute logical
-        -- coords; created after build() so it renders above the modal content.
         local n = gui.new_box_node(vmath.vector3(-100, -100, 0), vmath.vector3(10, 7, 0))
         gui.set_pivot(n, gui.PIVOT_CENTER)
         gui.set_xanchor(n, gui.ANCHOR_NONE)
@@ -242,33 +246,36 @@ local function build(self)
     pcall(function() gui.set_tracking(self.n_title, 0.12) end)
     pcall(function() gui.set_outline(self.n_title, vmath.vector4(0, 0, 0, 0.6)) end)
     pcall(function() gui.set_shadow(self.n_title, vmath.vector4(0, 0, 0, 0.5)) end)
-    attach(self.n_title, 0, 152)
+    attach(self.n_title, 0, 180)
 
-    self.n_sub = label(vmath.vector3(0, 0, 0), "", 26, C_SECONDARY, gui.PIVOT_CENTER, "body")
-    attach(self.n_sub, 0, 112)
+    self.n_sub = label(vmath.vector3(0, 0, 0), "", 26, C_SECONDARY, gui.PIVOT_CENTER, "helvetica_bold")
+    attach(self.n_sub, 0, 145)
 
     self.n_divider = box(vmath.vector3(0, 0, 0), vmath.vector3(220, 2, 0), C_DIVIDER, gui.PIVOT_CENTER)
-    attach(self.n_divider, 0, 84)
+    attach(self.n_divider, 0, 145)
 
-    self.n_reason = label(vmath.vector3(0, 0, 0), "Game Over", 22, C_PRIMARY, gui.PIVOT_CENTER, "body")
-    attach(self.n_reason, 0, 56)
+    self.n_reason = label(vmath.vector3(0, 0, 0), "Game Over", 22, C_PRIMARY, gui.PIVOT_CENTER, "helvetica_bold")
+    attach(self.n_reason, 0, 120)
 
-    self.n_you_name = label(vmath.vector3(0, 0, 0), "YOU", 20, C_SECONDARY, gui.PIVOT_CENTER, "body")
-    attach(self.n_you_name, -160, 44)
-    self.n_opp_name = label(vmath.vector3(0, 0, 0), "OPPONENT", 20, C_SECONDARY, gui.PIVOT_CENTER, "body")
-    attach(self.n_opp_name, 160, 44)
-
+    -- Avatars placed in the top center
     self.n_you_av_bg = circle(vmath.vector3(0, 0, 0), AVATAR_SIZE, C_AVATAR_BG)
-    attach(self.n_you_av_bg, -160, -20)
+    attach(self.n_you_av_bg, -180, 10)
     self.n_you_av = box(vmath.vector3(0, 0, 0), vmath.vector3(AVATAR_IMG, AVATAR_IMG, 0), vmath.vector4(1, 1, 1, 1), gui.PIVOT_CENTER)
     gui.set_parent(self.n_you_av, self.n_you_av_bg)
     gui.set_position(self.n_you_av, vmath.vector3(0, 0, 0))
 
     self.n_opp_av_bg = circle(vmath.vector3(0, 0, 0), AVATAR_SIZE, C_AVATAR_BG)
-    attach(self.n_opp_av_bg, 160, -20)
+    attach(self.n_opp_av_bg, 180, 10)
     self.n_opp_av = box(vmath.vector3(0, 0, 0), vmath.vector3(AVATAR_IMG, AVATAR_IMG, 0), vmath.vector4(1, 1, 1, 1), gui.PIVOT_CENTER)
     gui.set_parent(self.n_opp_av, self.n_opp_av_bg)
     gui.set_position(self.n_opp_av, vmath.vector3(0, 0, 0))
+
+    -- Names sit cleanly below avatars
+    self.n_you_name = label(vmath.vector3(0, 0, 0), "YOU", 20, C_SECONDARY, gui.PIVOT_CENTER, "helvetica_bold")
+    attach(self.n_you_name, -180, -65)
+    
+    self.n_opp_name = label(vmath.vector3(0, 0, 0), "OPPONENT", 20, C_SECONDARY, gui.PIVOT_CENTER, "helvetica_bold")
+    attach(self.n_opp_name, 180, -65)
 
     self.avatars_ok = pcall(function() gui.set_texture(self.n_you_av, "avatars") end)
     if self.avatars_ok then
@@ -280,17 +287,19 @@ local function build(self)
         gui.set_enabled(self.n_opp_av, false)
     end
 
-    self.n_you_sum = label(vmath.vector3(0, 0, 0), "", 16, C_ORANGE, gui.PIVOT_CENTER, "small")
-    attach(self.n_you_sum, -160, -84)
-    self.n_opp_sum = label(vmath.vector3(0, 0, 0), "", 16, C_ORANGE, gui.PIVOT_CENTER, "small")
-    attach(self.n_opp_sum, 160, -84)
+    -- Card sum placed directly below the name
+    self.n_you_sum = label(vmath.vector3(0, 0, 0), "", 16, C_ORANGE, gui.PIVOT_CENTER, "helvetica_bold")
+    attach(self.n_you_sum, -180, -90)
+    self.n_opp_sum = label(vmath.vector3(0, 0, 0), "", 16, C_ORANGE, gui.PIVOT_CENTER, "helvetica_bold")
+    attach(self.n_opp_sum, 180, -90)
 
-    self.n_you_score = label(vmath.vector3(0, 0, 0), "0", 60, C_PRIMARY, gui.PIVOT_E, "title")
-    attach(self.n_you_score, -22, -20)
-    self.n_colon = label(vmath.vector3(0, 0, 0), ":", 50, C_COLON, gui.PIVOT_CENTER, "title")
-    attach(self.n_colon, 0, -20)
-    self.n_opp_score = label(vmath.vector3(0, 0, 0), "0", 60, C_PRIMARY, gui.PIVOT_W, "title")
-    attach(self.n_opp_score, 22, -20)
+    -- Giant Match Scores sit beautifully in the very center between the avatars
+    self.n_you_score = label(vmath.vector3(0, 0, 0), "0", 64, C_PRIMARY, gui.PIVOT_E, "helvetica_bold")
+    attach(self.n_you_score, -30, 10)
+    self.n_colon = label(vmath.vector3(0, 0, 0), ":", 54, C_COLON, gui.PIVOT_CENTER, "helvetica_bold")
+    attach(self.n_colon, 0, 10)
+    self.n_opp_score = label(vmath.vector3(0, 0, 0), "0", 64, C_PRIMARY, gui.PIVOT_W, "helvetica_bold")
+    attach(self.n_opp_score, 30, 10)
 
     self.score_nodes = {
         self.n_you_name, self.n_opp_name,
@@ -301,10 +310,10 @@ local function build(self)
 
     self.stats = {}
     for i = 1, 3 do
-        local cap = label(vmath.vector3(0, 0, 0), "", 15, C_SECONDARY, gui.PIVOT_CENTER, "small")
-        attach(cap, 0, -118)
-        local val = label(vmath.vector3(0, 0, 0), "", 30, C_PRIMARY, gui.PIVOT_CENTER, "title")
-        attach(val, 0, -146)
+        local cap = label(vmath.vector3(0, 0, 0), "", 16, C_SECONDARY, gui.PIVOT_CENTER, "helvetica_bold")
+        attach(cap, 0, -140)
+        local val = label(vmath.vector3(0, 0, 0), "", 32, C_PRIMARY, gui.PIVOT_CENTER, "helvetica_bold")
+        attach(val, 0, -170)
         gui.set_enabled(cap, false)
         gui.set_enabled(val, false)
         self.stats[i] = { cap = cap, val = val }
@@ -312,46 +321,55 @@ local function build(self)
     self.stat_seps = {}
     for i = 1, 2 do
         local s = box(vmath.vector3(0, 0, 0), vmath.vector3(1, 36, 0), C_SEP, gui.PIVOT_CENTER)
-        attach(s, 0, -132)
+        attach(s, 0, -155)
         gui.set_enabled(s, false)
         self.stat_seps[i] = s
     end
-    self.stat_cap_y, self.stat_val_y, self.stat_sep_y = -118, -146, -132
+    self.stat_cap_y, self.stat_val_y, self.stat_sep_y = -140, -170, -155
 
+    -- Luckiest Guy styled buttons mapped closely under the top content
     self.n_again_bg = box(vmath.vector3(0, 0, 0), vmath.vector3(264, 58, 0), C_VICTORY, gui.PIVOT_CENTER)
-    attach(self.n_again_bg, 0, -200)
-    self.n_again_lbl = label(vmath.vector3(0, 0, 0), "PLAY AGAIN", 24, C_BTN_TEXT, gui.PIVOT_CENTER, "body")
+    attach(self.n_again_bg, 0, -215)
+    self.n_again_lbl = label(vmath.vector3(0, 0, 0), "PLAY AGAIN", 32, C_BTN_TEXT, gui.PIVOT_CENTER, "luckiest_guy_lg")
     gui.set_parent(self.n_again_lbl, self.n_again_bg)
     gui.set_position(self.n_again_lbl, vmath.vector3(0, 0, 0))
 
+    -- Exit button gap increased exactly to 80px (previously 50px)
     self.n_exit_hit = box(vmath.vector3(0, 0, 0), vmath.vector3(264, 42, 0), vmath.vector4(0, 0, 0, 0), gui.PIVOT_CENTER)
-    attach(self.n_exit_hit, 0, -252)
-    self.n_exit_lbl = label(vmath.vector3(0, 0, 0), "BACK TO LOBBY", 20, C_SECONDARY, gui.PIVOT_CENTER, "body")
+    attach(self.n_exit_hit, 0, -295)
+    self.n_exit_lbl = label(vmath.vector3(0, 0, 0), "BACK TO LOBBY", 24, C_SECONDARY, gui.PIVOT_CENTER, "luckiest_guy_lg")
     gui.set_parent(self.n_exit_lbl, self.n_exit_hit)
     gui.set_position(self.n_exit_lbl, vmath.vector3(0, 0, 0))
 end
 
 ----------------------------------------------------------------------
--- Layout presets 
+-- Layout presets (Dynamically stacking blocks to eliminate gaps)
 ----------------------------------------------------------------------
-local function apply_layout(self, has_score)
+local function apply_layout(self, has_score, has_sub)
     local set = function(node, x, y) gui.set_position(node, vmath.vector3(x, y, 0)) end
+    
+    local y = has_score and 180 or 120
+    set(self.n_title, 0, y)
+    
+    y = y - 35
+    if has_sub then
+        set(self.n_sub, 0, y)
+        y = y - 30
+    end
+    
+    -- Divider exactly bounds the content directly above it
+    set(self.n_divider, 0, y)
+    y = y - 25
+    set(self.n_reason, 0, y)
+    
     if has_score then
-        set(self.n_title, 0, 158)
-        set(self.n_sub, 0, 116)
-        set(self.n_divider, 0, 90)
-        set(self.n_reason, 0, 62)
-        self.stat_cap_y, self.stat_val_y, self.stat_sep_y = -118, -148, -133
-        set(self.n_again_bg, 0, -200)
-        set(self.n_exit_hit, 0, -252)
+        self.stat_cap_y, self.stat_val_y, self.stat_sep_y = -140, -170, -155
+        set(self.n_again_bg, 0, -215)
+        set(self.n_exit_hit, 0, -295) -- Wide 80px gap below Play Again
     else
-        set(self.n_title, 0, 96)
-        set(self.n_sub, 0, 54)
-        set(self.n_divider, 0, 28)
-        set(self.n_reason, 0, 0)
-        self.stat_cap_y, self.stat_val_y, self.stat_sep_y = -56, -84, -70
-        set(self.n_again_bg, 0, -136)
-        set(self.n_exit_hit, 0, -188)
+        self.stat_cap_y, self.stat_val_y, self.stat_sep_y = -50, -80, -65
+        set(self.n_again_bg, 0, -125)
+        set(self.n_exit_hit, 0, -205) -- Wide 80px gap below Play Again
     end
     for _, n in ipairs(self.score_nodes) do gui.set_enabled(n, has_score) end
 end
@@ -362,7 +380,7 @@ end
 local function set_visible(self, v)
     gui.set_enabled(self.n_grad, v)
     gui.set_enabled(self.n_content, v)
-    if not v then clear_confetti(self) end  -- confetti are top-level; hide explicitly
+    if not v then clear_confetti(self) end
 end
 
 local function play_entrance(self)
@@ -701,7 +719,9 @@ function on_message(self, message_id, message)
             gui.set_text(self.n_opp_sum, "")
         end
 
-        apply_layout(self, show_scores)
+        -- Dynamically structure and position content eliminating awkward gaps
+        apply_layout(self, show_scores, subtitle ~= "")
+        
         show_stats(self, balance_change, points, win_bonus)
         play_entrance(self)
 
