@@ -123,13 +123,16 @@ end
 ----------------------------------------------------------------------
 -- Play-effect sound selection
 ----------------------------------------------------------------------
-function M.trigger_play_effects(self, rec)
+function M.trigger_play_effects(self, rec, is_last)
     local v = tonumber(rec.v) or 1
     local snd = "SoundPlay"
     if v == 2 then snd = "SoundPlay20"
     elseif v == 3 then snd = "SoundPlay30"
     elseif v == 50 then snd = "SoundPlayJoker" end
     if M.is_cutting_match(self, rec) then snd = "SoundPlayCut" end
+    -- The LAST card on the table ends the round: it lands with the normal
+    -- play sound — no penalty fanfare, since no pick follows a winning card.
+    if is_last and snd ~= "SoundPlayCut" then snd = "SoundPlay" end
     self.play_sound(snd)
 end
 

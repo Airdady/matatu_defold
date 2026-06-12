@@ -214,7 +214,23 @@ local function parse_message(json_string)
   if t == "PING" then
     M.send_message("PONG", {})
   elseif t == "CLIENT_PONG" or t == "PONG" then
-    -- latency bookkeeping
+    -- Real-time network quality (Godot parity): RTT of our own keep-alive
+    -- ping. Shown locally on OUR badge and reported to the server so the
+    -- opponent's client can show it live on theirs.
+    if M._ping_sent_at and M._ping_sent_at > 0 then
+      local latency = math.floor((now_s() - M._ping_sent_at) * 1000)
+      M._ping_sent_at = 0
+      emit("network_quality", { user_id = M.current_user_id, latency_ms = latency })
+      if M.active_game_id ~= "" then
+        M.send_message("NETWORK_QUALITY", { latency = latency, gameId = M.active_game_id })
+      end
+    end
+  elseif t == "NETWORK_QUALITY" then
+    -- The opponent's reported latency, relayed by the server.
+    local uid = tostring(d.userId or "")
+    if uid ~= "" then
+      emit("network_quality", { user_id = uid, latency_ms = tonumber(d.latency) or 0 })
+    end
   elseif t == "AUTH_REQUIRED" then
     emit("auth_required", d.message or "Device not registered")
   elseif t == "IDENTIFY" then
@@ -309,6 +325,14 @@ local function parse_message(json_string)
   elseif t == "GAME_STATE_SYNC" then
     local gs = M.extract_game_state(d)
     if next(gs) ~= nil then M.active_game_state = gs end
+  elseif t == "RESYNC" then
+    -- The backend rejected our move: our board drifted. Park the
+    -- authoritative state and let the board rebuild itself.
+    local gs = M.extract_game_state(d)
+    if next(gs) ~= nil then
+      M.active_game_state = gs
+      emit("resync", { reason = tostring(d.reason or "") })
+    end
   elseif t == "ROUND_COMPLETE" then
     local gs = M.extract_game_state(d)
     if next(gs) ~= nil then M.active_game_state = gs end
@@ -392,6 +416,7 @@ local function start_keep_alive()
       handle_zombie()
       return
     end
+    M._ping_sent_at = now_s()
     websocket.send(connection, json_util.encode({ type = "CLIENT_PING", timestamp = os.time() }))
   end)
 end
