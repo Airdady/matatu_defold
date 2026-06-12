@@ -229,6 +229,10 @@ local function draw_left(self)
     local cx = (EDGE_L + div_lx) / 2
     local cy = EDGE_T - 16
 
+    -- ── Back to the main lobby ────────────────────────────────────────
+    mkbtn(self, "nav_lobby", vmath.vector3(cx, cy - 22, 0), vmath.vector3(pw, 40, 0), "< MAIN LOBBY", "secondary_btn")
+    cy = cy - 40 - 12
+
     -- ── Season timer block ────────────────────────────────────────────
     local timer_h = 88   -- increased from 76 for more breathing room
     local tcy = cy - timer_h / 2
@@ -589,8 +593,8 @@ local function draw_center(self)
             -- Only the ACTIVE stake reads red (Godot active style) — a fixed
             -- red 200 made it look permanently selected.
             local amt_col = is_active and COL_RED or (affordable and COL_WHITE or COL_DIM)
-            track(self, ui.text(vmath.vector3(sx, cy - stake_card_h/2 - 6, 0), tostring(st), "luckiest_guy_md", amt_col))
-            track(self, ui.text(vmath.vector3(sx, cy - stake_card_h/2 + 16, 0), "COINS", "luckiest_guy_sm", COL_DIM))
+            track(self, ui.text(vmath.vector3(sx, cy - stake_card_h/2 - 6, 0), tostring(st), "body", amt_col))
+            track(self, ui.text(vmath.vector3(sx, cy - stake_card_h/2 + 16, 0), "COINS", "small", COL_DIM))
         end
         cy = cy - stake_card_h - 10
         -- center separator under stakes
@@ -639,7 +643,7 @@ local function draw_center(self)
 
             local name_x = content_l + INNER_PAD
             local name_col = playing and vmath.vector4(0.5,0.5,0.5,1) or COL_WHITE
-            txtL(self, name_x, row_cy, string.upper(pu.username or "PLAYER"), "body", name_col)
+            txtL(self, name_x, row_cy, string.upper(pu.username or "PLAYER"), "helvetica_bold", name_col)
 
             local badge_x = content_l + 200
             if is_ai then
@@ -1031,7 +1035,8 @@ local function draw_invite_search(self)
     if not sr then return end
 
     track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(LOGICAL_W * 2, LOGICAL_H * 2, 0), vmath.vector4(0, 0, 0, 0.78)))
-    track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(760, 380, 0), "container_bg"))
+    -- Same radial-gradient backdrop as the incoming-request / game-over dialogs
+    track(self, ui.grad_backdrop(LOGICAL_W, LOGICAL_H))
 
     local title = sr.found and "OPPONENT FOUND!" or "SEARCHING FOR OPPONENT"
     local t_col = sr.found and vmath.vector4(0.15, 0.85, 0.35, 1) or COL_WHITE
@@ -1398,6 +1403,7 @@ local function handle(self, b)
         if b.data and b.data ~= "" then ws.accept_game_request(b.data) end; close_banner(self, b.data)
     elseif id == "banner_decline" then
         if b.data and b.data ~= "" then ws.decline_game_request(b.data) end; close_banner(self, b.data)
+    elseif id == "nav_lobby"       then msg.post("#controller", "goto_lobby")
     elseif id == "nav_payments"    then msg.post("#controller", "goto_payments")
     elseif id == "nav_themes"      then msg.post("#controller", "goto_themes")
     elseif id == "nav_tournaments" then msg.post("#controller", "goto_tournaments")

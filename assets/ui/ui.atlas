@@ -1,4 +1,8 @@
 images {
+  image: "/assets/ui/pin.png"
+  sprite_trim_mode: SPRITE_TRIM_MODE_OFF
+}
+images {
   image: "/assets/ui/bg_1.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }

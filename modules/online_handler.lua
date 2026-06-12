@@ -382,7 +382,7 @@ function M.process_opponent_actions(self, actions, chosen_suit, new_game_state, 
             end
 
             msg.post(GUI_SUIT, "suit_select", { mode = "close" })
-            self.trigger_play_effects({ v = v, s = s })
+            self.trigger_play_effects({ v = v, s = s }, #self.ai_hand == 0)
 
             self.animate_to_pile(rec, false)
             self.position_hands(true)
@@ -505,7 +505,7 @@ function M.process_my_actions(self, actions, done)
             end
 
             msg.post(GUI_SUIT, "suit_select", { mode = "close" })
-            self.trigger_play_effects({ v = v, s = s })
+            self.trigger_play_effects({ v = v, s = s }, #self.player_hand == 0)
             self.animate_to_pile(rec, true)
             self.position_hands(true)
             timer.delay(INTER, false, next_act)
@@ -578,6 +578,12 @@ function M.handle_single_move(self, move_data, new_state, done)
             M.finalize_state_sync(self, new_state, function() done() end)
         end)
     elseif ai_for_me and has_actions then
+        -- Akira consumed our turn: anything we half-did before timing out
+        -- (a draw, a staged play, a suit pick) is now void — drop it so the
+        -- NEXT turn we send starts from a clean slate and validates.
+        self.current_turn_actions = {}
+        self.player_has_drawn = false
+        self.is_local_action_locked = false
         M.process_my_actions(self, actions, function()
             M.finalize_state_sync(self, new_state, function()
                 sync_my_hand(self, new_state or {})

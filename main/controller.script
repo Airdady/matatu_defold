@@ -216,6 +216,7 @@ function init(self)
     end))
 
     -- Game notifications go to the logic script that owns the sprite board.
+    forward("resync",               "#game_logic", "ws_resync")
     forward("game_move",            "#game_logic", "ws_game_move")
     forward("game_over",            "#game_logic", "ws_game_over")
     -- timer_update is delivered by the board's own listener (online_handler)
