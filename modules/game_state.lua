@@ -39,6 +39,11 @@ function M.fresh_state(self)
     self.move_queue = {}
     self.is_processing_move = false
 
+    -- Pile scatter: offline games roll a fresh seed; online games overwrite
+    -- it with a game-id-derived seed so resumes reproduce the exact pile.
+    self.scatter_seed = math.random(2147483646)
+    self.pile_index_base = 0
+
     self._seq = (self._seq or 0) + 1
 end
 
