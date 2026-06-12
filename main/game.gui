@@ -19,6 +19,18 @@ fonts {
   name: "poppins_bold"
   font: "/fonts/poppins_bold.font"
 }
+fonts {
+  name: "luckiest_guy_md"
+  font: "/fonts/luckiest_guy_md.font"
+}
+fonts {
+  name: "luckiest_guy_sm"
+  font: "/fonts/luckiest_guy_sm.font"
+}
+fonts {
+  name: "helvetica_bold"
+  font: "/fonts/helvetica-bold.font"
+}
 textures {
   name: "ui"
   texture: "/assets/ui/ui.atlas"

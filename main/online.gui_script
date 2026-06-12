@@ -127,7 +127,15 @@ local function mkbtn(self, id, pos, size, label, style, data, font, text_color)
     else
         bg = track(self, ui.box(pos, size, style or COL_GLASS_HI))
     end
-    if label then track(self, ui.text(pos, label, font or "small", text_color or COL_WHITE)) end
+    if label then 
+        -- Enforce exclusive use of luckiest_guy fonts for all buttons
+        local btn_font = font
+        if btn_font ~= "luckiest_guy_md" and btn_font ~= "luckiest_guy_sm" then
+            -- Assign MD for 44px+ buttons, SM for smaller
+            btn_font = size.y >= 44 and "luckiest_guy_md" or "luckiest_guy_sm"
+        end
+        track(self, ui.text(pos, label, btn_font, text_color or COL_WHITE)) 
+    end
     self.buttons[#self.buttons+1] = { node = bg, id = id, data = data }
     return bg
 end
@@ -335,7 +343,7 @@ local function draw_right(self)
     local cy = EDGE_T - 16
 
     -- ── User info container (Godot UserInfoContainer: profile section,
-    --    standing badge and MAKE PAYMENTS all live in ONE panel) ─────────
+    --   standing badge and MAKE PAYMENTS all live in ONE panel) ─────────
     local margin   = 15
     local av_size  = 96
     local name_h   = 30
@@ -447,14 +455,14 @@ local function draw_right(self)
     local scy = cy - battle_h/2
     glass(self, vmath.vector3(cx, scy, 0), vmath.vector3(pw, battle_h, 0), "container_bg")
     track(self, ui.image(vmath.vector3(cx, cy - 32, 0), vmath.vector3(30, 30, 0), "battle_icon"))
-    track(self, ui.text(vmath.vector3(cx, cy - 60, 0), "BATTLES", "body", COL_WHITE))
+    track(self, ui.text(vmath.vector3(cx, cy - 60, 0), "BATTLES", "luckiest_guy_md", COL_WHITE))
 
     local mb = u.myBattle or u.myTournament
     local has_battle = type(mb) == "table" and next(mb) ~= nil
     if has_battle then
         local amt = tonumber(mb.stakeAmount) or tonumber((mb.stake or {}).amount) or 0
         local fmt = tonumber(mb.matchFormat) or 3
-        track(self, ui.text(vmath.vector3(cx, cy - 86, 0), string.format("BO %d ~ %s", fmt, commas(amt)), "body", COL_GREEN))
+        track(self, ui.text(vmath.vector3(cx, cy - 86, 0), string.format("BO %d ~ %s", fmt, commas(amt)), "luckiest_guy_sm", COL_GREEN))
         mkbtn(self, "nav_invite",    vmath.vector3(cx - pw/4 + 4, cy - 122, 0), vmath.vector3(pw/2 - 12, 40, 0), "INVITE", "primary_btn")
         mkbtn(self, "update_battle", vmath.vector3(cx + pw/4 - 4, cy - 122, 0), vmath.vector3(pw/2 - 12, 40, 0), "EDIT",   "secondary_btn")
     else
@@ -468,13 +476,13 @@ local function draw_right(self)
     track(self, ui.box(vmath.vector3(cx, tcy, 0), vmath.vector3(pw, t_h, 0), COL_BG)) -- tint behind
     mkbtn(self, "nav_tournaments", vmath.vector3(cx, tcy, 0), vmath.vector3(pw, t_h, 0), nil, "container_bg")
     track(self, ui.image(vmath.vector3(cx, cy - 40, 0), vmath.vector3(50, 50, 0), "tournament_icon"))
-    track(self, ui.text(vmath.vector3(cx, cy - 84, 0), "TOURNAMENTS", "body", COL_WHITE))
+    track(self, ui.text(vmath.vector3(cx, cy - 84, 0), "TOURNAMENTS", "luckiest_guy_md", COL_WHITE))
 
     local nx = cx + pw/2 - 30
     local ny = cy - 16
     track(self, ui.box(vmath.vector3(nx, ny, 0), vmath.vector3(44, 18, 0), vmath.vector4(0.15, 0.8, 0.25, 1.0)))
     track(self, ui.box(vmath.vector3(nx, ny + 9, 0), vmath.vector3(44, 1, 0), COL_WHITE))
-    track(self, ui.text(vmath.vector3(nx, ny, 0), "NEW", "small", COL_WHITE))
+    track(self, ui.text(vmath.vector3(nx, ny, 0), "NEW", "luckiest_guy_sm", COL_WHITE))
     cy = cy - t_h - BLOCK_GAP
 
     -- ── Footer links ──────────────────────────────────────────────────
@@ -538,8 +546,8 @@ local function draw_center(self)
     self.buttons[#self.buttons+1] = { node = btn_q, id = "tab_quick" }
     self.buttons[#self.buttons+1] = { node = btn_b, id = "tab_battles" }
 
-    track(self, ui.text(vmath.vector3(tab_qx, cy - tab_h/2, 0), "QUICK PLAY",     "body", q_col))
-    track(self, ui.text(vmath.vector3(tab_bx, cy - tab_h/2, 0), "BATTLE GROUNDS", "body", b_col))
+    track(self, ui.text(vmath.vector3(tab_qx, cy - tab_h/2, 0), "QUICK PLAY",     "luckiest_guy_md", q_col))
+    track(self, ui.text(vmath.vector3(tab_bx, cy - tab_h/2, 0), "BATTLE GROUNDS", "luckiest_guy_md", b_col))
 
     if self.tab == TAB_QUICK then
         track(self, ui.box(vmath.vector3(tab_qx, cy - tab_h, 0), vmath.vector3(tabw, 2, 0), COL_WHITE))
@@ -581,8 +589,8 @@ local function draw_center(self)
             -- Only the ACTIVE stake reads red (Godot active style) — a fixed
             -- red 200 made it look permanently selected.
             local amt_col = is_active and COL_RED or (affordable and COL_WHITE or COL_DIM)
-            track(self, ui.text(vmath.vector3(sx, cy - stake_card_h/2 - 6, 0), tostring(st), "body", amt_col))
-            track(self, ui.text(vmath.vector3(sx, cy - stake_card_h/2 + 16, 0), "COINS", "small", COL_DIM))
+            track(self, ui.text(vmath.vector3(sx, cy - stake_card_h/2 - 6, 0), tostring(st), "luckiest_guy_md", amt_col))
+            track(self, ui.text(vmath.vector3(sx, cy - stake_card_h/2 + 16, 0), "COINS", "luckiest_guy_sm", COL_DIM))
         end
         cy = cy - stake_card_h - 10
         -- center separator under stakes
@@ -846,13 +854,13 @@ local function draw_one_banner(self, b, idx)
     local accx = EDGE_R - 90
     local accb = ui.box(vmath.vector3(accx, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.0, 0.9, 0.63, 0.30 * alpha))
     track(self, accb)
-    track(self, ui.text(vmath.vector3(accx, cy, 0), "ACCEPT", "small", vmath.vector4(1,1,1,alpha)))
+    track(self, ui.text(vmath.vector3(accx, cy, 0), "ACCEPT", "luckiest_guy_md", vmath.vector4(1,1,1,alpha)))
     self.buttons[#self.buttons+1] = { node = accb, id = "banner_accept", data = b.request_id }
 
     local decx = EDGE_R - 225
     local decb = ui.box(vmath.vector3(decx, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.12, 0.19, 0.27, 0.85 * alpha))
     track(self, decb)
-    track(self, ui.text(vmath.vector3(decx, cy, 0), "DECLINE", "small", vmath.vector4(0.82,0.86,0.91,alpha)))
+    track(self, ui.text(vmath.vector3(decx, cy, 0), "DECLINE", "luckiest_guy_md", vmath.vector4(0.82,0.86,0.91,alpha)))
     self.buttons[#self.buttons+1] = { node = decb, id = "banner_decline", data = b.request_id }
 
     -- Head-to-head form vs the challenger (W green / L red), inline on the banner.
@@ -912,7 +920,7 @@ local function draw_battle_modal(self)
     -- Header + close
     txtL(self, l, top - 8, bm.editing and "UPDATE BATTLE" or "CREATE BATTLE", "body", COL_WHITE)
     local xb = mkbtn(self, "bm_close", vmath.vector3(r - 10, top - 8, 0), vmath.vector3(30, 30, 0), nil, vmath.vector4(0,0,0,0.001))
-    track(self, ui.text(vmath.vector3(r - 10, top - 8, 0), "X", "body", COL_MID))
+    track(self, ui.text(vmath.vector3(r - 10, top - 8, 0), "X", "luckiest_guy_sm", COL_MID))
 
     local tier = BATTLE_TIERS[bm.stake_i] or BATTLE_TIERS[1]
     local fmts = tier.formats
@@ -949,7 +957,7 @@ local function draw_battle_modal(self)
     -- Submit (64px high, tan label — Godot create button)
     local sub_label = bm.submitting and "SUBMITTING..."
         or (bm.editing and "UPDATE BATTLE" or "CREATE BATTLE")
-    mkbtn(self, "bm_submit", vmath.vector3(CX, CY - ph/2 + 62, 0), vmath.vector3(pw - 60, 64, 0), sub_label, "secondary_btn", nil, "body", BM_TAN)
+    mkbtn(self, "bm_submit", vmath.vector3(CX, CY - ph/2 + 62, 0), vmath.vector3(pw - 60, 64, 0), sub_label, "secondary_btn", nil, "luckiest_guy_md", BM_TAN)
 end
 
 local function close_battle_modal(self)
