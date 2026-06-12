@@ -41,11 +41,40 @@ end
 ----------------------------------------------------------------------
 -- Commit a card to the pile
 ----------------------------------------------------------------------
+----------------------------------------------------------------------
+-- Deterministic pile scatter
+-- The same (game seed, pile index) always lands a card on the same
+-- random-looking offset + rotation, so a resumed game can rebuild the
+-- discard pile EXACTLY as the player left it. Online games seed from the
+-- game id (stable across app restarts); offline games roll a fresh seed.
+----------------------------------------------------------------------
+function M.seed_from_string(s)
+    local h = 5381
+    s = tostring(s or "")
+    for i = 1, #s do
+        h = (h * 33 + string.byte(s, i)) % 2147483647
+    end
+    return h
+end
+
+function M.pile_scatter(self, idx)
+    local h = ((self.scatter_seed or 1) + idx * 2654435761) % 2147483647
+    local function nxt()
+        h = (h * 48271) % 2147483647
+        return h / 2147483647
+    end
+    local ox = (nxt() * 2 - 1) * PILE_OFFSET_X
+    local oy = (nxt() * 2 - 1) * PILE_OFFSET_Y
+    local rot = (nxt() * 2 - 1) * 32
+    return ox, oy, rot
+end
+
 function M.animate_to_pile(self, rec, is_player, on_done)
     if not is_player then M.set_face(rec) end
     table.insert(self.played_cards, rec)
-    local offset = vmath.vector3(rand_range(-PILE_OFFSET_X, PILE_OFFSET_X), rand_range(-PILE_OFFSET_Y, PILE_OFFSET_Y), 0)
-    local rot = rand_range(-32, 32)
+    local pile_idx = (self.pile_index_base or 0) + #self.played_cards
+    local ox, oy, rot = M.pile_scatter(self, pile_idx)
+    local offset = vmath.vector3(ox, oy, 0)
     local z = Z_PILE + #self.played_cards * 0.001
     local target = vmath.vector3(self.CENTER.x + offset.x, self.CENTER.y + offset.y, z)
     rec.pile_offset = offset

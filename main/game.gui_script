@@ -1,4 +1,5 @@
 local emoji_popover = require("modules.emoji_popover")
+local akira = require("modules.akira")
 
 -- Target mapped precisely to the /controller object to guarantee routing.
 local GAME = "/controller#game_logic"
@@ -568,11 +569,23 @@ local function build_ai_takeover_modal(self)
     local strip = box(vmath.vector3(0, ph/2 - 3, 0), vmath.vector3(pw, 6, 0), AI_C_ACCENT, gui.PIVOT_CENTER)
     gui.set_parent(strip, self.ai_panel)
 
-    local title = poppins(vmath.vector3(0, 84, 0), "AI HAD YOUR BACK", 30, C_WHITE, true)
+    -- Akira's framed avatar — the same identity shown in the install dialog.
+    local av_frame = box(vmath.vector3(-pw/2 + 64, 64, 0), vmath.vector3(76, 76, 0), AI_C_ACCENT, gui.PIVOT_CENTER)
+    gui.set_parent(av_frame, self.ai_panel)
+    local av_well = box(vmath.vector3(0, 0, 0), vmath.vector3(72, 72, 0), AI_C_DARK, gui.PIVOT_CENTER)
+    gui.set_parent(av_well, av_frame)
+    local av = box(vmath.vector3(0, 0, 0), vmath.vector3(66, 66, 0), vmath.vector4(1, 1, 1, 1), gui.PIVOT_CENTER)
+    gui.set_parent(av, av_frame)
+    pcall(function()
+        gui.set_texture(av, "avatars")
+        gui.play_flipbook(av, hash("avatar_" .. akira.avatar()))
+    end)
+
+    local title = poppins(vmath.vector3(38, 84, 0), "AKIRA HAD YOUR BACK", 28, C_WHITE, true)
     gui.set_parent(title, self.ai_panel)
 
-    local body1 = poppins(vmath.vector3(0, 34, 0), "AI has been playing for you", 22, AI_C_BODY, false)
-    local body2 = poppins(vmath.vector3(0, 4, 0), "to avoid losing your token.", 22, AI_C_BODY, false)
+    local body1 = poppins(vmath.vector3(38, 46, 0), "Akira AI has been playing for you", 21, AI_C_BODY, false)
+    local body2 = poppins(vmath.vector3(38, 18, 0), "to avoid losing your token.", 21, AI_C_BODY, false)
     local body3 = poppins(vmath.vector3(0, -32, 0), "You are back in control.", 18, vmath.vector4(0.55, 0.59, 0.64, 1), false)
     gui.set_parent(body1, self.ai_panel)
     gui.set_parent(body2, self.ai_panel)
@@ -594,7 +607,7 @@ local function build_ai_assist_banner(self)
     local strip = box(vmath.vector3(-bw/2 + 3, 0, 0), vmath.vector3(6, bh, 0), AI_C_ACCENT, gui.PIVOT_CENTER)
     gui.set_parent(strip, self.ai_banner)
 
-    self.ai_banner_lbl = poppins(vmath.vector3(0, -1, 0), "Time ran out — AI played this move to protect your token.", 19, C_WHITE, false)
+    self.ai_banner_lbl = poppins(vmath.vector3(0, -1, 0), "Time ran out — Akira played this move to protect your token.", 19, C_WHITE, false)
     gui.set_parent(self.ai_banner_lbl, self.ai_banner)
 
     gui.set_enabled(self.ai_banner, false)
@@ -612,13 +625,13 @@ local function show_ai_notice(self, opts)
         local max = tonumber(opts.max) or 3
         if self.ai_banner_lbl then
             if used > 0 then
-                local txt = string.format("Time ran out — AI played for you (%d of %d).", used, max)
+                local txt = string.format("Time ran out — Akira played for you (%d of %d).", used, max)
                 if used >= max then
-                    txt = string.format("AI played for you (%d of %d) — next timeout forfeits!", used, max)
+                    txt = string.format("Akira played for you (%d of %d) — next timeout forfeits!", used, max)
                 end
                 gui.set_text(self.ai_banner_lbl, txt)
             else
-                gui.set_text(self.ai_banner_lbl, "Time ran out — AI played this move to protect your token.")
+                gui.set_text(self.ai_banner_lbl, "Time ran out — Akira played this move to protect your token.")
             end
         end
         gui.set_enabled(self.ai_banner, true)
