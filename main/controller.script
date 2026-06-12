@@ -124,10 +124,11 @@ function init(self)
 		if self.screen ~= "game" then show(self, "game") end
 	end))
 
-	-- Broadcast user-data refreshes to data-driven screens.
+	-- Broadcast user-data refreshes to data-driven screens (and the live
+	-- board: tournament progress in the user object carries match scores).
 	local function broadcast(evt)
 		table.insert(self.tokens, ws.on(evt, function()
-			for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile" }) do
+			for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile", "game_logic" }) do
 				msg.post("#" .. s, "user_data_updated")
 			end
 		end))

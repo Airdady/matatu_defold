@@ -593,8 +593,22 @@ function on_message(self, message_id, message, sender)
         notify_gui(self.gui_hud, "conn_overlay", { show = false })
         if self.online_mode and not self.game_over then
             local results = ws.last_game_over or {}
+            -- Round end carries the updated match score (currentScores) —
+            -- bump the sticky tournament scoreboard before the modal shows,
+            -- exactly like the Godot HudUI game-over sync.
+            OnlineHandler.process_scoreboard(self, {
+                gameType = results.gameType,
+                tournamentId = (type(results.tournamentData) == "table" and results.tournamentData.id) or nil,
+                gameOverState = results,
+            })
             local is_cut = results.isCut or (results.reason == "CUTTING_CARD")
             self.end_game((results.winner == self.my_player_id), is_cut, results)
+        end
+
+    -- ── Live user-data refresh: tournament progress carries match scores ─────
+    elseif message_id == hash("user_data_updated") then
+        if self.online_mode and not self.game_over and self.active then
+            OnlineHandler.process_scoreboard(self, ws.get_active_game() or {})
         end
 
     -- ── Replay declined by the opponent → back to the lobby ──────────────────

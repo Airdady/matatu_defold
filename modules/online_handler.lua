@@ -100,66 +100,136 @@ function M.sync_deck_size(self, target_size)
     end
 end
 
--- Tournament / battle scoreboard, ported from the Godot Scoreboard.update_state.
--- A live tournament game carries its running match score in state.tournamentScore
--- (scores + matchFormat + currentLevel). Plain MOVE states often omit it, so once
--- we've recognised a series game we PERSIST the board and only refresh values when
--- new ones arrive — otherwise the board would flicker off between moves.
+-- ── Tournament scoreboard — faithful port of Godot Scoreboard.update_state ──
+-- Tournament detection is STICKY: the tournament id latches on the first
+-- state that carries it and the board stays up (and static) across every
+-- round of that tournament. A state that only says gameType == "TOURNAMENT"
+-- keeps the latched id (Godot does exactly this), so round transitions and
+-- game-over summaries never blank the board.
+--
+-- Score priority (Godot order):
+--   1. state.tournamentScore  { matchFormat, currentLevel, scores }
+--   2. gameOverState.currentScores / state.currentScores
+--   3. user-data fallback: tournaments[] / myBattle → userProgress.currentScores
+-- Scores are monotonic (never go backwards mid-tournament).
+
+-- Read a {playerId = wins} map into (mine, theirs). Iterating keys finds the
+-- opponent even before self.opponent_id is resolved.
+local function read_scores(self, scores)
+    if type(scores) ~= "table" then return nil, nil end
+    local mine, theirs, found = 0, 0, false
+    for pid, sc in pairs(scores) do
+        found = true
+        if tostring(pid) == tostring(self.my_player_id) then mine = tonumber(sc) or 0
+        else theirs = tonumber(sc) or theirs end
+    end
+    if not found then return nil, nil end
+    return mine, theirs
+end
+
+-- Godot _find_tournament_object + _extract_scores_from_user_data: the user
+-- object caches per-tournament progress with the running match scores.
+local function scores_from_user_data(t_id)
+    local u = ws.current_user_data or {}
+    local function progress_scores(obj)
+        if type(obj) ~= "table" then return nil end
+        local prog = obj.userProgress
+        if type(prog) == "table" and type(prog.currentScores) == "table" then
+            return prog.currentScores
+        end
+        return nil
+    end
+    if type(u.tournaments) == "table" then
+        for _, t in ipairs(u.tournaments) do
+            if type(t) == "table" and tostring(t._id or "") == t_id then
+                return progress_scores(t)
+            end
+        end
+    end
+    local mb = u.myBattle
+    if type(mb) == "table" and tostring(mb._id or "") == t_id then
+        return progress_scores(mb)
+    end
+    return nil
+end
+
+-- Resolve the tournament id for a state, with the Godot fallbacks: an
+-- explicit tournamentId wins; gameType == "TOURNAMENT" (top-level or inside
+-- gameOverState) keeps the latched id, or latches a sentinel so the board
+-- still initializes when the id is missing entirely.
+function M.resolve_tournament_id(self, state)
+    local raw = state.tournamentId
+    if type(raw) == "string" and raw ~= "" then return raw end
+    if raw ~= nil and type(raw) ~= "boolean" and tostring(raw) ~= "" and type(raw) ~= "table" then
+        return tostring(raw)
+    end
+    local gt = state.gameType
+    if gt == nil and type(state.gameOverState) == "table" then
+        gt = state.gameOverState.gameType
+    end
+    if tostring(gt or "") == "TOURNAMENT" then
+        if (self._sb_tid or "") ~= "" then return self._sb_tid end
+        return "__tournament__"
+    end
+    -- battles are tournaments under the hood; matchFormat marks a series game
+    if state.isBattle == true or tonumber(state.matchFormat) then
+        if (self._sb_tid or "") ~= "" then return self._sb_tid end
+        if tonumber(state.matchFormat) then return "__series__" end
+    end
+    return ""
+end
+
 function M.process_scoreboard(self, state)
     state = state or {}
+    local tid = M.resolve_tournament_id(self, state)
 
-    -- Read a {playerId = wins} map into (mine, theirs). Iterating keys finds the
-    -- opponent even before self.opponent_id is resolved.
-    local function read_scores(scores)
-        if type(scores) ~= "table" then return nil, nil end
-        local mine, theirs, found = 0, 0, false
-        for pid, sc in pairs(scores) do
-            found = true
-            if tostring(pid) == tostring(self.my_player_id) then mine = tonumber(sc) or 0
-            else theirs = tonumber(sc) or theirs end
-        end
-        if not found then return nil, nil end
-        return mine, theirs
+    if tid == "" then
+        -- Genuinely not a series game: clear the latch and hide the board.
+        self._sb_tid = nil
+        self._sb_p, self._sb_o, self._sb_format, self._sb_stage = nil, nil, nil, nil
+        msg.post(GUI_HUD, "update_scoreboard", { show = false })
+        return
+    end
+
+    if self._sb_tid ~= tid then
+        -- New tournament/battle: initialize the board ONCE, from zero.
+        self._sb_tid = tid
+        self._sb_p, self._sb_o = 0, 0
+        self._sb_format, self._sb_stage = nil, nil
     end
 
     local ts = (type(state.tournamentScore) == "table") and state.tournamentScore or nil
-    local fmt, stage, p_score, o_score
-
     if ts then
-        fmt = tonumber(ts.matchFormat)
+        -- 1) Authoritative live score from the game state: snap to it.
+        self._sb_format = tonumber(ts.matchFormat) or self._sb_format
         local lvl = tonumber(ts.currentLevel)
-        if lvl then stage = "Level " .. lvl end
-        p_score, o_score = read_scores(ts.scores)
-    end
-
-    if not fmt then fmt = tonumber(state.matchFormat) end
-    if not fmt and type(state.tournament) == "table" then fmt = tonumber(state.tournament.matchFormat) end
-    if p_score == nil then p_score, o_score = read_scores(state.currentScores) end
-
-    local is_series = (ts ~= nil)
-        or (state.gameType == "TOURNAMENT")
-        or (type(state.tournamentId) == "string" and state.tournamentId ~= "")
-        or (fmt ~= nil)
-        or (type(state.tournament) == "table")
-
-    if is_series then
-        self._sb_active = true
-        self._sb_format = fmt or self._sb_format or 3
-        if p_score ~= nil then self._sb_p, self._sb_o = p_score, o_score end
-        if stage then self._sb_stage = stage end
-    end
-
-    if self._sb_active then
-        msg.post(GUI_HUD, "update_scoreboard", {
-            show = true,
-            p_score = self._sb_p or 0,
-            o_score = self._sb_o or 0,
-            best_of = self._sb_format or 3,
-            stage = self._sb_stage,
-        })
+        if lvl then self._sb_stage = "Level " .. lvl end
+        local p, o = read_scores(self, ts.scores)
+        if p ~= nil then self._sb_p, self._sb_o = p, o end
     else
-        msg.post(GUI_HUD, "update_scoreboard", { show = false })
+        self._sb_format = tonumber(state.matchFormat)
+            or (type(state.tournament) == "table" and tonumber(state.tournament.matchFormat))
+            or self._sb_format
+        -- 2) Round results / live state / 3) user-data progress — monotonic.
+        local gos = (type(state.gameOverState) == "table") and state.gameOverState or nil
+        local p, o = read_scores(self, gos and gos.currentScores or nil)
+        if p == nil then p, o = read_scores(self, state.currentScores) end
+        if p == nil and tid ~= "__tournament__" and tid ~= "__series__" then
+            p, o = read_scores(self, scores_from_user_data(tid))
+        end
+        if p ~= nil then
+            self._sb_p = math.max(self._sb_p or 0, p)
+            self._sb_o = math.max(self._sb_o or 0, o or 0)
+        end
     end
+
+    msg.post(GUI_HUD, "update_scoreboard", {
+        show = true,
+        p_score = self._sb_p or 0,
+        o_score = self._sb_o or 0,
+        best_of = self._sb_format or 3,
+        stage = self._sb_stage,
+    })
 end
 
 function M.setup_ws_listeners(self)
@@ -168,24 +238,31 @@ function M.setup_ws_listeners(self)
     end
     self.ws_listeners = {}
 
+    -- IMPORTANT: these listeners fire in the WebSocket owner's script context
+    -- (the controller called ws.connect(), so emit() runs there). A relative
+    -- "#" there addresses the CONTROLLER script — which silently drops the
+    -- board messages. Capture the board's own URL now, while we ARE in the
+    -- game.script context, and post to it explicitly.
+    local LOGIC = msg.url("#")
+
     table.insert(self.ws_listeners, ws.on("game_move", function(move_data, gs)
         ws.queue_move(move_data, gs)
-        msg.post("#", "ws_game_move")
+        msg.post(LOGIC, "ws_game_move")
     end))
     table.insert(self.ws_listeners, ws.on("timer_update", function(d)
-        msg.post("#", "ws_timer_update", { data = d })
+        msg.post(LOGIC, "ws_timer_update", { data = d })
     end))
     table.insert(self.ws_listeners, ws.on("game_over", function(results)
         ws.last_game_over = results or {}
-        msg.post("#", "ws_game_over")
+        msg.post(LOGIC, "ws_game_over")
     end))
     table.insert(self.ws_listeners, ws.on("network_quality", function(d)
-        msg.post("#", "ws_network_quality", d)
+        msg.post(LOGIC, "ws_network_quality", d)
     end))
 
     table.insert(self.ws_listeners, ws.on("game_start", function(gs)
         if type(gs) ~= "table" or next(gs) == nil then return end
-        local incoming = tostring(gs.id or gs.gameId or "")
+        local incoming = tostring(gs.gameId or gs.id or "")
         local is_new = (incoming ~= "" and incoming ~= tostring(self.online_game_id))
         -- A brand-new id, OR any START after the current game finished (a
         -- tournament's next round can reuse the id) => re-init the board. The
@@ -194,7 +271,7 @@ function M.setup_ws_listeners(self)
         -- nested tables).
         if is_new or self.game_over then
             ws.active_game_state = gs
-            msg.post("#", "ws_new_game_start")
+            msg.post(LOGIC, "ws_new_game_start")
         elseif not self.game_over then
             M.sync_timers(self, gs)
         end
@@ -206,11 +283,11 @@ function M.setup_ws_listeners(self)
     -- no taps, no waiting on the controller's screen routing.
     table.insert(self.ws_listeners, ws.on("game_request_accepted", function(gs)
         if type(gs) ~= "table" or next(gs) == nil then return end
-        local incoming = tostring(gs.id or gs.gameId or "")
+        local incoming = tostring(gs.gameId or gs.id or "")
         local is_new = (incoming ~= "" and incoming ~= tostring(self.online_game_id))
         if is_new or self.game_over then
             ws.active_game_state = gs
-            msg.post("#", "ws_new_game_start")
+            msg.post(LOGIC, "ws_new_game_start")
         end
     end))
 end
@@ -558,27 +635,12 @@ function M.start_game(self, state)
         end
     end
 
-    -- ── Scoreboard persistence across series rounds ──────────────────────────
-    -- The board's running score (_sb_*) initializes once, at the very start of
-    -- the first match of a series, and is only UPDATED on later rounds. It
-    -- resets exclusively when a different series begins (another tournament,
-    -- or another opponent/format pairing for battles).
-    local ts = (type(state.tournamentScore) == "table") and state.tournamentScore or nil
-    local fmt = (ts and ts.matchFormat) or state.matchFormat
-        or (type(state.tournament) == "table" and state.tournament.matchFormat) or nil
-    local series_key = ""
-    local t_id = tostring(state.tournamentId or "")
-    if t_id ~= "" then
-        series_key = "t:" .. t_id
-    elseif fmt then
-        series_key = "b:" .. tostring(self.opponent_id) .. ":" .. tostring(fmt)
-    end
-    local is_continuation = (series_key ~= "" and series_key == self._sb_series_key)
-    if not is_continuation then
-        self._sb_active, self._sb_format, self._sb_stage = false, nil, nil
-        self._sb_p, self._sb_o = nil, nil
-    end
-    self._sb_series_key = series_key
+    -- ── Round continuation detection (sticky tournament latch) ───────────────
+    -- The scoreboard latch (self._sb_tid) survives across rounds; a new game
+    -- inside the SAME tournament is a continuation: the board stays static
+    -- (process_scoreboard only refreshes numbers) and the deal runs fast.
+    local tid = M.resolve_tournament_id(self, state)
+    local is_continuation = (tid ~= "" and tid == self._sb_tid)
 
     local hand_data = mp.hand or {}
     local opp_hand  = (type(op.hand) == "table") and op.hand or nil
