@@ -15,9 +15,9 @@ local function show(self, screen)
         if s == screen then
             msg.post("#" .. s, "enable")
             msg.post("#" .. s, "screen_enter")
-        elseif screen == "payments" and s == "online" then
-            -- Payments is a DIALOG, not a screen: the online lobby stays
-            -- alive (and visible) underneath the modal dim.
+        elseif (screen == "payments" or screen == "themes") and s == "online" then
+            -- Payments and Themes are DIALOGS, not screens: the online lobby
+            -- stays alive (and visible) underneath the modal dim.
         else
             msg.post("#" .. s, "disable")
         end
@@ -114,15 +114,25 @@ function init(self)
     -- FOUND!"), then switch to the board after the beat. Returns true when
     -- the delayed switch was scheduled.
     local function intercept_for_search(self_)
-        if not (app_state.searching_tournament and self_.screen == "tournaments") then
-            return false
+        if app_state.searching_tournament and self_.screen == "tournaments" then
+            app_state.searching_tournament = false
+            msg.post("#tournaments", "ws_match_found")
+            timer.delay(1.8, false, function()
+                if self_.screen == "tournaments" then show(self_, "game") end
+            end)
+            return true
         end
-        app_state.searching_tournament = false
-        msg.post("#tournaments", "ws_match_found")
-        timer.delay(1.8, false, function()
-            if self_.screen == "tournaments" then show(self_, "game") end
-        end)
-        return true
+        -- Battle INVITE search runs on the online lobby with the same beat:
+        -- land the reel on the matched opponent, hold, then enter the board.
+        if app_state.searching_invite and self_.screen == "online" then
+            app_state.searching_invite = false
+            msg.post("#online", "ws_match_found")
+            timer.delay(1.8, false, function()
+                if self_.screen == "online" then show(self_, "game") end
+            end)
+            return true
+        end
+        return false
     end
 
     -- Online game start → board screen. 

@@ -1019,6 +1019,88 @@ local function bm_submit(self)
     end
 end
 
+-- ── Battle INVITE: lottery opponent search ──────────────────────────────────
+-- Tapping INVITE broadcasts the battle and runs the same lottery beat as the
+-- tournament search: YOU on the left, a slot-machine avatar reel spinning on
+-- the right. When an opponent accepts, the reel lands on their real avatar
+-- with a pop + name reveal, holds the beat, then the board takes over.
+local INVITE_AVATAR_MAX = 60
+
+local function draw_invite_search(self)
+    local sr = self.invite_search
+    if not sr then return end
+
+    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(LOGICAL_W * 2, LOGICAL_H * 2, 0), vmath.vector4(0, 0, 0, 0.78)))
+    track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(760, 380, 0), "container_bg"))
+
+    local title = sr.found and "OPPONENT FOUND!" or "SEARCHING FOR OPPONENT"
+    local t_col = sr.found and vmath.vector4(0.15, 0.85, 0.35, 1) or COL_WHITE
+    track(self, ui.text(vmath.vector3(CX, CY + 130, 0), title, "title", t_col))
+    if not sr.found then
+        local dots = string.rep(".", 1 + (math.floor((sr.t or 0) * 2) % 3))
+        track(self, ui.text(vmath.vector3(CX, CY + 96, 0), "inviting a player to your battle" .. dots, "small", COL_DIM))
+    else
+        track(self, ui.text(vmath.vector3(CX, CY + 96, 0), "get ready…", "small", COL_DIM))
+    end
+
+    local u = ws.current_user_data or {}
+    local ax, bx, ay = CX - 190, CX + 190, CY - 10
+
+    -- YOU (left, steady)
+    track(self, ui.box(vmath.vector3(ax, ay, 0), vmath.vector3(124, 124, 0), vmath.vector4(0.10, 0.10, 0.13, 0.9)))
+    track(self, ui.avatar(vmath.vector3(ax, ay, 0), vmath.vector3(108, 108, 0), u.avatar or 1))
+    track(self, ui.text(vmath.vector3(ax, ay - 86, 0), "YOU", "body", COL_GOLD))
+
+    track(self, ui.text(vmath.vector3(CX, ay, 0), "VS", "title", vmath.vector4(1, 0.4, 0.4, 1)))
+
+    -- THE REEL (right): cycles avatars until the opponent lands
+    local frame_col = sr.found and vmath.vector4(0.15, 0.85, 0.35, 1) or vmath.vector4(0.25, 0.25, 0.30, 1)
+    local frame = track(self, ui.box(vmath.vector3(bx, ay, 0), vmath.vector3(124, 124, 0), frame_col))
+    local reel = track(self, ui.avatar(vmath.vector3(bx, ay, 0), vmath.vector3(108, 108, 0), sr.reel_ix or 1))
+    self.invite_reel_node = reel
+    local who = sr.found and (sr.opp_name or "PLAYER") or "? ? ?"
+    track(self, ui.text(vmath.vector3(bx, ay - 86, 0), who, "body", sr.found and COL_WHITE or COL_DIM))
+
+    if sr.found then
+        gui.set_scale(frame, vmath.vector3(0.9, 0.9, 1))
+        gui.animate(frame, "scale", vmath.vector3(1.12, 1.12, 1), gui.EASING_OUTBACK, 0.35, 0, function()
+            pcall(gui.animate, frame, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTSINE, 0.18)
+        end)
+    end
+
+    if not sr.found then
+        local cb = track(self, ui.btn9(vmath.vector3(CX, CY - 140, 0), vmath.vector3(200, 48, 0), "secondary_btn"))
+        track(self, ui.text(vmath.vector3(CX, CY - 140, 0), "CANCEL", "small", COL_WHITE))
+        self.buttons[#self.buttons + 1] = { node = cb, id = "cancel_invite" }
+    end
+end
+
+local function stop_invite_search(self)
+    self.invite_search = nil
+    self.invite_reel_node = nil
+    app_state.searching_invite = false
+    if self._active then rebuild(self) end
+end
+
+local function start_invite_search(self)
+    local u = ws.current_user_data or {}
+    local mb = u.myBattle or u.myTournament
+    if type(mb) ~= "table" or next(mb) == nil then return end
+
+    local stake = (type(mb.stake) == "table") and mb.stake
+        or { amount = tonumber(mb.stakeAmount) or 0, charge = 0 }
+
+    self.invite_search = { active = true, t = 0, reel_ix = math.random(INVITE_AVATAR_MAX), spin_t = 0 }
+    app_state.searching_invite = true
+
+    ws.send_game_request({}, stake, {
+        gameType     = "TOURNAMENT",
+        tournamentId = tostring(mb._id or mb.id or ""),
+        rules        = "JOKERS",
+    })
+    rebuild(self)
+end
+
 rebuild = function(self)
     clear(self)
     local _, _, div_lx, div_rx = get_layout()
@@ -1040,6 +1122,7 @@ rebuild = function(self)
     draw_banner(self)
     draw_dialog(self)
     draw_battle_modal(self)
+    draw_invite_search(self)
 end
 
 -- ── Loops & Control (EAT Season Logic) ───────────────────────────────────────
@@ -1181,6 +1264,22 @@ function update(self, dt)
         return
     end
 
+    local sr = self.invite_search
+    if sr and not sr.found then
+        sr.t = (sr.t or 0) + dt
+        sr.spin_t = (sr.spin_t or 0) + dt
+        if sr.spin_t >= 0.07 then
+            sr.spin_t = 0
+            sr.reel_ix = math.random(INVITE_AVATAR_MAX)
+            if self.invite_reel_node then
+                pcall(gui.play_flipbook, self.invite_reel_node, "avatar_" .. sr.reel_ix)
+            end
+        end
+        sr.dots_t = (sr.dots_t or 0) + dt
+        if sr.dots_t >= 0.5 then sr.dots_t = 0; rebuild(self) end
+        return
+    end
+
     if self.dialog then
         self.dlg_alpha = math.min(1, (self.dlg_alpha or 0) + dt * 4)
         self.dialog.time_left = (self.dialog.time_left or 10) - dt
@@ -1199,7 +1298,26 @@ function on_message(self, message_id, message, sender)
     if message_id == hash("screen_enter") then
         msg.post(".", "acquire_input_focus"); self._active = true; self.dialog, self.banners, self.list_scroll = nil, nil, 0
         self.battle_modal = nil
+        self.invite_search = nil
+        app_state.searching_invite = false
         refresh_wh(); rebuild(self)
+    elseif message_id == hash("ws_match_found") then
+        -- The battle invite matched: land the reel on the real opponent.
+        if self.invite_search then
+            local gs = ws.get_active_game() or {}
+            local me = tostring(ws.get_current_user_id() or "")
+            local opp
+            for k, pl in pairs(gs.players or {}) do
+                local pid = tostring((type(pl) == "table" and (pl._id or pl.id)) or k)
+                if pid ~= me then opp = pl end
+            end
+            self.invite_search.found = true
+            self.invite_search.reel_ix = (type(opp) == "table" and tonumber(opp.avatar)) or self.invite_search.reel_ix
+            local nm = (type(opp) == "table" and (opp.username or opp.name)) or "PLAYER"
+            self.invite_search.opp_name = string.upper(tostring(nm))
+            app_state.searching_invite = false
+            rebuild(self)
+        end
     elseif message_id == hash("enable") then
         refresh_wh(); self._active = true
     elseif message_id == hash("disable") then
@@ -1285,7 +1403,8 @@ local function handle(self, b)
     elseif id == "nav_tournaments" then msg.post("#controller", "goto_tournaments")
     elseif id == "nav_support"     then msg.post("#controller", "goto_support")
     elseif id == "nav_account"     then msg.post("#controller", "goto_account")
-    elseif id == "nav_invite"      then msg.post("#controller", "goto_invite")
+    elseif id == "nav_invite"      then start_invite_search(self)
+    elseif id == "cancel_invite"   then stop_invite_search(self)
 
     -- ── Battle modal (create / edit My Battle) ─────────────────────────
     elseif id == "create_battle" then
@@ -1329,7 +1448,7 @@ local function handle(self, b)
 end
 
 function on_input(self, action_id, action)
-    if action_id == hash("touch") and not self.dialog and not self.battle_modal and not (self.banners and #self.banners > 0) and self.list_region then
+    if action_id == hash("touch") and not self.dialog and not self.battle_modal and not self.invite_search and not (self.banners and #self.banners > 0) and self.list_region then
         local reg = self.list_region
         if action.pressed and action.x >= reg.left and action.x <= reg.right and action.y >= reg.bottom and action.y <= reg.top then
             self._drag_y = action.y; self._drag_start = action.y; self._dragged = false

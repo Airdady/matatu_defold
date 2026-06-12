@@ -674,22 +674,18 @@ function on_message(self, message_id, message, sender)
         })
 
     -- ── Our own socket dropped / recovered (Task: current user goes offline) ──
+    -- ── Our own socket dropped / recovered: the GLOBAL network dialog
+    -- (#network on the controller) now covers every screen, so the board
+    -- no longer shows its own overlay — it only handles the give-up
+    -- navigation when reconnection fails for good.
     elseif message_id == hash("ws_net_down") then
-        if self.online_mode and not self.game_over then
-            notify_gui(self.gui_hud, "conn_overlay", {
-                show = true, title = "CONNECTION LOST", subtitle = "Reconnecting…",
-            })
-        end
+        -- global network dialog handles the visual
 
     elseif message_id == hash("ws_net_up") then
         notify_gui(self.gui_hud, "conn_overlay", { show = false })
 
     elseif message_id == hash("ws_net_failed") then
         if self.online_mode then
-            notify_gui(self.gui_hud, "conn_overlay", {
-                show = true, danger = true,
-                title = "DISCONNECTED", subtitle = "Couldn't reconnect — returning to lobby…",
-            })
             local seq = self._seq
             timer.delay(2.5, false, function()
                 if seq == self._seq then msg.post("#controller", "goto_online") end

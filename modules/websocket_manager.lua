@@ -231,7 +231,7 @@ local function parse_message(json_string)
 
     local gs = M.extract_game_state(d)
     if next(gs) ~= nil then
-      M.active_game_id = gs.id or d.gameId or ""
+      M.active_game_id = gs.gameId or gs.id or d.gameId or ""
       M.active_game_state = gs
       emit("game_request_accepted", gs)
     else
@@ -251,14 +251,14 @@ local function parse_message(json_string)
   elseif t == "GAME_REQUEST_ACCEPTED" then
     local gs = M.extract_game_state(d)
     if next(gs) ~= nil then
-      M.active_game_id = gs.id or d.gameId or ""
+      M.active_game_id = gs.gameId or gs.id or d.gameId or ""
       M.active_game_state = gs
       emit("game_request_accepted", gs)
     end
   elseif t == "START" then
     local gs = M.extract_game_state(d)
     if next(gs) ~= nil then
-      M.active_game_id = gs.id or d.gameId or ""
+      M.active_game_id = gs.gameId or gs.id or d.gameId or ""
       M.active_game_state = gs
       emit("game_start", gs)
     end
