@@ -11,6 +11,14 @@ fonts {
   name: "small"
   font: "/fonts/small.font"
 }
+fonts {
+  name: "luckiest_guy_md"
+  font: "/fonts/luckiest_guy_md.font"
+}
+fonts {
+  name: "luckiest_guy_sm"
+  font: "/fonts/luckiest_guy_sm.font"
+}
 textures {
   name: "ui"
   texture: "/assets/ui/ui.atlas"

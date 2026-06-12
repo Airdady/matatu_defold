@@ -63,7 +63,7 @@ local function label(pos, text, size, color, align, font_name)
     -- To fix text blurring, we assume large fonts like poppins_bold have a higher native size.
     -- If your text is still slightly blurry, increase the native "size" property in your Defold .font file.
     local base_size = 24
-    if font_name == "poppins_bold" or font_name == "title" then
+    if font_name == "poppins_bold" or font_name == "title" or font_name == "helvetica_bold" then
         base_size = 36
     end
 
@@ -77,30 +77,30 @@ end
 
 -- Constructing the highly realistic 3D flip clock nodes...
 local function create_flipper(parent, pos)
-    -- Increased container size from 90x130 to 120x150 to completely prevent text cutoff
-    local root = box(pos, vmath.vector3(120, 150, 0), vmath.vector4(0.06, 0.06, 0.06, 1.0), gui.PIVOT_CENTER)
+    -- Slightly shrunk from 150x110 to 130x100 for a tighter scoreboard
+    local root = box(pos, vmath.vector3(130, 100, 0), vmath.vector4(0.06, 0.06, 0.06, 1.0), gui.PIVOT_CENTER)
     gui.set_parent(root, parent)
 
-    -- Hinges
-    local gear_l = box(vmath.vector3(-60, 0, 0), vmath.vector3(10, 24, 0), vmath.vector4(0.04, 0.04, 0.04, 1.0), gui.PIVOT_CENTER)
-    local gear_r = box(vmath.vector3(60, 0, 0), vmath.vector3(10, 24, 0), vmath.vector4(0.04, 0.04, 0.04, 1.0), gui.PIVOT_CENTER)
+    -- Hinges appropriately shifted
+    local gear_l = box(vmath.vector3(-65, 0, 0), vmath.vector3(8, 20, 0), vmath.vector4(0.04, 0.04, 0.04, 1.0), gui.PIVOT_CENTER)
+    local gear_r = box(vmath.vector3(65, 0, 0), vmath.vector3(8, 20, 0), vmath.vector4(0.04, 0.04, 0.04, 1.0), gui.PIVOT_CENTER)
     gui.set_parent(gear_l, root)
     gui.set_parent(gear_r, root)
 
     -- Stencil mask to slice the cards perfectly in half
     local function make_half(pivot, color)
-        local half = box(vmath.vector3(0, 0, 0), vmath.vector3(120, 75, 0), color, pivot)
+        local half = box(vmath.vector3(0, 0, 0), vmath.vector3(130, 50, 0), color, pivot)
         gui.set_clipping_mode(half, gui.CLIPPING_MODE_STENCIL)
         gui.set_parent(half, root)
 
-        -- Text placed precisely in the center; using poppins_bold
-        local lbl = label(vmath.vector3(0, 0, 0), "00", 64, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
+        -- Adjusted font size (80) to perfectly fit inside the 130x100 clock
+        local lbl = label(vmath.vector3(0, 0, 0), "00", 80, C_WHITE, gui.PIVOT_CENTER, "helvetica_bold")
         -- Add text shadow for realistic engraved look
         gui.set_shadow(lbl, vmath.vector4(0, 0, 0, 0.6))
         gui.set_parent(lbl, half)
 
         -- Lighting Shadow Overlay box
-        local shadow = box(vmath.vector3(0, 0, 0), vmath.vector3(120, 75, 0), vmath.vector4(0,0,0,0), pivot)
+        local shadow = box(vmath.vector3(0, 0, 0), vmath.vector3(130, 50, 0), vmath.vector4(0,0,0,0), pivot)
         gui.set_parent(shadow, half)
 
         return half, lbl, shadow
@@ -116,7 +116,7 @@ local function create_flipper(parent, pos)
     gui.set_enabled(flip_bot, false)
 
     -- Card middle crease separator
-    local div = box(vmath.vector3(0, 0, 0), vmath.vector3(120, 2, 0), vmath.vector4(0,0,0,0.8), gui.PIVOT_CENTER)
+    local div = box(vmath.vector3(0, 0, 0), vmath.vector3(130, 2, 0), vmath.vector4(0,0,0,0.8), gui.PIVOT_CENTER)
     gui.set_parent(div, root)
 
     return {
@@ -198,19 +198,23 @@ local function animate_flipper(flipper, new_val)
     gui.animate(flipper.stat_bot_shd, "color.w", 0.6, gui.EASING_INQUAD, 0.15)
 end
 
--- ── Round dots ──────────────────────────────────────────────────────────────
--- Small circles pinned to the bottom of each score card: one per win needed
--- to take the match (best-of-5 → 3 dots). Grey with a faux inner shadow
--- until that round is won — then the dot checks off with a pop.
-local function build_round_dots(flipper)
+-- ── Round dots & Skirting Footer ─────────────────────────────────────────────
+-- Dynamically wraps to a second row to fit within the flip clock width.
+local function build_round_dots(flipper, is_top)
     flipper.dots = {}
     flipper.dots_filled = 0
+    flipper.is_top = is_top
+
+    -- Add a visual skirting base attached directly to the scoreboard 
+    flipper.skirting = box(vmath.vector3(0, 0, 0), vmath.vector3(130, 40, 0), vmath.vector4(0.08, 0.08, 0.08, 1), gui.PIVOT_CENTER)
+    gui.set_parent(flipper.skirting, flipper.root)
+    gui.set_enabled(flipper.skirting, false)
+
     for i = 1, 5 do
-        local rim = gui.new_pie_node(vmath.vector3(0, -58, 0), vmath.vector3(14, 14, 0))
+        local rim = gui.new_pie_node(vmath.vector3(0, 0, 0), vmath.vector3(20, 20, 0))
         gui.set_color(rim, C_DOT_RIM)
         gui.set_parent(rim, flipper.root)
-        -- inner fill sits slightly down-left of the rim centre: cheap inner-shadow
-        local fill = gui.new_pie_node(vmath.vector3(0.8, -1.0, 0), vmath.vector3(9, 9, 0))
+        local fill = gui.new_pie_node(vmath.vector3(1.0, -1.0, 0), vmath.vector3(14, 14, 0))
         gui.set_color(fill, C_DOT_EMPTY)
         gui.set_parent(fill, rim)
         gui.set_enabled(rim, false)
@@ -221,23 +225,46 @@ end
 local function hide_round_dots(flipper)
     if not (flipper and flipper.dots) then return end
     for i = 1, 5 do gui.set_enabled(flipper.dots[i].rim, false) end
+    if flipper.skirting then gui.set_enabled(flipper.skirting, false) end
     flipper.dots_filled = 0
 end
 
--- needed = wins required, won = rounds won so far. animate=true pops the
--- newest checked dot.
 local function set_round_dots(flipper, needed, won, animate)
     if not (flipper and flipper.dots) then return end
     needed = math.max(1, math.min(5, tonumber(needed) or 1))
     won = math.max(0, math.min(tonumber(won) or 0, needed))
 
-    local spacing = 22
-    local x0 = -((needed - 1) * spacing) / 2
+    local spacing_x = 30
+    local spacing_y = 26
+    local dir_y = flipper.is_top and 1 or -1
+    local card_edge_y = flipper.is_top and 50 or -50
+
+    -- Size and position the skirting container to encompass all rows
+    local rows = math.ceil(needed / 3)
+    local skirting_h = rows * spacing_y + 12
+    if flipper.skirting then
+        gui.set_size(flipper.skirting, vmath.vector3(130, skirting_h, 0))
+        local sy = card_edge_y + dir_y * (skirting_h / 2)
+        gui.set_position(flipper.skirting, vmath.vector3(0, sy, 0))
+        gui.set_enabled(flipper.skirting, true)
+    end
+
+    local base_y = card_edge_y + dir_y * 18
     for i = 1, 5 do
         local d = flipper.dots[i]
-        gui.set_position(d.rim, vmath.vector3(x0 + (i - 1) * spacing, -58, 0))
         gui.set_enabled(d.rim, i <= needed)
         if i <= needed then
+            -- Grid wrapping logic: Max 3 items per row
+            local row = math.floor((i - 1) / 3)
+            local col_index = (i - 1) % 3
+            local items_in_row = math.min(3, needed - row * 3)
+            
+            local x0 = -((items_in_row - 1) * spacing_x) / 2
+            local x = x0 + col_index * spacing_x
+            local y = base_y + dir_y * (row * spacing_y)
+            
+            gui.set_position(d.rim, vmath.vector3(x, y, 0))
+            
             gui.cancel_animation(d.fill, "scale")
             gui.set_scale(d.fill, vmath.vector3(1, 1, 1))
             gui.set_color(d.fill, (i <= won) and C_DOT_FILL or C_DOT_EMPTY)
@@ -277,21 +304,20 @@ local function build_network_badge(parent, pos)
     gui.set_parent(bg, parent)
     local dot = box(vmath.vector3(-20, 0, 0), vmath.vector3(12, 12, 0), C_T_GREEN, gui.PIVOT_CENTER)
     gui.set_parent(dot, bg)
-    local lbl = label(vmath.vector3(-5, 0, 0), "Good", 12, C_T_GREEN, gui.PIVOT_W, "poppins")
+    local lbl = label(vmath.vector3(-5, 0, 0), "Good", 12, C_T_GREEN, gui.PIVOT_W, "poppins_bold")
     gui.set_parent(lbl, bg)
     return { bg = bg, dot = dot, lbl = lbl }
 end
 
 local function build_avatars_and_sections(self)
-    -- Extreme Left placement using anchor logic.
-    -- Added more padding on the left side: increased left_edge_x from 80 to 120
-    local left_edge_x = 120
+    -- Push left slightly to give extra margin space (100px from border)
+    local left_edge_x = 100
     self.hud_root = box(vmath.vector3(left_edge_x, LOGICAL_H/2, 0), vmath.vector3(160, 680, 0), vmath.vector4(0, 0, 0, 0), gui.PIVOT_CENTER)
     gui.set_xanchor(self.hud_root, gui.ANCHOR_LEFT)
     gui.set_yanchor(self.hud_root, gui.ANCHOR_NONE)
 
-    -- PLAYER 2 OPPONENT SECTION (MOVED TO TOP OUTER)
-    self.o_avatar_bg = box(vmath.vector3(0, 260, 0), vmath.vector3(AVATAR_CONTAINER_SIZE, AVATAR_CONTAINER_SIZE, 0), AVATAR_BG_COLOR, gui.PIVOT_CENTER)
+    -- PLAYER 2 OPPONENT SECTION
+    self.o_avatar_bg = box(vmath.vector3(0, 280, 0), vmath.vector3(AVATAR_CONTAINER_SIZE, AVATAR_CONTAINER_SIZE, 0), AVATAR_BG_COLOR, gui.PIVOT_CENTER)
     gui.set_parent(self.o_avatar_bg, self.hud_root)
 
     self.o_timer = gui.new_pie_node(vmath.vector3(0, 0, 0), vmath.vector3(TIMER_RADIUS*2, TIMER_RADIUS*2, 0))
@@ -303,13 +329,13 @@ local function build_avatars_and_sections(self)
     gui.set_parent(self.o_avatar_img, self.o_avatar_bg)
     pcall(function() gui.set_texture(self.o_avatar_img, "avatars"); gui.play_flipbook(self.o_avatar_img, hash("avatar_1")) end)
 
-    self.o_avatar_name = label(vmath.vector3(0, 185, 0), "Opponent", 18, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
+    self.o_avatar_name = label(vmath.vector3(0, 222, 0), "Opponent", 18, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
     gui.set_parent(self.o_avatar_name, self.hud_root)
 
-    self.o_net = build_network_badge(self.hud_root, vmath.vector3(0, 320, 0))
+    self.o_net = build_network_badge(self.hud_root, vmath.vector3(0, 335, 0))
 
-    -- PLAYER 1 SECTION (MOVED TO BOTTOM OUTER)
-    self.p_avatar_bg = box(vmath.vector3(0, -260, 0), vmath.vector3(AVATAR_CONTAINER_SIZE, AVATAR_CONTAINER_SIZE, 0), AVATAR_BG_COLOR, gui.PIVOT_CENTER)
+    -- PLAYER 1 SECTION
+    self.p_avatar_bg = box(vmath.vector3(0, -280, 0), vmath.vector3(AVATAR_CONTAINER_SIZE, AVATAR_CONTAINER_SIZE, 0), AVATAR_BG_COLOR, gui.PIVOT_CENTER)
     gui.set_parent(self.p_avatar_bg, self.hud_root)
 
     self.p_timer = gui.new_pie_node(vmath.vector3(0, 0, 0), vmath.vector3(TIMER_RADIUS*2, TIMER_RADIUS*2, 0))
@@ -321,99 +347,93 @@ local function build_avatars_and_sections(self)
     gui.set_parent(self.p_avatar_img, self.p_avatar_bg)
     pcall(function() gui.set_texture(self.p_avatar_img, "avatars"); gui.play_flipbook(self.p_avatar_img, hash("avatar_1")) end)
 
-    self.p_avatar_name = label(vmath.vector3(0, -185, 0), "You", 18, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
+    self.p_avatar_name = label(vmath.vector3(0, -222, 0), "You", 18, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
     gui.set_parent(self.p_avatar_name, self.hud_root)
 
-    self.p_balance = label(vmath.vector3(0, -210, 0), "Bal: 0", 14, vmath.vector4(1, 0.85, 0.4, 1.0), gui.PIVOT_CENTER, "poppins")
+    self.p_balance = label(vmath.vector3(0, -246, 0), "Bal: 0", 14, vmath.vector4(1, 0.85, 0.4, 1.0), gui.PIVOT_CENTER, "poppins")
     gui.set_parent(self.p_balance, self.hud_root)
     gui.set_enabled(self.p_balance, false)
 
-    self.p_net = build_network_badge(self.hud_root, vmath.vector3(0, -320, 0))
+    self.p_net = build_network_badge(self.hud_root, vmath.vector3(0, -335, 0))
 end
 
 -- Placing the Scoreboard flippers and game indicators...
 local function build_scoreboard(self)
-    -- Build Games Left Series indicators
-    self.o_games_bg = box(vmath.vector3(0, 175, 0), vmath.vector3(120, 22, 0), vmath.vector4(0.95, 0.61, 0.07, 0.15), gui.PIVOT_CENTER)
-    self.o_games_lbl = label(vmath.vector3(0, 0, 0), "NEEDS 2 WINS", 12, C_ORANGE, gui.PIVOT_CENTER, "poppins_bold")
-    gui.set_parent(self.o_games_lbl, self.o_games_bg)
-    gui.set_parent(self.o_games_bg, self.hud_root)
-
-    self.p_games_bg = box(vmath.vector3(0, -175, 0), vmath.vector3(120, 22, 0), vmath.vector4(0.95, 0.61, 0.07, 0.15), gui.PIVOT_CENTER)
-    self.p_games_lbl = label(vmath.vector3(0, 0, 0), "NEEDS 2 WINS", 12, C_ORANGE, gui.PIVOT_CENTER, "poppins_bold")
-    gui.set_parent(self.p_games_lbl, self.p_games_bg)
-    gui.set_parent(self.p_games_bg, self.hud_root)
-
     -- Flip Clocks Stacked Vertically in Center (Opponent Top, Player Bottom)
-    self.o_flipper = create_flipper(self.hud_root, vmath.vector3(0, 90, 0))
-    self.p_flipper = create_flipper(self.hud_root, vmath.vector3(0, -90, 0))
-    build_round_dots(self.o_flipper)
-    build_round_dots(self.p_flipper)
+    self.o_flipper = create_flipper(self.hud_root, vmath.vector3(0, 100, 0))
+    self.p_flipper = create_flipper(self.hud_root, vmath.vector3(0, -100, 0))
+    
+    -- Opponent dots build UPWARD, Player dots build DOWNWARD to avoid middle overlap
+    build_round_dots(self.o_flipper, true)
+    build_round_dots(self.p_flipper, false)
 
     -- Central Divider & Text
-    self.sb_div1 = box(vmath.vector3(0, 15, 0), vmath.vector3(120, 2, 0), vmath.vector4(0.2,0.2,0.2,1), gui.PIVOT_CENTER)
-    self.sb_div2 = box(vmath.vector3(0, -15, 0), vmath.vector3(120, 2, 0), vmath.vector4(0.2,0.2,0.2,1), gui.PIVOT_CENTER)
+    self.sb_div1 = box(vmath.vector3(0, 22, 0), vmath.vector3(120, 2, 0), vmath.vector4(0.2,0.2,0.2,1), gui.PIVOT_CENTER)
+    self.sb_div2 = box(vmath.vector3(0, -22, 0), vmath.vector3(120, 2, 0), vmath.vector4(0.2,0.2,0.2,1), gui.PIVOT_CENTER)
     gui.set_parent(self.sb_div1, self.hud_root)
     gui.set_parent(self.sb_div2, self.hud_root)
 
     self.sb_title = label(vmath.vector3(0, 0, 0), "BEST OF 3", 15, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
     gui.set_parent(self.sb_title, self.hud_root)
 
-    -- ── Head-to-head strip ────────────────────────────────────────────────
-    -- A thin vertical column hugging the RIGHT gutter of the HUD: rotated
-    -- "LAST 5" header, the last-5 form vs this opponent as W/L badges
-    -- (newest on bottom, W green / L red), and the rotated all-time score.
-    self.h2h_form_lbl = label(vmath.vector3(76, 105, 0), "LAST 5", 14, C_H2H_DIM, gui.PIVOT_CENTER, "poppins_bold")
+    -- ── Head-to-head ALL TIME Column (Inner Left) ──────────────────────────────
+    self.h2h_alltime_lbl = label(vmath.vector3(95, 0, 0), "ALL TIME 0-0", 16, C_H2H_GOLD, gui.PIVOT_CENTER, "poppins_bold")
+    gui.set_rotation(self.h2h_alltime_lbl, vmath.vector3(0, 0, -90))
+    gui.set_parent(self.h2h_alltime_lbl, self.hud_root)
+    gui.set_enabled(self.h2h_alltime_lbl, false)
+
+    -- ── Head-to-head LAST 5 Column (Dynamic Right) ───────────────────────────────
+    -- Will sit at 145 if "ALL TIME" is visible, collapses to 95 if hidden
+    self.h2h_form_lbl = label(vmath.vector3(145, 140, 0), "LAST 5 GAMES", 16, C_H2H_DIM, gui.PIVOT_CENTER, "poppins_bold")
     gui.set_rotation(self.h2h_form_lbl, vmath.vector3(0, 0, -90))
     gui.set_parent(self.h2h_form_lbl, self.hud_root)
     gui.set_enabled(self.h2h_form_lbl, false)
 
     self.h2h_badges = {}
     for i = 1, 5 do
-        -- Reverse layout: i=1 (most recent) at bottom (-30), i=5 (oldest) at top (66)
-        local y_pos = -30 + (i - 1) * 24
-        local bg = box(vmath.vector3(76, y_pos, 0), vmath.vector3(18, 18, 0), vmath.vector4(0.2, 0.2, 0.2, 0.5), gui.PIVOT_CENTER)
+        local y_pos = 10 - (i - 1) * 40
+        local bg = box(vmath.vector3(145, y_pos, 0), vmath.vector3(34, 34, 0), vmath.vector4(0.2, 0.2, 0.2, 0.5), gui.PIVOT_CENTER)
         gui.set_parent(bg, self.hud_root)
-        local lbl = label(vmath.vector3(0, 0, 0), "", 13, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
+        local lbl = label(vmath.vector3(0, 0, 0), "", 20, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
         gui.set_parent(lbl, bg)
         gui.set_enabled(bg, false)
         self.h2h_badges[i] = { bg = bg, lbl = lbl }
     end
 
-    self.h2h_divider = box(vmath.vector3(76, -54, 0), vmath.vector3(20, 2, 0), vmath.vector4(0.3, 0.3, 0.3, 1), gui.PIVOT_CENTER)
-    gui.set_parent(self.h2h_divider, self.hud_root)
-    gui.set_enabled(self.h2h_divider, false)
-
-    self.h2h_alltime_lbl = label(vmath.vector3(76, -108, 0), "ALL TIME 0-0", 14, C_H2H_GOLD, gui.PIVOT_CENTER, "poppins_bold")
-    gui.set_rotation(self.h2h_alltime_lbl, vmath.vector3(0, 0, -90))
-    gui.set_parent(self.h2h_alltime_lbl, self.hud_root)
-    gui.set_enabled(self.h2h_alltime_lbl, false)
-
-    -- Set fallbacks backwards compatibility
     self.sb_root = self.hud_root
 end
 
--- Show/hide the series scoreboard pieces (flippers, title, needs-wins).
-local function set_series_visible(self, board_visible, badges_visible)
-    if self.o_flipper then gui.set_enabled(self.o_flipper.root, board_visible) end
-    if self.p_flipper then gui.set_enabled(self.p_flipper.root, board_visible) end
-    if self.sb_div1 then gui.set_enabled(self.sb_div1, board_visible) end
-    if self.sb_div2 then gui.set_enabled(self.sb_div2, board_visible) end
-    if self.sb_title then gui.set_enabled(self.sb_title, board_visible) end
-    local bv = board_visible and badges_visible
-    if self.o_games_bg then gui.set_enabled(self.o_games_bg, bv) end
-    if self.p_games_bg then gui.set_enabled(self.p_games_bg, bv) end
+-- Show/hide the main scoreboard base (always visible if message.show ~= false)
+local function set_scoreboard_active(self, active)
+    if self.o_flipper then gui.set_enabled(self.o_flipper.root, active) end
+    if self.p_flipper then gui.set_enabled(self.p_flipper.root, active) end
+    if self.sb_div1 then gui.set_enabled(self.sb_div1, active) end
+    if self.sb_div2 then gui.set_enabled(self.sb_div2, active) end
+    if self.sb_title then gui.set_enabled(self.sb_title, active) end
 end
 
 -- Apply head-to-head data to the strip. h2h = { p, o, form = {"W","L",...} }
 -- (viewer perspective, newest first) or nil to hide it.
-local function set_h2h_strip(self, h2h)
+local function set_h2h_strip(self, h2h, is_series)
     local has = type(h2h) == "table"
     local form = has and type(h2h.form) == "table" and h2h.form or {}
     local has_form = has and #form > 0
     
-    if self.h2h_form_lbl then gui.set_enabled(self.h2h_form_lbl, has_form) end
-    if self.h2h_divider then gui.set_enabled(self.h2h_divider, has) end
+    -- If it is a series, we show the all time scores. If not, the main flippers show it!
+    local show_alltime = has and is_series
+    
+    -- Close the gap dynamically if the ALL TIME column text is hidden
+    local form_x = show_alltime and 145 or 95
+    
+    if self.h2h_form_lbl then 
+        gui.set_enabled(self.h2h_form_lbl, has_form) 
+        if has_form then
+            gui.set_text(self.h2h_form_lbl, "LAST 5 GAMES")
+            local p = gui.get_position(self.h2h_form_lbl)
+            p.x = form_x
+            gui.set_position(self.h2h_form_lbl, p)
+        end
+    end
     
     for i = 1, 5 do
         local badge = self.h2h_badges and self.h2h_badges[i]
@@ -423,13 +443,18 @@ local function set_h2h_strip(self, h2h)
                 gui.set_text(badge.lbl, r)
                 gui.set_color(badge.bg, r == "W" and C_FORM_W or C_FORM_L)
                 gui.set_enabled(badge.bg, true)
+                
+                local p = gui.get_position(badge.bg)
+                p.x = form_x
+                gui.set_position(badge.bg, p)
             else
                 gui.set_enabled(badge.bg, false)
             end
         end
     end
+    
     if self.h2h_alltime_lbl then
-        if has then
+        if show_alltime then
             gui.set_text(self.h2h_alltime_lbl, "ALL TIME " .. tostring(h2h.p or 0) .. "-" .. tostring(h2h.o or 0))
             gui.set_enabled(self.h2h_alltime_lbl, true)
         else
@@ -439,14 +464,13 @@ local function set_h2h_strip(self, h2h)
 end
 
 local function build_stake_chip(self)
-    -- Shift stake chip right to accommodate the 40px shift of the scoreboard padding
     self.stake_chip = box(vmath.vector3(260, LOGICAL_H/2, 0), vmath.vector3(STAKE_CHIP_SIZE, STAKE_CHIP_SIZE, 0), vmath.vector4(1,1,1,1), gui.PIVOT_W)
     gui.set_xanchor(self.stake_chip, gui.ANCHOR_LEFT)
     gui.set_yanchor(self.stake_chip, gui.ANCHOR_NONE)
     gui.set_enabled(self.stake_chip, false)
 end
 
--- Building Standings UI (Ensured it stays on the right side)
+-- Building Standings UI
 local function build_standings_ui(self)
     self.standings_root = box(vmath.vector3(LOGICAL_W - EXIT_BTN_MARGIN_RIGHT - 196, LOGICAL_H/2 - 86, 0), vmath.vector3(196, 180, 0), vmath.vector4(0,0,0,0), gui.PIVOT_NW)
     gui.set_xanchor(self.standings_root, gui.ANCHOR_RIGHT)
@@ -477,7 +501,7 @@ local function _create_skip_button(self)
     local inner_border = box(vmath.vector3(0,0,0), vmath.vector3(width - 8, height - 8, 0), vmath.vector4(0,0,0,0), gui.PIVOT_CENTER)
     gui.set_parent(inner_border, self.skip_btn)
 
-    local lbl = label(vmath.vector3(width/2 - 15, -height/2 + 10, 0), "TAP TO SKIP >>", 14, C_SKIP_TEXT, gui.PIVOT_SE, "poppins_bold")
+    local lbl = label(vmath.vector3(width/2 - 15, -height/2 + 10, 0), "TAP TO SKIP >>", 14, C_SKIP_TEXT, gui.PIVOT_SE, "luckiest_guy_sm")
     gui.set_shadow(lbl, vmath.vector4(0, 0, 0, 0.8))
     gui.set_parent(lbl, self.skip_btn)
 
@@ -489,7 +513,7 @@ local function build_exit(self)
     gui.set_xanchor(self.exit_btn, gui.ANCHOR_RIGHT)
     gui.set_yanchor(self.exit_btn, gui.ANCHOR_TOP)
 
-    local l = label(vmath.vector3(-EXIT_BTN_SIZE/2, -EXIT_BTN_SIZE/2, 0), "X", 20, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
+    local l = label(vmath.vector3(-EXIT_BTN_SIZE/2, -EXIT_BTN_SIZE/2, 0), "X", 20, C_WHITE, gui.PIVOT_CENTER, "luckiest_guy_md")
     gui.set_parent(l, self.exit_btn)
 
     self.exit_popover = box(vmath.vector3(LOGICAL_W - EXIT_BTN_MARGIN_RIGHT, LOGICAL_H - EXIT_BTN_MARGIN_TOP - EXIT_BTN_SIZE + EXIT_POPOVER_OFFSET_Y, 0), vmath.vector3(EXIT_POPOVER_WIDTH, EXIT_POPOVER_HEIGHT, 0), C_PANEL, gui.PIVOT_NE)
@@ -500,12 +524,12 @@ local function build_exit(self)
     gui.set_parent(title, self.exit_popover)
 
     self.btn_yes = box(vmath.vector3(-EXIT_POPOVER_WIDTH/2 - 45, -80, 0), vmath.vector3(80, 40, 0), C_PANEL_BORDER, gui.PIVOT_CENTER)
-    local ly = label(vmath.vector3(0,0,0), "Yes", 16, C_WHITE, gui.PIVOT_CENTER, "poppins")
+    local ly = label(vmath.vector3(0,0,0), "Yes", 16, C_WHITE, gui.PIVOT_CENTER, "luckiest_guy_sm")
     gui.set_parent(ly, self.btn_yes)
     gui.set_parent(self.btn_yes, self.exit_popover)
 
     self.btn_no = box(vmath.vector3(-EXIT_POPOVER_WIDTH/2 + 45, -80, 0), vmath.vector3(80, 40, 0), C_PANEL_BORDER, gui.PIVOT_CENTER)
-    local ln = label(vmath.vector3(0,0,0), "No", 16, C_WHITE, gui.PIVOT_CENTER, "poppins")
+    local ln = label(vmath.vector3(0,0,0), "No", 16, C_WHITE, gui.PIVOT_CENTER, "luckiest_guy_sm")
     gui.set_parent(ln, self.btn_no)
     gui.set_parent(self.btn_no, self.exit_popover)
 
@@ -532,7 +556,7 @@ local function build_conn_overlay(self)
     self.conn_sub = label(vmath.vector3(0, 8, 0), "", 16, vmath.vector4(0.70, 0.74, 0.80, 1.0), gui.PIVOT_CENTER, "poppins")
     gui.set_parent(self.conn_sub, self.conn_panel)
 
-    self.conn_count = label(vmath.vector3(0, -44, 0), "", 34, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
+    self.conn_count = label(vmath.vector3(0, -44, 0), "", 34, C_WHITE, gui.PIVOT_CENTER, "helvetica_bold")
     gui.set_parent(self.conn_count, self.conn_panel)
 
     gui.set_enabled(self.conn_scrim, false)
@@ -580,7 +604,7 @@ local function build_ai_takeover_modal(self)
 
     self.ai_ok_btn = box(vmath.vector3(0, -92, 0), vmath.vector3(200, 56, 0), AI_C_ACCENT, gui.PIVOT_CENTER)
     gui.set_parent(self.ai_ok_btn, self.ai_panel)
-    local ok_lbl = poppins(vmath.vector3(0, -2, 0), "GOT IT", 22, AI_C_DARK, true)
+    local ok_lbl = label(vmath.vector3(0, -2, 0), "GOT IT", 22, AI_C_DARK, gui.PIVOT_CENTER, "luckiest_guy_md")
     gui.set_parent(ok_lbl, self.ai_ok_btn)
 
     gui.set_enabled(self.ai_scrim, false)
@@ -840,9 +864,9 @@ function init(self)
     build_ai_assist_banner(self)
     build_round_story(self)
 
-    -- Series UI hidden until a scoreboard update arrives.
-    set_series_visible(self, false, false)
-    set_h2h_strip(self, nil)
+    -- HUD sets everything false on awake until specifically told to show via logic
+    set_scoreboard_active(self, false)
+    set_h2h_strip(self, nil, false)
 
     emoji_popover.init(self)
 end
@@ -980,8 +1004,8 @@ function on_message(self, message_id, message)
 
     elseif message_id == hash("update_scoreboard") then
         if message.show == false then
-            set_series_visible(self, false, false)
-            set_h2h_strip(self, nil)
+            set_scoreboard_active(self, false)
+            set_h2h_strip(self, nil, false)
             hide_round_dots(self.o_flipper)
             hide_round_dots(self.p_flipper)
             return
@@ -1057,10 +1081,11 @@ function on_message(self, message_id, message)
 
         local h2h = (type(message.h2h) == "table") and message.h2h or nil
 
-        set_series_visible(self, true, series and true or false)
+        -- ALWAYS make the core scoreboard active if we reach this point
+        set_scoreboard_active(self, true)
         
-        -- Show H2H side-strip (Last 5 & All Time) whenever h2h data is available
-        set_h2h_strip(self, h2h)
+        -- Show H2H side-strip, pass 'series' to appropriately hide/show the all time text score
+        set_h2h_strip(self, h2h, series)
 
         if series then
             -- Calculate Required Wins
@@ -1070,8 +1095,7 @@ function on_message(self, message_id, message)
             animate_flipper(self.o_flipper, string.format("%02d", o_score))
             animate_flipper(self.p_flipper, string.format("%02d", p_score))
 
-            -- Round dots under each score: one per win needed, checked off
-            -- (with a pop) as rounds are taken.
+            -- Round dots attached seamlessly inside the scoreboards
             set_round_dots(self.o_flipper, target, o_score, true)
             set_round_dots(self.p_flipper, target, p_score, true)
 
@@ -1083,30 +1107,6 @@ function on_message(self, message_id, message)
                 if stage and stage ~= "Match" then title = title .. "  •  " .. string.upper(stage) end
             end
             if self.sb_title then gui.set_text(self.sb_title, title) end
-
-            -- Calculate Games Left
-            local left_p = math.max(0, target - p_score)
-            local left_o = math.max(0, target - o_score)
-
-            if left_p == 1 then
-                gui.set_text(self.p_games_lbl, "MATCH POINT!")
-                gui.set_color(self.p_games_lbl, C_ACCENT)
-                gui.set_color(self.p_games_bg, vmath.vector4(0.9, 0.3, 0.23, 0.15))
-            else
-                gui.set_text(self.p_games_lbl, "NEEDS " .. left_p .. " WINS")
-                gui.set_color(self.p_games_lbl, C_ORANGE)
-                gui.set_color(self.p_games_bg, vmath.vector4(0.95, 0.61, 0.07, 0.15))
-            end
-
-            if left_o == 1 then
-                gui.set_text(self.o_games_lbl, "MATCH POINT!")
-                gui.set_color(self.o_games_lbl, C_ACCENT)
-                gui.set_color(self.o_games_bg, vmath.vector4(0.9, 0.3, 0.23, 0.15))
-            else
-                gui.set_text(self.o_games_lbl, "NEEDS " .. left_o .. " WINS")
-                gui.set_color(self.o_games_lbl, C_ORANGE)
-                gui.set_color(self.o_games_bg, vmath.vector4(0.95, 0.61, 0.07, 0.15))
-            end
         else
             -- Normal game (not series/tournament): flip clocks display all-time head-to-head score
             animate_flipper(self.o_flipper, string.format("%02d", (h2h and h2h.o) or 0))
@@ -1202,8 +1202,8 @@ function on_message(self, message_id, message)
         -- round transition re-init happens UNDER it); a full reset kills it.
         if not (message and message.keep_scoreboard) then
             hide_round_story(self)
-            set_series_visible(self, false, false)
-            set_h2h_strip(self, nil)
+            set_scoreboard_active(self, false)
+            set_h2h_strip(self, nil, false)
             snap_flipper(self.o_flipper, "00")
             snap_flipper(self.p_flipper, "00")
             hide_round_dots(self.o_flipper)
