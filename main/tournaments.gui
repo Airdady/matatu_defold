@@ -20,6 +20,10 @@ textures {
   texture: "/assets/cards/cards.atlas"
 }
 textures {
+  name: "map"
+  texture: "/assets/ui/map.atlas"
+}
+textures {
   name: "avatars"
   texture: "/assets/avatars/avatars.atlas"
 }

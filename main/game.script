@@ -127,7 +127,7 @@ function init(self)
     self.reshuffle_deck   = function(done) GF.reshuffle_deck(self, done) end
     self.animate_shuffle  = function(cards, done) CV.animate_shuffle(self, cards, done) end
 
-    self.trigger_play_effects = function(rec) RE.trigger_play_effects(self, rec) end
+    self.trigger_play_effects = function(rec, is_last) RE.trigger_play_effects(self, rec, is_last) end
     self.evaluate_play    = function(rec, hand) return RE.evaluate_play(self, rec, hand) end
     self.play_card        = function(rec, is_player, result) GF.play_card(self, rec, is_player, result) end
     self.has_playable     = function(hand) return RE.has_playable(self, hand) end
@@ -251,6 +251,12 @@ function update(self, dt)
             self.is_local_action_locked = false
             self.is_waiting_for_server_response = false
             self.waiting = false
+            -- CRITICAL: start the turn with a CLEAN action buffer. When Akira
+            -- played the previous turn for us (timeout assist), end_turn never
+            -- ran, so stale PLAY/DRAW actions from the abandoned turn would
+            -- otherwise be prepended to our next move and rejected as invalid
+            -- by the backend.
+            self.current_turn_actions = {}
             print("[TURN] became MY turn -> reset per-turn locks + input focus")
             RE.pre_validate_hand(self)
         end
@@ -504,6 +510,13 @@ function on_message(self, message_id, message, sender)
         notify_gui(self.gui_over, "reset_hud")
         notify_gui(self.gui_hud, "reset_hud")
         self.awaiting_replay = false
+        -- Leaving the board: drop all series-local scoreboard state so the
+        -- next match (or tournament) initializes its board from scratch.
+        self._sb_active, self._sb_format, self._sb_stage = false, nil, nil
+        self._sb_p, self._sb_o = nil, nil
+        self._sb_series_key, self._sb_tid = nil, nil
+        self._final_state_locked = false
+        self._h2h = nil
         GS.destroy_all(self)
 
     elseif message_id == hash("layout_changed") then
@@ -601,6 +614,27 @@ function on_message(self, message_id, message, sender)
             msg.post("#controller", "goto_lobby")
         end
 
+    -- ── Authoritative RESYNC: the backend rejected one of our moves, our
+    -- board has drifted. Rebuild it from the pushed state (instant snap —
+    -- the state reads as in-progress) under a brief "syncing" dialog.
+    elseif message_id == hash("ws_resync") then
+        if self.online_mode then
+            log("RESYNC requested: " .. tostring(message and message.reason))
+            self.online_game_id = "" -- defeat the same-id de-dupe
+            GF.start_game(self)
+            notify_gui(self.gui_hud, "conn_overlay", {
+                show = true,
+                title = "SYNCING BOARD",
+                subtitle = "Restoring your game from the server…",
+            })
+            local seq = self._seq
+            timer.delay(1.4, false, function()
+                if seq == self._seq then
+                    notify_gui(self.gui_hud, "conn_overlay", { show = false })
+                end
+            end)
+        end
+
     elseif message_id == hash("ws_game_move") then
         if self.online_mode then
             local moves = ws.take_moves()
@@ -619,6 +653,21 @@ function on_message(self, message_id, message, sender)
         notify_gui(self.gui_hud, "conn_overlay", { show = false })
         if self.online_mode and not self.game_over then
             local results = ws.last_game_over or {}
+            -- Round/tournament end carries the final currentScores: refresh
+            -- the scoreboard before the modal shows (Godot HudUI game-over
+            -- sync), so ended rounds never display stale numbers.
+            OnlineHandler.process_scoreboard(self, {
+                gameType = results.gameType,
+                tournamentId = (type(results.tournamentData) == "table" and results.tournamentData.id) or nil,
+                gameOverState = results,
+            })
+            -- Tournament fully over: the series-local scoreboard data must
+            -- not leak into the next match — clear the latch once the final
+            -- score has been displayed.
+            if results.isMatchComplete == true or results.tournamentCompleted == true then
+                self._sb_series_key, self._sb_tid = nil, nil
+                self._final_state_locked = false
+            end
             local is_cut = results.isCut or (results.reason == "CUTTING_CARD")
             self.end_game((results.winner == self.my_player_id), is_cut, results)
         end

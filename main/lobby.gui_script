@@ -570,6 +570,12 @@ local function rebuild(self)
     track(self, ui.text(vmath.vector3(EDGE_R - 40, EDGE_T - 42, 0), "?", "body", C_AMBER))
     self.buttons[#self.buttons + 1] = { node = help, id = "help_open" }
 
+    -- ===== RULES — jumps straight to the how-to-play / special-card pages ==
+    local rules = track(self, ui.box(vmath.vector3(EDGE_R - 124, EDGE_T - 40, 0),
+        vmath.vector3(110, 40, 0), vmath.vector4(0.12, 0.08, 0.30, 0.85)))
+    track(self, ui.text(vmath.vector3(EDGE_R - 124, EDGE_T - 42, 0), "RULES", "small", C_AMBER))
+    self.buttons[#self.buttons + 1] = { node = rules, id = "rules_open" }
+
     -- ===== New-user walkthrough overlay (drawn on top) =====================
     draw_tutorial(self)
 
@@ -759,6 +765,11 @@ local function handle(self, b)
     elseif b.id == "help_open" then
         self.state = STATE_LOBBY
         self.tut_page, self.tutorial_active = 1, true
+        rebuild(self); return
+    elseif b.id == "rules_open" then
+        -- RULES: open the walkthrough directly on the gameplay rules pages.
+        self.state = STATE_LOBBY
+        self.tut_page, self.tutorial_active = 3, true
         rebuild(self); return
     elseif b.id == "tut_skip" then
         self.tutorial_active = false; mark_tutorial_seen(); rebuild(self); return

@@ -19,6 +19,10 @@ fonts {
   name: "luckiest_guy_sm"
   font: "/fonts/luckiest_guy_sm.font"
 }
+fonts {
+  name: "helvetica_bold"
+  font: "/fonts/helvetica_bold.font"
+}
 textures {
   name: "ui"
   texture: "/assets/ui/ui.atlas"

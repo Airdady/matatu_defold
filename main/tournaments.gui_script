@@ -67,9 +67,10 @@ draw_search_overlay = function(self)
 	local sr = self.search
 	if not sr then return end
 
-	-- scrim + glow
+	-- scrim + the same radial-gradient backdrop as the incoming-request /
+	-- game-over dialogs, keeping every overlay visually consistent
 	track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(LOGICAL_W * 2, LOGICAL_H * 2, 0), vmath.vector4(0, 0, 0, 0.78)))
-	track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(760, 380, 0), "container_bg"))
+	track(self, ui.grad_backdrop(LOGICAL_W, LOGICAL_H))
 
 	local title = sr.found and "OPPONENT FOUND!" or (sr.failed and "NO OPPONENT FOUND" or "SEARCHING FOR OPPONENT")
 	local t_col = sr.found and vmath.vector4(0.15, 0.85, 0.35, 1) or (sr.failed and ui.GOLD or ui.WHITE)
@@ -133,14 +134,12 @@ rebuild = function(self)
 	track(self, ui.cover_image(LOGICAL_W, LOGICAL_H, "texture_bg"))
 	track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.58)))
 
-	-- Top bar.
-	track(self, ui.text(vmath.vector3(CX, EDGE_T - 44, 0), "TOURNAMENT", "title", ui.GOLD))
-	local bb = track(self, ui.btn9(vmath.vector3(EDGE_L + 90, EDGE_T - 44, 0), vmath.vector3(140, 44, 0), "secondary_btn"))
-	track(self, ui.text(vmath.vector3(EDGE_L + 90, EDGE_T - 44, 0), "< BACK", "small", ui.WHITE))
-	self.buttons[#self.buttons+1] = { node = bb, id = "back" }
-
 	local t = pick_tournament()
 	if not t then
+		track(self, ui.text(vmath.vector3(CX, EDGE_T - 44, 0), "TOURNAMENT", "title", ui.GOLD))
+		local bb0 = track(self, ui.btn9(vmath.vector3(EDGE_L + 90, EDGE_T - 44, 0), vmath.vector3(140, 44, 0), "secondary_btn"))
+		track(self, ui.text(vmath.vector3(EDGE_L + 90, EDGE_T - 44, 0), "< BACK", "small", ui.WHITE))
+		self.buttons[#self.buttons+1] = { node = bb0, id = "back" }
 		track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(520, 120, 0), "container_bg"))
 		track(self, ui.text(vmath.vector3(CX, CY+22, 0), "No active tournaments right now.", "body", ui.MUTED))
 		track(self, ui.text(vmath.vector3(CX, CY-14, 0), "Check back during a live season.", "small", ui.MUTED))
@@ -152,51 +151,89 @@ rebuild = function(self)
 	local current = tonumber(t.currentLevel) or (t.userProgress and tonumber(t.userProgress.currentLevel)) or 0
 	local grand   = (t.grandPrize and t.grandPrize.value) or (levels[#levels] and levels[#levels].coins) or 0
 
-	-- Header info panel.
+
+	-- ── Tournament MAP (Godot TournamentMap port) ────────────────────────────
+	-- The journey renders on the levels artwork: markers sit at the same
+	-- image-space coordinates as the Godot scene (map is 2321x987; Godot's
+	-- y runs top-down, so it flips for Defold), the map covers the screen,
+	-- finished stages tick green, the next stage carries the pin, locked
+	-- stages a padlock — and your avatar stands on your current position.
+	local MAP_W, MAP_H = 2321, 987
+	local LANDING = { x = 880, y = 895 }
+	local MAP_COORDS = {
+		{ x = 1188, y = 845 }, -- Level 1
+		{ x = 1488, y = 530 }, -- Level 2
+		{ x = 870,  y = 500 }, -- Level 3
+		{ x = 728,  y = 270 }, -- Level 4
+		{ x = 1260, y = 335 }, -- Level 5
+		{ x = 1665, y = 127 }, -- Level 6
+		{ x = 1160, y = 130 }, -- Grand Prize
+	}
+
+	local s = math.max(VISIBLE_W / MAP_W, VISIBLE_H / MAP_H)
+	local mw, mh = MAP_W * s, MAP_H * s
+	local ox, oy = CX - mw / 2, CY - mh / 2
+	local function map_pos(c)
+		return ox + c.x * s, oy + (MAP_H - c.y) * s
+	end
+
+	local map_node = track(self, gui.new_box_node(vmath.vector3(CX, CY, 0), vmath.vector3(mw, mh, 0)))
+	pcall(function()
+		gui.set_texture(map_node, "map")
+		gui.play_flipbook(map_node, hash("levels_map"))
+	end)
+	-- gentle dim so markers and labels stay readable over the art
+	track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(LOGICAL_W * 2, LOGICAL_H * 2, 0), vmath.vector4(0, 0, 0, 0.18)))
+
+	local n = math.min(#levels, #MAP_COORDS)
+	for i = 1, n do
+		local lv = levels[i]
+		local cxp, cyp = map_pos(MAP_COORDS[i])
+		local done = (i <= current)
+		local at   = (i == current + 1)
+
+		-- marker disc
+		local ring_col = at and ui.GOLD or (done and vmath.vector4(0.2, 0.75, 0.35, 1) or vmath.vector4(0.18, 0.18, 0.22, 0.95))
+		track(self, ui.pie(vmath.vector3(cxp, cyp, 0), 30, ring_col))
+		track(self, ui.pie(vmath.vector3(cxp, cyp, 0), 25, vmath.vector4(0.05, 0.05, 0.08, 0.95)))
+
+		if at then
+			-- the journey pin bobs over the NEXT stage
+			local pin = track(self, ui.image(vmath.vector3(cxp, cyp + 46, 0), vmath.vector3(56, 56, 0), "pin"))
+			gui.animate(pin, "position.y", cyp + 56, gui.EASING_INOUTSINE, 0.6, 0, nil, gui.PLAYBACK_LOOP_PINGPONG)
+			track(self, ui.text(vmath.vector3(cxp, cyp, 0), tostring(i), "body", ui.GOLD))
+		elseif done then
+			track(self, ui.text(vmath.vector3(cxp, cyp, 0), "WIN", "small", vmath.vector4(0.3, 0.9, 0.5, 1)))
+		else
+			track(self, ui.image(vmath.vector3(cxp, cyp, 0), vmath.vector3(26, 30, 0), "lock"))
+		end
+
+		-- stage name + reward under the marker
+		local name_col = at and ui.WHITE or (done and vmath.vector4(0.8, 0.8, 0.8, 1) or ui.MUTED)
+		track(self, ui.text(vmath.vector3(cxp, cyp - 44, 0), (lv.name or ("Level " .. i)):upper(), "small", name_col))
+		if (lv.coins or 0) > 0 then
+			track(self, ui.text(vmath.vector3(cxp, cyp - 64, 0), commas(lv.coins) .. "c", "small", at and ui.GOLD or ui.MUTED))
+		end
+	end
+
+	-- your avatar stands on the current position (lobby landing before level 1)
+	local u = ws.current_user_data or {}
+	local here = (current >= 1 and MAP_COORDS[math.min(current, #MAP_COORDS)]) or LANDING
+	local ax, ay = map_pos(here)
+	track(self, ui.pie(vmath.vector3(ax, ay + 58, 0), 30, vmath.vector4(0, 0, 0, 0.55)))
+	track(self, ui.avatar(vmath.vector3(ax, ay + 58, 0), vmath.vector3(52, 52, 0), u.avatar or 1))
+
+	-- Chrome ON TOP of the map: title, back, tournament header.
+	track(self, ui.text(vmath.vector3(CX, EDGE_T - 44, 0), "TOURNAMENT", "title", ui.GOLD))
+	local bb = track(self, ui.btn9(vmath.vector3(EDGE_L + 90, EDGE_T - 44, 0), vmath.vector3(140, 44, 0), "secondary_btn"))
+	track(self, ui.text(vmath.vector3(EDGE_L + 90, EDGE_T - 44, 0), "< BACK", "small", ui.WHITE))
+	self.buttons[#self.buttons+1] = { node = bb, id = "back" }
+
 	track(self, ui.panel9(vmath.vector3(CX, EDGE_T - 100, 0), vmath.vector3(700, 70, 0), "container_bg"))
 	track(self, ui.text(vmath.vector3(CX, EDGE_T - 88, 0), (t.name or "Global Tournament"):upper(), "body", th.accent))
 	track(self, ui.image(vmath.vector3(CX-90, EDGE_T - 114, 0), vmath.vector3(18,18,0), "coin_icon"))
 	track(self, ui.text(vmath.vector3(CX+10, EDGE_T - 114, 0),
 		"Grand Prize:  "..commas(grand).." coins", "small", ui.GOLD))
-
-	-- Vertical progress ladder (level 1 at the bottom).
-	local n = #levels
-	local ladder_top    = EDGE_T - 150
-	local ladder_bottom = EDGE_B + 110
-	local step = math.min(68, (ladder_top - ladder_bottom) / n)
-	for i = 1, n do
-		local lv = levels[i]
-		local y  = ladder_bottom + (i-1) * step
-		local done = (i <= current)
-		local at   = (i == current + 1)
-		local anim = at and "container_bg_active" or (done and "container_bg" or nil)
-
-		if anim then
-			track(self, ui.panel9(vmath.vector3(CX, y, 0), vmath.vector3(640, step-8, 0), anim))
-		else
-			track(self, ui.box(vmath.vector3(CX, y, 0), vmath.vector3(640, step-8, 0),
-				vmath.vector4(0.10,0.10,0.13,0.70)))
-		end
-
-		local bar_col = at and ui.GOLD
-			or done and vmath.vector4(0.2,0.7,0.35,1)
-			or vmath.vector4(0.25,0.25,0.30,1)
-		track(self, ui.box(vmath.vector3(CX-317, y, 0), vmath.vector3(4, step-8, 0), bar_col))
-
-		track(self, ui.text(vmath.vector3(CX-290, y, 0), tostring(i), "body",
-			at and ui.GOLD or done and ui.WHITE or ui.MUTED))
-		local nl = track(self, ui.text(vmath.vector3(CX-260, y, 0),
-			(lv.name or "Level "..i):upper(), "small",
-			at and ui.WHITE or done and vmath.vector4(0.8,0.8,0.8,1) or ui.MUTED))
-		gui.set_pivot(nl, gui.PIVOT_W)
-		local rl = track(self, ui.text(vmath.vector3(CX+300, y, 0),
-			commas(lv.coins or 0).."c  /  "..tostring(lv.points or 0).."p", "small",
-			done and ui.GOLD or ui.MUTED))
-		gui.set_pivot(rl, gui.PIVOT_E)
-		if done then
-			track(self, ui.text(vmath.vector3(CX+320, y, 0), "✓", "body", vmath.vector4(0.3,0.9,0.5,1)))
-		end
-	end
 
 	-- PLAY button anchored to the bottom edge.
 	local ready = (next(ws.active_game_state or {}) == nil)
