@@ -712,6 +712,15 @@ function on_message(self, message_id, message, sender)
 
     elseif message_id == hash("timer_expired") then
         if self.online_mode then return end
+        -- 4-player tournament: a timeout doesn't forfeit the whole bracket —
+        -- the seat simply passes (rotate to the next survivor).
+        if self.t4 then
+            if self.is_player_turn() and not self.is_animating and not self.game_over then
+                notify_gui(self.gui_hud, "skip", { show = false })
+                require("modules.tournament4").advance(self)
+            end
+            return
+        end
         if self.is_player_turn() and not self.waiting and not self.is_animating and not self.game_over then
             notify_gui(self.gui_hud, "skip", { show = false })
             self.end_game(false, false)
