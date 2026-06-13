@@ -6,10 +6,10 @@
 --
 -- All real game logic lives in:
 --   modules.board_layout  layout + positioning
---   modules.card_view     sprites + card animations
---   modules.rules_eval    rule evaluation + scoring
---   modules.game_state    fresh/destroy lifecycle
---   modules.game_flow     play/draw/reshuffle/win/end + boot dispatch
+--   modules.card_view      sprites + card animations
+--   modules.rules_eval     rule evaluation + scoring
+--   modules.game_state     fresh/destroy lifecycle
+--   modules.game_flow      play/draw/reshuffle/win/end + boot dispatch
 --   modules.online_handler / offline_handler  (unchanged)
 ----------------------------------------------------------------------
 local sound = require "modules.sound"
@@ -73,9 +73,13 @@ local function reconcile_input_locks(self)
     if not self.online_mode then return end
     if not self.is_player_turn() then return end
 
+    -- FIXED: We now additionally check if we are currently mid-animation 
+    -- or if we have already queued actions for this turn locally.
     local server_busy = self.is_processing_move
         or (#self.move_queue > 0)
         or self.is_waiting_for_server_response
+        or self.is_animating
+        or (self.current_turn_actions and #self.current_turn_actions > 0)
 
     if server_busy then return end
 
@@ -86,9 +90,6 @@ local function reconcile_input_locks(self)
     if self.is_local_action_locked then
         self.is_local_action_locked = false
     end
-    -- is_animating is deliberately NOT touched here. During our own draw/deal it
-    -- is legitimately true, and clearing it would let a tap race a mid-flight
-    -- animation. Cross-turn cases never set is_animating, so it isn't the culprit.
 end
 
 ----------------------------------------------------------------------
@@ -108,10 +109,10 @@ function init(self)
     self.Z_FLY  = BL.Z_FLY
     self.Z_CUT  = BL.Z_CUT
     self.CARD_SCALE_F = BL.CARD_SCALE_F
+    
+    self.emoji_popover_open = false -- Tracks popover state to block deck hits
 
     -- ---- self.* dispatch table -------------------------------------------
-    -- This is the single seam that lets the modules (and online/offline
-    -- handlers) call back into the running script without circular requires.
     self.play_sound       = function(name) play_sound(self, name) end
     self.set_face         = CV.set_face
     self.set_back         = CV.set_back
@@ -173,13 +174,16 @@ function init(self)
     end
     -- ----------------------------------------------------------------------
 
+    -- Update layout first to calculate positions
     BL.update_layout(self)
-    self.bg_img_w, self.bg_img_h = BL.LOGICAL_W, BL.LOGICAL_H
-    pcall(function()
-        local sz = go.get("#background", "size")
-        if sz and sz.x > 0 then self.bg_img_w, self.bg_img_h = sz.x, sz.y end
-    end)
-    BL.fit_background(self)
+    
+    -- CRITICAL FIX: Initialize background with multiple retry attempts
+    -- This solves the "first load doesn't cover full screen" issue by:
+    -- 1. Resetting cached dimensions to force fresh detection
+    -- 2. Trying multiple times at increasing intervals
+    -- 3. Using go.get("texture_size") which is more reliable for sprites
+    BL.init_background(self)
+
     GS.fresh_state(self)
     self.active = false
 end
@@ -316,6 +320,44 @@ local function get_logical_touch(action)
     end
 end
 
+----------------------------------------------------------------------
+-- Safe Shake Animation
+-- Prevents cards from "walking" away from their original position
+-- if the user rapidly taps them while they are already animating.
+----------------------------------------------------------------------
+local function safe_shake_card(self, card)
+    if not card or not card.id then return end
+    
+    -- 1. Cancel any active shake to prevent compound offsets
+    go.cancel_animations(card.id, "position.x")
+    
+    -- 2. Re-calculate the exact layout X coordinate for this card
+    local idx = 1
+    for i, c in ipairs(self.player_hand) do
+        if c.id == card.id then idx = i; break end
+    end
+    
+    local spacing = self.calc_spacing(#self.player_hand)
+    local start_x = self.CENTER.x - ((#self.player_hand - 1) * spacing) / 2.0
+    local true_x = start_x + (idx - 1) * spacing
+    
+    -- 3. Snap to the true origin first
+    local p = go.get_position(card.id)
+    p.x = true_x
+    go.set_position(p, card.id)
+    
+    -- 4. Ping-pong animate and guarantee it snaps back on complete
+    go.animate(card.id, "position.x", go.PLAYBACK_ONCE_PINGPONG, true_x + 18, go.EASING_INOUTSINE, 0.08, 0, function()
+        if card.id then
+            local final_p = go.get_position(card.id)
+            final_p.x = true_x
+            go.set_position(final_p, card.id)
+        end
+    end)
+    
+    play_sound(self, "SoundInvalid")
+end
+
 function on_input(self, action_id, action)
     if not self.active then return end
     if action_id ~= hash("touch") then return end
@@ -325,7 +367,8 @@ function on_input(self, action_id, action)
     -- FIRST tap registers the moment the server says it's our turn.
     reconcile_input_locks(self)
 
-    if self.game_over or self.is_animating or self.is_processing_move then
+    -- Ignore physical hits when the emoji popover is actively covering the screen
+    if self.game_over or self.is_animating or self.is_processing_move or self.emoji_popover_open then
         return true
     end
 
@@ -341,32 +384,19 @@ function on_input(self, action_id, action)
 
     if hit_card then
         if not self.is_player_turn() or self.waiting or self.is_local_action_locked or self.is_suit_selection_active then
-            CV.shake_card(self, hit_card)
+            safe_shake_card(self, hit_card)
             return true
         end
 
         local result = RE.evaluate_play(self, hit_card, self.player_hand)
         if result.valid then
+            -- Permanently lock the screen. We REMOVED the faulty timer block that was
+            -- prematurely clearing this lock. game_flow.lua will naturally unlock it 
+            -- via `after_play_settled()` if the card grants you a continued turn.
             self.is_local_action_locked = true
-
-            local val = tonumber(hit_card.v) or 10
-            local is_rapid_card = (val == 2 or val == 3 or val == 8 or val == 11 or val == 50)
-
-            if self.cutting_card and val == 7 and tostring(hit_card.s) == tostring(self.cutting_card.s) then
-                is_rapid_card = true
-            end
-
-            local lock_time = is_rapid_card and 0.01 or 0.4
-            local seq = self._seq
-            timer.delay(lock_time, false, function()
-                if seq == self._seq then
-                    self.is_local_action_locked = false
-                end
-            end)
-
             self.play_card(hit_card, true, result)
         else
-            CV.shake_card(self, hit_card)
+            safe_shake_card(self, hit_card)
         end
         return true
     end
@@ -713,6 +743,10 @@ function on_message(self, message_id, message, sender)
         if self.online_mode and message and message.emoji then
             ws.send_emoji(message.emoji, message.sound, self.opponent_id)
         end
+
+    -- ADDED: Updates the state flag based on Emoji Popover
+    elseif message_id == hash("emoji_state") then
+        self.emoji_popover_open = message.open
 
     elseif message_id == hash("ws_emoji") then
         local sender = tostring((message and message.sender) or "")

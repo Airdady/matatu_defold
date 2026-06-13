@@ -56,20 +56,90 @@ end
 
 ----------------------------------------------------------------------
 -- Background fit (aspect-fill)
+-- CRITICAL FIX: Use texture dimensions from the atlas/sprite instead of
+-- relying on cached bg_img_w/h which may be nil on first load.
 ----------------------------------------------------------------------
 function M.fit_background(self)
     local ok, ww, wh = pcall(window.get_size)
     if not ok or not ww or ww == 0 then ww = LOGICAL_W end
     if not wh or wh == 0 then wh = LOGICAL_H end
+    
     local screen_aspect  = ww / wh
     local logical_aspect = LOGICAL_W / LOGICAL_H
+    
+    -- Calculate the visible area dimensions
     local target_w, target_h = LOGICAL_W, LOGICAL_H
-    if screen_aspect > logical_aspect then target_w = LOGICAL_H * screen_aspect
-    else target_h = LOGICAL_W / screen_aspect end
-    local img_w = self.bg_img_w or LOGICAL_W
-    local img_h = self.bg_img_h or LOGICAL_H
-    local sf = math.max(target_w / img_w, target_h / img_h)
-    pcall(function() go.set("#background", "scale", vmath.vector3(sf, sf, 1.0)) end)
+    if screen_aspect > logical_aspect then 
+        target_w = LOGICAL_H * screen_aspect
+    else 
+        target_h = LOGICAL_W / screen_aspect 
+    end
+    
+    -- CRITICAL: Always try to get the actual texture size from the sprite
+    -- This is the most reliable way to get the background image dimensions
+    local img_w = LOGICAL_W  -- default fallback
+    local img_h = LOGICAL_H  -- default fallback
+    
+    pcall(function()
+        -- Try to get the texture dimensions from the sprite component
+        local url = msg.url("#background")
+        local texture_w, texture_h = go.get(url, "texture_size")
+        
+        if texture_w and texture_h and texture_w > 0 and texture_h > 0 then
+            img_w = texture_w
+            img_h = texture_h
+            -- Cache for future use
+            self.bg_img_w = img_w
+            self.bg_img_h = img_h
+        else
+            -- Fallback: try size property
+            local sz = go.get(url, "size")
+            if sz and sz.x > 0 and sz.y > 0 then
+                img_w = sz.x
+                img_h = sz.y
+                self.bg_img_w = img_w
+                self.bg_img_h = img_h
+            elseif self.bg_img_w and self.bg_img_w > 0 then
+                -- Use cached values if available
+                img_w = self.bg_img_w
+                img_h = self.bg_img_h
+            end
+        end
+    end)
+    
+    -- Calculate scale to fill the screen (aspect-fill)
+    local scale_x = target_w / img_w
+    local scale_y = target_h / img_h
+    local sf = math.max(scale_x, scale_y)
+    
+    -- Apply the scale
+    pcall(function()
+        go.set("#background", "scale", vmath.vector3(sf, sf, 1.0))
+    end)
+end
+
+----------------------------------------------------------------------
+-- Initialize background on first load
+-- Called from init() to ensure background is properly sized from the start
+----------------------------------------------------------------------
+function M.init_background(self)
+    -- Reset cached dimensions to force fresh detection
+    self.bg_img_w = nil
+    self.bg_img_h = nil
+    
+    -- Apply fitting immediately
+    M.fit_background(self)
+    
+    -- Schedule delayed re-fits to catch late-loading textures
+    -- Multiple attempts at increasing intervals to handle various loading times
+    local delays = {0.05, 0.15, 0.3, 0.6, 1.0}
+    for _, delay in ipairs(delays) do
+        timer.delay(delay, false, function()
+            if self.active ~= false then  -- Only if still on this screen
+                M.fit_background(self)
+            end
+        end)
+    end
 end
 
 ----------------------------------------------------------------------
