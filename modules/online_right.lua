@@ -207,10 +207,15 @@ function M.draw(self, ctx, left_M)
     track(self, ui.box(vmath.vector3(info_cx, name_y, 0), vmath.vector3(info_w, name_h, 0), C.COL_NAMEID_BG))
     txtL(self, info_l + 10, name_y, string.upper(u.username or "PLAYER"), "body", C.COL_BRIGHT)
 
-    mkbtn(self, "nav_account", vmath.vector3(inner_r - 16, name_y, 0), vmath.vector3(28, 28, 0), nil, vmath.vector4(0,0,0,0))
-    for li = -1, 1 do
-        track(self, ui.box(vmath.vector3(inner_r - 16, name_y + li * 5, 0), vmath.vector3(14, 2, 0), C.COL_MID))
-    end
+    -- Pencil icon → opens the profile screen to edit username/avatar.
+    mkbtn(self, "nav_account", vmath.vector3(inner_r - 16, name_y, 0), vmath.vector3(30, 30, 0), nil, vmath.vector4(0,0,0,0))
+    local COL_PENCIL = vmath.vector4(1.0, 0.78, 0.18, 1.0)
+    -- diagonal pencil body
+    local body = track(self, ui.box(vmath.vector3(inner_r - 16, name_y + 1, 0), vmath.vector3(16, 5, 0), COL_PENCIL))
+    gui.set_rotation(body, vmath.vector3(0, 0, 45))
+    -- pencil tip (dark nib at the lower-left end)
+    local tip = track(self, ui.box(vmath.vector3(inner_r - 21, name_y - 4, 0), vmath.vector3(5, 5, 0), C.COL_DIM))
+    gui.set_rotation(tip, vmath.vector3(0, 0, 45))
 
     -- Balance + Points
     local stat_y  = name_y - name_h/2 - name_gap - stat_h/2

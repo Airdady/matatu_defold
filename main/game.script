@@ -223,7 +223,13 @@ end
 ----------------------------------------------------------------------
 local function process_game_over_queue(self, results)
     if not self.online_mode or self.game_over then return end
-    
+
+    -- Fresh leaderboard the backend rebuilds at game over (username + points
+    -- + position): refresh the standings panel so it never shows stale rows.
+    if type(results.rank) == "table" and #results.rank > 0 then
+        notify_gui(self.gui_hud, "update_standings", { ranks = OnlineHandler.slim_ranks(results.rank) })
+    end
+
     -- Round/tournament end carries the final currentScores: refresh
     -- the scoreboard before the modal shows (Godot HudUI game-over
     -- sync), so ended rounds never display stale numbers.

@@ -30,9 +30,10 @@ M.ZOMBIE_TIMEOUT = 13.0
 M.TURN_SECONDS = 30
 
 -- Stake tiers for the lobby (amount = coins wagered, charge = fee, points won).
+-- 50-coin stake retired: lowest paid stake is now 100.
 M.STAKE_LEVELS = {
 	{ amount = 0, charge = 0, points = 0, label = "Free" },
-	{ amount = 50, charge = 5, points = 5, label = "50" },
+	{ amount = 100, charge = 10, points = 10, label = "100" },
 	{ amount = 200, charge = 20, points = 20, label = "200" },
 	{ amount = 500, charge = 50, points = 50, label = "500" },
 	{ amount = 1000, charge = 100, points = 100, label = "1000" },
