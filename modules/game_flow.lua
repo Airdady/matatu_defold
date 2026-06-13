@@ -40,6 +40,13 @@ function M.play_card(self, rec, is_player, result)
     log(actor .. " played " .. Defs.card_name(rec))
     local src_hand = is_player and self.player_hand or self.ai_hand
     local is_last = (#src_hand <= 1)
+    
+    -- Sequence Tracker for Swift Validation (Rapid Tapping)
+    -- We assign a ticket to every card played. If multiple cards are flying,
+    -- only the one with the highest ticket gets to resolve the rules.
+    self._play_ticket = (self._play_ticket or 0) + 1
+    local current_ticket = self._play_ticket
+
     RE.trigger_play_effects(self, rec, is_last)
 
     local src = is_player and self.player_hand or self.ai_hand
@@ -64,7 +71,7 @@ function M.play_card(self, rec, is_player, result)
 
     self.animate_to_pile(rec, is_player, function()
         if is_player or not self.online_mode then
-            M.after_play_settled(self, rec, is_player, result)
+            M.after_play_settled(self, rec, is_player, result, current_ticket)
         end
     end)
     self.position_hands(true)
@@ -72,8 +79,16 @@ function M.play_card(self, rec, is_player, result)
     RE.pre_validate_hand(self)
 end
 
-function M.after_play_settled(self, rec, is_player, result)
+function M.after_play_settled(self, rec, is_player, result, ticket)
     if self.game_over then return end
+    
+    -- SWIFT VALIDATION PROTECTOR
+    -- If a newer card has already been played while this one was animating, 
+    -- silently abort this callback. Let the final card run the rules!
+    if ticket and self._play_ticket and ticket < self._play_ticket then
+        return
+    end
+
     local actor = is_player and "You" or "Opponent"
     local hand  = is_player and self.player_hand or self.ai_hand
     local NA    = Rules.NextActionType

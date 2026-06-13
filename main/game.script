@@ -79,6 +79,7 @@ local function reconcile_input_locks(self)
         or (#self.move_queue > 0)
         or self.is_waiting_for_server_response
         or self.is_animating
+        or ((self._gs_anim_locks or 0) > 0)
         or (self.current_turn_actions and #self.current_turn_actions > 0)
 
     if server_busy then return end
@@ -112,6 +113,11 @@ function init(self)
     
     self.emoji_popover_open = false -- Tracks popover state to block deck hits
 
+    self.pending_game_over_data = nil
+    self._game_over_settle_time = 0
+    self._game_over_absolute_timeout = 0
+    self._gs_anim_locks = 0
+
     -- ---- self.* dispatch table -------------------------------------------
     self.play_sound       = function(name) play_sound(self, name) end
     self.set_face         = CV.set_face
@@ -123,10 +129,38 @@ function init(self)
     self.hand_score       = function(hand) return RE.hand_score(hand) end
 
     self.position_hands   = function(animate) BL.position_hands(self, animate) end
-    self.animate_to_pile  = function(rec, is_player, on_done) CV.animate_to_pile(self, rec, is_player, on_done) end
-    self.draw_to_hand     = function(hand, is_player, count, done) GF.draw_to_hand(self, hand, is_player, count, done) end
-    self.reshuffle_deck   = function(done) GF.reshuffle_deck(self, done) end
-    self.animate_shuffle  = function(cards, done) CV.animate_shuffle(self, cards, done) end
+    
+    self.animate_to_pile = function(rec, is_player, on_done)
+        self._gs_anim_locks = self._gs_anim_locks + 1
+        CV.animate_to_pile(self, rec, is_player, function(...)
+            self._gs_anim_locks = math.max(0, self._gs_anim_locks - 1)
+            if on_done then on_done(...) end
+        end)
+    end
+
+    self.draw_to_hand = function(hand, is_player, count, done)
+        self._gs_anim_locks = self._gs_anim_locks + 1
+        GF.draw_to_hand(self, hand, is_player, count, function(...)
+            self._gs_anim_locks = math.max(0, self._gs_anim_locks - 1)
+            if done then done(...) end
+        end)
+    end
+
+    self.reshuffle_deck = function(done)
+        self._gs_anim_locks = self._gs_anim_locks + 1
+        GF.reshuffle_deck(self, function(...)
+            self._gs_anim_locks = math.max(0, self._gs_anim_locks - 1)
+            if done then done(...) end
+        end)
+    end
+
+    self.animate_shuffle = function(cards, done)
+        self._gs_anim_locks = self._gs_anim_locks + 1
+        CV.animate_shuffle(self, cards, function(...)
+            self._gs_anim_locks = math.max(0, self._gs_anim_locks - 1)
+            if done then done(...) end
+        end)
+    end
 
     self.trigger_play_effects = function(rec, is_last) RE.trigger_play_effects(self, rec, is_last) end
     self.evaluate_play    = function(rec, hand) return RE.evaluate_play(self, rec, hand) end
@@ -185,6 +219,33 @@ function init(self)
 end
 
 ----------------------------------------------------------------------
+-- Deferred Game Over dispatcher
+----------------------------------------------------------------------
+local function process_game_over_queue(self, results)
+    if not self.online_mode or self.game_over then return end
+    
+    -- Round/tournament end carries the final currentScores: refresh
+    -- the scoreboard before the modal shows (Godot HudUI game-over
+    -- sync), so ended rounds never display stale numbers.
+    OnlineHandler.process_scoreboard(self, {
+        gameType = results.gameType,
+        tournamentId = (type(results.tournamentData) == "table" and results.tournamentData.id) or nil,
+        gameOverState = results,
+    })
+    
+    -- Tournament fully over: the series-local scoreboard data must
+    -- not leak into the next match — clear the latch once the final
+    -- score has been displayed.
+    if results.isMatchComplete == true or results.tournamentCompleted == true then
+        self._sb_series_key, self._sb_tid = nil, nil
+        self._final_state_locked = false
+    end
+    
+    local is_cut = results.isCut or (results.reason == "CUTTING_CARD")
+    self.end_game((results.winner == self.my_player_id), is_cut, results)
+end
+
+----------------------------------------------------------------------
 -- Watchdogs (online only): release stale locks the moment it's our turn
 ----------------------------------------------------------------------
 function update(self, dt)
@@ -197,10 +258,33 @@ function update(self, dt)
     end
 
     if self.online_mode then
+        -- Game Over Queue Watchdog: Wait for final moves & animations to settle
+        if self.pending_game_over_data then
+            self._game_over_absolute_timeout = (self._game_over_absolute_timeout or 0) + dt
+            
+            local has_active_anims = (self._gs_anim_locks > 0) or self.is_animating
+            
+            if (#self.move_queue == 0 and not self.is_processing_move and not has_active_anims) or (self._game_over_absolute_timeout > 6.0) then
+                self._game_over_settle_time = (self._game_over_settle_time or 0) + dt
+                
+                -- Wait a grace period (1.5s) for visual breathing room, or force if timeout is hit
+                if self._game_over_settle_time >= 1.5 or self._game_over_absolute_timeout > 6.0 then
+                    local results = self.pending_game_over_data
+                    self.pending_game_over_data = nil
+                    self._game_over_settle_time = 0
+                    self._game_over_absolute_timeout = 0
+                    self._gs_anim_locks = 0
+                    process_game_over_queue(self, results)
+                end
+            else
+                self._game_over_settle_time = 0
+            end
+        end
+
         if #self.move_queue == 0 then
             if self.is_processing_move then
                 self.stuck_count = (self.stuck_count or 0) + dt
-                if self.stuck_count > 1.5 then
+                if self.stuck_count > 3.5 then
                     print("[DEBUG] Watchdog resetting is_processing_move lock!")
                     self.is_processing_move = false
                     self.stuck_count = 0
@@ -220,7 +304,7 @@ function update(self, dt)
 
         if self.is_player_turn() and not self.is_processing_move and #self.move_queue == 0 and self.is_animating then
             self.anim_stuck = (self.anim_stuck or 0) + dt
-            if self.anim_stuck > 1.0 then
+            if self.anim_stuck > 3.5 then
                 print("[DEBUG] Watchdog clearing stuck is_animating lock!")
                 self.is_animating = false
                 self.anim_stuck = 0
@@ -234,7 +318,7 @@ function update(self, dt)
            and not self.is_animating and not self.waiting and not self.is_suit_selection_active
            and self.is_local_action_locked and not self.is_waiting_for_server_response then
             self.lock_stuck = (self.lock_stuck or 0) + dt
-            if self.lock_stuck > 1.0 then
+            if self.lock_stuck > 3.5 then
                 print("[DEBUG] Watchdog clearing stuck is_local_action_locked!")
                 self.is_local_action_locked = false
                 self.lock_stuck = 0
@@ -364,7 +448,8 @@ function on_input(self, action_id, action)
     reconcile_input_locks(self)
 
     -- Ignore physical hits when the emoji popover is actively covering the screen
-    if self.game_over or self.is_animating or self.is_processing_move or self.emoji_popover_open then
+    -- SWIFT VALIDATION FIX: Removed animation locks from this global block so user can rapid-tap!
+    if self.game_over or self.is_processing_move or self.emoji_popover_open then
         return true
     end
 
@@ -386,11 +471,25 @@ function on_input(self, action_id, action)
 
         local result = RE.evaluate_play(self, hit_card, self.player_hand)
         if result.valid then
-            -- Permanently lock the screen. We REMOVED the faulty timer block that was
-            -- prematurely clearing this lock. game_flow.lua will naturally unlock it 
-            -- via `after_play_settled()` if the card grants you a continued turn.
+            -- Permanently lock the screen initially to prevent instant double-fires of the exact same tap.
             self.is_local_action_locked = true
             self.play_card(hit_card, true, result)
+            
+            -- SWIFT VALIDATION / RAPID TAP FIX:
+            -- If the card is a skipping/chaining card, instantly unlock the board after a 100ms debounce. 
+            -- This entirely bypasses the visual animation wait time so the player can seamlessly tap 
+            -- their next card in the sequence while the first one is still flying.
+            local val = tostring(hit_card.value or hit_card.v or hit_card.rank or hit_card.id or "")
+            local is_chain = result.play_again or result.continued_turn or result.chain or result.skip
+                          or string.find(val, "J") or string.find(val, "8") or string.find(val, "K")
+                          
+            if is_chain then
+                timer.delay(0.1, false, function()
+                    if self.is_player_turn() and not self.waiting then
+                        self.is_local_action_locked = false
+                    end
+                end)
+            end
         else
             safe_shake_card(self, hit_card)
         end
@@ -546,6 +645,12 @@ function on_message(self, message_id, message, sender)
         self._seq = (self._seq or 0) + 1
         self.round_story_active = false
         self._pending_next_state = nil
+        
+        -- Clear deferred game over state
+        self.pending_game_over_data = nil
+        self._game_over_settle_time = 0
+        self._game_over_absolute_timeout = 0
+        
         -- Leaving the board: force-close the auxiliary overlays so a half-open
         -- suit selector / game-over / disconnect modal can't bleed onto the
         -- lobby (those guis are not in the controller's screen list).
@@ -625,7 +730,34 @@ function on_message(self, message_id, message, sender)
                 opp_data.isAI = p.isAI or false
             end
 
-            ws.send_game_request(opp_data, stake)
+            -- FIXED: Extract the tournament/battle context to keep the rematch chained properly
+            local extra_data = nil
+            if self.game_state then
+                local is_tourney = false
+                local t_id = self.game_state.tournamentId or self._sb_tid
+                
+                if self.game_state.gameType == "TOURNAMENT" or self.game_state.gameType == "BATTLE" or t_id or self.game_state.tournament then
+                    is_tourney = true
+                end
+                
+                if is_tourney then
+                    if not t_id and type(self.game_state.tournament) == "table" then
+                        t_id = self.game_state.tournament.id or self.game_state.tournament._id
+                    end
+                    
+                    extra_data = {
+                        gameType = "TOURNAMENT",
+                        tournamentId = t_id
+                    }
+                end
+
+                if self.game_state.rules then
+                    extra_data = extra_data or {}
+                    extra_data.rules = self.game_state.rules
+                end
+            end
+
+            ws.send_game_request(opp_data, stake, extra_data)
 
             -- Wait for the opponent's answer; if none comes, go back to lobby.
             self.awaiting_replay = true
@@ -707,25 +839,14 @@ function on_message(self, message_id, message, sender)
         -- Clear any disconnect/reconnect overlay so it doesn't linger under the
         -- game-over modal (e.g. opponent's grace period elapsed into a no-show).
         notify_gui(self.gui_hud, "conn_overlay", { show = false })
+        
         if self.online_mode and not self.game_over then
-            local results = ws.last_game_over or {}
-            -- Round/tournament end carries the final currentScores: refresh
-            -- the scoreboard before the modal shows (Godot HudUI game-over
-            -- sync), so ended rounds never display stale numbers.
-            OnlineHandler.process_scoreboard(self, {
-                gameType = results.gameType,
-                tournamentId = (type(results.tournamentData) == "table" and results.tournamentData.id) or nil,
-                gameOverState = results,
-            })
-            -- Tournament fully over: the series-local scoreboard data must
-            -- not leak into the next match — clear the latch once the final
-            -- score has been displayed.
-            if results.isMatchComplete == true or results.tournamentCompleted == true then
-                self._sb_series_key, self._sb_tid = nil, nil
-                self._final_state_locked = false
-            end
-            local is_cut = results.isCut or (results.reason == "CUTTING_CARD")
-            self.end_game((results.winner == self.my_player_id), is_cut, results)
+            -- DEFERRED EXECUTION: Queue this data up instead of executing it 
+            -- immediately. The update() loop watchdog will check this and execute 
+            -- it ONLY when move queues are empty and animations finish.
+            self.pending_game_over_data = ws.last_game_over or {}
+            self._game_over_absolute_timeout = 0
+            self._game_over_settle_time = 0
         end
 
     -- ── Replay declined by the opponent → back to the lobby ──────────────────

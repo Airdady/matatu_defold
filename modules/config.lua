@@ -3,9 +3,9 @@
 
 local M = {}
 
-M.DOMAIN = "192.168.1.128:3000"
-M.BASE_URL = "http://" .. M.DOMAIN .. "/matatu"
-M.WS_URL = "ws://" .. M.DOMAIN .. "/matatu/ws"
+M.DOMAIN = "api.matatuleague.com"
+M.BASE_URL = "https://" .. M.DOMAIN .. "/matatu"
+M.WS_URL = "wss://" .. M.DOMAIN .. "/matatu/ws"
 
 M.APP_VERSION = "18.5.9"
 
