@@ -1,9 +1,5 @@
 -- online.gui_script
 -- Online players lobby (multiplayer hub).
--- Panel content is split into three modules:
---   modules/online_left.lua   (Season timer, Standings, Bonuses)
---   modules/online_center.lua (Header, Tabs, Stakes, User list)
---   modules/online_right.lua  (Profile, Standing badge, Battles, Tournaments)
 
 local ui        = require("modules.ui")
 local config    = require("modules.config")
@@ -11,12 +7,13 @@ local app_state = require("modules.app_state")
 local ws        = require("modules.websocket_manager")
 local screen    = require("modules.screen")
 
-local left_panel   = require("modules.online_left")
-local center_panel = require("modules.online_center")
-local right_panel  = require("modules.online_right")
+local left_panel      = require("modules.online_left")
+local center_panel    = require("modules.online_center")
+local right_panel     = require("modules.online_right")
+local dialog_incoming = require("modules.dialog_incoming")
+local dialog_outgoing = require("modules.dialog_outgoing")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
-
 local VISIBLE_W, VISIBLE_H = 1280, 720
 local EDGE_L, EDGE_R = 0, 1280
 local EDGE_B, EDGE_T = 0, 720
@@ -25,12 +22,10 @@ local CX, CY = 640, 360
 local TAB_QUICK   = 1
 local TAB_BATTLES = 2
 
--- ── Layout ────────────────────────────────────────────────────────────────────
+-- ── Colors & Spacing ──────────────────────────────────────────────────────────
 local SIDE_RATIO  = 0.30
 local SIDE_MARGIN = 20
 local CENTER_PAD  = 22
-
--- ── Spacing ───────────────────────────────────────────────────────────────────
 local ROW_H_SM    = 38
 local ROW_H_LG    = 44
 local ROW_H_LIST  = 56
@@ -40,21 +35,13 @@ local SECTION_GAP = 10
 local BLOCK_GAP   = 18
 local INNER_PAD   = 14
 
--- ── Colors ────────────────────────────────────────────────────────────────────
 local COL_BG       = vmath.vector4(0.165, 0.145, 0.133, 1.0)
 local COL_GLASS    = vmath.vector4(0.04, 0.04, 0.06, 0.70)
 local COL_GLASS_HI = vmath.vector4(0.10, 0.10, 0.12, 0.85)
-
 local ROW_EVEN     = vmath.vector4(0.10, 0.10, 0.12, 0.75)
 local ROW_ODD      = vmath.vector4(0.07, 0.07, 0.09, 0.60)
 local ROW_YOU      = vmath.vector4(0.28, 0.06, 0.06, 0.80)
-
-local TIER_GOLD    = vmath.vector4(1.00, 0.80, 0.20, 1.0)
-local TIER_SILVER  = vmath.vector4(0.70, 0.70, 0.72, 1.0)
-local TIER_BRONZE  = vmath.vector4(0.80, 0.50, 0.20, 1.0)
-local TIER_TEAL    = vmath.vector4(0.11, 0.62, 0.46, 0.85)
-local TIER_DIM     = vmath.vector4(0.35, 0.35, 0.38, 0.55)
-local TIER_COLORS  = { TIER_GOLD, TIER_SILVER, TIER_BRONZE, TIER_TEAL, TIER_DIM }
+local TIER_COLORS  = { vmath.vector4(1.00, 0.80, 0.20, 1.0), vmath.vector4(0.70, 0.70, 0.72, 1.0), vmath.vector4(0.80, 0.50, 0.20, 1.0), vmath.vector4(0.11, 0.62, 0.46, 0.85), vmath.vector4(0.35, 0.35, 0.38, 0.55) }
 
 local COL_DIM      = vmath.vector4(0.45, 0.45, 0.45, 1.0)
 local COL_MID      = vmath.vector4(0.65, 0.65, 0.65, 1.0)
@@ -79,46 +66,10 @@ local STRIPE_OUTER = vmath.vector4(0.169, 0.153, 0.141, 1.0)
 local STRIPE_MID   = vmath.vector4(0.039, 0.031, 0.027, 1.0)
 local STRIPE_INNER = vmath.vector4(0.337, 0.333, 0.314, 1.0)
 
--- ── Shared constants table passed to panel modules ────────────────────────────
--- (avoids re-declaring every color in each module file)
 local C = {
-    SIDE_MARGIN  = SIDE_MARGIN,
-    CENTER_PAD   = CENTER_PAD,
-    ROW_H_SM     = ROW_H_SM,
-    ROW_H_LG     = ROW_H_LG,
-    ROW_H_LIST   = ROW_H_LIST,
-    ROW_GAP      = ROW_GAP,
-    HDR_H_TABLE  = HDR_H_TABLE,
-    SECTION_GAP  = SECTION_GAP,
-    BLOCK_GAP    = BLOCK_GAP,
-    INNER_PAD    = INNER_PAD,
-    COL_BG       = COL_BG,
-    COL_GLASS    = COL_GLASS,
-    COL_GLASS_HI = COL_GLASS_HI,
-    ROW_EVEN     = ROW_EVEN,
-    ROW_ODD      = ROW_ODD,
-    ROW_YOU      = ROW_YOU,
-    TIER_COLORS  = TIER_COLORS,
-    TIER_DIM     = TIER_DIM,
-    COL_DIM      = COL_DIM,
-    COL_MID      = COL_MID,
-    COL_BRIGHT   = COL_BRIGHT,
-    COL_GOLD     = COL_GOLD,
-    COL_WHITE    = COL_WHITE,
-    COL_GREEN    = COL_GREEN,
-    COL_RED      = COL_RED,
-    COL_CYAN     = COL_CYAN,
-    COL_BORDER   = COL_BORDER,
-    COL_GOLD_BDR = COL_GOLD_BDR,
-    COL_GOLD_BDR_D = COL_GOLD_BDR_D,
-    COL_TIMER_BG   = COL_TIMER_BG,
-    COL_HEADER_BG  = COL_HEADER_BG,
-    COL_BADGE_BG   = COL_BADGE_BG,
-    COL_NAMEID_BG  = COL_NAMEID_BG,
-    COL_STAT_BG    = COL_STAT_BG,
+    SIDE_MARGIN = SIDE_MARGIN, CENTER_PAD = CENTER_PAD, ROW_H_SM = ROW_H_SM, ROW_H_LG = ROW_H_LG, ROW_H_LIST = ROW_H_LIST, ROW_GAP = ROW_GAP, HDR_H_TABLE = HDR_H_TABLE, SECTION_GAP = SECTION_GAP, BLOCK_GAP = BLOCK_GAP, INNER_PAD = INNER_PAD, COL_BG = COL_BG, COL_GLASS = COL_GLASS, COL_GLASS_HI = COL_GLASS_HI, ROW_EVEN = ROW_EVEN, ROW_ODD = ROW_ODD, ROW_YOU = ROW_YOU, TIER_COLORS = TIER_COLORS, TIER_DIM = TIER_COLORS[5], COL_DIM = COL_DIM, COL_MID = COL_MID, COL_BRIGHT = COL_BRIGHT, COL_GOLD = COL_GOLD, COL_WHITE = COL_WHITE, COL_GREEN = COL_GREEN, COL_RED = COL_RED, COL_CYAN = COL_CYAN, COL_BORDER = COL_BORDER, COL_GOLD_BDR = COL_GOLD_BDR, COL_GOLD_BDR_D = COL_GOLD_BDR_D, COL_TIMER_BG = COL_TIMER_BG, COL_HEADER_BG = COL_HEADER_BG, COL_BADGE_BG = COL_BADGE_BG, COL_NAMEID_BG = COL_NAMEID_BG, COL_STAT_BG = COL_STAT_BG,
 }
 
--- ── Utility ───────────────────────────────────────────────────────────────────
 local function refresh_wh()
     local m = screen.metrics()
     VISIBLE_W, VISIBLE_H = m.VW, m.VH
@@ -127,482 +78,97 @@ local function refresh_wh()
     CX, CY = m.CX, m.CY
 end
 
-local function commas(n)
-    n = tostring(math.floor(tonumber(n) or 0))
-    return (n:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""))
-end
-
-local function clear(self)
-    for _, n in ipairs(self.nodes) do pcall(gui.delete_node, n) end
-    self.nodes, self.buttons = {}, {}
-end
-
+local function commas(n) return (tostring(math.floor(tonumber(n) or 0)):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")) end
+local function clear(self) for _, n in ipairs(self.nodes) do pcall(gui.delete_node, n) end; self.nodes, self.buttons = {}, {} end
 local function track(self, n) self.nodes[#self.nodes+1] = n; return n end
-
-local function txtL(self, x, y, str, font, color)
-    local t = track(self, ui.text(vmath.vector3(x, y, 0), str, font, color))
-    gui.set_pivot(t, gui.PIVOT_W)
-    return t
-end
-local function txtR(self, x, y, str, font, color)
-    local t = track(self, ui.text(vmath.vector3(x, y, 0), str, font, color))
-    gui.set_pivot(t, gui.PIVOT_E)
-    return t
-end
+local function txtL(self, x, y, str, font, color) local t = track(self, ui.text(vmath.vector3(x, y, 0), str, font, color)); gui.set_pivot(t, gui.PIVOT_W); return t end
+local function txtR(self, x, y, str, font, color) local t = track(self, ui.text(vmath.vector3(x, y, 0), str, font, color)); gui.set_pivot(t, gui.PIVOT_E); return t end
 
 local function mkbtn(self, id, pos, size, label, style, data, font, text_color)
     local bg
-    if type(style) == "string" then
-        bg = track(self, ui.btn9(pos, size, style))
-    else
-        bg = track(self, ui.box(pos, size, style or COL_GLASS_HI))
-    end
-    
+    if type(style) == "string" then bg = track(self, ui.btn9(pos, size, style)) else bg = track(self, ui.box(pos, size, style or COL_GLASS_HI)) end
     if label then
-        local btn_font = font
-        if btn_font ~= "luckiest_guy_md" and btn_font ~= "luckiest_guy_sm" then
-            btn_font = size.y >= 44 and "luckiest_guy_md" or "luckiest_guy_sm"
-        end
-        
-        -- Including the Y-offset fix from earlier
-        local text_pos = vmath.vector3(pos.x, pos.y - 3, pos.z)
-        
-        -- Change COL_WHITE to COL_CREAM here
-        track(self, ui.text(text_pos, label, btn_font, text_color or COL_CREAM))
+        local btn_font = font or (size.y >= 44 and "luckiest_guy_md" or "luckiest_guy_sm")
+        track(self, ui.text(vmath.vector3(pos.x, pos.y - 3, pos.z), label, btn_font, text_color or COL_CREAM))
     end
     self.buttons[#self.buttons+1] = { node = bg, id = id, data = data }
     return bg
 end
 
-local function glass(self, pos, size, style)
-    track(self, ui.box(pos, size, COL_BG))
-    return track(self, ui.btn9(pos, size, style or "container_bg"))
-end
-
-local function get_layout()
-    local left_w  = VISIBLE_W * SIDE_RATIO
-    local right_w = VISIBLE_W * SIDE_RATIO
-    local div_lx  = EDGE_L + left_w
-    local div_rx  = EDGE_R - right_w
-    return left_w, right_w, div_lx, div_rx
-end
-
--- ── Context table passed to panel modules ─────────────────────────────────────
-local function make_ctx()
-    return {
-        C          = C,
-        ui         = ui,
-        track      = track,
-        txtL       = txtL,
-        txtR       = txtR,
-        mkbtn      = mkbtn,
-        glass      = glass,
-        commas     = commas,
-        get_layout = get_layout,
-        EDGE_L     = EDGE_L,
-        EDGE_R     = EDGE_R,
-        EDGE_B     = EDGE_B,
-        EDGE_T     = EDGE_T,
-        CX         = CX,
-        CY         = CY,
-    }
-end
-
--- ── Dividers ──────────────────────────────────────────────────────────────────
-local function vbar(self, x, w, color)
-    track(self, ui.box(vmath.vector3(x, CY, 0), vmath.vector3(w, VISIBLE_H, 0), color))
-end
+local function glass(self, pos, size, style) track(self, ui.box(pos, size, COL_BG)); return track(self, ui.btn9(pos, size, style or "container_bg")) end
+local function get_layout() return VISIBLE_W*SIDE_RATIO, VISIBLE_W*SIDE_RATIO, EDGE_L+VISIBLE_W*SIDE_RATIO, EDGE_R-VISIBLE_W*SIDE_RATIO end
 
 local function draw_dividers(self, div_lx, div_rx)
-    vbar(self, div_lx + 2,  4,  STRIPE_OUTER)
-    vbar(self, div_lx + 9,  10, STRIPE_MID)
-    vbar(self, div_lx + 16, 4,  STRIPE_INNER)
-    vbar(self, div_rx - 2,  4,  STRIPE_OUTER)
-    vbar(self, div_rx - 9,  10, STRIPE_MID)
-    vbar(self, div_rx - 16, 4,  STRIPE_INNER)
+    local function vbar(x, w, col) track(self, ui.box(vmath.vector3(x, CY, 0), vmath.vector3(w, VISIBLE_H, 0), col)) end
+    vbar(div_lx + 2, 4, STRIPE_OUTER); vbar(div_lx + 9, 10, STRIPE_MID); vbar(div_lx + 16, 4, STRIPE_INNER)
+    vbar(div_rx - 2, 4, STRIPE_OUTER); vbar(div_rx - 9, 10, STRIPE_MID); vbar(div_rx - 16, 4, STRIPE_INNER)
 end
 
--- ── Dialog helpers ────────────────────────────────────────────────────────────
-local DLG_RED    = vmath.vector4(1.0, 0.40, 0.40, 1.0)
-local DLG_AV_BG  = vmath.vector4(0.20, 0.20, 0.20, 0.50)
-local DLG_SEARCH = vmath.vector4(1.0, 0.84, 0.00, 1.0)
-
-local function with_a(c, a)
-    a = a or 1
-    return vmath.vector4(c.x, c.y, c.z, c.w * a)
-end
-
-local function dlg_avatar(self, x, y, size, avatar_id, a)
-    track(self, ui.pie(vmath.vector3(x, y, 0), size/2 + 6, with_a(DLG_AV_BG, a)))
-    local av = track(self, ui.avatar(vmath.vector3(x, y, 0), vmath.vector3(size, size, 0), avatar_id))
-    gui.set_color(av, vmath.vector4(1, 1, 1, a or 1))
-end
-
+-- ── Dialog & UI Helpers passed to submodules ───────────────────────────────────
+local DLG_RED, DLG_AV_BG, DLG_SEARCH = vmath.vector4(1.0, 0.40, 0.40, 1.0), vmath.vector4(0.20, 0.20, 0.20, 0.50), vmath.vector4(1.0, 0.84, 0.00, 1.0)
+local function with_a(c, a) return vmath.vector4(c.x, c.y, c.z, c.w * (a or 1)) end
+local function dlg_avatar(self, x, y, size, avatar_id, a) track(self, ui.pie(vmath.vector3(x, y, 0), size/2 + 6, with_a(DLG_AV_BG, a))); gui.set_color(track(self, ui.avatar(vmath.vector3(x, y, 0), vmath.vector3(size, size, 0), avatar_id)), vmath.vector4(1, 1, 1, a or 1)) end
 local function dlg_timer(self, x, y, time_left, max_time, a)
-    local frac = math.max(0, math.min(1, (time_left or 0) / (max_time or 10)))
-    local R  = 34
-    local bg = track(self, gui.new_pie_node(vmath.vector3(x, y, 0), vmath.vector3(R*2, R*2, 0)))
-    gui.set_perimeter_vertices(bg, 48)
-    pcall(gui.set_inner_radius, bg, R * 0.80)
-    gui.set_color(bg, vmath.vector4(0.25, 0.25, 0.25, 0.45 * (a or 1)))
-
+    local frac, R = math.max(0, math.min(1, (time_left or 0) / (max_time or 10))), 34
+    local bg = track(self, gui.new_pie_node(vmath.vector3(x, y, 0), vmath.vector3(R*2, R*2, 0))); gui.set_perimeter_vertices(bg, 48); pcall(gui.set_inner_radius, bg, R * 0.80); gui.set_color(bg, vmath.vector4(0.25, 0.25, 0.25, 0.45 * (a or 1)))
     local col = (time_left or 0) <= 3 and COL_RED or COL_CYAN
-    local fg  = track(self, gui.new_pie_node(vmath.vector3(x, y, 0), vmath.vector3(R*2, R*2, 0)))
-    gui.set_perimeter_vertices(fg, 48)
-    pcall(gui.set_inner_radius, fg, R * 0.80)
-    gui.set_rotation(fg, vmath.vector3(0, 0, 90))
-    gui.set_fill_angle(fg, frac * 360)
-    gui.set_color(fg, with_a(col, a))
-
+    local fg = track(self, gui.new_pie_node(vmath.vector3(x, y, 0), vmath.vector3(R*2, R*2, 0))); gui.set_perimeter_vertices(fg, 48); pcall(gui.set_inner_radius, fg, R * 0.80); gui.set_rotation(fg, vmath.vector3(0, 0, 90)); gui.set_fill_angle(fg, frac * 360); gui.set_color(fg, with_a(col, a))
     track(self, ui.text(vmath.vector3(x, y, 0), tostring(math.ceil(time_left or 0)), "title", with_a(col, a)))
 end
-
 local function h2h_view(h2h)
     if type(h2h) ~= "table" then return nil end
-    local my_id = tostring(ws.get_current_user_id() or "")
-    local mine, theirs, opp_id = 0, 0, nil
-    if type(h2h.scores) == "table" then
-        for pid, sc in pairs(h2h.scores) do
-            if tostring(pid) == my_id then mine = tonumber(sc) or 0
-            else theirs = tonumber(sc) or 0; opp_id = tostring(pid) end
-        end
-    end
-    local form   = (type(h2h.form) == "table") and h2h.form[my_id] or nil
-    local rating = nil
-    if opp_id and type(h2h.ratings) == "table" and type(h2h.ratings[opp_id]) == "table" then
-        rating = tonumber(h2h.ratings[opp_id].winRate)
-    end
-    return {
-        p = mine, o = theirs,
-        total = tonumber(h2h.totalGames) or 0,
-        form = (type(form) == "table") and form or {},
-        opp_winrate = rating,
-    }
+    local my_id, mine, theirs, opp_id = tostring(ws.get_current_user_id() or ""), 0, 0, nil
+    if type(h2h.scores) == "table" then for pid, sc in pairs(h2h.scores) do if tostring(pid) == my_id then mine = tonumber(sc) or 0 else theirs = tonumber(sc) or 0; opp_id = tostring(pid) end end end
+    return { p = mine, o = theirs, total = tonumber(h2h.totalGames) or 0, form = (type(h2h.form) == "table" and h2h.form[my_id]) or {}, opp_winrate = (opp_id and type(h2h.ratings) == "table" and type(h2h.ratings[opp_id]) == "table") and tonumber(h2h.ratings[opp_id].winRate) or nil }
 end
-
 local function draw_h2h_row(self, cx, y, view, a)
     if not view then return end
-    a = a or 1
-    local score = track(self, ui.text(vmath.vector3(cx - 78, y, 0),
-        string.format("H2H %d - %d", view.p or 0, view.o or 0), "small", with_a(COL_GOLD, a)))
-    gui.set_pivot(score, gui.PIVOT_E)
-
+    gui.set_pivot(track(self, ui.text(vmath.vector3(cx - 78, y, 0), string.format("H2H %d - %d", view.p or 0, view.o or 0), "small", with_a(COL_GOLD, a))), gui.PIVOT_E)
     local n = math.min(5, #view.form)
-    if n == 0 then
-        local none = track(self, ui.text(vmath.vector3(cx - 64, y, 0), "First meeting", "small", with_a(COL_DIM, a)))
-        gui.set_pivot(none, gui.PIVOT_W)
-        return
-    end
-    local size, gap = 22, 6
+    if n == 0 then gui.set_pivot(track(self, ui.text(vmath.vector3(cx - 64, y, 0), "First meeting", "small", with_a(COL_DIM, a))), gui.PIVOT_W); return end
     for i = 1, n do
-        local r   = tostring(view.form[i])
-        local col = (r == "W") and COL_GREEN or COL_RED
-        local bx  = cx - 64 + (i - 1) * (size + gap) + size / 2
-        track(self, ui.box(vmath.vector3(bx, y, 0), vmath.vector3(size, size, 0), with_a(col, 0.92 * a)))
+        local r, col = tostring(view.form[i]), (tostring(view.form[i]) == "W") and COL_GREEN or COL_RED
+        local bx = cx - 64 + (i - 1) * 28 + 11
+        track(self, ui.box(vmath.vector3(bx, y, 0), vmath.vector3(22, 22, 0), with_a(col, 0.92 * (a or 1))))
         track(self, ui.text(vmath.vector3(bx, y, 0), r, "small", with_a(COL_WHITE, a)))
     end
 end
 
--- ── Game-request dialog ───────────────────────────────────────────────────────
-local function draw_dialog(self)
-    local d = self.dialog
-    if not d then return end
-    local a        = self.dlg_alpha or 1
-    local incoming = (d.kind == "incoming")
-
-    local scrim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(LOGICAL_W*2, LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.62 * a)))
-    self.buttons[#self.buttons+1] = { node = scrim, id = "dlg_block" }
-    local grad = track(self, ui.grad_backdrop(LOGICAL_W, LOGICAL_H))
-    gui.set_color(grad, vmath.vector4(1, 1, 1, a))
-
-    local title = incoming and "INCOMING CHALLENGE" or "CHALLENGING"
-    track(self, ui.text(vmath.vector3(CX, CY + 168, 0), title, "title", with_a(COL_CYAN, a)))
-
-    local col_gap = 165
-    local opp_x, me_x = CX - col_gap, CX + col_gap
-    local av_y, av_size = CY + 40, 92
-
-    dlg_avatar(self, opp_x, av_y, av_size, d.avatar or 1, a)
-    track(self, ui.text(vmath.vector3(opp_x, av_y - av_size/2 - 18, 0), (d.name or "PLAYER"):upper(), "body", with_a(COL_WHITE, a)))
-    local hv = h2h_view(d.h2h)
-    if hv and hv.opp_winrate then
-        local wr     = math.floor(hv.opp_winrate + 0.5)
-        local wr_col = wr >= 60 and COL_GREEN or (wr >= 40 and COL_GOLD or COL_RED)
-        track(self, ui.text(vmath.vector3(opp_x, av_y - av_size/2 - 40, 0), "WR "..wr.."%", "small", with_a(wr_col, a)))
-    end
-
-    local u = ws.current_user_data or {}
-    dlg_avatar(self, me_x, av_y, av_size, u.avatar or 1, a)
-    track(self, ui.text(vmath.vector3(me_x, av_y - av_size/2 - 18, 0), "YOU", "body", with_a(DLG_SEARCH, a)))
-    track(self, ui.text(vmath.vector3(me_x, av_y - av_size/2 - 40, 0), "Bal: "..commas(u.balance or 0), "small", with_a(COL_GOLD, a)))
-
-    track(self, ui.text(vmath.vector3(CX, av_y + 36, 0), "VS", "title", with_a(DLG_RED, a)))
-    local amt    = tonumber((d.stake or {}).amount) or 0
-    local st_txt = amt == 0 and "Practice Game" or (commas(amt).." Coins")
-    track(self, ui.text(vmath.vector3(CX, av_y + 6, 0), st_txt, "small", with_a(COL_DIM, a)))
-    dlg_timer(self, CX, av_y - 36, d.time_left, d.max_time, a)
-
-    local status = incoming and "Wants to play!" or "Waiting for player to accept..."
-    track(self, ui.text(vmath.vector3(CX, CY - 80, 0), status, "small", with_a(COL_MID, a)))
-
-    if hv then draw_h2h_row(self, CX, CY - 108, hv, a) end
-
-    if incoming then
-        mkbtn(self, "decline", vmath.vector3(CX - 95, CY - 148, 0), vmath.vector3(150, 48, 0), "Decline", "secondary_btn")
-        mkbtn(self, "accept",  vmath.vector3(CX + 95, CY - 148, 0), vmath.vector3(150, 48, 0), "Accept",  "primary_btn")
-    else
-        mkbtn(self, "cancel_wait", vmath.vector3(CX, CY - 148, 0), vmath.vector3(170, 48, 0), "Cancel", "secondary_btn")
-    end
+local function make_ctx()
+    return { C = C, ui = ui, track = track, txtL = txtL, txtR = txtR, mkbtn = mkbtn, glass = glass, commas = commas, get_layout = get_layout, EDGE_L = EDGE_L, EDGE_R = EDGE_R, EDGE_B = EDGE_B, EDGE_T = EDGE_T, CX = CX, CY = CY, LOGICAL_W = LOGICAL_W, LOGICAL_H = LOGICAL_H, DLG_RED = DLG_RED, DLG_SEARCH = DLG_SEARCH, with_a = with_a, dlg_avatar = dlg_avatar, dlg_timer = dlg_timer, h2h_view = h2h_view, draw_h2h_row = draw_h2h_row }
 end
 
--- ── Banners ───────────────────────────────────────────────────────────────────
-local BANNER_H, BANNER_GAP = 92, 10
-
-local function draw_one_banner(self, b, idx)
-    local bw    = VISIBLE_W
-    local slide = (b.y_off or 0) * (BANNER_H + 40)
-    local cy    = EDGE_T - 70 - (idx - 1) * (BANNER_H + BANNER_GAP) + slide
-    local alpha = b.alpha or 1
-
-    local panel = track(self, ui.box(vmath.vector3(CX, cy, 0), vmath.vector3(bw, BANNER_H, 0), vmath.vector4(0.06, 0.10, 0.14, 0.97 * alpha)))
-    track(self, ui.box(vmath.vector3(CX, cy + BANNER_H/2 - 2, 0), vmath.vector3(bw, 3, 0), vmath.vector4(0.2, 0.9, 1.0, alpha)))
-    self.buttons[#self.buttons+1] = { node = panel, id = "banner_block" }
-
-    local tx    = EDGE_L + 40
-    local title = track(self, ui.text(vmath.vector3(tx, cy + 20, 0), b.title or "GAME REQUEST", "body", vmath.vector4(0.92, 0.96, 1.0, alpha)))
-    gui.set_pivot(title, gui.PIVOT_W)
-    local desc = track(self, ui.text(vmath.vector3(tx, cy - 12, 0), b.desc or "", "small", vmath.vector4(0.42, 0.56, 0.68, alpha)))
-    gui.set_pivot(desc, gui.PIVOT_W)
-
-    local accx = EDGE_R - 90
-    local accb = ui.box(vmath.vector3(accx, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.0, 0.9, 0.63, 0.30 * alpha))
-    track(self, accb)
-    track(self, ui.text(vmath.vector3(accx, cy, 0), "ACCEPT", "luckiest_guy_md", vmath.vector4(1,1,1,alpha)))
-    self.buttons[#self.buttons+1] = { node = accb, id = "banner_accept", data = b.request_id }
-
-    local decx = EDGE_R - 225
-    local decb = ui.box(vmath.vector3(decx, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.12, 0.19, 0.27, 0.85 * alpha))
-    track(self, decb)
-    track(self, ui.text(vmath.vector3(decx, cy, 0), "DECLINE", "luckiest_guy_md", vmath.vector4(0.82,0.86,0.91,alpha)))
-    self.buttons[#self.buttons+1] = { node = decb, id = "banner_decline", data = b.request_id }
-
-    local hv = h2h_view(b.h2h)
-    if hv then draw_h2h_row(self, EDGE_R - 430, cy, hv, alpha) end
-
-    local frac = math.max(0, math.min(1, (b.time_left or 10) / (b.max_time or 10)))
-    local barw = bw * frac
-    track(self, ui.box(vmath.vector3(CX, cy - BANNER_H/2 + 2, 0), vmath.vector3(bw, 3, 0), vmath.vector4(0.12, 0.19, 0.27, alpha)))
-    local fill = frac < 0.3 and COL_RED or COL_GREEN
-    if barw > 1 then
-        track(self, ui.box(vmath.vector3(CX - bw/2 + barw/2, cy - BANNER_H/2 + 2, 0), vmath.vector3(barw, 3, 0), fill))
-    end
-end
-
+-- ── Banner System ─────────────────────────────────────────────────────────────
 local function draw_banner(self)
-    for i, b in ipairs(self.banners or {}) do draw_one_banner(self, b, i) end
-end
-
--- ── Battle modal ──────────────────────────────────────────────────────────────
-local BATTLE_TIERS = {
-    { amount = 500,   formats = { { games = 3, charge = 75,  points = 9 } } },
-    { amount = 1000,  formats = { { games = 3, charge = 75,  points = 9 }, { games = 5, charge = 125, points = 15 } } },
-    { amount = 2000,  formats = { { games = 3, charge = 75,  points = 9 }, { games = 5, charge = 125, points = 15 },
-                                  { games = 7, charge = 175, points = 21 }, { games = 9, charge = 225, points = 27 } } },
-    { amount = 5000,  formats = { { games = 3, charge = 150, points = 9 }, { games = 5, charge = 250, points = 15 },
-                                  { games = 7, charge = 350, points = 21 }, { games = 9, charge = 400, points = 27 },
-                                  { games = 11, charge = 500, points = 33 }, { games = 13, charge = 600, points = 39 } } },
-    { amount = 10000, formats = { { games = 3, charge = 300, points = 9 }, { games = 5, charge = 500, points = 15 },
-                                  { games = 7, charge = 700, points = 21 }, { games = 9, charge = 800, points = 27 },
-                                  { games = 11, charge = 1000, points = 33 }, { games = 13, charge = 1200, points = 39 } } },
-}
-
-local BM_TAN = vmath.vector4(0.702, 0.604, 0.467, 1)
-
-local rebuild -- forward declaration
-
-local function draw_battle_modal(self)
-    local bm = self.battle_modal
-    if not bm then return end
-
-    local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(LOGICAL_W*2, LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.8)))
-    self.buttons[#self.buttons+1] = { node = dim, id = "bm_block" }
-
-    local pw, ph = 500, 440
-    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), COL_BG))
-    track(self, ui.btn9(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), "container_bg"))
-
-    local l   = CX - pw/2 + 30
-    local r   = CX + pw/2 - 30
-    local top = CY + ph/2 - 30
-
-    txtL(self, l, top - 8, bm.editing and "UPDATE BATTLE" or "CREATE BATTLE", "body", COL_WHITE)
-    mkbtn(self, "bm_close", vmath.vector3(r - 10, top - 8, 0), vmath.vector3(30, 30, 0), nil, vmath.vector4(0,0,0,0.001))
-    track(self, ui.text(vmath.vector3(r - 10, top - 8, 0), "X", "luckiest_guy_sm", COL_MID))
-
-    local tier         = BATTLE_TIERS[bm.stake_i] or BATTLE_TIERS[1]
-    local fmts         = tier.formats
-    if bm.fmt_i > #fmts then bm.fmt_i = #fmts end
-    local fmt          = fmts[bm.fmt_i] or fmts[1]
-    local winner_takes = tier.amount * 2 - fmt.charge
-
-    local fee_y = top - 70
-    txtL(self, l, fee_y + 28, "ENTRY FEE", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
-    mkbtn(self, "bm_fee_minus", vmath.vector3(l + 20, fee_y - 8, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
-    track(self, ui.box(vmath.vector3(CX, fee_y - 8, 0), vmath.vector3(pw - 200, 40, 0), COL_NAMEID_BG))
-    track(self, ui.text(vmath.vector3(CX, fee_y - 8, 0), commas(tier.amount) .. " COINS", "body", vmath.vector4(1, 0.8, 0.4, 1)))
-    mkbtn(self, "bm_fee_plus", vmath.vector3(r - 20, fee_y - 8, 0), vmath.vector3(40, 40, 0), "+", "secondary_btn")
-    track(self, ui.text(vmath.vector3(CX, fee_y - 44, 0),
-        string.format("Winner Takes: %s + %d Pts", commas(winner_takes), fmt.points), "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
-
-    local fmt_y = top - 168
-    txtL(self, l, fmt_y + 28, "GAME FORMAT", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
-    mkbtn(self, "bm_fmt_minus", vmath.vector3(l + 20, fmt_y - 8, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
-    track(self, ui.box(vmath.vector3(CX, fmt_y - 8, 0), vmath.vector3(pw - 200, 40, 0), COL_NAMEID_BG))
-    track(self, ui.text(vmath.vector3(CX, fmt_y - 8, 0), "BEST OF " .. fmt.games, "body", COL_WHITE))
-    mkbtn(self, "bm_fmt_plus", vmath.vector3(r - 20, fmt_y - 8, 0), vmath.vector3(40, 40, 0), "+", "secondary_btn")
-    track(self, ui.text(vmath.vector3(CX, fmt_y - 44, 0),
-        string.format("Charge: %s  ·  %d Pts to the winner", commas(fmt.charge), fmt.points), "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
-
-    if bm.msg then
-        track(self, ui.text(vmath.vector3(CX, CY - ph/2 + 118, 0), bm.msg, "small",
-            bm.msg_ok and vmath.vector4(0.3, 1.0, 0.3, 1) or vmath.vector4(1, 0.3, 0.3, 1)))
-    end
-
-    local sub_label = bm.submitting and "SUBMITTING..."
-        or (bm.editing and "UPDATE BATTLE" or "CREATE BATTLE")
-    mkbtn(self, "bm_submit", vmath.vector3(CX, CY - ph/2 + 62, 0), vmath.vector3(pw - 60, 64, 0), sub_label, "secondary_btn", nil, "luckiest_guy_md", BM_TAN)
-end
-
-local function close_battle_modal(self)
-    self.battle_modal = nil
-end
-
-local function bm_submit(self)
-    local bm = self.battle_modal
-    if not bm or bm.submitting then return end
-    local tier = BATTLE_TIERS[bm.stake_i] or BATTLE_TIERS[1]
-    local fmt  = tier.formats[math.min(bm.fmt_i, #tier.formats)]
-    local uid  = ws.get_current_user_id()
-    if uid == "" then
-        bm.msg, bm.msg_ok = "User ID missing. Please log in.", false
-        rebuild(self); return
-    end
-
-    bm.submitting = true; bm.msg, bm.msg_ok = nil, nil; rebuild(self)
-
-    local payload = { userId = uid, amount = tier.amount, matchFormat = fmt.games, rules = "JOKERS" }
-
-    local function on_result(result)
-        local cur = self.battle_modal
-        if not cur then return end
-        cur.submitting = false
-        if result.success then
-            local data   = result.data or {}
-            local battle = data.tournament or data.data or data
-            local u      = ws.current_user_data or {}
-            u.myBattle   = battle; ws.current_user_data = u
-            cur.msg, cur.msg_ok = bm.editing and "Battle updated successfully!" or "Battle created successfully!", true
-            if self._active then rebuild(self) end
-            timer.delay(1.0, false, function()
-                if self.battle_modal == cur then
-                    close_battle_modal(self)
-                    if self._active then rebuild(self) end
-                end
-            end)
-        else
-            cur.msg, cur.msg_ok = result.message or "Request failed", false
-            if self._active then rebuild(self) end
-        end
-    end
-
-    local api = require("modules.api_service")
-    if bm.editing and bm.id and bm.id ~= "" then
-        api.update_tournament(bm.id, payload, on_result)
-    else
-        api.create_tournament(payload, on_result)
+    for idx, b in ipairs(self.banners or {}) do
+        local bw, slide = VISIBLE_W, (b.y_off or 0) * 132
+        local cy, alpha = EDGE_T - 70 - (idx - 1) * 102 + slide, b.alpha or 1
+        self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(CX, cy, 0), vmath.vector3(bw, 92, 0), vmath.vector4(0.06, 0.10, 0.14, 0.97 * alpha))), id = "banner_block" }
+        track(self, ui.box(vmath.vector3(CX, cy + 44, 0), vmath.vector3(bw, 3, 0), vmath.vector4(0.2, 0.9, 1.0, alpha)))
+        gui.set_pivot(track(self, ui.text(vmath.vector3(EDGE_L + 40, cy + 20, 0), b.title or "GAME REQUEST", "body", vmath.vector4(0.92, 0.96, 1.0, alpha))), gui.PIVOT_W)
+        gui.set_pivot(track(self, ui.text(vmath.vector3(EDGE_L + 40, cy - 12, 0), b.desc or "", "small", vmath.vector4(0.42, 0.56, 0.68, alpha))), gui.PIVOT_W)
+        self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(EDGE_R - 90, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.0, 0.9, 0.63, 0.30 * alpha))), id = "banner_accept", data = b.request_id }
+        track(self, ui.text(vmath.vector3(EDGE_R - 90, cy, 0), "ACCEPT", "luckiest_guy_md", vmath.vector4(1,1,1,alpha)))
+        self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(EDGE_R - 225, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.12, 0.19, 0.27, 0.85 * alpha))), id = "banner_decline", data = b.request_id }
+        track(self, ui.text(vmath.vector3(EDGE_R - 225, cy, 0), "DECLINE", "luckiest_guy_md", vmath.vector4(0.82,0.86,0.91,alpha)))
+        if b.h2h then draw_h2h_row(self, EDGE_R - 430, cy, h2h_view(b.h2h), alpha) end
+        local barw = bw * math.max(0, math.min(1, (b.time_left or 10) / (b.max_time or 10)))
+        track(self, ui.box(vmath.vector3(CX, cy - 44, 0), vmath.vector3(bw, 3, 0), vmath.vector4(0.12, 0.19, 0.27, alpha)))
+        if barw > 1 then track(self, ui.box(vmath.vector3(CX - bw/2 + barw/2, cy - 44, 0), vmath.vector3(barw, 3, 0), barw/bw < 0.3 and COL_RED or COL_GREEN)) end
     end
 end
 
--- ── Invite search overlay ─────────────────────────────────────────────────────
-local INVITE_AVATAR_MAX = 60
+-- ── Main Rebuild ──────────────────────────────────────────────────────────────
+local rebuild -- Forward declaration
 
-local function draw_invite_search(self)
-    local sr = self.invite_search
-    if not sr then return end
-
-    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(LOGICAL_W * 2, LOGICAL_H * 2, 0), vmath.vector4(0, 0, 0, 0.78)))
-    track(self, ui.grad_backdrop(LOGICAL_W, LOGICAL_H))
-
-    local title = sr.found and "OPPONENT FOUND!" or "SEARCHING FOR OPPONENT"
-    local t_col = sr.found and vmath.vector4(0.15, 0.85, 0.35, 1) or COL_WHITE
-    track(self, ui.text(vmath.vector3(CX, CY + 130, 0), title, "title", t_col))
-    if not sr.found then
-        local dots = string.rep(".", 1 + (math.floor((sr.t or 0) * 2) % 3))
-        track(self, ui.text(vmath.vector3(CX, CY + 96, 0), "inviting a player to your battle" .. dots, "small", COL_DIM))
-    else
-        track(self, ui.text(vmath.vector3(CX, CY + 96, 0), "get ready…", "small", COL_DIM))
-    end
-
-    local u = ws.current_user_data or {}
-    local ax, bx, ay = CX - 190, CX + 190, CY - 10
-
-    track(self, ui.box(vmath.vector3(ax, ay, 0), vmath.vector3(124, 124, 0), vmath.vector4(0.10, 0.10, 0.13, 0.9)))
-    track(self, ui.avatar(vmath.vector3(ax, ay, 0), vmath.vector3(108, 108, 0), u.avatar or 1))
-    track(self, ui.text(vmath.vector3(ax, ay - 86, 0), "YOU", "body", COL_GOLD))
-    track(self, ui.text(vmath.vector3(CX, ay, 0), "VS", "title", vmath.vector4(1, 0.4, 0.4, 1)))
-
-    local frame_col = sr.found and vmath.vector4(0.15, 0.85, 0.35, 1) or vmath.vector4(0.25, 0.25, 0.30, 1)
-    local frame = track(self, ui.box(vmath.vector3(bx, ay, 0), vmath.vector3(124, 124, 0), frame_col))
-    local reel  = track(self, ui.avatar(vmath.vector3(bx, ay, 0), vmath.vector3(108, 108, 0), sr.reel_ix or 1))
-    self.invite_reel_node = reel
-    local who = sr.found and (sr.opp_name or "PLAYER") or "? ? ?"
-    track(self, ui.text(vmath.vector3(bx, ay - 86, 0), who, "body", sr.found and COL_WHITE or COL_DIM))
-
-    if sr.found then
-        gui.set_scale(frame, vmath.vector3(0.9, 0.9, 1))
-        gui.animate(frame, "scale", vmath.vector3(1.12, 1.12, 1), gui.EASING_OUTBACK, 0.35, 0, function()
-            pcall(gui.animate, frame, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTSINE, 0.18)
-        end)
-    end
-
-    if not sr.found then
-        local cb = track(self, ui.btn9(vmath.vector3(CX, CY - 140, 0), vmath.vector3(200, 48, 0), "secondary_btn"))
-        track(self, ui.text(vmath.vector3(CX, CY - 140, 0), "CANCEL", "small", COL_WHITE))
-        self.buttons[#self.buttons+1] = { node = cb, id = "cancel_invite" }
-    end
+local function draw_dialog(self, ctx)
+    if not self.dialog then return end
+    if self.dialog.kind == "incoming" then dialog_incoming.draw(self, ctx, self.dialog, self.dlg_alpha or 1)
+    else dialog_outgoing.draw(self, ctx, self.dialog, self.dlg_alpha or 1) end
 end
 
-local function stop_invite_search(self)
-    self.invite_search = nil; self.invite_reel_node = nil
-    app_state.searching_invite = false
-    if self._active then rebuild(self) end
-end
-
-local function start_invite_search(self)
-    local u  = ws.current_user_data or {}
-    local mb = u.myBattle or u.myTournament
-    if type(mb) ~= "table" or next(mb) == nil then return end
-
-    local stake = (type(mb.stake) == "table") and mb.stake
-        or { amount = tonumber(mb.stakeAmount) or 0, charge = 0 }
-
-    self.invite_search = { active = true, t = 0, reel_ix = math.random(INVITE_AVATAR_MAX), spin_t = 0 }
-    app_state.searching_invite = true
-
-    ws.send_game_request({}, stake, {
-        gameType     = "TOURNAMENT",
-        tournamentId = tostring(mb._id or mb.id or ""),
-        rules        = "JOKERS",
-    })
-    rebuild(self)
-end
-
--- ── Main rebuild ──────────────────────────────────────────────────────────────
 rebuild = function(self)
-    clear(self)
-    local _, _, div_lx, div_rx = get_layout()
-    local ctx = make_ctx()
-
+    clear(self); local _, _, div_lx, div_rx = get_layout(); local ctx = make_ctx()
     track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(LOGICAL_W*2, LOGICAL_H*2, 0), COL_BG))
     track(self, ui.cover_image(LOGICAL_W, LOGICAL_H, "texture_bg"))
     track(self, ui.box(vmath.vector3((div_lx+div_rx)/2, CY, 0), vmath.vector3(div_rx - div_lx, VISIBLE_H, 0), COL_BG))
@@ -613,127 +179,46 @@ rebuild = function(self)
     right_panel.draw(self, ctx, left_panel)
 
     draw_banner(self)
-    draw_dialog(self)
-    draw_battle_modal(self)
-    draw_invite_search(self)
+    draw_dialog(self, ctx)
 end
 
--- ── Season logic (EAT) ────────────────────────────────────────────────────────
+-- ── Season Logic ──────────────────────────────────────────────────────────────
 local function update_season(self)
-    local now_utc = os.time(os.date("!*t"))
-    local now_eat = now_utc + 3 * 3600
-    local t       = os.date("!*t", now_eat)
-
-    local wday          = t.wday
+    local t, now_eat = os.date("!*t", os.time() + 3 * 3600), os.time() + 3 * 3600
     local seconds_today = t.hour * 3600 + t.min * 60 + t.sec
     local midnight_today_eat = now_eat - seconds_today
-
-    local is_phase_1 = (wday == 1 or wday == 2 or wday == 3 or (wday == 4 and seconds_today < 43200))
-
-    local target_eat
-    if is_phase_1 then
-        local days_until_wed = (4 - wday) % 7
-        if days_until_wed < 0 then days_until_wed = days_until_wed + 7 end
-        target_eat = midnight_today_eat + (days_until_wed * 86400) + 43200
-        self.season_target_text = "Ends Wednesday Midday"
-    else
-        local days_until_sat = (7 - wday) % 7
-        if days_until_sat < 0 then days_until_sat = days_until_sat + 7 end
-        target_eat = midnight_today_eat + (days_until_sat * 86400) + 86399
-        self.season_target_text = "Ends Saturday Midnight"
-    end
-
+    local is_phase_1 = (t.wday >= 1 and t.wday <= 3) or (t.wday == 4 and seconds_today < 43200)
+    local target_eat = is_phase_1 and (midnight_today_eat + (((4 - t.wday) % 7) * 86400) + 43200) or (midnight_today_eat + (((7 - t.wday) % 7) * 86400) + 86399)
     local diff = math.max(0, target_eat - now_eat)
-    local d = math.floor(diff/86400); diff = diff % 86400
-    local h = math.floor(diff/3600);  diff = diff % 3600
-    local m = math.floor(diff/60);    local s = diff % 60
-
-    self.season_text = d > 0
-        and string.format("%dD %02dH %02dM %02dS", d, h, m, s)
-        or  string.format("%02dH %02dM %02dS", h, m, s)
-
-    self.deadline = ""
-    local dl_target
-    if wday == 4 and seconds_today < 43200 then
-        self.deadline, dl_target = "WEDNESDAY", 43200
-    elseif wday == 7 then
-        self.deadline, dl_target = "SATURDAY", 86400
-    end
-    if self.deadline ~= "" then
-        local rem = math.max(0, dl_target - seconds_today)
-        local dh  = math.floor(rem / 3600)
+    self.season_text = diff >= 86400 and string.format("%dD %02dH %02dM %02dS", math.floor(diff/86400), math.floor((diff%86400)/3600), math.floor((diff%3600)/60), diff%60) or string.format("%02dH %02dM %02dS", math.floor(diff/3600), math.floor((diff%3600)/60), diff%60)
+    self.season_target_text = is_phase_1 and "Ends Wednesday Midday" or "Ends Saturday Midnight"
+    self.deadline, self.deadline_clock, self.deadline_urgency = "", nil, nil
+    if (t.wday == 4 and seconds_today < 43200) or (t.wday == 7) then
+        self.deadline = t.wday == 4 and "WEDNESDAY" or "SATURDAY"
+        local rem = math.max(0, (t.wday == 4 and 43200 or 86400) - seconds_today)
+        local dh = math.floor(rem / 3600)
         self.deadline_clock = string.format("%02d:%02d:%02d", dh, math.floor((rem % 3600) / 60), rem % 60)
-        if dh < 1 then self.deadline_urgency = "FINAL HOUR!"
-        elseif dh < 3 then self.deadline_urgency = "Time running out!"
-        elseif dh < 6 then self.deadline_urgency = "Last chance!"
-        else self.deadline_urgency = (self.deadline == "WEDNESDAY") and "Ends at midday" or "Ends at midnight" end
+        self.deadline_urgency = dh < 1 and "FINAL HOUR!" or (dh < 3 and "Time running out!" or (dh < 6 and "Last chance!" or (self.deadline == "WEDNESDAY" and "Ends at midday" or "Ends at midnight")))
     end
 end
 
--- ── Dialog / banner lifecycle ─────────────────────────────────────────────────
+-- ── Dialog / Banner Lifecycle ─────────────────────────────────────────────────
 local function open_dialog(self, kind, name, stake, request_id, avatar, opponent_id, h2h)
-    self.dialog = { kind = kind, name = name, stake = stake or {}, request_id = request_id,
-        avatar = tonumber(avatar) or 1, time_left = 10, max_time = 10,
-        opponent_id = opponent_id and tostring(opponent_id) or nil, h2h = h2h }
-    self.dlg_alpha = 0
+    self.dialog, self.dlg_alpha = { kind = kind, name = name, stake = stake or {}, request_id = request_id, avatar = tonumber(avatar) or 1, time_left = 10, max_time = 10, opponent_id = opponent_id and tostring(opponent_id) or nil, h2h = h2h }, 0
     if self._active then rebuild(self) end
 end
-
-local function close_dialog(self)
-    self.dialog = nil
-    if self._active then rebuild(self) end
-end
-
-local function close_banner(self, rid)
-    if not self.banners then return end
-    if rid == nil then table.remove(self.banners, 1)
-    else
-        for i = #self.banners, 1, -1 do
-            if self.banners[i].request_id == rid then table.remove(self.banners, i) end
-        end
-    end
-    if #self.banners == 0 then self.banners = nil end
-    if self._active then rebuild(self) end
-end
-
 local function open_banner(self, raw)
-    raw = raw or {}
-    local sender = type(raw.sender) == "table" and raw.sender or (raw.user or {})
-    local name   = sender.username or "Opponent"
-    local tour   = type(raw.tournament) == "table" and raw.tournament or {}
-    local stake  = type(tour.stake) == "table" and tour.stake or (raw.stake or {})
-    local amount = tonumber(stake.amount) or 0
-    local fmt    = tonumber(tour.matchFormat) or 3
-    local gt     = raw.gameType or "TOURNAMENT"
-
-    local title = gt == "BATTLE" and ("BATTLE  -  "..name) or ("TOURNAMENT  -  "..name)
-    local parts = { string.format("Best of %d", fmt) }
-    if amount > 0 then parts[#parts+1] = commas(amount).." Coins" else parts[#parts+1] = "Practice Mode" end
-
-    local hv = h2h_view(raw.headToHead)
-    if hv and hv.opp_winrate then
-        parts[#parts+1] = "WR "..math.floor(hv.opp_winrate + 0.5).."%"
-    end
-
-    local rid = raw.requestId or ""
-    self.banners = self.banners or {}
-    for _, ex in ipairs(self.banners) do if rid ~= "" and ex.request_id == rid then return end end
-    self.banners[#self.banners+1] = {
-        title = title:upper(), desc = table.concat(parts, "   -   "),
-        request_id = rid, time_left = 10, max_time = 10, alpha = 0, y_off = 1,
-        h2h = raw.headToHead,
-    }
-    if self._active then rebuild(self) end
+    local b = { title = ((raw.gameType or "TOURNAMENT") == "BATTLE" and "BATTLE  -  " or "TOURNAMENT  -  ") .. ((type(raw.sender) == "table" and raw.sender.username) or "Opponent"):upper(), desc = "Best of " .. (tonumber((type(raw.tournament) == "table" and raw.tournament.matchFormat) or 3) or 3) .. "   -   " .. (((tonumber(((type(raw.tournament) == "table" and raw.tournament.stake) or raw.stake or {}).amount) or 0) > 0) and commas(tonumber(((type(raw.tournament) == "table" and raw.tournament.stake) or raw.stake or {}).amount) or 0).." Coins" or "Practice Mode"), request_id = raw.requestId or "", time_left = 10, max_time = 10, alpha = 0, y_off = 1, h2h = raw.headToHead }
+    if h2h_view(raw.headToHead) and h2h_view(raw.headToHead).opp_winrate then b.desc = b.desc .. "   -   WR " .. math.floor(h2h_view(raw.headToHead).opp_winrate + 0.5) .. "%" end
+    self.banners = self.banners or {}; for _, ex in ipairs(self.banners) do if b.request_id ~= "" and ex.request_id == b.request_id then return end end
+    table.insert(self.banners, b); if self._active then rebuild(self) end
 end
 
--- ── Lifecycle ─────────────────────────────────────────────────────────────────
+-- ── Standard Defold Hooks ─────────────────────────────────────────────────────
 function init(self)
-    self.nodes, self.buttons = {}, {}
-    self.stake_index, self.tab = 2, TAB_QUICK
+    self.nodes, self.buttons, self.stake_index, self.tab, self.list_scroll, self._tick = {}, {}, 2, TAB_QUICK, 0, 0
     app_state.selected_stake = app_state.selected_stake or config.STAKE_LEVELS[self.stake_index]
-    self.dialog, self.banners, self.list_scroll, self._tick = nil, nil, 0, 0
-    refresh_wh()
-    update_season(self)
+    refresh_wh(); update_season(self)
 end
 
 function update(self, dt)
@@ -742,45 +227,31 @@ function update(self, dt)
     if self.banners and #self.banners > 0 then
         local expired = {}
         for _, b in ipairs(self.banners) do
-            b.alpha    = math.min(1, (b.alpha or 0) + dt * 5)
-            b.y_off    = math.max(0, (b.y_off or 0) - dt * 4)
-            b.time_left = (b.time_left or 10) - dt
-            if b.time_left <= 0 then expired[#expired+1] = b end
+            b.alpha, b.y_off, b.time_left = math.min(1, (b.alpha or 0) + dt * 5), math.max(0, (b.y_off or 0) - dt * 4), (b.time_left or 10) - dt
+            if b.time_left <= 0 then table.insert(expired, b) end
         end
         for _, b in ipairs(expired) do
             if b.request_id and b.request_id ~= "" then ws.decline_game_request(b.request_id) end
-            close_banner(self, b.request_id)
+            for i = #self.banners, 1, -1 do if self.banners[i].request_id == b.request_id then table.remove(self.banners, i) end end
+            if #self.banners == 0 then self.banners = nil end
         end
-        if self._active then rebuild(self) end
-        return
+        rebuild(self); return
     end
 
-    local sr = self.invite_search
-    if sr and not sr.found then
-        sr.t      = (sr.t or 0) + dt
-        sr.spin_t = (sr.spin_t or 0) + dt
-        if sr.spin_t >= 0.07 then
-            sr.spin_t = 0
-            sr.reel_ix = math.random(INVITE_AVATAR_MAX)
-            if self.invite_reel_node then
-                pcall(gui.play_flipbook, self.invite_reel_node, "avatar_" .. sr.reel_ix)
-            end
-        end
-        sr.dots_t = (sr.dots_t or 0) + dt
+    if self.invite_search and not self.invite_search.found then
+        local sr = self.invite_search; sr.t, sr.spin_t, sr.dots_t = (sr.t or 0) + dt, (sr.spin_t or 0) + dt, (sr.dots_t or 0) + dt
+        if sr.spin_t >= 0.07 then sr.spin_t = 0; sr.reel_ix = math.random(60); if self.invite_reel_node then pcall(gui.play_flipbook, self.invite_reel_node, "avatar_" .. sr.reel_ix) end end
         if sr.dots_t >= 0.5 then sr.dots_t = 0; rebuild(self) end
         return
     end
 
     if self.dialog then
-        self.dlg_alpha          = math.min(1, (self.dlg_alpha or 0) + dt * 4)
-        self.dialog.time_left   = (self.dialog.time_left or 10) - dt
+        self.dlg_alpha, self.dialog.time_left = math.min(1, (self.dlg_alpha or 0) + dt * 4), (self.dialog.time_left or 10) - dt
         if self.dialog.time_left <= 0 then
-            if self.dialog.kind == "incoming" and self.dialog.request_id then
-                ws.decline_game_request(self.dialog.request_id)
-            end
-            close_dialog(self)
-        else rebuild(self) end
-        return
+            if self.dialog.kind == "incoming" and self.dialog.request_id then ws.decline_game_request(self.dialog.request_id) end
+            self.dialog = nil
+        end
+        rebuild(self); return
     end
 
     self._tick = self._tick + dt
@@ -789,185 +260,85 @@ end
 
 function on_message(self, message_id, message, sender)
     if message_id == hash("screen_enter") then
-        msg.post(".", "acquire_input_focus")
-        self._active, self.dialog, self.banners, self.list_scroll = true, nil, nil, 0
-        self.battle_modal, self.invite_search = nil, nil
-        app_state.searching_invite = false
-        refresh_wh(); rebuild(self)
-
-    elseif message_id == hash("ws_match_found") then
-        if self.invite_search then
-            local gs = ws.get_active_game() or {}
-            local me = tostring(ws.get_current_user_id() or "")
-            local opp
-            for k, pl in pairs(gs.players or {}) do
-                local pid = tostring((type(pl) == "table" and (pl._id or pl.id)) or k)
-                if pid ~= me then opp = pl end
-            end
-            self.invite_search.found   = true
-            self.invite_search.reel_ix = (type(opp) == "table" and tonumber(opp.avatar)) or self.invite_search.reel_ix
-            local nm = (type(opp) == "table" and (opp.username or opp.name)) or "PLAYER"
-            self.invite_search.opp_name = string.upper(tostring(nm))
-            app_state.searching_invite = false
-            rebuild(self)
-        end
-
-    elseif message_id == hash("enable") then
-        refresh_wh(); self._active = true
-
-    elseif message_id == hash("disable") then
-        self._active = false; clear(self)
-
-    elseif message_id == hash("layout_changed") then
-        refresh_wh(); if self._active then rebuild(self) end
-
-    elseif message_id == hash("user_data_updated") or message_id == hash("ws_online_users") then
-        if self._active then rebuild(self) end
-
-    elseif message_id == hash("ws_connected") then
-        self.status_text, self.status_color = "Connected - looking for players...", COL_GREEN
-        if self._active then rebuild(self) end
-
-    elseif message_id == hash("ws_disconnected") then
-        self.status_text, self.status_color = "Disconnected. Reconnecting...", COL_RED
-        if self._active then rebuild(self) end
-
+        msg.post(".", "acquire_input_focus"); self._active, self.dialog, self.banners, self.list_scroll, self.battle_modal, self.invite_search, app_state.searching_invite = true, nil, nil, 0, nil, nil, false; refresh_wh(); rebuild(self)
+    elseif message_id == hash("ws_match_found") and self.invite_search then
+        local gs, me, opp = ws.get_active_game() or {}, tostring(ws.get_current_user_id() or ""), nil
+        for k, pl in pairs(gs.players or {}) do if tostring((type(pl) == "table" and (pl._id or pl.id)) or k) ~= me then opp = pl end end
+        self.invite_search.found, self.invite_search.reel_ix, self.invite_search.opp_name, app_state.searching_invite = true, (type(opp) == "table" and tonumber(opp.avatar)) or self.invite_search.reel_ix, string.upper(tostring((type(opp) == "table" and (opp.username or opp.name)) or "PLAYER")), false
+        rebuild(self)
+    elseif message_id == hash("enable") then refresh_wh(); self._active = true
+    elseif message_id == hash("disable") then self._active = false; clear(self)
+    elseif message_id == hash("layout_changed") or message_id == hash("user_data_updated") or message_id == hash("ws_online_users") or message_id == hash("ws_connected") or message_id == hash("ws_disconnected") then if self._active then rebuild(self) end
     elseif message_id == hash("ws_game_request") then
-        local r   = ws.last_game_request or {}
-        local raw = r.raw or {}
-        if type(raw) == "table" and (raw.gameType == "TOURNAMENT" or raw.gameType == "BATTLE" or raw.tournament) then
-            open_banner(self, raw)
-        else
-            open_dialog(self, "incoming", (r.user or {}).username or "A player", r.stake or {},
-                r.requestId, (r.user or {}).avatar, (r.user or {})._id, raw.headToHead)
-        end
-
+        local r, raw = ws.last_game_request or {}, (ws.last_game_request or {}).raw or {}
+        if type(raw) == "table" and (raw.gameType == "TOURNAMENT" or raw.gameType == "BATTLE" or raw.tournament) then open_banner(self, raw)
+        else open_dialog(self, "incoming", (r.user or {}).username or "A player", r.stake or {}, r.requestId, (r.user or {}).avatar, (r.user or {})._id, raw.headToHead) end
     elseif message_id == hash("ws_head_to_head") then
         local d = ws.last_head_to_head or {}
-        if self.dialog and self.dialog.opponent_id
-           and tostring(d.opponentId or "") == self.dialog.opponent_id then
-            self.dialog.h2h = d.headToHead
-            if self._active then rebuild(self) end
-        end
-
+        if self.dialog and self.dialog.opponent_id and tostring(d.opponentId or "") == self.dialog.opponent_id then self.dialog.h2h = d.headToHead; if self._active then rebuild(self) end end
     elseif message_id == hash("ws_request_declined") or message_id == hash("ws_request_cancelled") then
-        local rid = message and message.request_id
-        if self.banners then close_banner(self, rid) end
-        close_dialog(self)
-    end
-end
-
--- ── Input handler ─────────────────────────────────────────────────────────────
-local function handle(self, b)
-    local id = b.id
-    if id == "tab_quick" then
-        self.tab = TAB_QUICK; self.list_scroll = 0; rebuild(self)
-    elseif id == "tab_battles" then
-        self.tab = TAB_BATTLES; self.list_scroll = 0; rebuild(self)
-
-    elseif type(id) == "string" and id:sub(1,6) == "stake_" then
-        self.stake_index = b.data
-        app_state.selected_stake = config.STAKE_LEVELS[self.stake_index]
-        ws.update_stake(config.STAKE_LEVELS[self.stake_index]); rebuild(self)
-
-    elseif id == "challenge" then
-        local u          = b.data or {}
-        local stake_data = app_state.selected_stake
-        local extra      = nil
-        if self.tab == TAB_BATTLES and type(u.myBattle) == "table" then
-            local mb = u.myBattle
-            stake_data = type(mb.stake) == "table" and mb.stake
-                or { amount = tonumber(mb.stakeAmount) or 0, charge = 0, points = 0 }
-            extra = { gameType = "TOURNAMENT", tournamentId = mb._id or mb.id, rules = mb.rules }
-        end
-        ws.send_game_request({ _id=u._id, username=u.username, isAI=u.isAI, avatar=u.avatar }, stake_data, extra)
-        open_dialog(self, "challenging", u.username or "opponent", stake_data, nil, u.avatar, u._id, nil)
-        ws.request_head_to_head(u._id)
-
-    elseif id == "accept" then
-        if self.dialog and self.dialog.request_id then ws.accept_game_request(self.dialog.request_id) end
-        close_dialog(self)
-    elseif id == "decline" or id == "cancel_wait" then
-        if self.dialog and self.dialog.request_id then ws.decline_game_request(self.dialog.request_id) end
-        close_dialog(self)
-    elseif id == "banner_accept" then
-        if b.data and b.data ~= "" then ws.accept_game_request(b.data) end; close_banner(self, b.data)
-    elseif id == "banner_decline" then
-        if b.data and b.data ~= "" then ws.decline_game_request(b.data) end; close_banner(self, b.data)
-
-    elseif id == "nav_lobby"       then msg.post("#controller", "goto_lobby")
-    elseif id == "nav_payments"    then msg.post("#controller", "goto_payments")
-    elseif id == "nav_themes"      then msg.post("#controller", "goto_themes")
-    elseif id == "nav_tournaments" then msg.post("#controller", "goto_tournaments")
-    elseif id == "nav_support"     then msg.post("#controller", "goto_support")
-    elseif id == "nav_account"     then msg.post("#controller", "goto_account")
-    elseif id == "nav_invite"      then start_invite_search(self)
-    elseif id == "cancel_invite"   then stop_invite_search(self)
-
-    elseif id == "create_battle" then
-        self.battle_modal = { editing = false, stake_i = 1, fmt_i = 1 }; rebuild(self)
-    elseif id == "update_battle" then
-        local u  = ws.current_user_data or {}
-        local mb = u.myBattle or u.myTournament or {}
-        local amt  = tonumber(mb.stakeAmount) or tonumber((mb.stake or {}).amount)
-            or tonumber((mb.grandPrize or {}).value) or 0
-        local fmtv = tonumber(mb.matchFormat) or 3
-        local stake_i, fmt_i = 1, 1
-        for i, t in ipairs(BATTLE_TIERS) do
-            if t.amount == amt then stake_i = i; break end
-        end
-        for i, fdef in ipairs(BATTLE_TIERS[stake_i].formats) do
-            if fdef.games == fmtv then fmt_i = i; break end
-        end
-        self.battle_modal = { editing = true, id = tostring(mb._id or mb.id or ""), stake_i = stake_i, fmt_i = fmt_i }
-        rebuild(self)
-
-    elseif id == "bm_block"  then  -- absorb
-    elseif id == "bm_close"  then close_battle_modal(self); rebuild(self)
-    elseif id == "bm_fee_minus" or id == "bm_fee_plus" then
-        local bm = self.battle_modal
-        if bm and not bm.submitting then
-            bm.stake_i = math.max(1, math.min(#BATTLE_TIERS, bm.stake_i + (id == "bm_fee_plus" and 1 or -1)))
-            bm.fmt_i   = math.min(bm.fmt_i, #BATTLE_TIERS[bm.stake_i].formats)
-            rebuild(self)
-        end
-    elseif id == "bm_fmt_minus" or id == "bm_fmt_plus" then
-        local bm = self.battle_modal
-        if bm and not bm.submitting then
-            bm.fmt_i = math.max(1, math.min(#BATTLE_TIERS[bm.stake_i].formats, bm.fmt_i + (id == "bm_fmt_plus" and 1 or -1)))
-            rebuild(self)
-        end
-    elseif id == "bm_submit" then bm_submit(self)
+        if self.banners and message and message.request_id then for i = #self.banners, 1, -1 do if self.banners[i].request_id == message.request_id then table.remove(self.banners, i) end end; if #self.banners == 0 then self.banners = nil end end
+        self.dialog = nil; if self._active then rebuild(self) end
     end
 end
 
 function on_input(self, action_id, action)
-    if action_id == hash("touch")
-       and not self.dialog and not self.battle_modal
-       and not self.invite_search
-       and not (self.banners and #self.banners > 0)
-       and self.list_region then
+    if action_id == hash("touch") and not self.dialog and not self.battle_modal and not self.invite_search and not self.banners and self.list_region then
         local reg = self.list_region
-        if action.pressed and action.x >= reg.left and action.x <= reg.right
-           and action.y >= reg.bottom and action.y <= reg.top then
-            self._drag_y = action.y; self._drag_start = action.y; self._dragged = false
-        elseif self._drag_y and not action.released then
-            local dy = action.y - self._drag_y
-            if math.abs(action.y - (self._drag_start or action.y)) > 6 then self._dragged = true end
-            self.list_scroll = (self.list_scroll or 0) - dy
-            self._drag_y     = action.y
-            rebuild(self)
-            return true
-        elseif action.released and self._drag_y then
-            local was_drag = self._dragged; self._drag_y = nil; self._dragged = false
-            if was_drag then return true end
+        if action.pressed and action.x >= reg.left and action.x <= reg.right and action.y >= reg.bottom and action.y <= reg.top then
+            self._dy = action.y; self._dstart = action.y; self._drag = false
+        elseif self._dy and not action.released then
+            if math.abs(action.y - (self._dstart or action.y)) > 6 then self._drag = true end
+            self.list_scroll, self._dy = (self.list_scroll or 0) - (action.y - self._dy), action.y; rebuild(self); return true
+        elseif action.released and self._dy then
+            local wd = self._drag; self._dy, self._drag = nil, false; if wd then return true end
         end
     end
 
     if action_id == hash("touch") and action.pressed then
         for i = #self.buttons, 1, -1 do
             local b = self.buttons[i]
-            if b.node and gui.pick_node(b.node, action.x, action.y) then handle(self, b); return true end
+            if gui.pick_node(b.node, action.x, action.y) then
+                local id = b.id
+                if id == "tab_quick" then self.tab, self.list_scroll = TAB_QUICK, 0; rebuild(self)
+                elseif id == "tab_battles" then self.tab, self.list_scroll = TAB_BATTLES, 0; rebuild(self)
+                elseif type(id) == "string" and id:sub(1,6) == "stake_" then self.stake_index = b.data; app_state.selected_stake = config.STAKE_LEVELS[self.stake_index]; ws.update_stake(config.STAKE_LEVELS[self.stake_index]); rebuild(self)
+                elseif id == "challenge" then
+                    local u, sd, ex = b.data or {}, app_state.selected_stake, nil
+                    if self.tab == TAB_BATTLES and type(u.myBattle) == "table" then
+                        sd = type(u.myBattle.stake) == "table" and u.myBattle.stake or { amount = tonumber(u.myBattle.stakeAmount) or 0 }
+                        ex = { gameType = "TOURNAMENT", tournamentId = u.myBattle._id or u.myBattle.id, rules = u.myBattle.rules }
+                    end
+                    ws.send_game_request({ _id=u._id, username=u.username, isAI=u.isAI, avatar=u.avatar }, sd, ex); open_dialog(self, "challenging", u.username or "opponent", sd, nil, u.avatar, u._id, nil); ws.request_head_to_head(u._id)
+                elseif id == "accept" then if self.dialog and self.dialog.request_id then ws.accept_game_request(self.dialog.request_id) end; self.dialog = nil; rebuild(self)
+                elseif id == "decline" or id == "cancel_wait" then if self.dialog and self.dialog.request_id then ws.decline_game_request(self.dialog.request_id) end; self.dialog = nil; rebuild(self)
+                elseif id == "banner_accept" or id == "banner_decline" then if b.data and b.data ~= "" then if id == "banner_accept" then ws.accept_game_request(b.data) else ws.decline_game_request(b.data) end end; for j = #self.banners, 1, -1 do if self.banners[j].request_id == b.data then table.remove(self.banners, j) end end; if #self.banners == 0 then self.banners = nil end; rebuild(self)
+                elseif id == "nav_lobby" then msg.post("#controller", "goto_lobby")
+                elseif id == "nav_payments" then msg.post("#controller", "goto_payments")
+                elseif id == "nav_themes" then msg.post("#controller", "goto_themes")
+                elseif id == "nav_tournaments" then msg.post("#controller", "goto_tournaments")
+                elseif id == "nav_support" then msg.post("#controller", "goto_support")
+                elseif id == "nav_account" then msg.post("#controller", "goto_account")
+                elseif id == "nav_invite" then right_panel.start_invite_search(self, app_state, function() rebuild(self) end)
+                elseif id == "cancel_invite" then right_panel.stop_invite_search(self, app_state, function() rebuild(self) end)
+                elseif id == "create_battle" then self.battle_modal = { editing = false, stake_i = 1, fmt_i = 1 }; rebuild(self)
+                elseif id == "update_battle" then
+                    local mb = (ws.current_user_data or {}).myBattle or (ws.current_user_data or {}).myTournament or {}
+                    local amt, fmtv, s_i, f_i = tonumber(mb.stakeAmount) or tonumber((mb.stake or {}).amount) or 0, tonumber(mb.matchFormat) or 3, 1, 1
+                    for j, t in ipairs(right_panel.BATTLE_TIERS) do if t.amount == amt then s_i = j; break end end
+                    for j, fdef in ipairs(right_panel.BATTLE_TIERS[s_i].formats) do if fdef.games == fmtv then f_i = j; break end end
+                    self.battle_modal = { editing = true, id = tostring(mb._id or mb.id or ""), stake_i = s_i, fmt_i = f_i }; rebuild(self)
+                elseif id == "bm_close" then self.battle_modal = nil; rebuild(self)
+                elseif id == "bm_fee_minus" or id == "bm_fee_plus" then
+                    local bm = self.battle_modal
+                    if bm and not bm.submitting then bm.stake_i = math.max(1, math.min(#right_panel.BATTLE_TIERS, bm.stake_i + (id == "bm_fee_plus" and 1 or -1))); bm.fmt_i = math.min(bm.fmt_i, #right_panel.BATTLE_TIERS[bm.stake_i].formats); rebuild(self) end
+                elseif id == "bm_fmt_minus" or id == "bm_fmt_plus" then
+                    local bm = self.battle_modal
+                    if bm and not bm.submitting then bm.fmt_i = math.max(1, math.min(#right_panel.BATTLE_TIERS[bm.stake_i].formats, bm.fmt_i + (id == "bm_fmt_plus" and 1 or -1))); rebuild(self) end
+                elseif id == "bm_submit" then right_panel.bm_submit(self, function() rebuild(self) end)
+                end
+                return true
+            end
         end
     end
     return false

@@ -23,6 +23,10 @@ fonts {
   name: "helvetica_bold"
   font: "/fonts/helvetica_bold.font"
 }
+fonts {
+  name: "helvetica_black"
+  font: "/fonts/helvetica_black.font"
+}
 textures {
   name: "ui"
   texture: "/assets/ui/ui.atlas"

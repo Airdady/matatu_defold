@@ -29,7 +29,7 @@ fonts {
 }
 fonts {
   name: "helvetica_bold"
-  font: "/fonts/helvetica-bold.font"
+  font: "/fonts/helvetica_bold.font"
 }
 textures {
   name: "ui"
