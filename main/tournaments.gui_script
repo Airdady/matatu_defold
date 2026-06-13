@@ -308,9 +308,13 @@ function on_message(self, message_id, message, sender)
 				self.search.opp_name = string.upper(self.search.opp_name)
 			end
 			app_state.searching_tournament = false
+			-- Stop the search loop, play the "opponent found" sting.
+			pcall(msg.post, "#snd_connecting", "stop_sound")
+			pcall(msg.post, "#snd_win", "play_sound")
 			rebuild(self)
 		end
 	elseif message_id == hash("ws_search_failed") then
+		pcall(msg.post, "#snd_connecting", "stop_sound")
 		if self.search and not self.search.found then
 			self.search.failed = true
 			self.search.fail_msg = (message and message.reason) or "No opponents available right now"
@@ -332,11 +336,13 @@ local function handle(self, b)
 		self._msg = nil
 		self.search = { active = true, t = 0, reel_ix = math.random(AVATAR_MAX), spin_t = 0 }
 		app_state.searching_tournament = true
+		pcall(msg.post, "#snd_connecting", "play_sound")
 		msg.post("#controller", "tournament_play", {
 			tournament_id = d.id, tournament_name = d.name, stake = d.stake,
 		})
 		rebuild(self)
 	elseif b.id == "cancel_search" then
+		pcall(msg.post, "#snd_connecting", "stop_sound")
 		stop_search(self)
 	end
 end

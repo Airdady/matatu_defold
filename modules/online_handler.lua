@@ -125,7 +125,8 @@ function M.slim_ranks(ranks)
             position = r.position,
             username = r.username,
             points   = r.points,
-            id       = r.id or r._id,
+            -- backend rank rows carry `userId`; keep id/_id fallbacks too
+            id       = r.id or r._id or r.userId,
         }
     end
     return out

@@ -22,6 +22,15 @@ local CX, CY = 640, 360
 local TAB_QUICK   = 1
 local TAB_BATTLES = 2
 
+-- The snd_* components live on the controller object (siblings of #online),
+-- so they're addressable with a bare "#snd_..." url from here.
+local function play_snd(name)
+    pcall(msg.post, "#" .. name, "play_sound")
+end
+local function stop_snd(name)
+    pcall(msg.post, "#" .. name, "stop_sound")
+end
+
 -- ── Colors & Spacing ──────────────────────────────────────────────────────────
 local SIDE_RATIO  = 0.30
 local SIDE_MARGIN = 20
@@ -145,8 +154,12 @@ local function draw_banner(self)
         local cy, alpha = EDGE_T - 70 - (idx - 1) * 102 + slide, b.alpha or 1
         self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(CX, cy, 0), vmath.vector3(bw, 92, 0), vmath.vector4(0.06, 0.10, 0.14, 0.97 * alpha))), id = "banner_block" }
         track(self, ui.box(vmath.vector3(CX, cy + 44, 0), vmath.vector3(bw, 3, 0), vmath.vector4(0.2, 0.9, 1.0, alpha)))
-        gui.set_pivot(track(self, ui.text(vmath.vector3(EDGE_L + 40, cy + 20, 0), b.title or "GAME REQUEST", "body", vmath.vector4(0.92, 0.96, 1.0, alpha))), gui.PIVOT_W)
-        gui.set_pivot(track(self, ui.text(vmath.vector3(EDGE_L + 40, cy - 12, 0), b.desc or "", "small", vmath.vector4(0.42, 0.56, 0.68, alpha))), gui.PIVOT_W)
+        -- Sender avatar (framed disc) on the left of the inline invite bar.
+        track(self, ui.box(vmath.vector3(EDGE_L + 48, cy, 0), vmath.vector3(60, 60, 0), vmath.vector4(0.10, 0.14, 0.18, alpha)))
+        local b_av = track(self, ui.avatar(vmath.vector3(EDGE_L + 48, cy, 0), vmath.vector3(54, 54, 0), b.avatar or 1))
+        gui.set_color(b_av, vmath.vector4(1, 1, 1, alpha))
+        gui.set_pivot(track(self, ui.text(vmath.vector3(EDGE_L + 90, cy + 20, 0), b.title or "GAME REQUEST", "body", vmath.vector4(0.92, 0.96, 1.0, alpha))), gui.PIVOT_W)
+        gui.set_pivot(track(self, ui.text(vmath.vector3(EDGE_L + 90, cy - 12, 0), b.desc or "", "small", vmath.vector4(0.42, 0.56, 0.68, alpha))), gui.PIVOT_W)
         self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(EDGE_R - 90, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.0, 0.9, 0.63, 0.30 * alpha))), id = "banner_accept", data = b.request_id }
         track(self, ui.text(vmath.vector3(EDGE_R - 90, cy, 0), "ACCEPT", "luckiest_guy_md", vmath.vector4(1,1,1,alpha)))
         self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(EDGE_R - 225, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.12, 0.19, 0.27, 0.85 * alpha))), id = "banner_decline", data = b.request_id }
@@ -205,13 +218,19 @@ end
 -- ── Dialog / Banner Lifecycle ─────────────────────────────────────────────────
 local function open_dialog(self, kind, name, stake, request_id, avatar, opponent_id, h2h)
     self.dialog, self.dlg_alpha = { kind = kind, name = name, stake = stake or {}, request_id = request_id, avatar = tonumber(avatar) or 1, time_left = 10, max_time = 10, opponent_id = opponent_id and tostring(opponent_id) or nil, h2h = h2h }, 0
+    -- Audible cue when an opponent's challenge arrives.
+    if kind == "incoming" then play_snd("snd_alert") end
     if self._active then rebuild(self) end
 end
 local function open_banner(self, raw)
-    local b = { title = ((raw.gameType or "TOURNAMENT") == "BATTLE" and "BATTLE  -  " or "TOURNAMENT  -  ") .. ((type(raw.sender) == "table" and raw.sender.username) or "Opponent"):upper(), desc = "Best of " .. (tonumber((type(raw.tournament) == "table" and raw.tournament.matchFormat) or 3) or 3) .. "   -   " .. (((tonumber(((type(raw.tournament) == "table" and raw.tournament.stake) or raw.stake or {}).amount) or 0) > 0) and commas(tonumber(((type(raw.tournament) == "table" and raw.tournament.stake) or raw.stake or {}).amount) or 0).." Coins" or "Practice Mode"), request_id = raw.requestId or "", time_left = 10, max_time = 10, alpha = 0, y_off = 1, h2h = raw.headToHead }
+    local sender_av = (type(raw.sender) == "table" and tonumber(raw.sender.avatar)) or 1
+    local b = { title = ((raw.gameType or "TOURNAMENT") == "BATTLE" and "BATTLE  -  " or "TOURNAMENT  -  ") .. ((type(raw.sender) == "table" and raw.sender.username) or "Opponent"):upper(), desc = "Best of " .. (tonumber((type(raw.tournament) == "table" and raw.tournament.matchFormat) or 3) or 3) .. "   -   " .. (((tonumber(((type(raw.tournament) == "table" and raw.tournament.stake) or raw.stake or {}).amount) or 0) > 0) and commas(tonumber(((type(raw.tournament) == "table" and raw.tournament.stake) or raw.stake or {}).amount) or 0).." Coins" or "Practice Mode"), request_id = raw.requestId or "", avatar = sender_av, time_left = 10, max_time = 10, alpha = 0, y_off = 1, h2h = raw.headToHead }
     if h2h_view(raw.headToHead) and h2h_view(raw.headToHead).opp_winrate then b.desc = b.desc .. "   -   WR " .. math.floor(h2h_view(raw.headToHead).opp_winrate + 0.5) .. "%" end
     self.banners = self.banners or {}; for _, ex in ipairs(self.banners) do if b.request_id ~= "" and ex.request_id == b.request_id then return end end
-    table.insert(self.banners, b); if self._active then rebuild(self) end
+    table.insert(self.banners, b)
+    -- Audible cue for an incoming tournament/battle invite.
+    play_snd("snd_alert")
+    if self._active then rebuild(self) end
 end
 
 -- ── Standard Defold Hooks ─────────────────────────────────────────────────────
@@ -224,6 +243,14 @@ end
 function update(self, dt)
     if not self._active then return end
 
+    -- All overlay animations (banners, the lottery search reel, and the
+    -- request dialog) advance in ONE pass and trigger AT MOST one rebuild per
+    -- frame. The previous version early-returned after rebuilding for banners,
+    -- which starved (and visually restarted) any dialog/search animating
+    -- underneath them — the "banner on top breaks other dialogs" bug.
+    local need_rebuild = false
+
+    -- ── Banners (inline tournament/battle invites) ────────────────────────
     if self.banners and #self.banners > 0 then
         local expired = {}
         for _, b in ipairs(self.banners) do
@@ -235,24 +262,27 @@ function update(self, dt)
             for i = #self.banners, 1, -1 do if self.banners[i].request_id == b.request_id then table.remove(self.banners, i) end end
             if #self.banners == 0 then self.banners = nil end
         end
-        rebuild(self); return
+        need_rebuild = true
     end
 
+    -- ── Lottery opponent-search reel ──────────────────────────────────────
     if self.invite_search and not self.invite_search.found then
         local sr = self.invite_search; sr.t, sr.spin_t, sr.dots_t = (sr.t or 0) + dt, (sr.spin_t or 0) + dt, (sr.dots_t or 0) + dt
         if sr.spin_t >= 0.07 then sr.spin_t = 0; sr.reel_ix = math.random(60); if self.invite_reel_node then pcall(gui.play_flipbook, self.invite_reel_node, "avatar_" .. sr.reel_ix) end end
-        if sr.dots_t >= 0.5 then sr.dots_t = 0; rebuild(self) end
-        return
+        if sr.dots_t >= 0.5 then sr.dots_t = 0; need_rebuild = true end
     end
 
+    -- ── Request dialog (incoming / outgoing) ──────────────────────────────
     if self.dialog then
         self.dlg_alpha, self.dialog.time_left = math.min(1, (self.dlg_alpha or 0) + dt * 4), (self.dialog.time_left or 10) - dt
         if self.dialog.time_left <= 0 then
             if self.dialog.kind == "incoming" and self.dialog.request_id then ws.decline_game_request(self.dialog.request_id) end
             self.dialog = nil
         end
-        rebuild(self); return
+        need_rebuild = true
     end
+
+    if need_rebuild then rebuild(self); return end
 
     self._tick = self._tick + dt
     if self._tick >= 1 then self._tick = 0; update_season(self); rebuild(self) end
@@ -265,6 +295,8 @@ function on_message(self, message_id, message, sender)
         local gs, me, opp = ws.get_active_game() or {}, tostring(ws.get_current_user_id() or ""), nil
         for k, pl in pairs(gs.players or {}) do if tostring((type(pl) == "table" and (pl._id or pl.id)) or k) ~= me then opp = pl end end
         self.invite_search.found, self.invite_search.reel_ix, self.invite_search.opp_name, app_state.searching_invite = true, (type(opp) == "table" and tonumber(opp.avatar)) or self.invite_search.reel_ix, string.upper(tostring((type(opp) == "table" and (opp.username or opp.name)) or "PLAYER")), false
+        -- Stop the looping search cue and play a distinct "found" sting.
+        stop_snd("snd_connecting"); play_snd("snd_win")
         rebuild(self)
     elseif message_id == hash("enable") then refresh_wh(); self._active = true
     elseif message_id == hash("disable") then self._active = false; clear(self)
@@ -318,9 +350,9 @@ function on_input(self, action_id, action)
                 elseif id == "nav_themes" then msg.post("#controller", "goto_themes")
                 elseif id == "nav_tournaments" then msg.post("#controller", "goto_tournaments")
                 elseif id == "nav_support" then msg.post("#controller", "goto_support")
-                elseif id == "nav_account" then msg.post("#controller", "goto_account")
-                elseif id == "nav_invite" then right_panel.start_invite_search(self, app_state, function() rebuild(self) end)
-                elseif id == "cancel_invite" then right_panel.stop_invite_search(self, app_state, function() rebuild(self) end)
+                elseif id == "nav_account" then msg.post("#controller", "goto_profile")
+                elseif id == "nav_invite" then right_panel.start_invite_search(self, app_state, function() rebuild(self) end); play_snd("snd_connecting")
+                elseif id == "cancel_invite" then right_panel.stop_invite_search(self, app_state, function() rebuild(self) end); stop_snd("snd_connecting")
                 elseif id == "create_battle" then self.battle_modal = { editing = false, stake_i = 1, fmt_i = 1 }; rebuild(self)
                 elseif id == "update_battle" then
                     local mb = (ws.current_user_data or {}).myBattle or (ws.current_user_data or {}).myTournament or {}
