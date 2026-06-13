@@ -53,6 +53,12 @@ function M.destroy_all(self)
     if self.cutting_card then pcall(go.delete, self.cutting_card.id); self.cutting_card = nil end
     self.deck, self.player_hand, self.ai_hand, self.played_cards = {}, {}, {}, {}
 
+    -- Tear down any 4-player tournament seat visuals + state.
+    if self.t4 then
+        for _, s in ipairs(self.t4.seats or {}) do purge(s.cards) end
+        self.t4 = nil
+    end
+
     if self.ws_listeners then
         for _, token in ipairs(self.ws_listeners) do ws.off(token) end
     end

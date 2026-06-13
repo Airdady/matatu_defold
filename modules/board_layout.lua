@@ -218,6 +218,13 @@ function M.update_layout(self)
     self.PLAYER_HAND_Y  = bottom_edge + 96
     self.AI_HAND_Y      = top_edge - 96
 
+    -- 4-player tournament seats: human is the bottom hand; the three AI
+    -- opponents sit top / left / right as compact face-down stacks.
+    local left_edge = (LOGICAL_W / 2) - (vis_w / 2)
+    self.SEAT_TOP   = vmath.vector3(LOGICAL_W / 2,    top_edge - 70,    0)
+    self.SEAT_LEFT  = vmath.vector3(left_edge + 110,  LOGICAL_H / 2,    0)
+    self.SEAT_RIGHT = vmath.vector3(right_edge - 110, LOGICAL_H / 2 + 70, 0)
+
     M.fit_background(self)
     if self.player_hand and #self.player_hand > 0 then M.position_hands(self, false) end
     if self.ai_hand and #self.ai_hand > 0 then M.position_hands(self, false) end

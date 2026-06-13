@@ -329,9 +329,11 @@ local function show_emoji_anim(self, name, fly, local_start_pos, start_scale)
         gui.set_scale(self.emoji_btn, vmath.vector3(1.15, 1.15, 1))
         gui.animate(self.emoji_btn, "scale", vmath.vector3(1.0, 1.0, 1), gui.EASING_OUTELASTIC, 0.6)
 
-        -- Flight duration: slow and graceful across the full screen
-        local fly_duration = 1.8
-        local fade_delay  = fly_duration - 0.4   -- fade starts near the end, close to top-left
+        -- Flight duration: a brisk arc. Kept short on purpose — a long flight
+        -- means the multi-frame emoji flipbook is resampled for many extra
+        -- frames while it travels, which was dragging the card/emoji FPS down.
+        local fly_duration = 1.0
+        local fade_delay  = fly_duration - 0.3   -- fade starts near the end, close to top-left
 
         if start_scale then
             local s0 = type(start_scale) == "number" and vmath.vector3(start_scale, start_scale, 1) or start_scale
@@ -367,7 +369,7 @@ local function show_emoji_anim(self, name, fly, local_start_pos, start_scale)
 
         gui.set_scale(n, vmath.vector3(0.3, 0.3, 1))
         gui.animate(n, "scale", vmath.vector3(1.2, 1.2, 1), gui.EASING_OUTBACK, 0.3)
-        gui.animate(n, "color.w", 0.0, gui.EASING_INSINE, 0.5, 1.7, done)
+        gui.animate(n, "color.w", 0.0, gui.EASING_INSINE, 0.5, 1.1, done)
     end
 end
 

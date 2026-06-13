@@ -101,14 +101,12 @@ local function rebuild(self)
 
     local panel_t = CY + ph/2
 
-    -- Header row inside the panel: title left, balance + close right.
+    -- Header row inside the panel: title left, close right. No balance shown
+    -- (Godot ThemesDialog parity — only owned/free/active state is surfaced).
     track(self, ui.text(vmath.vector3(CX - pw/2 + 110, panel_t - 36, 0), "THEMES", "poppins_black", P_GOLD))
 
     local u = ws.current_user_data or {}
     local balance = tonumber(u.balance) or 0
-    track(self, ui.image(vmath.vector3(CX + pw/2 - 200, panel_t - 36, 0), vmath.vector3(26, 26, 0), "coin_icon"))
-    local bal_txt = txtL(self, CX + pw/2 - 176, panel_t - 36, commas(balance), "poppins_bold", P_GOLD)
-    gui.set_scale(bal_txt, vmath.vector3(1.05, 1.05, 1))
 
     local close_btn = track(self, ui.box(vmath.vector3(CX + pw/2 - 36, panel_t - 36, 0), vmath.vector3(44, 44, 0), vmath.vector4(0, 0, 0, 0.001)))
     track(self, ui.text(vmath.vector3(CX + pw/2 - 36, panel_t - 36, 0), "X", "poppins_bold", P_CREAM_DIM))
@@ -174,9 +172,9 @@ local function rebuild(self)
         shadow_box(-46, 20, 0.8)
         shadow_box(-104, 80, 0.95) -- Core deep shadow at the very bottom
 
-        -- Top-Right Badge (replaces the old top colored line)
+        -- Status badge — top-LEFT, like the Godot ThemesDialog
         local badge_w, badge_h = 90, 28
-        local bx = px + cw/2 - badge_w/2 - 14
+        local bx = px - cw/2 + badge_w/2 + 14
         local by = py + ch/2 - badge_h/2 - 14
         if t.active then
             framed(self, bx, by, badge_w, badge_h, P_GOLD, 1, vmath.vector4(0.2, 0.15, 0.05, 0.9))
