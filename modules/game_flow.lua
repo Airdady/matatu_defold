@@ -125,6 +125,12 @@ function M.after_play_settled(self, rec, is_player, result, ticket)
     elseif result.type == NA.SKIP_TURN then
         log(actor .. " skips opponent!")
         notify_gui(self.gui_suit, "suit_select", { mode = "close" })
+        -- 4-player: a skip removes the NEXT seat's turn, then play rotates on
+        -- (it is NOT a free "play again" like the 2-player game).
+        if self.t4 then
+            require("modules.tournament4").skip_and_advance(self)
+            return
+        end
         if is_player then
             if #self.player_hand == 0 then
                 if self.online_mode then
@@ -377,6 +383,11 @@ function M.next_turn(self)
         self.deactivate_turn()
         return
     end
+    -- 4-player elimination tournament: hand the turn to the next surviving seat.
+    if self.t4 then
+        require("modules.tournament4").advance(self)
+        return
+    end
     OfflineHandler.next_turn(self)
 end
 
@@ -430,6 +441,17 @@ end
 ----------------------------------------------------------------------
 function M.check_win(self, rec, is_player, result)
     if self.online_mode then return false end
+
+    -- 4-player tournament: the human emptying their hand ENDS the deal (they
+    -- survive) and triggers elimination of the most-cards seat — there is no
+    -- cutting-card instant-win and no 2-player ai_hand here.
+    if self.t4 then
+        if #self.player_hand == 0 then
+            require("modules.tournament4").human_finished(self)
+            return true
+        end
+        return false
+    end
 
     if RE.is_cutting_match(self, rec) then
         log("Cutting card played! Game over instantly.")
@@ -669,6 +691,13 @@ function M.start_game(self)
             OnlineHandler.start_game(self, state)
             return
         end
+    end
+
+    -- 4-player offline elimination bracket.
+    if app.mode == "tournament4" then
+        local me = ws.current_user_data or {}
+        require("modules.tournament4").start(self, me)
+        return
     end
 
     OfflineHandler.start_game(self)

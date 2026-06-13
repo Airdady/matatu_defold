@@ -223,7 +223,13 @@ end
 ----------------------------------------------------------------------
 local function process_game_over_queue(self, results)
     if not self.online_mode or self.game_over then return end
-    
+
+    -- Fresh leaderboard the backend rebuilds at game over (username + points
+    -- + position): refresh the standings panel so it never shows stale rows.
+    if type(results.rank) == "table" and #results.rank > 0 then
+        notify_gui(self.gui_hud, "update_standings", { ranks = OnlineHandler.slim_ranks(results.rank) })
+    end
+
     -- Round/tournament end carries the final currentScores: refresh
     -- the scoreboard before the modal shows (Godot HudUI game-over
     -- sync), so ended rounds never display stale numbers.
@@ -706,6 +712,15 @@ function on_message(self, message_id, message, sender)
 
     elseif message_id == hash("timer_expired") then
         if self.online_mode then return end
+        -- 4-player tournament: a timeout doesn't forfeit the whole bracket —
+        -- the seat simply passes (rotate to the next survivor).
+        if self.t4 then
+            if self.is_player_turn() and not self.is_animating and not self.game_over then
+                notify_gui(self.gui_hud, "skip", { show = false })
+                require("modules.tournament4").advance(self)
+            end
+            return
+        end
         if self.is_player_turn() and not self.waiting and not self.is_animating and not self.game_over then
             notify_gui(self.gui_hud, "skip", { show = false })
             self.end_game(false, false)

@@ -663,6 +663,16 @@ function on_message(self, message_id, message)
             end
         end
 
+        -- 4-player offline elimination bracket result.
+        if message.t4_champion then
+            if message.t4_is_human then
+                title_str, title_col, subtitle = "CHAMPION!", C_CHAMPION, "You won the bracket"
+            else
+                title_str, title_col, subtitle = "ELIMINATED", C_DEFEAT, string.upper(tostring(message.t4_champion)) .. " won the bracket"
+            end
+            again_txt = "PLAY AGAIN"
+        end
+
         if is_no_show then
             title_str = "OPPONENT NO SHOW"
             title_col = C_NEUTRAL
