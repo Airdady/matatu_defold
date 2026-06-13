@@ -837,8 +837,10 @@ local function handle(self, b)
         set_state(self, STATE_TOURNEY)
 
     elseif b.id == "start_tournament" then
-        app_state.tournament_size = app_state.tournament_size or 4
-        msg.post("#controller", "start_tournament")
+        -- Quick bracket = OFFLINE 4-player elimination chamber (1 human + 3 AI).
+        app_state.tournament_size = 4
+        app_state.mode = "tournament4"
+        msg.post("#controller", "goto_game")
     end
 end
 
