@@ -125,10 +125,10 @@ function M.after_play_settled(self, rec, is_player, result, ticket)
     elseif result.type == NA.SKIP_TURN then
         log(actor .. " skips opponent!")
         notify_gui(self.gui_suit, "suit_select", { mode = "close" })
-        -- 4-player: a skip removes the NEXT seat's turn, then play rotates on
-        -- (it is NOT a free "play again" like the 2-player game).
+        -- 4-player: 8 skips the next seat; J/11 reverses the direction of play
+        -- (or skips in the 2-player endgame). It is NOT a free "play again".
         if self.t4 then
-            require("modules.tournament4").skip_and_advance(self)
+            require("modules.tournament4").apply_skip(self, rec)
             return
         end
         if is_player then
