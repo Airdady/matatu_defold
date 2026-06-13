@@ -169,9 +169,6 @@ function M.close(self)
     self.emoji_open = false
     self.emoji_closing = true
     
-    -- Notify the main game controller that the popover has closed
-    msg.post(GAME, "emoji_state", { open = false })
-    
     gui.cancel_animation(self.popover_anchor, "scale")
     gui.animate(self.popover_anchor, "scale", vmath.vector3(0.01, 0.01, 1), gui.EASING_INBACK, 0.2, 0, function()
         gui.set_enabled(self.popover_anchor, false)
@@ -181,6 +178,9 @@ function M.close(self)
         gui.set_position(self.sound_root, vmath.vector3(self.p_w, 0, 0))
         gui.set_enabled(self.active_thumb, false)
         self.emoji_closing = false
+        
+        -- Notify the main game controller that the popover has closed AFTER animation
+        msg.post(GAME, "emoji_state", { open = false })
     end)
 end
 
@@ -336,22 +336,22 @@ local function show_emoji_anim(self, name, fly, local_start_pos, start_scale)
         if start_scale then
             local s0 = type(start_scale) == "number" and vmath.vector3(start_scale, start_scale, 1) or start_scale
             gui.set_scale(n, s0)
-            -- Gentle pop
-            gui.animate(n, "scale", vmath.vector3(s0.x * 1.3, s0.y * 1.3, 1), gui.EASING_OUTBACK, 0.35)
+            -- Gentle pop, then chain the shrink to avoid overlapping animations
+            gui.animate(n, "scale", vmath.vector3(s0.x * 1.3, s0.y * 1.3, 1), gui.EASING_OUTBACK, 0.25, 0, function()
+                gui.animate(n, "scale", vmath.vector3(0.5, 0.5, 1), gui.EASING_INOUTSINE, fly_duration - 0.25)
+            end)
             -- Slow arc to top-left
-            gui.animate(n, "position", dest_local, gui.EASING_INOUTSINE, fly_duration, 0.15)
-            -- Shrink during flight
-            gui.animate(n, "scale", vmath.vector3(0.5, 0.5, 1), gui.EASING_INOUTSINE, fly_duration, 0.15)
+            gui.animate(n, "position", dest_local, gui.EASING_INOUTSINE, fly_duration, 0.1)
             -- Fade out only when almost at destination
             gui.animate(n, "color.w", 0.0, gui.EASING_INSINE, 0.35, fade_delay, done)
         else
             gui.set_scale(n, vmath.vector3(0.1, 0.1, 1))
-            -- Bloom up
-            gui.animate(n, "scale", vmath.vector3(3.0, 3.0, 1), gui.EASING_OUTELASTIC, 0.7)
+            -- Bloom up, then chain the shrink to avoid overlapping animations
+            gui.animate(n, "scale", vmath.vector3(3.0, 3.0, 1), gui.EASING_OUTELASTIC, 0.4, 0, function()
+                gui.animate(n, "scale", vmath.vector3(0.5, 0.5, 1), gui.EASING_INOUTSINE, fly_duration - 0.4)
+            end)
             -- Slow arc to top-left
-            gui.animate(n, "position", dest_local, gui.EASING_INOUTSINE, fly_duration, 0.4)
-            -- Shrink during flight
-            gui.animate(n, "scale", vmath.vector3(0.5, 0.5, 1), gui.EASING_INOUTSINE, fly_duration, 0.4)
+            gui.animate(n, "position", dest_local, gui.EASING_INOUTSINE, fly_duration, 0.1)
             -- Fade out only when almost at destination
             gui.animate(n, "color.w", 0.0, gui.EASING_INSINE, 0.4, fade_delay, done)
         end

@@ -144,6 +144,7 @@ function M.identify(id, username, stake, country)
   end
 end
 
+-- FIXED: extra_data logic appends payload keys matching the Godot structure (e.g. tournamentId)
 function M.send_game_request(opponent, stake, extra_data)
   local payload = {
     opponent = opponent,
