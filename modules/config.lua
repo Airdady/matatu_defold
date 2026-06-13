@@ -3,7 +3,7 @@
 
 local M = {}
 
-M.DOMAIN = "10.15.64.113:3000"
+M.DOMAIN = "192.168.1.128:3000"
 M.BASE_URL = "http://" .. M.DOMAIN .. "/matatu"
 M.WS_URL = "ws://" .. M.DOMAIN .. "/matatu/ws"
 

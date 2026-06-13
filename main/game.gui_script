@@ -7,9 +7,9 @@ local GAME = "/controller#game_logic"
 -- Layout constants
 local LOGICAL_W = 1280
 local LOGICAL_H = 720
-local EXIT_BTN_SIZE = 140 -- Increased size to match emoji button
-local EXIT_BTN_MARGIN_TOP = 0 -- Extended slightly to top
-local EXIT_BTN_MARGIN_RIGHT = 0 -- Extended slightly to right
+local EXIT_BTN_SIZE = 80 
+local EXIT_BTN_MARGIN_TOP = 10 
+local EXIT_BTN_MARGIN_RIGHT = 10 
 local EXIT_POPOVER_WIDTH = 200
 local EXIT_POPOVER_HEIGHT = 120
 local EXIT_POPOVER_OFFSET_Y = -10
@@ -463,26 +463,35 @@ local function build_stake_chip(self)
     gui.set_enabled(self.stake_chip, false)
 end
 
--- Building Standings UI
+-- Building Standings UI aligned right below the exit button
 local function build_standings_ui(self)
-    -- Rankings live on the RIGHT, stacked ABOVE the deck (which sits at the
-    -- right edge, vertical centre) — Godot HudUI placement.
-    self.standings_root = box(vmath.vector3(LOGICAL_W - EXIT_BTN_MARGIN_RIGHT - 196, LOGICAL_H - 116, 0), vmath.vector3(196, 180, 0), vmath.vector4(0,0,0,0), gui.PIVOT_NW)
-    gui.set_xanchor(self.standings_root, gui.ANCHOR_RIGHT)
-    gui.set_yanchor(self.standings_root, gui.ANCHOR_NONE)
+    -- Rankings live on the RIGHT, below the exit button, above the deck.
+    local st_y = LOGICAL_H - EXIT_BTN_MARGIN_TOP - EXIT_BTN_SIZE - 20
+    local st_x = LOGICAL_W - EXIT_BTN_MARGIN_RIGHT
 
-    self.standings_title = label(vmath.vector3(0, 2, 0), "STANDINGS", 13, vmath.vector4(0.65, 0.68, 0.72, 1.0), gui.PIVOT_W, "poppins_bold")
+    self.standings_root = box(vmath.vector3(st_x, st_y, 0), vmath.vector3(220, 180, 0), vmath.vector4(0,0,0,0), gui.PIVOT_NE)
+    gui.set_xanchor(self.standings_root, gui.ANCHOR_RIGHT)
+    gui.set_yanchor(self.standings_root, gui.ANCHOR_TOP)
+
+    self.standings_title = label(vmath.vector3(-220, 0, 0), "STANDINGS", 13, vmath.vector4(0.65, 0.68, 0.72, 1.0), gui.PIVOT_NW, "poppins_bold")
     gui.set_parent(self.standings_title, self.standings_root)
     gui.set_enabled(self.standings_title, false)
 
     self.standings_rows = {}
-    for i=1, 7 do
-        local row = box(vmath.vector3(0, -18 - (i-1)*24, 0), vmath.vector3(196, 24, 0), vmath.vector4(0,0,0,0), gui.PIVOT_NW)
+    -- Only showing 3 top players as per prompt
+    for i=1, 3 do
+        local row_y = -24 - (i-1)*28
+        local row = box(vmath.vector3(-220, row_y, 0), vmath.vector3(220, 24, 0), vmath.vector4(0,0,0,0), gui.PIVOT_NW)
         gui.set_parent(row, self.standings_root)
-        local pos_lbl = label(vmath.vector3(0, -12, 0), "", 15, C_WHITE, gui.PIVOT_W, "poppins")
-        local name_lbl = label(vmath.vector3(32, -12, 0), "", 15, C_WHITE, gui.PIVOT_W, "poppins")
-        local pts_lbl = label(vmath.vector3(196, -12, 0), "", 15, C_WHITE, gui.PIVOT_E, "poppins_bold")
-        gui.set_parent(pos_lbl, row); gui.set_parent(name_lbl, row); gui.set_parent(pts_lbl, row)
+        
+        local pos_lbl = label(vmath.vector3(0, -12, 0), "", 16, C_WHITE, gui.PIVOT_W, "poppins_bold")
+        local name_lbl = label(vmath.vector3(35, -12, 0), "", 16, C_WHITE, gui.PIVOT_W, "poppins_bold")
+        local pts_lbl = label(vmath.vector3(220, -12, 0), "", 16, C_WHITE, gui.PIVOT_E, "poppins_bold")
+        
+        gui.set_parent(pos_lbl, row)
+        gui.set_parent(name_lbl, row)
+        gui.set_parent(pts_lbl, row)
+        
         table.insert(self.standings_rows, { bg=row, pos=pos_lbl, name=name_lbl, pts=pts_lbl })
     end
 end
@@ -1135,24 +1144,52 @@ function on_message(self, message_id, message)
         m.opp_name = m.opp_name or self.opp_display_name
         show_round_story(self, m)
 
+    -- Routing matching the Godot implementation: parses active state and visually highlights
     elseif message_id == hash("update_standings") then
-        local ranks = message.ranks or {}
-        table.sort(ranks, function(a, b) return (a.position or 99) < (b.position or 99) end)
+        -- FIXED: Do not sort the raw reference, duplicate it first
+        local raw_ranks = message.ranks or {}
+        local ranks = {}
+        for _, r in ipairs(raw_ranks) do table.insert(ranks, r) end
+        
+        table.sort(ranks, function(a, b) return (tonumber(a.position) or 9999) < (tonumber(b.position) or 9999) end)
+        
         if self.standings_title then gui.set_enabled(self.standings_title, #ranks > 0) end
-        for i=1, 7 do
+        
+        for i=1, 3 do
             local row = self.standings_rows[i]
             if not row then break end
+            
             if ranks[i] then
                 gui.set_enabled(row.bg, true)
                 gui.set_text(row.pos, "#" .. tostring(ranks[i].position or 0))
+                
+                local raw_active = ranks[i].active
+                local is_active = false
+                if type(raw_active) == "boolean" then is_active = raw_active
+                elseif type(raw_active) == "string" then is_active = (string.lower(raw_active) == "true") end
+                
                 local nm = tostring(ranks[i].username or "Player")
-                if #nm > 9 then nm = string.sub(nm, 1, 9) .. "…" end
-                gui.set_text(row.name, nm)
+                if is_active then
+                    nm = "YOU"
+                elseif #nm > 7 then
+                    nm = string.sub(nm, 1, 7) .. "…"
+                end
+                
+                gui.set_text(row.name, string.upper(nm))
                 gui.set_text(row.pts, tostring(ranks[i].points or 0))
 
-                local c = C_WHITE
-                if ranks[i].id == self.my_id then c = vmath.vector4(1, 0.84, 0, 1) end
-                gui.set_color(row.pos, c); gui.set_color(row.name, c); gui.set_color(row.pts, c)
+                local pos_c = is_active and vmath.vector4(1, 0.84, 0, 1) or vmath.vector4(0.6, 0.6, 0.6, 1)
+                local nm_c  = is_active and vmath.vector4(1, 1, 1, 1) or vmath.vector4(0.8, 0.8, 0.8, 0.8)
+                local pts_c = is_active and vmath.vector4(1, 1, 1, 1) or vmath.vector4(0.7, 0.7, 0.7, 0.8)
+                local s_size = is_active and 20 or 16
+                
+                gui.set_color(row.pos, pos_c)
+                gui.set_color(row.name, nm_c)
+                gui.set_color(row.pts, pts_c)
+                
+                gui.set_scale(row.pos, vmath.vector3(s_size/24, s_size/24, 1))
+                gui.set_scale(row.name, vmath.vector3(s_size/24, s_size/24, 1))
+                gui.set_scale(row.pts, vmath.vector3(s_size/24, s_size/24, 1))
             else
                 gui.set_enabled(row.bg, false)
             end
@@ -1223,11 +1260,13 @@ function on_message(self, message_id, message)
             snap_flipper(self.p_flipper, "00")
             hide_round_dots(self.o_flipper)
             hide_round_dots(self.p_flipper)
+            
+            -- Wiping the stake chip and standings should ONLY happen if we are 
+            -- completely resetting the HUD, not keeping the scoreboard.
+            if self.stake_chip then gui.set_enabled(self.stake_chip, false) end
+            if self.standings_title then gui.set_enabled(self.standings_title, false) end
+            for _, row in ipairs(self.standings_rows or {}) do gui.set_enabled(row.bg, false) end
         end
-
-        if self.stake_chip then gui.set_enabled(self.stake_chip, false) end
-        if self.standings_title then gui.set_enabled(self.standings_title, false) end
-        for _, row in ipairs(self.standings_rows or {}) do gui.set_enabled(row.bg, false) end
 
         emoji_popover.reset(self)
     end

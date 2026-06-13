@@ -178,10 +178,6 @@ function init(self)
     BL.update_layout(self)
     
     -- CRITICAL FIX: Initialize background with multiple retry attempts
-    -- This solves the "first load doesn't cover full screen" issue by:
-    -- 1. Resetting cached dimensions to force fresh detection
-    -- 2. Trying multiple times at increasing intervals
-    -- 3. Using go.get("texture_size") which is more reliable for sprites
     BL.init_background(self)
 
     GS.fresh_state(self)
@@ -484,6 +480,14 @@ local function start_new_online_game(self, state)
     self.awaiting_replay = false
     ws.active_game_state = state
     GF.start_game(self)
+    
+    -- ADDED: Push Standings cache on Game start 
+    if self.online_mode and ws.current_user_data then
+        if ws.current_user_data.rank then
+            notify_gui(self.gui_hud, "update_standings", { ranks = ws.current_user_data.rank })
+        end
+    end
+    
     if self._ai_notice then
         notify_gui(self.gui_hud, "ai_takeover_notice", self._ai_notice)
     end
@@ -504,8 +508,17 @@ function on_message(self, message_id, message, sender)
         self.awaiting_replay = false
         msg.post(".", "acquire_input_focus")
         GF.start_game(self)
-        -- Reconnect resume: surface the un-acknowledged AI takeover notice on
-        -- top of the rebuilt board (reset_hud just cleared the HUD layer).
+        
+        -- ADDED: Push Standings & Balance immediately on Entering Screen
+        if self.online_mode and ws.current_user_data then
+            if ws.current_user_data.balance then
+                notify_gui(self.gui_hud, "update_balance", { balance = ws.current_user_data.balance })
+            end
+            if ws.current_user_data.rank then
+                notify_gui(self.gui_hud, "update_standings", { ranks = ws.current_user_data.rank })
+            end
+        end
+
         if self._ai_notice then
             notify_gui(self.gui_hud, "ai_takeover_notice", self._ai_notice)
         end
@@ -677,6 +690,19 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("ws_network_quality") then
         notify_gui(self.gui_hud, "network_quality", message)
 
+    -- Route Standings Data to the HUD 
+    elseif message_id == hash("ws_rank_updated") then
+        notify_gui(self.gui_hud, "update_standings", { ranks = message.ranks })
+
+    elseif message_id == hash("ws_user_data_updated") then
+        local data = message.data or message
+        if data.balance then
+            notify_gui(self.gui_hud, "update_balance", { balance = tonumber(data.balance) or 0 })
+        end
+        if data.rank then
+            notify_gui(self.gui_hud, "update_standings", { ranks = data.rank })
+        end
+
     elseif message_id == hash("ws_game_over") then
         -- Clear any disconnect/reconnect overlay so it doesn't linger under the
         -- game-over modal (e.g. opponent's grace period elapsed into a no-show).
@@ -744,7 +770,7 @@ function on_message(self, message_id, message, sender)
             ws.send_emoji(message.emoji, message.sound, self.opponent_id)
         end
 
-    -- ADDED: Updates the state flag based on Emoji Popover
+    -- Updates the state flag based on Emoji Popover
     elseif message_id == hash("emoji_state") then
         self.emoji_popover_open = message.open
 
