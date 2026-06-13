@@ -1,4 +1,3 @@
--- modules/online_right.lua
 -- Right sidebar: Profile card, Standing badge, Form, Payments, Battles, Tournaments.
 -- Also manages the Battle Creation/Update modal and the Invite Search overlay.
 
@@ -179,12 +178,11 @@ function M.draw(self, ctx, left_M)
     local name_h   = 30
     local stat_h   = 32
     local name_gap = 8
-    local badge_h  = 84
+    local list_h   = 160 -- Expanded to fit 4 rows
     local pay_h    = 44
-    local form_h   = 30
     local gap      = 12
     local prof_h   = math.max(av_size, name_h + name_gap + stat_h)
-    local cont_h   = margin + prof_h + gap + badge_h + gap + form_h + gap + pay_h + margin
+    local cont_h   = margin + prof_h + gap + list_h + gap + pay_h + margin
     local ccy      = cy - cont_h / 2
     glass(self, vmath.vector3(cx, ccy, 0), vmath.vector3(pw, cont_h, 0), "container_bg")
 
@@ -192,40 +190,13 @@ function M.draw(self, ctx, left_M)
     local inner_r = cx + pw/2 - margin
     local top_y   = cy - margin
 
-    -- Avatar & Rating Progress Ring
+    -- Avatar Only (Removed floating badge and rings)
     local av_x   = inner_l + av_size/2
     local av_cy  = top_y - prof_h/2
     local rating = (tonumber(u.winRate) or 0) / 10
     local r_col  = rating >= 6 and C.COL_GREEN or (rating >= 4 and C.COL_GOLD or C.COL_RED)
     
     track(self, ui.avatar(vmath.vector3(av_x, av_cy, 0), vmath.vector3(av_size, av_size, 0), u.avatar or 1))
-
-    local R = av_size/2 + 6
-    local ring_bg = track(self, gui.new_pie_node(vmath.vector3(av_x, av_cy, 0), vmath.vector3(R*2, R*2, 0)))
-    gui.set_perimeter_vertices(ring_bg, 64)
-    pcall(gui.set_inner_radius, ring_bg, R - 4)
-    gui.set_color(ring_bg, vmath.vector4(0, 0, 0, 0.4))
-
-    local ring_fg = track(self, gui.new_pie_node(vmath.vector3(av_x, av_cy, 0), vmath.vector3(R*2, R*2, 0)))
-    gui.set_perimeter_vertices(ring_fg, 64)
-    pcall(gui.set_inner_radius, ring_fg, R - 4)
-    gui.set_rotation(ring_fg, vmath.vector3(0, 0, 90))
-    gui.set_fill_angle(ring_fg, (rating / 10) * 360)
-    gui.set_color(ring_fg, r_col)
-
-    -- Oval Floating Rating Badge
-    local badge_x = av_x + R * math.cos(math.rad(45)) + 6
-    local badge_y = av_cy + R * math.sin(math.rad(45)) + 6
-    
-    local badge_bg = track(self, gui.new_pie_node(vmath.vector3(badge_x, badge_y, 0), vmath.vector3(46, 28, 0)))
-    gui.set_perimeter_vertices(badge_bg, 32)
-    gui.set_color(badge_bg, vmath.vector4(0.08, 0.08, 0.10, 1.0))
-
-    local badge_fill = track(self, gui.new_pie_node(vmath.vector3(badge_x, badge_y, 0), vmath.vector3(40, 22, 0)))
-    gui.set_perimeter_vertices(badge_fill, 32)
-    gui.set_color(badge_fill, r_col)
-
-    track(self, ui.text(vmath.vector3(badge_x, badge_y, 0), string.format("%.1f", rating), "small", C.COL_WHITE))
 
     local info_l  = av_x + av_size/2 + 20
     local info_w  = inner_r - info_l
@@ -257,51 +228,64 @@ function M.draw(self, ctx, left_M)
     txtL(self, pts_cx - pts_w/2 + 8, stat_y, "PTS.", "small", C.COL_DIM)
     txtR(self, pts_cx + pts_w/2 - 8, stat_y, commas(u.points or 0), "body", C.COL_CYAN)
 
-    -- Standing badge
+    -- Combined Stats List (Rating, Position, Reward, Form)
     local pos      = tonumber(u.position) or -1
     local has_rank = pos > 0
     local bw       = pw - margin * 2
-    local bcy      = top_y - prof_h - gap - badge_h/2
+    local lcy      = top_y - prof_h - gap - list_h/2
 
-    track(self, ui.box(vmath.vector3(cx, bcy, 0), vmath.vector3(bw, badge_h, 0), C.COL_STAT_BG))
+    track(self, ui.box(vmath.vector3(cx, lcy, 0), vmath.vector3(bw, list_h, 0), C.COL_STAT_BG))
     
     local accent_col = has_rank and C.COL_GOLD or C.COL_DIM
-    track(self, ui.box(vmath.vector3(cx - bw/2 + 2, bcy, 0), vmath.vector3(4, badge_h, 0), accent_col))
+    local row_h = list_h / 4
 
-    local rank_txt_x = cx - bw/2 + 18
-    txtL(self, rank_txt_x, bcy + 22, "SEASON STANDING", "body", C.COL_DIM)
-    txtL(self, rank_txt_x, bcy - 2, has_rank and ("#"..pos) or "UNRANKED", "title", accent_col)
+    -- Dividers
+    track(self, ui.box(vmath.vector3(cx, lcy + list_h/4, 0), vmath.vector3(bw - 24, 1, 0), vmath.vector4(1, 1, 1, 0.05)))
+    track(self, ui.box(vmath.vector3(cx, lcy, 0), vmath.vector3(bw - 24, 1, 0), vmath.vector4(1, 1, 1, 0.05)))
+    track(self, ui.box(vmath.vector3(cx, lcy - list_h/4, 0), vmath.vector3(bw - 24, 1, 0), vmath.vector4(1, 1, 1, 0.05)))
 
+    -- Row 1: Your Rating
+    local r1_y = lcy + list_h/2 - row_h/2
+    txtL(self, cx - bw/2 + 12, r1_y, "YOUR RATING", "small", C.COL_DIM)
+    txtR(self, cx + bw/2 - 12, r1_y, string.format("%.1f", rating), "body", r_col)
+
+    -- Row 2: Your Position
+    local r2_y = lcy + list_h/2 - row_h*1.5
+    txtL(self, cx - bw/2 + 12, r2_y, "YOUR POSITION", "small", C.COL_DIM)
+    txtR(self, cx + bw/2 - 12, r2_y, has_rank and ("#"..pos) or "UNRANKED", "body", accent_col)
+
+    -- Row 3: Estimated Reward
+    local r3_y = lcy + list_h/2 - row_h*2.5
+    txtL(self, cx - bw/2 + 12, r3_y, "ESTIMATED REWARD", "small", C.COL_DIM)
+    local val = "-"
     if has_rank then
         local prizes = left_M.build_prizes(commas)
-        local val = left_M.prize_for_position(prizes, pos, commas)
-        if val ~= "" then
-            txtL(self, rank_txt_x, bcy - 28, "Est. Reward: "..val, "body", C.COL_GREEN)
-        end
+        local prize_val = left_M.prize_for_position(prizes, pos, commas)
+        if prize_val ~= "" then val = prize_val end
     end
+    txtR(self, cx + bw/2 - 12, r3_y, val, "body", C.COL_GREEN)
 
-    -- Form row
-    local form_y = bcy - badge_h/2 - gap - form_h/2
-    track(self, ui.box(vmath.vector3(cx, form_y, 0), vmath.vector3(bw, form_h, 0), C.COL_STAT_BG))
-    txtL(self, cx - bw/2 + 8, form_y, "YOUR CURRENT FORM", "small", C.COL_DIM)
-    
+    -- Row 4: Your Current Form
+    local r4_y = lcy + list_h/2 - row_h*3.5
+    txtL(self, cx - bw/2 + 12, r4_y, "YOUR CURRENT FORM", "small", C.COL_DIM)
+
     local form = type(u.recentForm) == "table" and u.recentForm or {}
-    local fsz, fgap = 32, 6 
-    local fx0 = cx + bw/2 - 8 - fsz/2
+    local fsz, fgap = 26, 6 
+    local fx0 = cx + bw/2 - 12 - fsz/2
     for i = 1, 5 do
         local r  = form[i]
         local bx = fx0 - (i - 1) * (fsz + fgap)
         if r == "W" or r == "L" then
-            track(self, ui.box(vmath.vector3(bx, form_y, 0), vmath.vector3(fsz, fsz, 0),
+            track(self, ui.box(vmath.vector3(bx, r4_y, 0), vmath.vector3(fsz, fsz, 0),
                 r == "W" and vmath.vector4(0.15, 0.70, 0.25, 0.92) or vmath.vector4(0.90, 0.25, 0.25, 0.92)))
-            track(self, ui.text(vmath.vector3(bx, form_y, 0), r, "helvetica_bold", C.COL_WHITE))
+            track(self, ui.text(vmath.vector3(bx, r4_y, 0), r, "helvetica_bold", C.COL_WHITE))
         else
-            track(self, ui.box(vmath.vector3(bx, form_y, 0), vmath.vector3(fsz, fsz, 0), vmath.vector4(1, 1, 1, 0.06)))
+            track(self, ui.box(vmath.vector3(bx, r4_y, 0), vmath.vector3(fsz, fsz, 0), vmath.vector4(1, 1, 1, 0.06)))
         end
     end
 
     -- Make Payments button
-    local pay_y = form_y - form_h/2 - gap - pay_h/2
+    local pay_y = lcy - list_h/2 - gap - pay_h/2
     mkbtn(self, "nav_payments", vmath.vector3(cx, pay_y, 0), vmath.vector3(bw, pay_h, 0), "MAKE PAYMENTS", "primary_btn")
 
     cy = cy - cont_h - C.BLOCK_GAP
@@ -343,15 +327,17 @@ function M.draw(self, ctx, left_M)
     cy = cy - battle_h - C.BLOCK_GAP
 
     -- ── Tournaments panel ─────────────────────────────────────────────────
-    local t_h  = 110
+    local t_h  = 64
     local tcy2 = cy - t_h/2
     track(self, ui.box(vmath.vector3(cx, tcy2, 0), vmath.vector3(pw, t_h, 0), C.COL_BG))
     mkbtn(self, "nav_tournaments", vmath.vector3(cx, tcy2, 0), vmath.vector3(pw, t_h, 0), nil, "container_bg")
-    track(self, ui.image(vmath.vector3(cx, cy - 40, 0), vmath.vector3(50, 50, 0), "tournament_icon"))
-    track(self, ui.text(vmath.vector3(cx, cy - 84, 0), "TOURNAMENTS", "luckiest_guy_md", C.COL_WHITE))
+    
+    local icon_x = cx - 74
+    track(self, ui.image(vmath.vector3(icon_x, tcy2, 0), vmath.vector3(28, 28, 0), "tournament_icon"))
+    txtL(self, icon_x + 22, tcy2, "TOURNAMENTS", "luckiest_guy_md", C.COL_WHITE)
 
-    local nx = cx + pw/2 - 30
-    local ny = cy - 16
+    local nx = cx + pw/2 - 36
+    local ny = tcy2
     track(self, ui.box(vmath.vector3(nx, ny, 0), vmath.vector3(44, 18, 0), vmath.vector4(0.15, 0.8, 0.25, 1.0)))
     track(self, ui.box(vmath.vector3(nx, ny + 9, 0), vmath.vector3(44, 1, 0), C.COL_WHITE))
     track(self, ui.text(vmath.vector3(nx, ny, 0), "NEW", "luckiest_guy_sm", C.COL_WHITE))

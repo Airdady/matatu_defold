@@ -59,9 +59,6 @@ end
 -- Convert a world-space absolute position into local space of a given parent node.
 -- For nodes parented directly to the gui root (no parent), world == local.
 local function world_to_local(parent_node, world_pos)
-    -- gui.get_position returns local pos; we need the parent's world pos to back-calculate.
-    -- We place the node at root, grab world transform, then re-parent.
-    -- Simpler: compute by subtracting the parent's world position.
     local parent_world = gui.get_position(parent_node)
     return vmath.vector3(
         world_pos.x - parent_world.x,
@@ -71,24 +68,28 @@ local function world_to_local(parent_node, world_pos)
 end
 
 function M.init(self)
-    local btn_size = 160
+    local btn_size = 140
     local gap = 16
     local p_w = 368
     local GRID_H = 230
+    
+    -- Margins adjusted to push the button further bottom/right (was 10)
+    local MARGIN_RIGHT = 0
+    local MARGIN_BOTTOM = -5
 
     self.GRID_H = GRID_H
     self.p_w = p_w
 
-    self.emoji_btn = box(vmath.vector3(LOGICAL_W - 22 - btn_size/2, 22 + btn_size/2, 0), vmath.vector3(btn_size, btn_size, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
+    self.emoji_btn = box(vmath.vector3(LOGICAL_W - MARGIN_RIGHT - btn_size/2, MARGIN_BOTTOM + btn_size/2, 0), vmath.vector3(btn_size, btn_size, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
     gui.set_xanchor(self.emoji_btn, gui.ANCHOR_RIGHT)
     gui.set_yanchor(self.emoji_btn, gui.ANCHOR_BOTTOM)
     pcall(function() gui.set_texture(self.emoji_btn, "emojis"); gui.play_flipbook(self.emoji_btn, hash("emoji_btn")) end)
 
-    self.flight_anchor = box(vmath.vector3(LOGICAL_W - 22 - p_w/2, 22 + btn_size + gap, 0), vmath.vector3(1,1,0), vmath.vector4(0,0,0,0), gui.PIVOT_S)
+    self.flight_anchor = box(vmath.vector3(LOGICAL_W - MARGIN_RIGHT - p_w/2, MARGIN_BOTTOM + btn_size + gap, 0), vmath.vector3(1,1,0), vmath.vector4(0,0,0,0), gui.PIVOT_S)
     gui.set_xanchor(self.flight_anchor, gui.ANCHOR_RIGHT)
     gui.set_yanchor(self.flight_anchor, gui.ANCHOR_BOTTOM)
 
-    self.popover_anchor = box(vmath.vector3(LOGICAL_W - 22 - p_w/2, 22 + btn_size + gap, 0), vmath.vector3(1,1,0), vmath.vector4(0,0,0,0), gui.PIVOT_S)
+    self.popover_anchor = box(vmath.vector3(LOGICAL_W - MARGIN_RIGHT - p_w/2, MARGIN_BOTTOM + btn_size + gap, 0), vmath.vector3(1,1,0), vmath.vector4(0,0,0,0), gui.PIVOT_S)
     gui.set_xanchor(self.popover_anchor, gui.ANCHOR_RIGHT)
     gui.set_yanchor(self.popover_anchor, gui.ANCHOR_BOTTOM)
     gui.set_enabled(self.popover_anchor, false)
@@ -156,27 +157,41 @@ function M.init(self)
     end
 
     self.emoji_open = false
+    self.emoji_closing = false
     self.emoji_touch_captured = false
     self.emoji_view = "grid"
     self.emoji_fx = {}
 end
 
 function M.close(self)
+    if not self.emoji_open and not self.emoji_closing then return end
+    
     self.emoji_open = false
+    self.emoji_closing = true
+    
+    -- Notify the main game controller that the popover has closed
+    msg.post(GAME, "emoji_state", { open = false })
+    
+    gui.cancel_animation(self.popover_anchor, "scale")
     gui.animate(self.popover_anchor, "scale", vmath.vector3(0.01, 0.01, 1), gui.EASING_INBACK, 0.2, 0, function()
         gui.set_enabled(self.popover_anchor, false)
-
         gui.set_size(self.popover_bg, vmath.vector3(self.p_w, self.GRID_H, 0))
         gui.set_size(self.clipping_box, vmath.vector3(self.p_w, self.GRID_H, 0))
         gui.set_position(self.grid_root, vmath.vector3(0, 0, 0))
         gui.set_position(self.sound_root, vmath.vector3(self.p_w, 0, 0))
         gui.set_enabled(self.active_thumb, false)
+        self.emoji_closing = false
     end)
 end
 
 function M.reset(self)
     gui.set_enabled(self.popover_anchor, false)
     self.emoji_open = false
+    self.emoji_closing = false
+    
+    -- Notify the main game controller to unlock screen touches
+    msg.post(GAME, "emoji_state", { open = false })
+    
     for k, n in pairs(self.emoji_fx or {}) do
         pcall(gui.delete_node, n)
         self.emoji_fx[k] = nil
@@ -184,7 +199,13 @@ function M.reset(self)
 end
 
 local function emoji_show_grid(self)
-    self.emoji_open, self.emoji_view = true, "grid"
+    gui.cancel_animation(self.popover_anchor, "scale")
+    self.emoji_closing = false
+    self.emoji_open = true
+    self.emoji_view = "grid"
+    
+    -- Notify the main game controller to block card/deck touches
+    msg.post(GAME, "emoji_state", { open = true })
 
     gui.set_size(self.popover_bg, vmath.vector3(self.p_w, self.GRID_H, 0))
     gui.set_size(self.clipping_box, vmath.vector3(self.p_w, self.GRID_H, 0))
@@ -377,13 +398,15 @@ end
 function M.on_input(self, action_id, action)
     if action_id ~= hash("touch") then return false end
 
+    -- Keep swallowing input if touch gesture is captured and not released
     if self.emoji_touch_captured and not action.pressed then
         if action.released then self.emoji_touch_captured = false end
         return true
     end
 
-    if self.emoji_open then
-        if action.pressed then
+    -- Actively swallow ALL touches while open OR while closing animation plays
+    if self.emoji_open or self.emoji_closing then
+        if action.pressed and self.emoji_open then
             self.emoji_touch_captured = true
 
             if self.emoji_btn and hit(self.emoji_btn, action) then
@@ -421,10 +444,11 @@ function M.on_input(self, action_id, action)
                 return true
             end
 
+            -- Clicked outside popover_bg, close popover.
             M.close(self)
             return true
         end
-        return true
+        return true 
     end
 
     if action.pressed then
