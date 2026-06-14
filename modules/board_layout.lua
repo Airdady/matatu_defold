@@ -56,8 +56,6 @@ end
 
 ----------------------------------------------------------------------
 -- Background fit (aspect-fill)
--- CRITICAL FIX: Use texture dimensions from the atlas/sprite instead of
--- relying on cached bg_img_w/h which may be nil on first load.
 ----------------------------------------------------------------------
 function M.fit_background(self)
     local ok, ww, wh = pcall(window.get_size)
@@ -76,23 +74,19 @@ function M.fit_background(self)
     end
     
     -- CRITICAL: Always try to get the actual texture size from the sprite
-    -- This is the most reliable way to get the background image dimensions
     local img_w = LOGICAL_W  -- default fallback
     local img_h = LOGICAL_H  -- default fallback
     
     pcall(function()
-        -- Try to get the texture dimensions from the sprite component
         local url = msg.url("#background")
         local texture_w, texture_h = go.get(url, "texture_size")
         
         if texture_w and texture_h and texture_w > 0 and texture_h > 0 then
             img_w = texture_w
             img_h = texture_h
-            -- Cache for future use
             self.bg_img_w = img_w
             self.bg_img_h = img_h
         else
-            -- Fallback: try size property
             local sz = go.get(url, "size")
             if sz and sz.x > 0 and sz.y > 0 then
                 img_w = sz.x
@@ -100,7 +94,6 @@ function M.fit_background(self)
                 self.bg_img_w = img_w
                 self.bg_img_h = img_h
             elseif self.bg_img_w and self.bg_img_w > 0 then
-                -- Use cached values if available
                 img_w = self.bg_img_w
                 img_h = self.bg_img_h
             end
@@ -120,22 +113,17 @@ end
 
 ----------------------------------------------------------------------
 -- Initialize background on first load
--- Called from init() to ensure background is properly sized from the start
 ----------------------------------------------------------------------
 function M.init_background(self)
-    -- Reset cached dimensions to force fresh detection
     self.bg_img_w = nil
     self.bg_img_h = nil
     
-    -- Apply fitting immediately
     M.fit_background(self)
     
-    -- Schedule delayed re-fits to catch late-loading textures
-    -- Multiple attempts at increasing intervals to handle various loading times
     local delays = {0.05, 0.15, 0.3, 0.6, 1.0}
     for _, delay in ipairs(delays) do
         timer.delay(delay, false, function()
-            if self.active ~= false then  -- Only if still on this screen
+            if self.active ~= false then
                 M.fit_background(self)
             end
         end)
@@ -144,9 +132,6 @@ end
 
 ----------------------------------------------------------------------
 -- Deck stacking helpers
--- Higher index = nearer the TOP of the visual stack (drawn first, higher z).
--- Lower index sits below (rendered behind, drawn last) — this is what lets
--- freshly shuffled cards tuck UNDER the old deck cards during a reshuffle.
 ----------------------------------------------------------------------
 function M.deck_slot_pos(self, idx)
     return vmath.vector3(
@@ -172,9 +157,7 @@ function M.layout_hand(self, hand, y, animate)
     local spacing = M.calc_spacing(self, n)
     local start = self.CENTER.x - ((n - 1) * spacing) / 2.0
 
-    -- 4-player tournament: give the human's bottom hand a gentle fan (arc rises
-    -- in the middle, cards tilt outward at the edges). The curve eases off as
-    -- the hand shrinks, so a 2-card hand sits almost flat.
+    -- 4-player tournament: give the human's bottom hand a gentle fan 
     local arch = self.t4 and self.t4.human_alive and hand == self.player_hand
     local arc_amt = arch and math.min(34, n * 5.0) or 0
     local fan_amt = arch and math.min(8, n * 1.3) or 0
@@ -222,18 +205,30 @@ function M.update_layout(self)
     local bottom_edge = (LOGICAL_H / 2) - (vis_h / 2)
 
     self.CENTER   = vmath.vector3(LOGICAL_W / 2, LOGICAL_H / 2, 0.05)
-    self.DECK_POS = vmath.vector3(right_edge - 130, LOGICAL_H / 2, 0)
+    
+    -- 4-player tournament seats
+    local left_edge = (LOGICAL_W / 2) - (vis_w / 2)
+    self.SEAT_TOP   = vmath.vector3(LOGICAL_W / 2,    top_edge - 70,    0)
+    self.SEAT_LEFT  = vmath.vector3(left_edge + 110,  LOGICAL_H / 2,    0)
+    self.SEAT_RIGHT = vmath.vector3(right_edge - 110, LOGICAL_H / 2 + 70, 0)
 
     self.MAX_HAND_WIDTH = math.min(1100, vis_w - 400)
     self.PLAYER_HAND_Y  = bottom_edge + 96
     self.AI_HAND_Y      = top_edge - 96
 
-    -- 4-player tournament seats: human is the bottom hand; the three AI
-    -- opponents sit top / left / right as compact face-down stacks.
-    local left_edge = (LOGICAL_W / 2) - (vis_w / 2)
-    self.SEAT_TOP   = vmath.vector3(LOGICAL_W / 2,    top_edge - 70,    0)
-    self.SEAT_LEFT  = vmath.vector3(left_edge + 110,  LOGICAL_H / 2,    0)
-    self.SEAT_RIGHT = vmath.vector3(right_edge - 110, LOGICAL_H / 2 + 70, 0)
+    -- DECK POSITIONING LOGIC
+    -- We safely evaluate whether we are genuinely inside a multi-player T4 mode
+    -- using explicit length checks to prevent empty table bleed from 2P game mode.
+    local is_multiplayer_t4 = self.t4 and self.t4.seats and (#self.t4.seats > 0) and not self.t4.is_heads_up
+    
+    if is_multiplayer_t4 then
+        -- 4 (or 3) active players: Deck shifts exactly midway between the center pile and the right player!
+        local mid_x = self.CENTER.x + (self.SEAT_RIGHT.x - self.CENTER.x) / 2
+        self.DECK_POS = vmath.vector3(mid_x, self.CENTER.y, 0)
+    else
+        -- Standard 2-player match OR heads-up T4 finals: deck to the far right edge
+        self.DECK_POS = vmath.vector3(right_edge - 130, LOGICAL_H / 2, 0)
+    end
 
     M.fit_background(self)
     if self.player_hand and #self.player_hand > 0 then M.position_hands(self, false) end
