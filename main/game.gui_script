@@ -898,110 +898,104 @@ local function t4_clear_graves(self)
     self.t4_graves = {}
 end
 
-local function t4_init_tally(self, players)
-    if self.t4_tally_root then pcall(gui.delete_node, self.t4_tally_root) end
-    
-    -- Root for the tally board positioned on the right side of the screen
-    self.t4_tally_root = box(vmath.vector3(LOGICAL_W/2 + 250, LOGICAL_H/2 + 30, 0), vmath.vector3(260, 400, 0), vmath.vector4(0,0,0,0), gui.PIVOT_CENTER)
-    self.t4_tally_rows = {}
+-- ── 4-player tournament: cohesive at-the-table counting ──────────────────────
+-- Each player is counted in turn AT THE CENTRE: their live avatar slides in to a
+-- podium on the left of the table, their cards fly into a row beside it, and a
+-- big running score tallies up next to the avatar. Then it slides back to its
+-- seat and the next player comes in.
+local T4_PODIUM_X = LOGICAL_W / 2 - 300
+local T4_PODIUM_Y = LOGICAL_H / 2
 
-    local title = label(vmath.vector3(0, 180, 0), "THE DAMAGE", 26, C_WHITE, gui.PIVOT_CENTER, "luckiest_guy_md")
-    gui.set_parent(title, self.t4_tally_root)
+-- Bring a seat's avatar in to the counting podium.
+local function t4_count_focus(self, slot)
+    local b = (self.t4_badges or {})[slot]
+    if not b then return end
+    set_square_timer_enabled(b.timer, false)
+    gui.cancel_animation(b.disc, "euler.z"); gui.set_rotation(b.disc, vmath.vector3(0, 0, 0))
+    gui.animate(b.disc, "position", vmath.vector3(T4_PODIUM_X, T4_PODIUM_Y, 0), gui.EASING_INOUTSINE, 0.5)
+    gui.animate(b.disc, "scale", vmath.vector3(1.3, 1.3, 1), gui.EASING_OUTBACK, 0.55)
+    gui.set_color(b.disc, vmath.vector4(0.16, 0.18, 0.06, 1))
 
-    for i, p in ipairs(players or {}) do
-        local y_pos = 120 - (i - 1) * 75
-        local bg = box(vmath.vector3(400, y_pos, 0), vmath.vector3(280, 60, 0), vmath.vector4(0.08, 0.08, 0.10, 0.95), gui.PIVOT_CENTER)
-        gui.set_parent(bg, self.t4_tally_root)
-        gui.animate(bg, "position.x", 0, gui.EASING_OUTBACK, 0.6, i * 0.12)
+    gui.set_pivot(b.nm, gui.PIVOT_CENTER)
+    gui.animate(b.nm, "position", vmath.vector3(T4_PODIUM_X, T4_PODIUM_Y - 66, 0), gui.EASING_INOUTSINE, 0.5)
 
-        local b = self.t4_badges and self.t4_badges[p.slot]
-        if b then
-            -- Hide timer visuals completely during counting
-            set_square_timer_enabled(b.timer, false)
-
-            local dest_x = LOGICAL_W/2 + 250
-            local dest_y = LOGICAL_H/2 + 30 + y_pos
-
-            -- Actually animate the live game HUD widgets straight into the tally grid!
-            gui.animate(b.disc, "position", vmath.vector3(dest_x - 105, dest_y, 0), gui.EASING_INOUTSINE, 0.7)
-            gui.animate(b.disc, "scale", vmath.vector3(0.65, 0.65, 1), gui.EASING_INOUTSINE, 0.7)
-            
-            gui.animate(b.nm, "position", vmath.vector3(dest_x - 55, dest_y, 0), gui.EASING_INOUTSINE, 0.7)
-            gui.set_pivot(b.nm, gui.PIVOT_W)
-            
-            gui.animate(b.tot, "position", vmath.vector3(dest_x + 115, dest_y, 0), gui.EASING_INOUTSINE, 0.7)
-            gui.set_text(b.tot, "0")
-            gui.set_scale(b.tot, vmath.vector3(1.5, 1.5, 1))
-            gui.set_enabled(b.tot, true)
-
-            self.t4_tally_rows[p.slot] = { bg = bg, score_lbl = b.tot, nm = b.nm, y = y_pos, badge = b }
-        end
-    end
+    gui.set_text(b.tot, "0")
+    gui.set_color(b.tot, vmath.vector4(1, 0.84, 0.2, 1))
+    gui.set_pivot(b.tot, gui.PIVOT_W)
+    gui.set_scale(b.tot, vmath.vector3(2.4, 2.4, 1))
+    gui.set_position(b.tot, vmath.vector3(T4_PODIUM_X + 64, T4_PODIUM_Y, 0))
+    gui.set_enabled(b.tot, true)
 end
 
-local function t4_tick_tally(self, slot, added_val, total, cx, cy)
-    local row = self.t4_tally_rows and self.t4_tally_rows[slot]
-    if not row then return end
-
-    if added_val > 0 then
-        local ftxt = label(vmath.vector3(cx, cy, 0), "+" .. tostring(added_val), 48, vmath.vector4(1, 0.4, 0.2, 1), gui.PIVOT_CENTER, "luckiest_guy_md")
-        gui.set_shadow(ftxt, vmath.vector4(0,0,0,1))
-
-        local dest_x = (LOGICAL_W/2 + 250) + 110
-        local dest_y = (LOGICAL_H/2 + 30) + row.y
-
-        -- Gentle float to the scoreboard row
-        gui.animate(ftxt, "position.x", dest_x, gui.EASING_LINEAR, 0.4)
-        gui.animate(ftxt, "position.y", dest_y, gui.EASING_OUTSINE, 0.4, 0, function()
+-- A card was counted: float a "+value" chip from the card up to the running
+-- score, then bump the podium total.
+local function t4_count_tick(self, slot, added_val, total, cx, cy)
+    local b = (self.t4_badges or {})[slot]
+    if not b then return end
+    if added_val and added_val > 0 then
+        local ftxt = label(vmath.vector3(cx, cy, 0), "+" .. tostring(added_val), 40, vmath.vector4(1, 0.55, 0.2, 1), gui.PIVOT_CENTER, "luckiest_guy_md")
+        gui.set_shadow(ftxt, vmath.vector4(0, 0, 0, 1))
+        gui.animate(ftxt, "position", vmath.vector3(T4_PODIUM_X + 90, T4_PODIUM_Y, 0), gui.EASING_INSINE, 0.42, 0, function()
             pcall(gui.delete_node, ftxt)
-            -- Pulse the actual avatar score label
-            gui.set_text(row.score_lbl, tostring(total))
-            gui.set_scale(row.score_lbl, vmath.vector3(2.0, 2.0, 1))
-            gui.animate(row.score_lbl, "scale", vmath.vector3(1.5, 1.5, 1), gui.EASING_OUTBOUNCE, 0.4)
-            
-            gui.set_color(row.bg, vmath.vector4(0.25, 0.25, 0.30, 1))
-            gui.animate(row.bg, "color", vmath.vector4(0.08, 0.08, 0.10, 0.95), gui.EASING_OUTSINE, 0.4)
+            gui.set_text(b.tot, tostring(total))
+            gui.set_scale(b.tot, vmath.vector3(3.0, 3.0, 1))
+            gui.animate(b.tot, "scale", vmath.vector3(2.4, 2.4, 1), gui.EASING_OUTBOUNCE, 0.3)
         end)
     else
-        gui.set_text(row.score_lbl, tostring(total))
+        gui.set_text(b.tot, tostring(total))
     end
 end
 
+-- Counting done for this seat: slide the avatar back to its seat, keeping the
+-- final score on the badge.
+local function t4_count_unfocus(self, slot)
+    local b = (self.t4_badges or {})[slot]
+    if not b then return end
+    local hx, hy = b.home_x or T4_PODIUM_X, b.home_y or T4_PODIUM_Y
+    gui.animate(b.disc, "position", vmath.vector3(hx, hy, 0), gui.EASING_INOUTSINE, 0.5)
+    gui.animate(b.disc, "scale", vmath.vector3(1, 1, 1), gui.EASING_INOUTSINE, 0.5)
+    gui.set_color(b.disc, vmath.vector4(0.06, 0.07, 0.10, 1))
+    gui.set_pivot(b.nm, gui.PIVOT_CENTER)
+    gui.animate(b.nm, "position", vmath.vector3(hx, hy - 62, 0), gui.EASING_INOUTSINE, 0.5)
+    gui.set_pivot(b.tot, gui.PIVOT_CENTER)
+    gui.animate(b.tot, "scale", vmath.vector3(0.9, 0.9, 1), gui.EASING_INOUTSINE, 0.5)
+    gui.animate(b.tot, "position", vmath.vector3(hx, hy - 86, 0), gui.EASING_INOUTSINE, 0.5)
+end
+
+-- The loser leaves: dramatize, then fly the avatar from its seat to the
+-- permanent graveyard on the right.
 local function t4_elimination_sequence(self, worst_slot, worst_name, worst_avatar)
-    local row = self.t4_tally_rows and self.t4_tally_rows[worst_slot]
-    if not row then return end
+    local drama = label(vmath.vector3(LOGICAL_W / 2, LOGICAL_H / 2 + 210, 0), string.upper(tostring(worst_name or "PLAYER")) .. " IS WIPED OUT!", 46, vmath.vector4(1, 0.25, 0.25, 1), gui.PIVOT_CENTER, "title")
+    gui.set_scale(drama, vmath.vector3(0.2, 0.2, 1))
+    gui.animate(drama, "scale", vmath.vector3(1.0, 1.0, 1), gui.EASING_OUTBACK, 0.45)
+    gui.animate(drama, "color.w", 0, gui.EASING_INSINE, 0.6, 2.2, function() pcall(gui.delete_node, drama) end)
 
-    local drama = label(vmath.vector3(LOGICAL_W/2, LOGICAL_H/2 + 250, 0), string.upper(worst_name) .. " IS WIPED OUT!", 48, vmath.vector4(1, 0.2, 0.2, 1), gui.PIVOT_CENTER, "title")
-    gui.set_scale(drama, vmath.vector3(0.1, 0.1, 1))
-    gui.animate(drama, "scale", vmath.vector3(1.1, 1.1, 1), gui.EASING_OUTBACK, 0.5)
-    gui.animate(drama, "color.w", 0, gui.EASING_INSINE, 0.5, 2.5, function() pcall(gui.delete_node, drama) end)
+    local b = (self.t4_badges or {})[worst_slot]
+    if not b then
+        t4_add_grave(self, worst_name, worst_avatar)
+        return
+    end
 
-    gui.animate(row.bg, "color", vmath.vector4(0.8, 0.1, 0.1, 1), gui.EASING_INOUTSINE, 0.25, 0, nil, gui.PLAYBACK_LOOP_PINGPONG)
+    gui.set_color(b.disc, vmath.vector4(0.8, 0.1, 0.1, 1))
+    gui.set_scale(b.disc, vmath.vector3(1, 1, 1))
+    gui.animate(b.disc, "scale", vmath.vector3(1.14, 1.14, 1), gui.EASING_INOUTSINE, 0.22, 0, nil, gui.PLAYBACK_LOOP_PINGPONG)
 
-    timer.delay(1.5, false, function()
-        gui.cancel_animation(row.bg, "color")
-        gui.set_color(row.bg, vmath.vector4(0.8, 0.1, 0.1, 1))
-        
-        local dest_y = -200
-        gui.animate(row.bg, "position.y", dest_y, gui.EASING_INBACK, 0.6)
-        gui.animate(row.bg, "euler.z", 35, gui.EASING_LINEAR, 0.6)
+    local idx = #(self.t4_graves or {})
+    local gx = LOGICAL_W - 60
+    local gy = LOGICAL_H - 130 - idx * 80
 
-        -- Take the active game widget down into the grave as well!
-        if row.badge then
-            gui.animate(row.badge.disc, "position.y", dest_y, gui.EASING_INBACK, 0.6)
-            gui.animate(row.badge.disc, "euler.z", 35, gui.EASING_LINEAR, 0.6)
-            gui.animate(row.badge.nm, "position.y", dest_y, gui.EASING_INBACK, 0.6)
-            gui.animate(row.badge.tot, "position.y", dest_y, gui.EASING_INBACK, 0.6)
-        end
+    timer.delay(1.3, false, function()
+        gui.cancel_animation(b.disc, "scale")
+        gui.animate(b.disc, "position", vmath.vector3(gx, gy, 0), gui.EASING_INBACK, 0.6)
+        gui.animate(b.disc, "scale", vmath.vector3(0.62, 0.62, 1), gui.EASING_INBACK, 0.6)
+        gui.animate(b.disc, "euler.z", 30, gui.EASING_LINEAR, 0.6)
+        gui.animate(b.nm, "position", vmath.vector3(gx, gy - 36, 0), gui.EASING_INBACK, 0.6)
+        gui.animate(b.tot, "color.w", 0, gui.EASING_INSINE, 0.3)
 
-        timer.delay(0.6, false, function()
+        timer.delay(0.62, false, function()
             t4_add_grave(self, worst_name, worst_avatar)
-            if row.badge then
-                pcall(gui.delete_node, row.badge.disc)
-                pcall(gui.delete_node, row.badge.nm)
-                pcall(gui.delete_node, row.badge.tot)
-                self.t4_badges[worst_slot] = nil
-            end
+            pcall(gui.delete_node, b.disc); pcall(gui.delete_node, b.nm); pcall(gui.delete_node, b.tot)
+            if self.t4_badges then self.t4_badges[worst_slot] = nil end
         end)
     end)
 end
@@ -1215,15 +1209,21 @@ function on_message(self, message_id, message)
             b = { disc = disc, av = av, nm = nm, tot = tot, timer = timer_frame }
             self.t4_badges[slot] = b
         end
-        
-        -- Smoothly restore position from tally board layout (if it came from there)
+
+        -- remember the seat (home) position and keep the avatar in sync (the
+        -- seat at this slot can change between rounds as the table collapses)
+        b.home_x, b.home_y = x, y
+        pcall(function() gui.play_flipbook(b.av, hash("avatar_" .. tostring(message.avatar or 1))) end)
+
+        -- Smoothly settle the badge at its seat position
         gui.animate(b.disc, "position", vmath.vector3(x, y, 0), gui.EASING_INOUTSINE, 0.6)
         gui.animate(b.disc, "scale", vmath.vector3(1, 1, 1), gui.EASING_INOUTSINE, 0.6)
-        gui.animate(b.nm, "position", vmath.vector3(x, y - 62, 0), gui.EASING_INOUTSINE, 0.6)
         gui.set_pivot(b.nm, gui.PIVOT_CENTER)
+        gui.animate(b.nm, "position", vmath.vector3(x, y - 62, 0), gui.EASING_INOUTSINE, 0.6)
+        gui.set_pivot(b.tot, gui.PIVOT_CENTER)
         gui.animate(b.tot, "position", vmath.vector3(x, y - 86, 0), gui.EASING_INOUTSINE, 0.6)
         gui.set_scale(b.tot, vmath.vector3(1, 1, 1))
-        
+
         gui.set_text(b.nm, string.upper(tostring(message.name or "AI")))
         
         local frame_col = message.eliminated and vmath.vector4(0.22, 0.05, 0.05, 1)
@@ -1261,18 +1261,18 @@ function on_message(self, message_id, message)
             gui.animate(b.disc, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTSINE, 0.5)
         end
 
-    -- ==============================================================================
-    -- NEW TALLY BOARD MESSAGE HANDLERS
-    -- ==============================================================================
-    elseif message_id == hash("t4_tally_init") then
-        t4_init_tally(self, message.players or {})
+    -- ── 4-player counting (cohesive, one player at a time at the table) ─────
+    elseif message_id == hash("t4_count_focus") then
+        t4_count_focus(self, message.slot)
 
     elseif message_id == hash("t4_count_tick") then
-        t4_tick_tally(self, message.slot, message.added_val or 0, message.total or 0, message.cx or 0, message.cy or 0)
+        t4_count_tick(self, message.slot, message.added_val or 0, message.total or 0, message.cx or 0, message.cy or 0)
+
+    elseif message_id == hash("t4_count_unfocus") then
+        t4_count_unfocus(self, message.slot)
 
     elseif message_id == hash("t4_elimination_sequence") then
         t4_elimination_sequence(self, message.worst_slot, message.worst_name, message.worst_avatar)
-    -- ==============================================================================
 
     elseif message_id == hash("t4_flash") then
         local fl = label(vmath.vector3(LOGICAL_W/2, LOGICAL_H/2 + 80, 0), tostring(message.text or ""), 40, vmath.vector4(1, 0.84, 0.2, 1), gui.PIVOT_CENTER, "title")
@@ -1497,7 +1497,9 @@ function on_message(self, message_id, message)
             self.t4_badges = nil
         end
         self.t4_active_slot = nil
-        
+        self.is_t4_mode = false
+        pcall(function() gui.set_enabled(gui.get_node("emoji_btn"), true) end)
+
         if self.t4_tally_root then pcall(gui.delete_node, self.t4_tally_root); self.t4_tally_root = nil end
         t4_clear_graves(self)
         
