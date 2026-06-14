@@ -19,6 +19,7 @@ local MAP = {
   win       = "snd_win",
   lose      = "snd_lose",
   alert     = "snd_alert",
+  notify    = "snd_notify",
   move_deck = "snd_move_deck",
   confetti  = "snd_confetti",
 }
