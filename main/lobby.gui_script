@@ -750,6 +750,13 @@ local function rebuild_tournament(self)
     track(self, ui.text(vmath.vector3(CX - pw / 2 + 52, CY + ph / 2 - 28, 0),
         "< BACK", "small", C_WHITE))
     self.buttons[#self.buttons + 1] = { node = bkb, id = "back_to_lobby" }
+
+    -- Online tournament map (the bracket/levels map) lives on its own screen.
+    local onb = track(self, ui.btn9(vmath.vector3(CX + pw / 2 - 90, CY + ph / 2 - 26, 0),
+        vmath.vector3(150, 34, 0), "secondary_btn"))
+    track(self, ui.text(vmath.vector3(CX + pw / 2 - 90, CY + ph / 2 - 28, 0),
+        "ONLINE CUP >", "small", C_PURPLE_L))
+    self.buttons[#self.buttons + 1] = { node = onb, id = "online_tournament" }
 end
 
 -- ---------------------------------------------------------------------------
@@ -877,6 +884,10 @@ local function handle(self, b)
             app_state.mode = "tournament4"
         end
         msg.post("#controller", "goto_game")
+
+    elseif b.id == "online_tournament" then
+        -- Open the online tournament map (levels / bracket) on its own screen.
+        msg.post("#controller", "goto_tournaments")
     end
 end
 
