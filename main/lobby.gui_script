@@ -714,14 +714,13 @@ local function rebuild_tournament(self)
     track(self, ui.text(vmath.vector3(CX, thr_y + 40, 0),
         is_chamber and "SCORE CAP  —  reach it and you're eliminated" or "Score cap (Elimination Chamber only)",
         "small", is_chamber and C_WHITE or C_MUTED))
-    local caps    = { 100, 200, 300 }
+    local caps    = { 200, 300, 500 }
     local cap_w   = 120
-    local cur_cap = app_state.chamber_threshold or 100
+    local cur_cap = app_state.chamber_threshold or 200
     for i, cap in ipairs(caps) do
         local cx     = CX - (cap_w + 16) + (i - 1) * (cap_w + 16)
         local active = is_chamber and (cur_cap == cap)
-        track(self, ui.panel9(vmath.vector3(cx, thr_y, 0), vmath.vector3(cap_w, 50, 0),
-            active and "container_bg_active" or "container_bg"))
+        track(self, ui.btn9(vmath.vector3(cx, thr_y, 0), vmath.vector3(cap_w, 50, 0), "secondary_btn"))
         if active then
             track(self, ui.box(vmath.vector3(cx, thr_y + 22, 0),
                 vmath.vector3(cap_w - 8, 3, 0), C_PURPLE_L))
@@ -907,7 +906,7 @@ function init(self)
     if not app_state.ai_series        then app_state.ai_series        = 3 end
     if not app_state.tournament_size  then app_state.tournament_size  = 4 end
     if not app_state.t4_mode          then app_state.t4_mode          = "bracket" end
-    if not app_state.chamber_threshold then app_state.chamber_threshold = 100 end
+    if not app_state.chamber_threshold then app_state.chamber_threshold = 200 end
     msg.post(".", "acquire_input_focus")
     rebuild(self)
 end
