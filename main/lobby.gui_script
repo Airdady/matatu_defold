@@ -576,6 +576,17 @@ local function rebuild(self)
     track(self, ui.text(vmath.vector3(EDGE_R - 124, EDGE_T - 42, 0), "RULES", "small", C_AMBER))
     self.buttons[#self.buttons + 1] = { node = rules, id = "rules_open" }
 
+    -- ===== SUPPORT (moved here from the online panel) + SHARE ==============
+    local support = track(self, ui.box(vmath.vector3(EDGE_R - 244, EDGE_T - 40, 0),
+        vmath.vector3(110, 40, 0), vmath.vector4(0.12, 0.08, 0.30, 0.85)))
+    track(self, ui.text(vmath.vector3(EDGE_R - 244, EDGE_T - 42, 0), "SUPPORT", "small", C_GEM))
+    self.buttons[#self.buttons + 1] = { node = support, id = "support" }
+
+    local share = track(self, ui.box(vmath.vector3(EDGE_R - 364, EDGE_T - 40, 0),
+        vmath.vector3(110, 40, 0), vmath.vector4(0.12, 0.08, 0.30, 0.85)))
+    track(self, ui.text(vmath.vector3(EDGE_R - 364, EDGE_T - 42, 0), "SHARE", "small", C_GREEN))
+    self.buttons[#self.buttons + 1] = { node = share, id = "share" }
+
     -- ===== New-user walkthrough overlay (drawn on top) =====================
     draw_tutorial(self)
 
@@ -821,6 +832,20 @@ local function handle(self, b)
     -- ---- Lobby actions ----------------------------------------------------
     if b.id == "play_online" then
         msg.post("#controller", "play_online")
+
+    elseif b.id == "support" then
+        -- Support contact (moved off the online players panel).
+        pcall(function()
+            local config = require("modules.config")
+            sys.open_url(config.BASE_URL .. "/support")
+        end)
+
+    elseif b.id == "share" then
+        -- Share the app with friends via a pre-filled WhatsApp message.
+        pcall(function()
+            local config = require("modules.config")
+            sys.open_url("https://wa.me/?text=Play%20Matatu%20with%20me!%20https%3A%2F%2F" .. config.DOMAIN)
+        end)
 
     elseif b.id == "quick_play" then
         app_state.mode = "offline"
