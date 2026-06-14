@@ -171,15 +171,25 @@ function M.layout_hand(self, hand, y, animate)
     if n == 0 then return end
     local spacing = M.calc_spacing(self, n)
     local start = self.CENTER.x - ((n - 1) * spacing) / 2.0
+
+    -- 4-player tournament: give the human's bottom hand a gentle fan (arc rises
+    -- in the middle, cards tilt outward at the edges). The curve eases off as
+    -- the hand shrinks, so a 2-card hand sits almost flat.
+    local arch = self.t4 and self.t4.human_alive and hand == self.player_hand
+    local arc_amt = arch and math.min(34, n * 5.0) or 0
+    local fan_amt = arch and math.min(8, n * 1.3) or 0
+
     for i, c in ipairs(hand) do
         local z = Z_HAND + i * 0.001
-        local target = vmath.vector3(start + (i - 1) * spacing, y, z)
+        local t = (n > 1) and ((i - 1) / (n - 1) - 0.5) or 0
+        local by = (0.25 - t * t) * arc_amt
+        local target = vmath.vector3(start + (i - 1) * spacing, y + by, z)
         if animate then
             go.animate(c.id, "position", go.PLAYBACK_ONCE_FORWARD, target, go.EASING_OUTSINE, 0.42)
         else
             go.set_position(target, c.id)
         end
-        go.set(c.id, "euler.z", 0)
+        go.set(c.id, "euler.z", -t * fan_amt)
     end
 end
 
