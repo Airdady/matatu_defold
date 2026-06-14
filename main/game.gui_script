@@ -1000,6 +1000,60 @@ local function t4_elimination_sequence(self, worst_slot, worst_name, worst_avata
     end)
 end
 
+-- ── Elimination Chamber: persistent all-time score table (top-left) ──────────
+local function t4_chamber_init(self, threshold, rows)
+    if self.t4_chamber and self.t4_chamber.root then pcall(gui.delete_node, self.t4_chamber.root) end
+    local n = #rows
+    local root = gui.new_box_node(vmath.vector3(14, LOGICAL_H - 14, 0), vmath.vector3(250, 52 + n * 42, 0))
+    gui.set_pivot(root, gui.PIVOT_NW)
+    gui.set_color(root, vmath.vector4(0.05, 0.06, 0.09, 0.86))
+    gui.set_xanchor(root, gui.ANCHOR_LEFT); gui.set_yanchor(root, gui.ANCHOR_TOP)
+    local title = label(vmath.vector3(125, -24, 0), "SCORE CAP  " .. tostring(threshold), 16, vmath.vector4(1, 0.84, 0.2, 1), gui.PIVOT_CENTER, "poppins_bold")
+    gui.set_parent(title, root)
+    self.t4_chamber = { root = root, threshold = threshold, rows = {} }
+    for i, r in ipairs(rows) do
+        local ry = -52 - (i - 1) * 42
+        local nm = label(vmath.vector3(14, ry, 0), string.upper(tostring(r.name or "")), 14, C_WHITE, gui.PIVOT_W, "poppins_bold")
+        gui.set_parent(nm, root)
+        local val = label(vmath.vector3(236, ry, 0), tostring(r.total or 0), 16, C_WHITE, gui.PIVOT_E, "poppins_bold")
+        gui.set_parent(val, root)
+        local trk = gui.new_box_node(vmath.vector3(14, ry - 15, 0), vmath.vector3(222, 5, 0))
+        gui.set_pivot(trk, gui.PIVOT_W); gui.set_color(trk, vmath.vector4(1, 1, 1, 0.12)); gui.set_parent(trk, root)
+        local fill = gui.new_box_node(vmath.vector3(14, ry - 15, 0), vmath.vector3(222, 5, 0))
+        gui.set_pivot(fill, gui.PIVOT_W); gui.set_color(fill, C_T_GREEN); gui.set_parent(fill, root)
+        local frac = math.min(1, (r.total or 0) / math.max(1, threshold))
+        gui.set_scale(fill, vmath.vector3(frac, 1, 1))
+        -- keyed by NAME (stable): seat slots get reassigned as the table collapses
+        self.t4_chamber.rows[string.upper(tostring(r.name or i))] = { nm = nm, val = val, fill = fill }
+    end
+end
+
+local function t4_chamber_update(self, name, added, total, threshold, eliminated)
+    if not (self.t4_chamber and self.t4_chamber.rows) then return end
+    local row = self.t4_chamber.rows[string.upper(tostring(name or ""))]
+    if not row then return end
+    local thr = threshold or self.t4_chamber.threshold or 100
+    gui.set_text(row.val, tostring(total))
+    local frac = math.min(1, total / math.max(1, thr))
+    gui.animate(row.fill, "scale.x", frac, gui.EASING_OUTCUBIC, 0.5)
+    local col = C_T_GREEN
+    if frac >= 1 then col = C_T_RED elseif frac >= 0.66 then col = C_T_ORANGE end
+    gui.set_color(row.fill, col)
+    if added and added > 0 then
+        gui.set_scale(row.val, vmath.vector3(1.6, 1.6, 1))
+        gui.animate(row.val, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTBOUNCE, 0.4)
+    end
+    if eliminated then
+        gui.set_color(row.nm, vmath.vector4(0.5, 0.5, 0.55, 1))
+        gui.set_color(row.val, vmath.vector4(0.95, 0.32, 0.32, 1))
+    end
+end
+
+local function t4_delete_chamber(self)
+    if self.t4_chamber and self.t4_chamber.root then pcall(gui.delete_node, self.t4_chamber.root) end
+    self.t4_chamber = nil
+end
+
 function init(self)
     msg.post(".", "acquire_input_focus")
     gui.set_render_order(13)
@@ -1274,6 +1328,12 @@ function on_message(self, message_id, message)
     elseif message_id == hash("t4_elimination_sequence") then
         t4_elimination_sequence(self, message.worst_slot, message.worst_name, message.worst_avatar)
 
+    elseif message_id == hash("t4_chamber_init") then
+        t4_chamber_init(self, message.threshold or 100, message.rows or {})
+
+    elseif message_id == hash("t4_chamber_update") then
+        t4_chamber_update(self, message.name, message.added or 0, message.total or 0, message.threshold, message.eliminated)
+
     elseif message_id == hash("t4_flash") then
         local fl = label(vmath.vector3(LOGICAL_W/2, LOGICAL_H/2 + 80, 0), tostring(message.text or ""), 40, vmath.vector4(1, 0.84, 0.2, 1), gui.PIVOT_CENTER, "title")
         gui.set_scale(fl, vmath.vector3(0.5, 0.5, 1))
@@ -1498,6 +1558,7 @@ function on_message(self, message_id, message)
         end
         self.t4_active_slot = nil
         self.is_t4_mode = false
+        t4_delete_chamber(self)
         pcall(function() gui.set_enabled(gui.get_node("emoji_btn"), true) end)
 
         if self.t4_tally_root then pcall(gui.delete_node, self.t4_tally_root); self.t4_tally_root = nil end

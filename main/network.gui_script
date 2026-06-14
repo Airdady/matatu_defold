@@ -8,8 +8,9 @@
 --   reconnecting — socket dropped, automatic retries running (spinner dots)
 --   offline      — retries exhausted: explains + RETRY button
 
-local ws = require("modules.websocket_manager")
-local F  = require("modules.fonts")
+local ws        = require("modules.websocket_manager")
+local F         = require("modules.fonts")
+local app_state = require("modules.app_state")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 
@@ -19,6 +20,7 @@ local C_RED    = vmath.vector4(0.902, 0.290, 0.235, 1.0) -- #E64A3C
 local C_BODY   = vmath.vector4(0.788, 0.812, 0.839, 1.0) -- #C9CFD6
 local C_WHITE  = vmath.vector4(1, 1, 1, 1)
 local C_DARK   = vmath.vector4(0.082, 0.094, 0.110, 1.0)
+local C_GREEN  = vmath.vector4(0.298, 0.804, 0.396, 1.0) -- #4CCD65
 
 local function box(pos, size, color)
     local n = gui.new_box_node(pos, size)
@@ -65,28 +67,84 @@ local function build(self)
     gui.set_enabled(self.scrim, false)
 end
 
+-- Small unobtrusive connection-status pill, top-right. Used on the lobby and in
+-- OFFLINE games, where the full-screen dialog is unwanted. Anchored top-right
+-- but nudged down/left so it stays clear of the in-game exit button corner.
+local function build_badge(self)
+    local bw, bh = 90, 26
+    -- Anchor to the top-right corner; offset keeps it clear of the exit button.
+    self.badge = box(vmath.vector3(LOGICAL_W - bw/2 - 18, LOGICAL_H - bh/2 - 56, 0),
+        vmath.vector3(bw, bh, 0), C_PANEL)
+    gui.set_pivot(self.badge, gui.PIVOT_CENTER)
+    gui.set_xanchor(self.badge, gui.ANCHOR_RIGHT)
+    gui.set_yanchor(self.badge, gui.ANCHOR_TOP)
+    gui.set_adjust_mode(self.badge, gui.ADJUST_FIT)
+
+    self.badge_dot = box(vmath.vector3(-bw/2 + 13, 0, 0), vmath.vector3(8, 8, 0), C_GREEN)
+    gui.set_parent(self.badge_dot, self.badge)
+
+    self.badge_lbl = text(vmath.vector3(6, -1, 0), "ONLINE", 12, C_BODY)
+    gui.set_parent(self.badge_lbl, self.badge)
+
+    gui.set_enabled(self.badge, false)
+end
+
+-- Drive the top-right badge to a state and reveal it. Mirrors the dialog modes
+-- plus a "connected" green state. Returns nothing.
+local function show_badge(self, mode)
+    if mode == "offline" then
+        gui.set_color(self.badge_dot, C_RED)
+        gui.set_text(self.badge_lbl, "OFFLINE")
+        gui.set_color(self.badge_lbl, C_BODY)
+    elseif mode == "connected" then
+        gui.set_color(self.badge_dot, C_GREEN)
+        gui.set_text(self.badge_lbl, "ONLINE")
+        gui.set_color(self.badge_lbl, C_BODY)
+    else -- reconnecting
+        gui.set_color(self.badge_dot, C_ACCENT)
+        gui.set_text(self.badge_lbl, "RECONNECTING…")
+        gui.set_color(self.badge_lbl, C_BODY)
+    end
+    self._badge_mode = mode
+    gui.set_enabled(self.badge, true)
+end
+
 function init(self)
     msg.post(".", "acquire_input_focus")
     gui.set_render_order(15)
     self._mode = nil
     self._dots_t = 0
+    self._badge_mode = nil
+    self._badge_hide_t = nil
     build(self)
+    build_badge(self)
 
     -- WS callbacks run in the socket owner's (controller) context — post back
     -- to THIS component through a URL captured here, in our own context.
+    -- During ONLINE play we drive the full-screen dialog; on the lobby and in
+    -- OFFLINE games we only update the small top-right badge.
     local ME = msg.url("#")
+    local function notify(mode)
+        if app_state.mode == "online" then
+            msg.post(ME, "net_show", { mode = mode })
+        else
+            msg.post(ME, "net_badge", { mode = mode })
+        end
+    end
     self._tokens = {
         ws.on("disconnected", function()
-            if ws.current_user_id ~= "" then msg.post(ME, "net_show", { mode = "reconnecting" }) end
+            if ws.current_user_id ~= "" then notify("reconnecting") end
         end),
         ws.on("connection_error", function()
-            if ws.current_user_id ~= "" then msg.post(ME, "net_show", { mode = "reconnecting" }) end
+            if ws.current_user_id ~= "" then notify("reconnecting") end
         end),
         ws.on("reconnect_failed", function()
-            msg.post(ME, "net_show", { mode = "offline" })
+            notify("offline")
         end),
         ws.on("connected", function()
+            -- Always close the dialog; green + auto-hide the badge if showing.
             msg.post(ME, "net_hide")
+            msg.post(ME, "net_badge", { mode = "connected" })
         end),
     }
 end
@@ -119,14 +177,41 @@ function update(self, dt)
         local dots = string.rep(".", 1 + (math.floor(self._dots_t * 2) % 3))
         gui.set_text(self.body, "Reconnecting" .. dots)
     end
+
+    -- Auto-hide the green "connected" badge a short moment after reconnect.
+    if self._badge_hide_t then
+        self._badge_hide_t = self._badge_hide_t - dt
+        if self._badge_hide_t <= 0 then
+            self._badge_hide_t = nil
+            self._badge_mode = nil
+            gui.set_enabled(self.badge, false)
+        end
+    end
 end
 
 function on_message(self, message_id, message)
     if message_id == hash("net_show") then
+        -- Full dialog supersedes the badge (online play only).
+        self._badge_hide_t = nil
+        self._badge_mode = nil
+        gui.set_enabled(self.badge, false)
         apply_mode(self, (message and message.mode) or "reconnecting")
     elseif message_id == hash("net_hide") then
         self._mode = nil
         gui.set_enabled(self.scrim, false)
+    elseif message_id == hash("net_badge") then
+        local mode = (message and message.mode) or "reconnecting"
+        -- When online the dialog owns the UI; keep the badge hidden.
+        if app_state.mode == "online" then
+            self._badge_hide_t = nil
+            self._badge_mode = nil
+            gui.set_enabled(self.badge, false)
+            return
+        end
+        show_badge(self, mode)
+        -- Green/connected badge fades out after a couple of seconds; a problem
+        -- state stays put until it resolves.
+        self._badge_hide_t = (mode == "connected") and 2.0 or nil
     end
 end
 

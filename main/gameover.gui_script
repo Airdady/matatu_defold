@@ -81,7 +81,7 @@ local function build_gradient_texture()
         { 0.00, 55 / 255, 37 / 255, 27 / 255, 0.90 },
         { 0.31,  0 / 255, 36 / 255, 61 / 255, 0.90 },
         { 0.80,  0 / 255, 36 / 255, 61 / 255, 0.00 },
-        { 1.00,  0.0,      0.0,      0.0,     0.95 },
+        { 1.00,  0.0,      0.0,      0.0,     0.0 },
     }
     local n_stops = #stops
 
@@ -345,32 +345,45 @@ end
 ----------------------------------------------------------------------
 -- Layout presets (Dynamically stacking blocks to eliminate gaps)
 ----------------------------------------------------------------------
-local function apply_layout(self, has_score, has_sub)
+local function apply_layout(self, has_score, has_sub, has_stats)
     local set = function(node, x, y) gui.set_position(node, vmath.vector3(x, y, 0)) end
-    
+
     local y = has_score and 180 or 120
     set(self.n_title, 0, y)
-    
+
     y = y - 35
     if has_sub then
         set(self.n_sub, 0, y)
         y = y - 30
     end
-    
+
     -- Divider exactly bounds the content directly above it
     set(self.n_divider, 0, y)
     y = y - 25
     set(self.n_reason, 0, y)
-    
+
+    -- Base Y for the stats strip + buttons depends on whether the score block
+    -- (avatars + big numeric score) is shown above them.
     if has_score then
         self.stat_cap_y, self.stat_val_y, self.stat_sep_y = -140, -170, -155
-        set(self.n_again_bg, 0, -215)
-        set(self.n_exit_hit, 0, -295) -- Wide 80px gap below Play Again
     else
         self.stat_cap_y, self.stat_val_y, self.stat_sep_y = -50, -80, -65
-        set(self.n_again_bg, 0, -125)
-        set(self.n_exit_hit, 0, -205) -- Wide 80px gap below Play Again
     end
+
+    -- Buttons sit just under the stats strip. When the strip renders nothing we
+    -- collapse the ~55px it would occupy and pull the buttons up to remove the
+    -- dead gap. The 80px spacing between the two buttons is preserved.
+    local again_y
+    if has_stats then
+        -- Place buttons below the stat VALUE row (which is the lowest element).
+        again_y = self.stat_val_y - 45
+    else
+        -- No strip: buttons rise to where the strip's caption row would start.
+        again_y = self.stat_cap_y - 20
+    end
+    set(self.n_again_bg, 0, again_y)
+    set(self.n_exit_hit, 0, again_y - 80) -- Wide 80px gap below Play Again
+
     for _, n in ipairs(self.score_nodes) do gui.set_enabled(n, has_score) end
 end
 
@@ -413,13 +426,7 @@ local function format_number(n)
     return (n < 0 and "-" or "+") .. res
 end
 
-local function show_stats(self, prize, points, win_bonus)
-    for i = 1, 3 do
-        gui.set_enabled(self.stats[i].cap, false)
-        gui.set_enabled(self.stats[i].val, false)
-    end
-    for i = 1, 2 do gui.set_enabled(self.stat_seps[i], false) end
-
+local function build_stat_entries(prize, points, win_bonus)
     local entries = {}
     if prize ~= 0 then
         entries[#entries + 1] = { cap = "PRIZES", val = format_number(prize), col = (prize > 0 and C_POSITIVE or C_NEGATIVE) }
@@ -430,6 +437,23 @@ local function show_stats(self, prize, points, win_bonus)
     if win_bonus > 0 then
         entries[#entries + 1] = { cap = "WIN BONUS", val = "+" .. tostring(win_bonus), col = C_VICTORY }
     end
+    return entries
+end
+
+-- How many stat cells the strip will render for these values (no side effects).
+-- Used by apply_layout to collapse the gap when nothing will show.
+local function stats_count(prize, points, win_bonus)
+    return #build_stat_entries(prize, points, win_bonus)
+end
+
+local function show_stats(self, prize, points, win_bonus)
+    for i = 1, 3 do
+        gui.set_enabled(self.stats[i].cap, false)
+        gui.set_enabled(self.stats[i].val, false)
+    end
+    for i = 1, 2 do gui.set_enabled(self.stat_seps[i], false) end
+
+    local entries = build_stat_entries(prize, points, win_bonus)
 
     local n = #entries
     if n == 0 then return false end
@@ -724,8 +748,11 @@ function on_message(self, message_id, message)
         gui.set_text(self.n_opp_score, tostring(opp_score))
         gui.set_color(self.n_opp_score, opp_score > my_score and C_POSITIVE or (opp_score < my_score and C_NEGATIVE or C_PRIMARY))
 
-        local show_scores = is_cut or my_cards > 0 or opp_cards > 0
-        if show_scores then
+        -- Card-sum sub-lines under each avatar only render when we actually
+        -- have totals (or a cut decided it). They may stay hidden independently
+        -- of the big numeric score.
+        local show_card_sums = is_cut or my_cards > 0 or opp_cards > 0
+        if show_card_sums then
             gui.set_text(self.n_you_sum, "Card Sum: " .. tostring(my_cards))
             gui.set_text(self.n_opp_sum, "Card Sum: " .. tostring(opp_cards))
         else
@@ -733,9 +760,24 @@ function on_message(self, message_id, message)
             gui.set_text(self.n_opp_sum, "")
         end
 
+        -- Always show the avatars + numeric "X : Y" for any 2-player result
+        -- (offline passes player_score/ai_score; online derives my_score/opp_score).
+        -- 4-player bracket results are not a head-to-head score, so skip them.
+        local is_4p_bracket = (message.t4_champion ~= nil) or (message.t4_human_out ~= nil)
+        local has_2p_score  = (not is_4p_bracket)
+            and (message.player_score ~= nil or message.ai_score ~= nil
+                 or type(res.currentScores) == "table")
+        local has_score = has_2p_score or show_card_sums
+
+        -- Determine up front whether the PRIZES/POINTS/WIN BONUS strip will
+        -- render anything, so the layout can collapse the empty space when it
+        -- won't. (apply_layout sets the stat Y coords that show_stats consumes,
+        -- so the actual render still happens after layout below.)
+        local has_stats = stats_count(balance_change, points, win_bonus) > 0
+
         -- Dynamically structure and position content eliminating awkward gaps
-        apply_layout(self, show_scores, subtitle ~= "")
-        
+        apply_layout(self, has_score, subtitle ~= "", has_stats)
+
         show_stats(self, balance_change, points, win_bonus)
         play_entrance(self)
 
