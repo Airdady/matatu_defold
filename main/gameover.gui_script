@@ -671,6 +671,10 @@ function on_message(self, message_id, message)
                 title_str, title_col, subtitle = "ELIMINATED", C_DEFEAT, string.upper(tostring(message.t4_champion)) .. " won the bracket"
             end
             again_txt = "PLAY AGAIN"
+        elseif message.t4_human_out then
+            -- The human left the table mid-bracket: stop the game right here.
+            title_str, title_col, subtitle = "ELIMINATED", C_DEFEAT, "You left the table"
+            again_txt = "PLAY AGAIN"
         end
 
         if is_no_show then
