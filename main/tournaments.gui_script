@@ -533,6 +533,7 @@ local function handle(self, b)
 		rebuild(self)
 	elseif b.id == "cancel_search" then
 		pcall(msg.post, "#snd_connecting", "stop_sound")
+		pcall(msg.post, "#snd_suspense", "stop_sound")
 		stop_search(self)
 	end
 end

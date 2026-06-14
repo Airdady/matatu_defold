@@ -304,6 +304,8 @@ local function set_round_dots(flipper, needed, won, animate)
 
     local prev = flipper.dots_filled or 0
     if animate and won > prev and flipper.dots[won] then
+        -- A round dot was just checked off: ping the scoreboard.
+        pcall(msg.post, "/controller#snd_ping", "play_sound")
         local d = flipper.dots[won]
         gui.set_color(d.fill, C_DOT_FLASH)
         gui.set_scale(d.fill, vmath.vector3(0.1, 0.1, 1))
@@ -1107,6 +1109,8 @@ local function t4_chamber_update(self, name, added, total, threshold, eliminated
     if frac >= 1 then col = C_T_RED elseif frac >= 0.66 then col = C_T_ORANGE end
     gui.set_color(row.fill, col)
     if added and added > 0 then
+        -- This chamber row's total just climbed: ping the scoreboard pin update.
+        pcall(msg.post, "/controller#snd_ping", "play_sound")
         gui.set_scale(row.val, vmath.vector3(1.6, 1.6, 1))
         gui.animate(row.val, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTBOUNCE, 0.4)
     end
