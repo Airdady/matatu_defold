@@ -30,6 +30,10 @@ local function show(self, screen)
         msg.post("#game_logic", "disable")
     end
     self.screen = screen
+    -- Publish the active screen so global overlays (e.g. the incoming-request
+    -- dialog) can adapt their presentation — notably showing a small, non-
+    -- disruptive toast instead of a full-screen modal while in a game.
+    app_state.current_screen = screen
 end
 
 -- Decide where to go once we have a user identified for online play.
