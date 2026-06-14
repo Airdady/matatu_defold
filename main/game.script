@@ -477,6 +477,12 @@ function on_input(self, action_id, action)
         return true
     end
 
+    -- Online: gameplay stays locked until the backend broadcasts START (every
+    -- player ready). Swallow taps while we're holding after our deal.
+    if self.online_mode and self._await_start then
+        return true
+    end
+
     local x, y = get_logical_touch(action)
 
     local hit_card = nil
