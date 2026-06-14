@@ -219,7 +219,7 @@ end
 local function open_dialog(self, kind, name, stake, request_id, avatar, opponent_id, h2h)
     self.dialog, self.dlg_alpha = { kind = kind, name = name, stake = stake or {}, request_id = request_id, avatar = tonumber(avatar) or 1, time_left = 10, max_time = 10, opponent_id = opponent_id and tostring(opponent_id) or nil, h2h = h2h }, 0
     -- Audible cue when an opponent's challenge arrives.
-    if kind == "incoming" then play_snd("snd_alert") end
+    if kind == "incoming" then play_snd("snd_notify") end
     if self._active then rebuild(self) end
 end
 local function open_banner(self, raw)
@@ -229,7 +229,7 @@ local function open_banner(self, raw)
     self.banners = self.banners or {}; for _, ex in ipairs(self.banners) do if b.request_id ~= "" and ex.request_id == b.request_id then return end end
     table.insert(self.banners, b)
     -- Audible cue for an incoming tournament/battle invite.
-    play_snd("snd_alert")
+    play_snd("snd_notify")
     if self._active then rebuild(self) end
 end
 
@@ -315,18 +315,29 @@ function on_message(self, message_id, message, sender)
 end
 
 function on_input(self, action_id, action)
-    if action_id == hash("touch") and not self.dialog and not self.battle_modal and not self.invite_search and not self.banners and self.list_region then
+    -- Handle natural scrolling (Touch Dragging + Mouse Wheel Support)
+    if not self.dialog and not self.battle_modal and not self.invite_search and not self.banners and self.list_region and action.x and action.y then
         local reg = self.list_region
-        if action.pressed and action.x >= reg.left and action.x <= reg.right and action.y >= reg.bottom and action.y <= reg.top then
-            self._dy = action.y; self._dstart = action.y; self._drag = false
-        elseif self._dy and not action.released then
-            if math.abs(action.y - (self._dstart or action.y)) > 6 then self._drag = true end
-            self.list_scroll, self._dy = (self.list_scroll or 0) - (action.y - self._dy), action.y; rebuild(self); return true
-        elseif action.released and self._dy then
-            local wd = self._drag; self._dy, self._drag = nil, false; if wd then return true end
+        local in_reg = action.x >= reg.left and action.x <= reg.right and action.y >= reg.bottom and action.y <= reg.top
+
+        if action_id == hash("touch") then
+            if action.pressed and in_reg then
+                self._dy = action.y; self._dstart = action.y; self._drag = false
+            elseif self._dy and not action.released then
+                if math.abs(action.y - (self._dstart or action.y)) > 6 then self._drag = true end
+                -- FIX: Changed sign from '-' to '+' here so drag follows UI naturally
+                self.list_scroll, self._dy = (self.list_scroll or 0) + (action.y - self._dy), action.y; rebuild(self); return true
+            elseif action.released and self._dy then
+                local wd = self._drag; self._dy, self._drag = nil, false; if wd then return true end
+            end
+        elseif action_id == hash("scroll_up") and in_reg then
+            self.list_scroll = (self.list_scroll or 0) - 40; rebuild(self); return true
+        elseif action_id == hash("scroll_down") and in_reg then
+            self.list_scroll = (self.list_scroll or 0) + 40; rebuild(self); return true
         end
     end
 
+    -- Button Interactions 
     if action_id == hash("touch") and action.pressed then
         for i = #self.buttons, 1, -1 do
             local b = self.buttons[i]
@@ -336,10 +347,13 @@ function on_input(self, action_id, action)
                 elseif id == "tab_battles" then self.tab, self.list_scroll = TAB_BATTLES, 0; rebuild(self)
                 elseif type(id) == "string" and id:sub(1,6) == "stake_" then self.stake_index = b.data; app_state.selected_stake = config.STAKE_LEVELS[self.stake_index]; ws.update_stake(config.STAKE_LEVELS[self.stake_index]); rebuild(self)
                 elseif id == "challenge" then
-                    local u, sd, ex = b.data or {}, app_state.selected_stake, nil
+                    local u = b.data or {}
+                    local sd, ex = nil, nil
                     if self.tab == TAB_BATTLES and type(u.myBattle) == "table" then
                         sd = type(u.myBattle.stake) == "table" and u.myBattle.stake or { amount = tonumber(u.myBattle.stakeAmount) or 0 }
                         ex = { gameType = "TOURNAMENT", tournamentId = u.myBattle._id or u.myBattle.id, rules = u.myBattle.rules }
+                    else
+                        sd = type(u.stake) == "table" and u.stake or { amount = tonumber((u.stake or {}).amount) or 0 }
                     end
                     ws.send_game_request({ _id=u._id, username=u.username, isAI=u.isAI, avatar=u.avatar }, sd, ex); open_dialog(self, "challenging", u.username or "opponent", sd, nil, u.avatar, u._id, nil); ws.request_head_to_head(u._id)
                 elseif id == "accept" then if self.dialog and self.dialog.request_id then ws.accept_game_request(self.dialog.request_id) end; self.dialog, self.list_scroll = nil, 0; rebuild(self)
