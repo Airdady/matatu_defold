@@ -1007,30 +1007,89 @@ local function t4_elimination_sequence(self, worst_slot, worst_name, worst_avata
 end
 
 -- ── Elimination Chamber: persistent all-time score table (top-left) ──────────
+local T4_CHAMBER_ROW_GAP = 42
+-- y of a row's content (name/value) for the slot at 0-based index `i`.
+local function t4_chamber_row_y(i)
+    return -52 - i * T4_CHAMBER_ROW_GAP
+end
+
+-- Recompute the standings order (lowest total = best = top, since low score wins
+-- this mode) and slide every row's nodes to their new slot. Eliminated players are
+-- pushed to the bottom. The sort is made stable via each row's insertion index so
+-- equal totals keep a deterministic order.
+local function t4_chamber_reflow(self)
+    if not (self.t4_chamber and self.t4_chamber.list) then return end
+    local list = self.t4_chamber.list
+    local order = {}
+    for _, e in ipairs(list) do order[#order + 1] = e end
+    table.sort(order, function(a, b)
+        local ae = a.eliminated and 1 or 0
+        local be = b.eliminated and 1 or 0
+        if ae ~= be then return ae < be end          -- alive first, eliminated last
+        if a.total ~= b.total then return a.total < b.total end  -- ascending: low = top
+        return a.idx < b.idx                          -- stable tie-break (insertion order)
+    end)
+    for slot, e in ipairs(order) do
+        local base_y = t4_chamber_row_y(slot - 1)
+        gui.set_text(e.rk, tostring(slot))
+        for _, nd in ipairs(e.nodes) do
+            gui.animate(nd.node, "position.y", base_y + nd.dy, gui.EASING_INOUTSINE, 0.4)
+        end
+    end
+end
+
 local function t4_chamber_init(self, threshold, rows)
     if self.t4_chamber and self.t4_chamber.root then pcall(gui.delete_node, self.t4_chamber.root) end
     local n = #rows
-    local root = gui.new_box_node(vmath.vector3(14, LOGICAL_H - 14, 0), vmath.vector3(250, 52 + n * 42, 0))
+    local root = gui.new_box_node(vmath.vector3(14, LOGICAL_H - 14, 0), vmath.vector3(250, 52 + n * T4_CHAMBER_ROW_GAP, 0))
     gui.set_pivot(root, gui.PIVOT_NW)
     gui.set_color(root, vmath.vector4(0.05, 0.06, 0.09, 0.86))
     gui.set_xanchor(root, gui.ANCHOR_LEFT); gui.set_yanchor(root, gui.ANCHOR_TOP)
     local title = label(vmath.vector3(125, -24, 0), "SCORE CAP  " .. tostring(threshold), 16, vmath.vector4(1, 0.84, 0.2, 1), gui.PIVOT_CENTER, "poppins_bold")
     gui.set_parent(title, root)
-    self.t4_chamber = { root = root, threshold = threshold, rows = {} }
+    -- `rows` is keyed by NAME for live updates; `list` holds the same entries in an
+    -- array so they can be re-sorted/re-ranked as totals change.
+    self.t4_chamber = { root = root, threshold = threshold, rows = {}, list = {} }
     for i, r in ipairs(rows) do
-        local ry = -52 - (i - 1) * 42
-        local nm = label(vmath.vector3(14, ry, 0), string.upper(tostring(r.name or "")), 14, C_WHITE, gui.PIVOT_W, "poppins_bold")
+        local ry = t4_chamber_row_y(i - 1)
+        local total = r.total or 0
+        -- Row background: same atlas button image the accept/decline buttons use.
+        local bg = gui.new_box_node(vmath.vector3(125, ry - 4, 0), vmath.vector3(242, 38, 0))
+        local ok_bg = pcall(function()
+            gui.set_texture(bg, "ui")
+            gui.play_flipbook(bg, hash("secondary_btn"))
+            gui.set_slice9(bg, vmath.vector4(24, 18, 24, 18))
+        end)
+        if not ok_bg then gui.set_color(bg, vmath.vector4(1, 1, 1, 0.06)) end
+        gui.set_parent(bg, root)
+        local rk = label(vmath.vector3(14, ry, 0), tostring(i), 14, vmath.vector4(1, 0.84, 0.2, 1), gui.PIVOT_W, "poppins_bold")
+        gui.set_parent(rk, root)
+        local nm = label(vmath.vector3(34, ry, 0), string.upper(tostring(r.name or "")), 14, C_WHITE, gui.PIVOT_W, "poppins_bold")
         gui.set_parent(nm, root)
-        local val = label(vmath.vector3(236, ry, 0), tostring(r.total or 0), 16, C_WHITE, gui.PIVOT_E, "poppins_bold")
+        local val = label(vmath.vector3(236, ry, 0), tostring(total), 16, C_WHITE, gui.PIVOT_E, "poppins_bold")
         gui.set_parent(val, root)
-        local trk = gui.new_box_node(vmath.vector3(14, ry - 15, 0), vmath.vector3(222, 5, 0))
+        local trk = gui.new_box_node(vmath.vector3(34, ry - 15, 0), vmath.vector3(202, 5, 0))
         gui.set_pivot(trk, gui.PIVOT_W); gui.set_color(trk, vmath.vector4(1, 1, 1, 0.12)); gui.set_parent(trk, root)
-        local fill = gui.new_box_node(vmath.vector3(14, ry - 15, 0), vmath.vector3(222, 5, 0))
+        local fill = gui.new_box_node(vmath.vector3(34, ry - 15, 0), vmath.vector3(202, 5, 0))
         gui.set_pivot(fill, gui.PIVOT_W); gui.set_color(fill, C_T_GREEN); gui.set_parent(fill, root)
-        local frac = math.min(1, (r.total or 0) / math.max(1, threshold))
+        local frac = math.min(1, total / math.max(1, threshold))
         gui.set_scale(fill, vmath.vector3(frac, 1, 1))
-        -- keyed by NAME (stable): seat slots get reassigned as the table collapses
-        self.t4_chamber.rows[string.upper(tostring(r.name or i))] = { nm = nm, val = val, fill = fill }
+        -- entry stores its current total + its nodes (with each node's y-offset from
+        -- the row's content line) so reflow can animate every node to a new slot.
+        local entry = {
+            idx = i, total = total, eliminated = false,
+            rk = rk, nm = nm, val = val, fill = fill,
+            nodes = {
+                { node = bg,   dy = -4  },
+                { node = rk,   dy = 0   },
+                { node = nm,   dy = 0   },
+                { node = val,  dy = 0   },
+                { node = trk,  dy = -15 },
+                { node = fill, dy = -15 },
+            },
+        }
+        self.t4_chamber.rows[string.upper(tostring(r.name or i))] = entry
+        self.t4_chamber.list[i] = entry
     end
 end
 
@@ -1039,6 +1098,8 @@ local function t4_chamber_update(self, name, added, total, threshold, eliminated
     local row = self.t4_chamber.rows[string.upper(tostring(name or ""))]
     if not row then return end
     local thr = threshold or self.t4_chamber.threshold or 100
+    row.total = total
+    if eliminated then row.eliminated = true end
     gui.set_text(row.val, tostring(total))
     local frac = math.min(1, total / math.max(1, thr))
     gui.animate(row.fill, "scale.x", frac, gui.EASING_OUTCUBIC, 0.5)
@@ -1053,6 +1114,8 @@ local function t4_chamber_update(self, name, added, total, threshold, eliminated
         gui.set_color(row.nm, vmath.vector4(0.5, 0.5, 0.55, 1))
         gui.set_color(row.val, vmath.vector4(0.95, 0.32, 0.32, 1))
     end
+    -- Re-rank live: totals just changed, slide rows to their new ascending order.
+    t4_chamber_reflow(self)
 end
 
 local function t4_delete_chamber(self)
