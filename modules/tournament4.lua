@@ -472,91 +472,98 @@ end
 
 local function sweep_nodes_to_deck(self, nodes)
     local dp = self.DECK_POS
-    local seq = self._seq
     for i, c in ipairs(nodes) do
         local id = c.id
         -- Slower, more deliberate sweep
         go.animate(id, "position", go.PLAYBACK_ONCE_FORWARD, vmath.vector3(dp.x + i * 0.5, dp.y - i * 0.5, BL.Z_FLY + i * 0.001), go.EASING_INCUBIC, 0.4, i * 0.05)
         go.animate(id, "scale", go.PLAYBACK_ONCE_FORWARD, BL.CARD_SCALE, go.EASING_INSINE, 0.4, i * 0.05)
-        timer.delay(0.45 + i * 0.05, false, function() if seq == self._seq then pcall(go.delete, id) end end)
+        -- delete UNCONDITIONALLY: a swept card must never survive into the next
+        -- deal (guarding on self._seq here orphaned face-up cards on transition).
+        timer.delay(0.45 + i * 0.05, false, function() pcall(go.delete, id) end)
     end
     for k = #nodes, 1, -1 do nodes[k] = nil end
 end
 
+-- Count ONE player at the centre of the table: their avatar slides in to a
+-- counting podium, their cards fly into a row beside it one at a time while a
+-- running score tallies up, then the avatar slides back to its seat.
 local function count_one_seat(self, seat, done)
     local nodes = seat_nodes(self, seat)
     local n = #nodes
     local true_hand = (seat.is_human and self.t4.human_alive) and self.player_hand or seat.hand
-    local real_n = #true_hand
-    
     local real_score = 0
-    for _, c in ipairs(true_hand) do 
-        real_score = real_score + get_card_value(c.v, c.s) 
-    end
-
+    for _, c in ipairs(true_hand) do real_score = real_score + get_card_value(c.v, c.s) end
     seat._count = 0
-    
-    if n == 0 then 
+
+    -- bring this player's avatar in to the centre podium
+    notify(GUI_HUD, "t4_count_focus", { slot = seat.slot, name = seat.name })
+
+    local seq = self._seq
+    local step = 46
+    local row_cx = self.CENTER.x + 60
+    local row_cy = self.CENTER.y
+
+    -- nothing to count (the finisher, or an empty hand)
+    if n == 0 then
         seat._count = real_score
-        notify(GUI_HUD, "t4_count_tick", { slot = seat.slot, added_val = 0, total = seat._count, cx = self.CENTER.x, cy = self.CENTER.y })
-        if done then done() end 
-        return 
+        notify(GUI_HUD, "t4_count_tick", { slot = seat.slot, added_val = 0, total = real_score, cx = row_cx, cy = row_cy })
+        timer.delay(1.0, false, function()
+            if seq ~= self._seq then return end
+            notify(GUI_HUD, "t4_count_unfocus", { slot = seat.slot })
+            timer.delay(0.5, false, function() if seq == self._seq and done then done() end end)
+        end)
+        return
     end
 
-    local step = 45 -- Scaled up spacing so full scale cards remain legible
-    local k = 0
-    local seq = self._seq
-    local function fly_one()
-        k = k + 1
-        if k > n then
-            seat._count = math.max(seat._count, real_score)
-            timer.delay(1.2, false, function()
-                if seq ~= self._seq then return end
-                sweep_nodes_to_deck(self, nodes)
-                timer.delay(0.8, false, function() if seq == self._seq and done then done() end end)
-            end)
-            return
-        end
-        local c = nodes[k]
-        local data_c = true_hand[k]
-        local val = data_c and get_card_value(data_c.v, data_c.s) or 0
-        
-        if k == n and real_n > n then
-            for i = n + 1, real_n do
-                val = val + get_card_value(true_hand[i].v, true_hand[i].s)
+    -- let the avatar settle on the podium before the cards come in
+    timer.delay(0.55, false, function()
+        if seq ~= self._seq then return end
+        local k = 0
+        local function fly_one()
+            k = k + 1
+            if k > n then
+                seat._count = math.max(seat._count, real_score)
+                timer.delay(1.0, false, function()
+                    if seq ~= self._seq then return end
+                    sweep_nodes_to_deck(self, nodes)
+                    notify(GUI_HUD, "t4_count_unfocus", { slot = seat.slot })
+                    timer.delay(0.6, false, function() if seq == self._seq and done then done() end end)
+                end)
+                return
             end
+            local c = nodes[k]
+            local data_c = true_hand[k]
+            local val = data_c and get_card_value(data_c.v, data_c.s) or 0
+            -- fold any over-cap cards (rare big hands) into the last visible card
+            if k == n and #true_hand > n then
+                for i = n + 1, #true_hand do val = val + get_card_value(true_hand[i].v, true_hand[i].s) end
+            end
+            seat._count = seat._count + val
+
+            local cx = row_cx - ((n - 1) * step) / 2.0 + (k - 1) * step
+            local cy = row_cy
+            local z = BL.Z_FLY + k * 0.002
+            go.set(c.id, "position.z", z)
+            go.animate(c.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_OUTSINE, 0.4)
+            go.animate(c.id, "scale", go.PLAYBACK_ONCE_FORWARD, BL.CARD_SCALE, go.EASING_OUTSINE, 0.4)
+            go.animate(c.id, "position", go.PLAYBACK_ONCE_FORWARD, vmath.vector3(cx, cy, z), go.EASING_OUTCUBIC, 0.4, 0, function()
+                if seq ~= self._seq then return end
+                go.animate(c.id, "scale", go.PLAYBACK_ONCE_PINGPONG, vmath.vector3(BL.CARD_SCALE_F * 1.12, BL.CARD_SCALE_F * 1.12, 1), go.EASING_INOUTSINE, 0.12)
+            end)
+            self.play_sound("SoundPick")
+            notify(GUI_HUD, "t4_count_tick", { slot = seat.slot, added_val = val, total = seat._count, cx = cx, cy = cy })
+            timer.delay(0.42, false, function() if seq == self._seq then fly_one() end end)
         end
-        
-        seat._count = seat._count + val
-        
-        local cx = self.CENTER.x - ((n - 1) * step) / 2.0 + (k - 1) * step
-        local cy = self.CENTER.y + 26
-        local z = BL.Z_FLY + k * 0.002
-        
-        go.set(c.id, "position.z", z)
-        go.animate(c.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_OUTSINE, 0.45)
-        
-        notify(GUI_HUD, "t4_count_tick", { slot = seat.slot, added_val = val, total = seat._count, cx = cx, cy = cy })
-        
-        -- Slower, readable flight path
-        go.animate(c.id, "position", go.PLAYBACK_ONCE_FORWARD, vmath.vector3(cx, cy, z), go.EASING_OUTCUBIC, 0.45, 0, function()
-            if seq ~= self._seq then return end
-            go.animate(c.id, "scale", go.PLAYBACK_ONCE_PINGPONG, vmath.vector3(BL.CARD_SCALE_F * 1.15, BL.CARD_SCALE_F * 1.15, 1), go.EASING_INOUTSINE, 0.15)
-        end)
-        self.play_sound("SoundPick")
-        
-        -- Relaxed delay between cards
-        timer.delay(0.40, false, function() if seq == self._seq then fly_one() end end)
-    end
-    fly_one()
+        fly_one()
+    end)
 end
 
 local function count_seats(self, list, idx, done)
     if idx > #list then if done then done() end return end
     local seat = list[idx]
-    notify(GUI_HUD, "t4_count", { slot = seat.slot }) 
+    notify(GUI_HUD, "t4_count", { slot = seat.slot })   -- pulse the seat avatar before it travels in
     local seq = self._seq
-    timer.delay(0.6, false, function()
+    timer.delay(0.45, false, function()
         if seq ~= self._seq then return end
         count_one_seat(self, seat, function() count_seats(self, list, idx + 1, done) end)
     end)
@@ -599,13 +606,9 @@ function M.finish_round(self, finisher)
     collect_pile_to_deck(self)
 
     local counters = {}
-    local tally_players = {}
-    for _, s in ipairs(alive_seats(self)) do 
-        table.insert(tally_players, { name = s.name, avatar = s.avatar, slot = s.slot })
-        if s ~= finisher then counters[#counters + 1] = s end 
+    for _, s in ipairs(alive_seats(self)) do
+        if s ~= finisher then counters[#counters + 1] = s end
     end
-    
-    notify(GUI_HUD, "t4_tally_init", { players = tally_players })
 
     local seq = self._seq
     timer.delay(0.7, false, function()
@@ -720,18 +723,21 @@ function M.deal_round(self)
     self.t4.direction = 1
 
     assign_slots(self)
-    
-    -- HIDE tally rows but PRESERVE the badge widgets so they can animate smoothly back to game position
-    notify(GUI_HUD, "t4_hide_tally", {})
-    
+
     local survivors = alive_seats(self)
+    self.t4.is_heads_up = (#survivors == 2)
+    BL.update_layout(self)
+
+    -- Wipe the old per-seat badges (slots are reassigned as the table collapses)
+    -- and rebuild them at their NEW seat positions, so none linger on the wrong
+    -- seat or with a stale avatar. The graveyard is preserved.
+    notify(GUI_HUD, "t4_clear", {})
+    for _, s in ipairs(survivors) do push_seat_hud(self, s) end
+
     local stage = "QUARTER FINALS"
     if #survivors == 3 then stage = "SEMI FINALS"
     elseif #survivors == 2 then stage = "FINALS" end
     notify(GUI_HUD, "t4_flash", { text = stage })
-    
-    self.t4.is_heads_up = (#survivors == 2)
-    BL.update_layout(self)
 
     local data = deck.build()
     for i = #data, 2, -1 do local j = math.random(i); data[i], data[j] = data[j], data[i] end

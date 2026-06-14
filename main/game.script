@@ -367,6 +367,24 @@ function update(self, dt)
             end
         end
     end
+
+    -- 4-player tournament (offline) safety net: the online watchdogs above do
+    -- not run offline, so a missed unlock after a rapid skip play would hang the
+    -- human until the turn timer. Self-heal a stuck input lock here.
+    if self.t4 and not self.online_mode and not self.game_over then
+        if self.current_turn == "player" and not self.is_animating
+           and not self.is_suit_selection_active and self.is_local_action_locked
+           and (self._gs_anim_locks or 0) == 0 then
+            self.t4_lock_stuck = (self.t4_lock_stuck or 0) + dt
+            if self.t4_lock_stuck > 1.2 then
+                self.is_local_action_locked = false
+                self.t4_lock_stuck = 0
+                RE.pre_validate_hand(self)
+            end
+        else
+            self.t4_lock_stuck = 0
+        end
+    end
 end
 
 ----------------------------------------------------------------------
@@ -485,9 +503,13 @@ function on_input(self, action_id, action)
             -- If the card is a skipping/chaining card, instantly unlock the board after a 100ms debounce. 
             -- This entirely bypasses the visual animation wait time so the player can seamlessly tap 
             -- their next card in the sequence while the first one is still flying.
-            local val = tostring(hit_card.value or hit_card.v or hit_card.rank or hit_card.id or "")
+            -- 8 and Jack (v == 11) are the skip/chain cards. Detect by VALUE:
+            -- a Jack's value "11" never matched the old "J" string test, so
+            -- Jacks never unlocked for rapid chaining. Validation still runs per
+            -- tap via RE.evaluate_play above, so this only frees the next tap.
+            local cv = tonumber(hit_card.v)
             local is_chain = result.play_again or result.continued_turn or result.chain or result.skip
-                          or string.find(val, "J") or string.find(val, "8") or string.find(val, "K")
+                          or cv == 8 or cv == 11
                           
             if is_chain then
                 timer.delay(0.1, false, function()
