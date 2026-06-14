@@ -1,7 +1,7 @@
 -- themes.gui_script - Theme select / purchase screen.
 -- Upgraded to match the luxury dark-gold design system:
--- texture_bg background, translucent dark header overlay, 3-stripe horizontal divider,
--- Netflix-style gradient shadows on cards, and clean top-right status badges.
+-- Translucent dark header overlay, 3-stripe horizontal divider,
+-- Netflix-style gradient shadows on compact cards with single-row headers.
 
 local ui        = require("modules.ui")
 local app_state = require("modules.app_state")
@@ -23,12 +23,10 @@ local P_CREAM     = vmath.vector4(0.957, 0.925, 0.843, 1) -- #F4EDD7
 local P_CREAM_DIM = vmath.vector4(0.682, 0.627, 0.541, 1) -- #AEA08A
 local P_MUTED     = vmath.vector4(0.455, 0.400, 0.325, 1) -- #746B53
 local P_BORDER    = vmath.vector4(0.165, 0.129, 0.102, 1) -- #2A2119
-local P_DARK_TXT  = vmath.vector4(0.06, 0.045, 0.02, 1)
+local P_ERROR     = vmath.vector4(0.8, 0.3, 0.3, 1)
 
--- Stripe divider colors (Godot Shader_stripe_border)
-local STRIPE_OUTER = vmath.vector4(0.169, 0.153, 0.141, 1.0)
-local STRIPE_MID   = vmath.vector4(0.039, 0.031, 0.027, 1.0)
-local STRIPE_INNER = vmath.vector4(0.337, 0.333, 0.314, 1.0)
+-- Each theme previews with REAL cards from its own sprite-sheet atlas
+local CARD_TEX = { default = "cards", drago = "cards_drago", batman = "cards_batman" }
 
 local function refresh_wh()
     local m = screen.metrics()
@@ -37,9 +35,6 @@ local function refresh_wh()
     EDGE_B, EDGE_T = m.B, m.T
     CX, CY = m.CX, m.CY
 end
-
--- Each theme previews with REAL cards from its own sprite-sheet atlas
-local CARD_TEX = { default = "cards", drago = "cards_drago", batman = "cards_batman" }
 
 local function commas(n)
     n = tostring(math.floor(tonumber(n) or 0))
@@ -74,22 +69,40 @@ end
 
 local function get_themes()
     local u = ws.current_user_data or {}
-    if type(u.themes) == "table" and #u.themes > 0 then return u.themes end
-    local out = {}
-    for _, key in ipairs(app_state.THEME_ORDER) do
-        local t = app_state.THEMES[key]
-        out[#out+1] = { id = t.id, name = t.label, price = (key=="default" and 0 or 2000),
-            purchased = (key=="default"), active = (key == app_state.theme) }
+    local raw_themes = {}
+    
+    if type(u.themes) == "table" and #u.themes > 0 then 
+        raw_themes = u.themes 
+    else
+        for _, key in ipairs(app_state.THEME_ORDER) do
+            local t = app_state.THEMES[key]
+            raw_themes[#raw_themes+1] = { id = t.id, name = t.label, price = (key=="default" and 0 or 2000),
+                purchased = (key=="default") }
+        end
     end
-    return out
+
+    local list = {}
+    local active_idx = nil
+    for i, t in ipairs(raw_themes) do
+        -- Deep copy into a mutable list to update the local active state safely
+        local t_copy = { id = t.id, name = t.name, price = t.price, purchased = t.purchased, active = (t.id == app_state.theme) }
+        list[i] = t_copy
+        if t_copy.active then active_idx = i end
+    end
+
+    -- Re-organise: Pop the active item and insert it at the front
+    if active_idx and active_idx > 1 then
+        local act_t = table.remove(list, active_idx)
+        table.insert(list, 1, act_t)
+    end
+    
+    return list
 end
 
 local function rebuild(self)
     clear(self)
 
-    -- ── DIALOG shell (Godot ThemesDialog): the lobby stays alive under a
-    -- dim scrim; everything renders inside a centered, gold-lined panel.
-    -- Tapping outside the panel closes the dialog.
+    -- ── DIALOG shell
     local scrim = track(self, ui.box(vmath.vector3(CX, CY, 0),
         vmath.vector3(LOGICAL_W * 2, LOGICAL_H * 2, 0), vmath.vector4(0, 0, 0, 0.8)))
     self.buttons[#self.buttons+1] = { node = scrim, id = "back" }
@@ -101,33 +114,33 @@ local function rebuild(self)
 
     local panel_t = CY + ph/2
 
-    -- Header row inside the panel: title left, close right. No balance shown
-    -- (Godot ThemesDialog parity — only owned/free/active state is surfaced).
-    local hdr = track(self, ui.text(vmath.vector3(CX - pw/2 + 110, panel_t - 36, 0), "THEMES", "poppins_black", P_GOLD))
-    gui.set_scale(hdr, vmath.vector3(0.85, 0.85, 1)) -- title: poppins_black 34px -> ~29px (slightly above body)
+    -- Header row inside the panel
+    local hdr = track(self, ui.text(vmath.vector3(CX - pw/2 + 110, panel_t - 36, 0), "THEMES", "body", P_GOLD))
+    gui.set_scale(hdr, vmath.vector3(0.85, 0.85, 1))
 
     local u = ws.current_user_data or {}
     local balance = tonumber(u.balance) or 0
 
     local close_btn = track(self, ui.box(vmath.vector3(CX + pw/2 - 36, panel_t - 36, 0), vmath.vector3(44, 44, 0), vmath.vector4(0, 0, 0, 0.001)))
-    track(self, ui.text(vmath.vector3(CX + pw/2 - 36, panel_t - 36, 0), "X", "poppins_bold", P_CREAM_DIM))
+    track(self, ui.text(vmath.vector3(CX + pw/2 - 36, panel_t - 36, 0), "X", "body", P_CREAM_DIM))
     self.buttons[#self.buttons+1] = { node = close_btn, id = "back" }
 
-    -- thin gold separator under the header
+    -- Thin gold separator
     track(self, ui.box(vmath.vector3(CX, panel_t - 64, 0), vmath.vector3(pw - 40, 1, 0), vmath.vector4(0.549, 0.404, 0.141, 0.35)))
 
     if self._msg then
-        track(self, ui.text(vmath.vector3(CX, panel_t - 84, 0), self._msg, "poppins",
+        -- Pushed to the very bottom of the modal panel, away from cards
+        track(self, ui.text(vmath.vector3(CX, CY - ph/2 + 30, 0), self._msg, "poppins",
             self._msg_ok and vmath.vector4(0.3, 0.8, 0.4, 1) or P_ERROR))
     end
 
-    -- Theme cards: 3-col grid centred inside the panel.
+    -- Compact Theme Cards Grid
     local themes = get_themes()
     local cols = 3
-    local cw, ch, gap = 340, 300, 20
+    local cw, ch, gap = 340, 210, 20
     local gridw = cols * cw + (cols-1) * gap
     local x0 = CX - gridw / 2 + cw / 2
-    local y0 = panel_t - 76 - ch / 2
+    local y0 = panel_t - 90 - ch / 2
 
     for i, t in ipairs(themes) do
         local c  = (i-1) % cols
@@ -139,15 +152,14 @@ local function rebuild(self)
         track(self, ui.panel9(vmath.vector3(px, py, 0), vmath.vector3(cw, ch, 0),
             t.active and "container_bg_active" or "container_bg"))
 
-        -- Card fan preview
+        -- Card fan preview (Scaled down to fit elegantly)
         local th_def    = app_state.THEMES[t.id]
         local tex       = CARD_TEX[(th_def and th_def.card_set) or "default"] or "cards"
         local back_anim = (th_def and th_def.card_back) or "card_back"
-        local card_h    = 118
+        local card_h    = 85
         local card_w    = math.floor(card_h * 212 / 238)
         
-        -- Shift cards slightly up so they sit beautifully inside the top half
-        local fan_y_off = 34 
+        local fan_y_off = 5 
         local function fan_card(dx, dy, anim, rot)
             local n = gui.new_box_node(vmath.vector3(px + dx, py + dy, 0), vmath.vector3(card_w, card_h, 0))
             local ok = pcall(function()
@@ -158,76 +170,60 @@ local function rebuild(self)
             if rot ~= 0 then gui.set_rotation(n, vmath.vector3(0, 0, rot)) end
             track(self, n)
         end
-        fan_card(-74, fan_y_off - 4, "card_15S", 10)
-        fan_card(74, fan_y_off - 4, "card_13H", -10)
+        fan_card(-60, fan_y_off - 4, "card_15S", 10)
+        fan_card(60, fan_y_off - 4, "card_13H", -10)
         fan_card(0, fan_y_off, back_anim, 0)
 
-        -- Netflix-style pseudo-gradient shadow (Darkens bottom of container)
+        -- Netflix-style pseudo-gradient shadow
         local sh_color = vmath.vector4(0.04, 0.03, 0.02, 0)
         local function shadow_box(y_off, h, alpha)
             track(self, ui.box(vmath.vector3(px, py + y_off, 0), vmath.vector3(cw-6, h, 0), 
                 vmath.vector4(sh_color.x, sh_color.y, sh_color.z, alpha)))
         end
-        shadow_box(-10, 20, 0.2)
-        shadow_box(-28, 20, 0.5)
-        shadow_box(-46, 20, 0.8)
-        shadow_box(-104, 80, 0.95) -- Core deep shadow at the very bottom
+        shadow_box(-45, 20, 0.2)
+        shadow_box(-65, 20, 0.5)
+        shadow_box(-85, 20, 0.8)
+        shadow_box(-100, 10, 0.95) -- Deep shadow at the very bottom
 
-        -- Status badge — top-LEFT, like the Godot ThemesDialog
-        local badge_w, badge_h = 90, 28
-        local bx = px - cw/2 + badge_w/2 + 14
-        local by = py + ch/2 - badge_h/2 - 14
-        if t.active then
-            framed(self, bx, by, badge_w, badge_h, P_GOLD, 1, vmath.vector4(0.2, 0.15, 0.05, 0.9))
-            local b_txt = track(self, ui.text(vmath.vector3(bx, by, 0), "ACTIVE", "poppins_bold", P_GOLD))
-            gui.set_scale(b_txt, vmath.vector3(0.65, 0.65, 1))
-        elseif t.purchased then
-            framed(self, bx, by, badge_w, badge_h, P_BORDER, 1, P_PANEL)
-            local b_txt = track(self, ui.text(vmath.vector3(bx, by, 0), "OWNED", "poppins_bold", P_MUTED))
-            gui.set_scale(b_txt, vmath.vector3(0.65, 0.65, 1))
-        end
-
-        -- Theme Title
-        local title_lbl = track(self, ui.text(vmath.vector3(px, py - 50, 0), (t.name or t.id or "Theme"):upper(), "poppins_bold", P_CREAM))
-        gui.set_scale(title_lbl, vmath.vector3(0.76, 0.76, 1)) -- poppins_bold 34px -> ~26px (body)
+        -- Theme Title (Extreme Left) & Price (Extreme Right) on the same row
+        local row_y = py + 70
         
-        -- Theme Price
+        local title_lbl = txtL(self, px - cw/2 + 24, row_y, (t.name or t.id or "Theme"):upper(), "body", P_CREAM)
+        gui.set_scale(title_lbl, vmath.vector3(0.76, 0.76, 1))
+        
         local price = tonumber(t.price) or 0
         local ptxt = (price == 0) and "FREE" or (commas(price).." COINS")
-        local price_lbl = track(self, ui.text(vmath.vector3(px, py - 80, 0), ptxt, "poppins",
-            price == 0 and vmath.vector4(0.4,0.9,0.5,1) or P_GOLD_LIGHT))
+        local price_lbl = txtR(self, px + cw/2 - 24, row_y, ptxt, "poppins", price == 0 and vmath.vector4(0.4,0.9,0.5,1) or P_GOLD_LIGHT)
         gui.set_scale(price_lbl, vmath.vector3(0.85, 0.85, 1))
 
-        -- Action Button (safely within the bounds)
-        local btn_y = py - 116
+        -- Action Button
+        local btn_y = py - 65
         if t.active then
-            -- Optional: We don't necessarily need a button if it's active, but we can put a disabled placeholder
-            track(self, ui.btn9(vmath.vector3(px, btn_y, 0), vmath.vector3(cw-60, 44, 0), "default_btn"))
-            local in_use = track(self, ui.text(vmath.vector3(px, btn_y, 0), "CURRENTLY IN USE", "poppins_bold", P_MUTED))
-            gui.set_scale(in_use, vmath.vector3(0.76, 0.76, 1)) -- poppins_bold 34px -> ~26px (body)
+            track(self, ui.btn9(vmath.vector3(px, btn_y, 0), vmath.vector3(cw-48, 44, 0), "default_btn"))
+            local in_use = track(self, ui.text(vmath.vector3(px, btn_y, 0), "CURRENTLY IN USE", "body", P_MUTED))
+            gui.set_scale(in_use, vmath.vector3(0.76, 0.76, 1))
         elseif t.purchased then
-            local ab = track(self, ui.btn9(vmath.vector3(px, btn_y, 0), vmath.vector3(cw-60, 44, 0), "primary_btn"))
-            local act = track(self, ui.text(vmath.vector3(px, btn_y, 0), "ACTIVATE", "poppins_bold", P_CREAM))
-            gui.set_scale(act, vmath.vector3(0.76, 0.76, 1)) -- poppins_bold 34px -> ~26px (body)
+            local ab = track(self, ui.btn9(vmath.vector3(px, btn_y, 0), vmath.vector3(cw-48, 44, 0), "primary_btn"))
+            local act = track(self, ui.text(vmath.vector3(px, btn_y, 0), "ACTIVATE", "body", P_CREAM))
+            gui.set_scale(act, vmath.vector3(0.76, 0.76, 1))
             self.buttons[#self.buttons+1] = { node = ab, id = "activate", data = t.id }
         elseif balance >= price then
-            local pu = track(self, ui.btn9(vmath.vector3(px, btn_y, 0), vmath.vector3(cw-60, 44, 0), "primary_btn"))
-            local pur = track(self, ui.text(vmath.vector3(px, btn_y, 0), "PURCHASE", "poppins_bold", P_CREAM))
-            gui.set_scale(pur, vmath.vector3(0.76, 0.76, 1)) -- poppins_bold 34px -> ~26px (body)
+            local pu = track(self, ui.btn9(vmath.vector3(px, btn_y, 0), vmath.vector3(cw-48, 44, 0), "primary_btn"))
+            local pur = track(self, ui.text(vmath.vector3(px, btn_y, 0), "PURCHASE", "body", P_CREAM))
+            gui.set_scale(pur, vmath.vector3(0.76, 0.76, 1))
             self.buttons[#self.buttons+1] = { node = pu, id = "purchase", data = t.id }
         else
-            track(self, ui.btn9(vmath.vector3(px, btn_y, 0), vmath.vector3(cw-60, 44, 0), "default_btn"))
-            local no_f = track(self, ui.text(vmath.vector3(px, btn_y, 0), "INSUFFICIENT FUNDS", "poppins_bold", P_MUTED))
-            gui.set_scale(no_f, vmath.vector3(0.76, 0.76, 1)) -- poppins_bold 34px -> ~26px (body)
+            track(self, ui.btn9(vmath.vector3(px, btn_y, 0), vmath.vector3(cw-48, 44, 0), "default_btn"))
+            local no_f = track(self, ui.text(vmath.vector3(px, btn_y, 0), "INSUFFICIENT FUNDS", "body", P_MUTED))
+            gui.set_scale(no_f, vmath.vector3(0.76, 0.76, 1))
         end
     end
 end
 
 function init(self)
-	self.nodes, self.buttons = {}, {}
-	-- Dialog: floats above the live online lobby gui.
-	gui.set_render_order(14)
-	refresh_wh()
+    self.nodes, self.buttons = {}, {}
+    gui.set_render_order(14)
+    refresh_wh()
 end
 
 function on_message(self, message_id, message, sender)
@@ -236,11 +232,13 @@ function on_message(self, message_id, message, sender)
         msg.post(".", "acquire_input_focus")
         self._active = true
         self._msg = nil
+        if self._close_timer then timer.cancel(self._close_timer); self._close_timer = nil end
         rebuild(self)
     elseif message_id == hash("enable") then
         self._active = true
     elseif message_id == hash("disable") then
         self._active = false
+        if self._close_timer then timer.cancel(self._close_timer); self._close_timer = nil end
         clear(self)
     elseif message_id == hash("layout_changed") then
         refresh_wh()
@@ -250,7 +248,16 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("theme_action_result") then
         self._msg = message.ok and "Done!" or (message.message or "Failed")
         self._msg_ok = message.ok
-        if self._active then rebuild(self) end
+        if self._active then 
+            rebuild(self) 
+            if message.ok then
+                if self._close_timer then timer.cancel(self._close_timer) end
+                self._close_timer = timer.delay(1.5, false, function()
+                    if self._active then msg.post("#controller", "goto_online") end
+                    self._close_timer = nil
+                end)
+            end
+        end
     end
 end
 
@@ -262,10 +269,17 @@ local function handle(self, b)
         msg.post("#controller", "theme_purchase", { theme_id = b.data })
         rebuild(self)
     elseif b.id == "activate" then
-        self._msg = "Activating..."; self._msg_ok = true
+        self._msg = "Theme Activated Successfully!"; self._msg_ok = true
         msg.post("#controller", "theme_switch", { theme_id = b.data })
         app_state.theme = b.data
         rebuild(self)
+        
+        -- Automatically close back to lobby after 1.5s
+        if self._close_timer then timer.cancel(self._close_timer) end
+        self._close_timer = timer.delay(1.5, false, function()
+            if self._active then msg.post("#controller", "goto_online") end
+            self._close_timer = nil
+        end)
     end
 end
 

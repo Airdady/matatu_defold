@@ -158,6 +158,12 @@ embedded_components {
   ""
 }
 embedded_components {
+  id: "snd_notify"
+  type: "sound"
+  data: "sound: \"/assets/sounds/request.ogg\"\n"
+  ""
+}
+embedded_components {
   id: "snd_move_deck"
   type: "sound"
   data: "sound: \"/assets/sounds/move_deck.ogg\"\n"

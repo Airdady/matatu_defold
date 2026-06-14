@@ -1,5 +1,5 @@
 -- modules/online_center.lua
--- Center panel: header bar, tabs, stakes selector, user list, and scrollbar.
+-- Center panel: header bar, tabs, stakes selector, and user list.
 -- Called from online.gui_script via M.draw(self, ctx).
 
 local ws     = require("modules.websocket_manager")
@@ -9,43 +9,6 @@ local TAB_QUICK   = 1
 local TAB_BATTLES = 2
 
 local M = {}
-
--- ── Scroll Input Handling ──────────────────────────────────────────────────
--- NOTE: Make sure to call `online_center.on_input(self, action_id, action)`
--- inside the main `on_input` function of your `online.gui_script`.
-function M.on_input(self, action_id, action)
-    if not self.list_region then return false end
-    
-    local r = self.list_region
-    local in_region = action.x >= r.left and action.x <= r.right and action.y >= r.bottom and action.y <= r.top
-
-    -- Handle touch/drag scrolling
-    if action_id == hash("touch") then
-        if action.pressed and in_region then
-            self._is_dragging_list = true
-            self._last_y = action.y
-        elseif action.released then
-            self._is_dragging_list = false
-        elseif self._is_dragging_list then
-            local dy = action.y - self._last_y
-            self.list_scroll = (self.list_scroll or 0) + dy
-            self._last_y = action.y
-            
-            -- Consume input if actively dragging so we don't accidentally click rows
-            if math.abs(dy) > 1 then return true end
-        end
-        
-    -- Handle mouse wheel scrolling
-    elseif action_id == hash("scroll_up") and in_region then
-        self.list_scroll = (self.list_scroll or 0) - 40
-        return true
-    elseif action_id == hash("scroll_down") and in_region then
-        self.list_scroll = (self.list_scroll or 0) + 40
-        return true
-    end
-
-    return false
-end
 
 -- ── Drawing Logic ─────────────────────────────────────────────────────────
 function M.draw(self, ctx)
@@ -204,7 +167,11 @@ function M.draw(self, ctx)
     end
 
     local content_h  = #rows * step
-    local max_scroll = math.max(0, content_h - region_h)
+    local max_scroll = 0
+    if content_h > region_h then
+        -- Add slight padding to the max scroll to give breathing room at the bottom list margin
+        max_scroll = content_h - region_h + 20
+    end
     
     -- Ensure scroll stays within bounds dynamically while scrolling
     self.list_scroll = math.max(0, math.min(self.list_scroll or 0, max_scroll))
@@ -221,7 +188,8 @@ function M.draw(self, ctx)
 
     self.list_region = { top = list_top, bottom = list_bottom, left = content_l, right = content_r, x = cx }
 
-    local y = list_top - row_h/2 - self.list_scroll
+    -- MATH FIX: Used + self.list_scroll here instead of subtraction. Positive scroll offset follows natural UI rules.
+    local y = list_top - row_h/2 + self.list_scroll
     for i, pu in ipairs(rows) do
         local row_cy = y - (i-1) * step
         if row_cy + row_h/2 >= list_bottom and row_cy - row_h/2 <= list_top then
@@ -248,7 +216,6 @@ function M.draw(self, ctx)
             end
 
             local info_x = content_r - C.INNER_PAD
-            if max_scroll > 0 then info_x = info_x - 12 end
 
             if self.tab == TAB_BATTLES and pu.myBattle then
                 local mb  = pu.myBattle
@@ -276,21 +243,6 @@ function M.draw(self, ctx)
                 self.buttons[#self.buttons+1] = { node = frame, id = "challenge", data = pu, row = true }
             end
         end
-    end
-
-    -- ── Visual Scrollbar ──────────────────────────────────────────────────
-    if max_scroll > 0 then
-        local sb_w = 6
-        local sb_x = content_r - sb_w / 2
-        local sb_cy = list_top - region_h / 2
-
-        track(self, ui.box(vmath.vector3(sb_x, sb_cy, 0), vmath.vector3(sb_w, region_h, 0), vmath.vector4(0.1, 0.08, 0.06, 0.8)))
-
-        local progress = self.list_scroll / max_scroll
-        local thumb_h  = math.max(40, (region_h / content_h) * region_h)
-        local thumb_y  = list_top - (thumb_h / 2) - progress * (region_h - thumb_h)
-
-        track(self, ui.box(vmath.vector3(sb_x, thumb_y, 0), vmath.vector3(sb_w, thumb_h, 0), C.COL_GOLD))
     end
 end
 
