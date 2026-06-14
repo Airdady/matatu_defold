@@ -302,9 +302,11 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("disable") then self._active = false; clear(self)
     elseif message_id == hash("layout_changed") or message_id == hash("user_data_updated") or message_id == hash("ws_online_users") or message_id == hash("ws_connected") or message_id == hash("ws_disconnected") then if self._active then rebuild(self) end
     elseif message_id == hash("ws_game_request") then
-        local r, raw = ws.last_game_request or {}, (ws.last_game_request or {}).raw or {}
-        if type(raw) == "table" and (raw.gameType == "TOURNAMENT" or raw.gameType == "BATTLE" or raw.tournament) then open_banner(self, raw)
-        else open_dialog(self, "incoming", (r.user or {}).username or "A player", r.stake or {}, r.requestId, (r.user or {}).avatar, (r.user or {})._id, raw.headToHead) end
+        -- Plain incoming requests are now rendered by the GLOBAL overlay
+        -- (main/incoming.gui_script) so they surface on every screen. Here we
+        -- only keep the inline tournament/battle banner.
+        local raw = (ws.last_game_request or {}).raw or {}
+        if type(raw) == "table" and (raw.gameType == "TOURNAMENT" or raw.gameType == "BATTLE" or raw.tournament) then open_banner(self, raw) end
     elseif message_id == hash("ws_head_to_head") then
         local d = ws.last_head_to_head or {}
         if self.dialog and self.dialog.opponent_id and tostring(d.opponentId or "") == self.dialog.opponent_id then self.dialog.h2h = d.headToHead; if self._active then rebuild(self) end end

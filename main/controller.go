@@ -54,6 +54,10 @@ components {
   id: "network"
   component: "/main/network.gui"
 }
+components {
+  id: "incoming"
+  component: "/main/incoming.gui"
+}
 embedded_components {
   id: "background"
   type: "sprite"
