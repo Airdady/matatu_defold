@@ -693,10 +693,13 @@ function M.start_game(self)
         end
     end
 
-    -- 4-player offline elimination bracket.
-    if app.mode == "tournament4" then
+    -- 4-player offline modes: Quick Bracket and Elimination Chamber.
+    if app.mode == "tournament4" or app.mode == "chamber4" then
         local me = ws.current_user_data or {}
-        require("modules.tournament4").start(self, me)
+        require("modules.tournament4").start(self, me, {
+            chamber   = (app.mode == "chamber4"),
+            threshold = app.chamber_threshold or 100,
+        })
         return
     end
 

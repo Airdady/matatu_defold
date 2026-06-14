@@ -103,7 +103,8 @@ local function rebuild(self)
 
     -- Header row inside the panel: title left, close right. No balance shown
     -- (Godot ThemesDialog parity — only owned/free/active state is surfaced).
-    track(self, ui.text(vmath.vector3(CX - pw/2 + 110, panel_t - 36, 0), "THEMES", "poppins_black", P_GOLD))
+    local hdr = track(self, ui.text(vmath.vector3(CX - pw/2 + 110, panel_t - 36, 0), "THEMES", "poppins_black", P_GOLD))
+    gui.set_scale(hdr, vmath.vector3(0.85, 0.85, 1)) -- title: poppins_black 34px -> ~29px (slightly above body)
 
     local u = ws.current_user_data or {}
     local balance = tonumber(u.balance) or 0
@@ -187,7 +188,8 @@ local function rebuild(self)
         end
 
         -- Theme Title
-        track(self, ui.text(vmath.vector3(px, py - 50, 0), (t.name or t.id or "Theme"):upper(), "poppins_bold", P_CREAM))
+        local title_lbl = track(self, ui.text(vmath.vector3(px, py - 50, 0), (t.name or t.id or "Theme"):upper(), "poppins_bold", P_CREAM))
+        gui.set_scale(title_lbl, vmath.vector3(0.76, 0.76, 1)) -- poppins_bold 34px -> ~26px (body)
         
         -- Theme Price
         local price = tonumber(t.price) or 0
@@ -201,19 +203,22 @@ local function rebuild(self)
         if t.active then
             -- Optional: We don't necessarily need a button if it's active, but we can put a disabled placeholder
             track(self, ui.btn9(vmath.vector3(px, btn_y, 0), vmath.vector3(cw-60, 44, 0), "default_btn"))
-            track(self, ui.text(vmath.vector3(px, btn_y, 0), "CURRENTLY IN USE", "poppins_bold", P_MUTED))
+            local in_use = track(self, ui.text(vmath.vector3(px, btn_y, 0), "CURRENTLY IN USE", "poppins_bold", P_MUTED))
+            gui.set_scale(in_use, vmath.vector3(0.76, 0.76, 1)) -- poppins_bold 34px -> ~26px (body)
         elseif t.purchased then
             local ab = track(self, ui.btn9(vmath.vector3(px, btn_y, 0), vmath.vector3(cw-60, 44, 0), "primary_btn"))
-            track(self, ui.text(vmath.vector3(px, btn_y, 0), "ACTIVATE", "poppins_bold", P_CREAM))
+            local act = track(self, ui.text(vmath.vector3(px, btn_y, 0), "ACTIVATE", "poppins_bold", P_CREAM))
+            gui.set_scale(act, vmath.vector3(0.76, 0.76, 1)) -- poppins_bold 34px -> ~26px (body)
             self.buttons[#self.buttons+1] = { node = ab, id = "activate", data = t.id }
         elseif balance >= price then
             local pu = track(self, ui.btn9(vmath.vector3(px, btn_y, 0), vmath.vector3(cw-60, 44, 0), "primary_btn"))
-            track(self, ui.text(vmath.vector3(px, btn_y, 0), "PURCHASE", "poppins_bold", P_CREAM))
+            local pur = track(self, ui.text(vmath.vector3(px, btn_y, 0), "PURCHASE", "poppins_bold", P_CREAM))
+            gui.set_scale(pur, vmath.vector3(0.76, 0.76, 1)) -- poppins_bold 34px -> ~26px (body)
             self.buttons[#self.buttons+1] = { node = pu, id = "purchase", data = t.id }
         else
             track(self, ui.btn9(vmath.vector3(px, btn_y, 0), vmath.vector3(cw-60, 44, 0), "default_btn"))
             local no_f = track(self, ui.text(vmath.vector3(px, btn_y, 0), "INSUFFICIENT FUNDS", "poppins_bold", P_MUTED))
-            gui.set_scale(no_f, vmath.vector3(0.85, 0.85, 1))
+            gui.set_scale(no_f, vmath.vector3(0.76, 0.76, 1)) -- poppins_bold 34px -> ~26px (body)
         end
     end
 end
