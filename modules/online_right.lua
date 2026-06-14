@@ -346,8 +346,8 @@ function M.draw(self, ctx, left_M)
     -- ── Footer links ──────────────────────────────────────────────────────
     local fx1 = cx - pw/4
     local fx2 = cx + pw/4
-    mkbtn(self, "nav_support", vmath.vector3(fx1, cy - 22, 0), vmath.vector3(pw/2 - 8, 42, 0), "SUPPORT", "secondary_btn")
-    mkbtn(self, "nav_themes",  vmath.vector3(fx2, cy - 22, 0), vmath.vector3(pw/2 - 8, 42, 0), "THEMES",  "secondary_btn")
+    -- Support moved to the main lobby; Themes spans the footer here.
+    mkbtn(self, "nav_themes", vmath.vector3(cx, cy - 22, 0), vmath.vector3(pw - 16, 42, 0), "THEMES", "secondary_btn")
 
     -- ── Draw Extracted Modals on Top ──────────────────────────────────────
     draw_battle_modal(self, ctx)

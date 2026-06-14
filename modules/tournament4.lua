@@ -263,7 +263,6 @@ local function ai_draw(self, seat, n, done)
     local seq = self._seq
     local is_hu = self.t4.is_heads_up
     local scale_f = is_hu and BL.CARD_SCALE_F or (BL.CARD_SCALE_F * 0.85)
-    local a = anchor_for(self, seat.slot)
 
     for i = 1, n do
         local delay = (i - 1) * DEAL_STAGGER
@@ -272,23 +271,37 @@ local function ai_draw(self, seat, n, done)
             reshuffle_if_needed(self)
             local d = table.remove(self.deck)
             if not d then return end
-            
+
             seat.hand[#seat.hand + 1] = { v = d.v, s = d.s }
-            
+
             go.set(d.id, "scale", vmath.vector3(scale_f, scale_f, 1))
+            go.set(d.id, "euler.z", 0)
             self.set_back(d)
             self.play_sound("SoundDraw")
-            go.animate(d.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, base_rot(seat.slot), go.EASING_OUTCUBIC, 0.3)
-            go.animate(d.id, "position", go.PLAYBACK_ONCE_FORWARD, vmath.vector3(a.x, a.y, BL.Z_FLY), go.EASING_OUTCUBIC, 0.3, 0, function()
-                if seq ~= self._seq then return end
-                pcall(go.delete, d.id)
+
+            -- The drawn deck card BECOMES the seat's newest back and the whole
+            -- hand fluidly re-organises into the arch — the same feel as the
+            -- human draw: a card glides from the deck onto one end of the fan
+            -- and the rest shift to make room. If the fan is already at its
+            -- visible cap, retire this one to the deck side so layout doesn't
+            -- cull a card mid-flight.
+            local cap = is_hu and #seat.hand or MAX_BACKS
+            if #seat.cards < cap then
+                seat.cards[#seat.cards + 1] = d
                 layout_seat(self, seat, true)
-                push_seat_hud(self, seat)
-            end)
+            else
+                local a = anchor_for(self, seat.slot)
+                go.animate(d.id, "position", go.PLAYBACK_ONCE_FORWARD, vmath.vector3(a.x, a.y, BL.Z_FLY), go.EASING_OUTCUBIC, 0.3, 0, function()
+                    if seq ~= self._seq then return end
+                    pcall(go.delete, d.id)
+                    layout_seat(self, seat, true)
+                end)
+            end
+            push_seat_hud(self, seat)
         end)
     end
-    
-    local total_duration = (n > 0 and (n - 1) * DEAL_STAGGER or 0) + 0.35
+
+    local total_duration = (n > 0 and (n - 1) * DEAL_STAGGER or 0) + 0.4
     timer.delay(total_duration, false, function()
         if seq == self._seq and done then done() end
     end)
@@ -604,8 +617,10 @@ function M.finish_round(self, finisher)
     notify(GUI_HUD, "stop_timers")
     notify(GUI_HUD, "t4_active", { slot = "none" })
 
-    if finisher then finisher._count = 0 end
-
+    -- Reveal + count EVERY surviving hand, including the seat that ENDED the
+    -- round. A normal finisher emptied their hand (counts 0 and stays safe); a
+    -- CUT ends the round with the cutter still holding cards, which must be
+    -- counted and added to the board too.
     for _, seat in ipairs(alive_seats(self)) do
         if not (seat.is_human and self.t4.human_alive) then reveal_seat_faceup(self, seat) end
         push_seat_hud(self, seat)
@@ -614,9 +629,7 @@ function M.finish_round(self, finisher)
     collect_pile_to_deck(self)
 
     local counters = {}
-    for _, s in ipairs(alive_seats(self)) do
-        if s ~= finisher then counters[#counters + 1] = s end
-    end
+    for _, s in ipairs(alive_seats(self)) do counters[#counters + 1] = s end
 
     local seq = self._seq
     timer.delay(0.7, false, function()
@@ -675,12 +688,25 @@ function M.game_over_human_out(self, finisher)
 end
 
 -- ── Elimination Chamber resolution ───────────────────────────────────────────
--- Each deal's hand value is ADDED to every survivor's running total (the
--- finisher adds 0). Anyone who reaches the score cap is eliminated; play
--- continues until a single champion remains.
+local function lowest_total_seat(list)
+    local lo, best = math.huge, nil
+    for _, s in ipairs(list) do
+        if (s.total or 0) < lo then lo, best = s.total or 0, s end
+    end
+    return best
+end
+
+local function list_has_human(list)
+    for _, s in ipairs(list) do if s.is_human then return true end end
+    return false
+end
+
+-- Each deal's hand value is ADDED to every alive seat's running total (a normal
+-- finisher adds 0; a cutter adds the cards still in hand). Anyone who reaches
+-- the score cap leaves. If EVERY remaining player crosses the cap in the same
+-- deal, the LOWEST cumulative total (count + history) wins — "whoever makes the
+-- less count wins it".
 function M.chamber_resolve(self, finisher)
-    local crossed = {}
-    local human_crossed = false
     for _, s in ipairs(alive_seats(self)) do
         s.total = (s.total or 0) + (s._count or 0)
         notify(GUI_HUD, "t4_chamber_update", {
@@ -688,26 +714,37 @@ function M.chamber_resolve(self, finisher)
             threshold = self.t4.threshold,
             eliminated = (s.total >= self.t4.threshold),
         })
-        if s.total >= self.t4.threshold then
-            crossed[#crossed + 1] = s
-            if s.is_human then human_crossed = true end
-        end
     end
 
     local seq = self._seq
     timer.delay(2.0, false, function()
         if seq ~= self._seq then return end
+
+        local crossed, survivors = {}, {}
+        for _, s in ipairs(alive_seats(self)) do
+            if (s.total or 0) >= self.t4.threshold then crossed[#crossed + 1] = s
+            else survivors[#survivors + 1] = s end
+        end
+
         if #crossed == 0 then
             -- nobody crossed the cap: the lowest total opens the next deal
-            local lo, op = math.huge, nil
-            for _, s in ipairs(alive_seats(self)) do
-                if (s.total or 0) < lo then lo, op = s.total or 0, s end
-            end
-            self.t4.next_opener = op
+            self.t4.next_opener = lowest_total_seat(alive_seats(self))
             M.deal_round(self)
             return
         end
-        if human_crossed then
+
+        if #survivors == 0 then
+            -- EVERYONE hit the cap together (e.g. a cut in the 2-player endgame):
+            -- the lowest total is the champion, the rest leave the table.
+            local champ = lowest_total_seat(crossed)
+            local losers = {}
+            for _, s in ipairs(crossed) do if s ~= champ then losers[#losers + 1] = s end end
+            M.chamber_eliminate(self, losers, 1, finisher, champ)
+            return
+        end
+
+        -- Some survive: the crossers leave; the survivors play on.
+        if list_has_human(crossed) then
             for _, s in ipairs(crossed) do s.eliminated = true end
             local hs = self.t4.human_seat
             notify(GUI_HUD, "t4_elimination_sequence", { worst_slot = hs.slot, worst_name = "YOU", worst_avatar = hs.avatar })
@@ -718,16 +755,13 @@ function M.chamber_resolve(self, finisher)
     end)
 end
 
-function M.chamber_eliminate(self, list, idx, finisher)
+function M.chamber_eliminate(self, list, idx, finisher, final_champ)
     if idx > #list then
+        if final_champ then M.crown(self, final_champ); return end
         local alive = alive_seats(self)
         if #alive <= 1 then M.crown(self, alive[1] or finisher); return end
         -- lowest cumulative total opens the next deal
-        local lo, op = math.huge, nil
-        for _, s in ipairs(alive) do
-            if (s.total or 0) < lo then lo, op = s.total or 0, s end
-        end
-        self.t4.next_opener = op
+        self.t4.next_opener = lowest_total_seat(alive)
         M.deal_round(self)
         return
     end
@@ -736,7 +770,7 @@ function M.chamber_eliminate(self, list, idx, finisher)
     notify(GUI_HUD, "t4_elimination_sequence", { worst_slot = s.slot, worst_name = s.name, worst_avatar = s.avatar })
     local seq = self._seq
     timer.delay(2.6, false, function()
-        if seq == self._seq then M.chamber_eliminate(self, list, idx + 1, finisher) end
+        if seq == self._seq then M.chamber_eliminate(self, list, idx + 1, finisher, final_champ) end
     end)
 end
 
