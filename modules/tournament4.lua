@@ -614,12 +614,20 @@ function M.finish_round(self, finisher)
     timer.delay(0.7, false, function()
         if seq ~= self._seq then return end
         count_seats(self, counters, 1, function()
+            -- Elimination Chamber: add this deal to every running total and
+            -- knock out whoever has hit the score cap.
+            if self.t4.chamber then
+                M.chamber_resolve(self, finisher)
+                return
+            end
+
+            -- Quick Bracket: the single most-cards seat leaves the table.
             local worst, worst_n = nil, -1
             for _, s in ipairs(counters) do
                 local c = s._count or 0
                 if c > worst_n then worst_n, worst = c, s end
             end
-            
+
             local min_score = math.huge
             local next_opener = nil
             for _, s in ipairs(alive_seats(self)) do
@@ -656,6 +664,72 @@ function M.game_over_human_out(self, finisher)
         t4_human_out = true,
     })
     self.play_sound("SoundLose")
+end
+
+-- ── Elimination Chamber resolution ───────────────────────────────────────────
+-- Each deal's hand value is ADDED to every survivor's running total (the
+-- finisher adds 0). Anyone who reaches the score cap is eliminated; play
+-- continues until a single champion remains.
+function M.chamber_resolve(self, finisher)
+    local crossed = {}
+    local human_crossed = false
+    for _, s in ipairs(alive_seats(self)) do
+        s.total = (s.total or 0) + (s._count or 0)
+        notify(GUI_HUD, "t4_chamber_update", {
+            name = s.name, added = s._count or 0, total = s.total,
+            threshold = self.t4.threshold,
+            eliminated = (s.total >= self.t4.threshold),
+        })
+        if s.total >= self.t4.threshold then
+            crossed[#crossed + 1] = s
+            if s.is_human then human_crossed = true end
+        end
+    end
+
+    local seq = self._seq
+    timer.delay(2.0, false, function()
+        if seq ~= self._seq then return end
+        if #crossed == 0 then
+            -- nobody crossed the cap: the lowest total opens the next deal
+            local lo, op = math.huge, nil
+            for _, s in ipairs(alive_seats(self)) do
+                if (s.total or 0) < lo then lo, op = s.total or 0, s end
+            end
+            self.t4.next_opener = op
+            M.deal_round(self)
+            return
+        end
+        if human_crossed then
+            for _, s in ipairs(crossed) do s.eliminated = true end
+            local hs = self.t4.human_seat
+            notify(GUI_HUD, "t4_elimination_sequence", { worst_slot = hs.slot, worst_name = "YOU", worst_avatar = hs.avatar })
+            timer.delay(4.0, false, function() if seq == self._seq then M.game_over_human_out(self, finisher) end end)
+            return
+        end
+        M.chamber_eliminate(self, crossed, 1, finisher)
+    end)
+end
+
+function M.chamber_eliminate(self, list, idx, finisher)
+    if idx > #list then
+        local alive = alive_seats(self)
+        if #alive <= 1 then M.crown(self, alive[1] or finisher); return end
+        -- lowest cumulative total opens the next deal
+        local lo, op = math.huge, nil
+        for _, s in ipairs(alive) do
+            if (s.total or 0) < lo then lo, op = s.total or 0, s end
+        end
+        self.t4.next_opener = op
+        M.deal_round(self)
+        return
+    end
+    local s = list[idx]
+    s.eliminated = true
+    notify(GUI_HUD, "t4_elimination_sequence", { worst_slot = s.slot, worst_name = s.name, worst_avatar = s.avatar })
+    local seq = self._seq
+    timer.delay(2.6, false, function()
+        if seq == self._seq then M.chamber_eliminate(self, list, idx + 1, finisher) end
+    end)
 end
 
 local function assign_slots(self)
@@ -819,26 +893,45 @@ function M.deal_round(self)
     end)
 end
 
-function M.start(self, me)
+-- rows describing every seat's cumulative standing (Elimination Chamber).
+local function chamber_rows(self)
+    local rows = {}
+    for _, s in ipairs(self.t4.seats) do
+        rows[#rows + 1] = { slot = s.slot, name = s.name, avatar = s.avatar, total = s.total or 0, eliminated = s.eliminated and true or false }
+    end
+    return rows
+end
+
+function M.start(self, me, opts)
+    opts = opts or {}
     self._seq = (self._seq or 0) + 1
     self.online_mode = false
-    
-    self.t4 = { round = 0, opener_idx = math.random(1, 4), direction = 1, human_alive = true }
 
-    local human = { is_human = true, name = (me and me.username) or "You", avatar = (me and me.avatar) or 1, slot = "bottom", eliminated = false, hand = {}, cards = {} }
+    self.t4 = {
+        round = 0, opener_idx = math.random(1, 4), direction = 1, human_alive = true,
+        chamber = opts.chamber and true or false,
+        threshold = tonumber(opts.threshold) or 100,
+    }
+
+    local human = { is_human = true, name = (me and me.username) or "You", avatar = (me and me.avatar) or 1, slot = "bottom", eliminated = false, hand = {}, cards = {}, total = 0 }
     self.t4.human_seat = human
     self.t4.seats = {
         human,
-        { is_human = false, name = AI_NAMES[1], avatar = AI_AVATARS[1], slot = "left",  eliminated = false, hand = {}, cards = {} },
-        { is_human = false, name = AI_NAMES[2], avatar = AI_AVATARS[2], slot = "top",   eliminated = false, hand = {}, cards = {} },
-        { is_human = false, name = AI_NAMES[3], avatar = AI_AVATARS[3], slot = "right", eliminated = false, hand = {}, cards = {} },
+        { is_human = false, name = AI_NAMES[1], avatar = AI_AVATARS[1], slot = "left",  eliminated = false, hand = {}, cards = {}, total = 0 },
+        { is_human = false, name = AI_NAMES[2], avatar = AI_AVATARS[2], slot = "top",   eliminated = false, hand = {}, cards = {}, total = 0 },
+        { is_human = false, name = AI_NAMES[3], avatar = AI_AVATARS[3], slot = "right", eliminated = false, hand = {}, cards = {}, total = 0 },
     }
 
     notify(GUI_HUD, "t4_mode", { on = true })
-    
+
     -- Ensure fresh slate for the avatars when launching new tournament
     notify(GUI_HUD, "t4_clear", {})
-    
+
+    -- Elimination Chamber: stand up the all-time score table.
+    if self.t4.chamber then
+        notify(GUI_HUD, "t4_chamber_init", { threshold = self.t4.threshold, rows = chamber_rows(self) })
+    end
+
     M.deal_round(self)
 end
 
