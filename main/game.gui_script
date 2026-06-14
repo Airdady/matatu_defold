@@ -73,6 +73,68 @@ local function label(pos, text, size, color, align, font_name)
     return n
 end
 
+-- ── 4-player tournament: square timer frame ─────────────────────────────────
+-- A square countdown that hugs the (square) avatar container: a dim outline
+-- track plus four coloured edges that drain clockwise from the top-left corner.
+local T4_TIMER_SQ = 96   -- side of the square frame (wraps the avatar disc)
+local T4_TIMER_TH = 7    -- edge thickness
+
+local function t4_edge(x, y, w, h, pivot, color)
+    local n = gui.new_box_node(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0))
+    gui.set_pivot(n, pivot)
+    gui.set_color(n, color)
+    gui.set_xanchor(n, gui.ANCHOR_NONE)
+    gui.set_yanchor(n, gui.ANCHOR_NONE)
+    return n
+end
+
+local function build_square_timer(x, y)
+    local S, T = T4_TIMER_SQ, T4_TIMER_TH
+    local hd = S / 2
+    local trk = vmath.vector4(1, 1, 1, 0.10)
+    -- dim outline track (always visible so every avatar reads as framed)
+    local track = {
+        t4_edge(x - hd, y + hd, S, T, gui.PIVOT_W, trk),
+        t4_edge(x + hd, y + hd, T, S, gui.PIVOT_N, trk),
+        t4_edge(x + hd, y - hd, S, T, gui.PIVOT_E, trk),
+        t4_edge(x - hd, y - hd, T, S, gui.PIVOT_S, trk),
+    }
+    -- coloured fills (scaled per frame from each clockwise start corner)
+    local fills = {
+        t4_edge(x - hd, y + hd, S, T, gui.PIVOT_W, C_T_GREEN),  -- top  L->R
+        t4_edge(x + hd, y + hd, T, S, gui.PIVOT_N, C_T_GREEN),  -- right T->B
+        t4_edge(x + hd, y - hd, S, T, gui.PIVOT_E, C_T_GREEN),  -- bot  R->L
+        t4_edge(x - hd, y - hd, T, S, gui.PIVOT_S, C_T_GREEN),  -- left B->T
+    }
+    return { track = track, fills = fills }
+end
+
+local function set_square_timer(frame, frac)
+    if not frame then return end
+    local filled = math.max(0, math.min(1, frac)) * 4
+    local f = frame.fills
+    gui.set_scale(f[1], vmath.vector3(math.max(0, math.min(1, filled)), 1, 1))
+    gui.set_scale(f[2], vmath.vector3(1, math.max(0, math.min(1, filled - 1)), 1))
+    gui.set_scale(f[3], vmath.vector3(math.max(0, math.min(1, filled - 2)), 1, 1))
+    gui.set_scale(f[4], vmath.vector3(1, math.max(0, math.min(1, filled - 3)), 1))
+end
+
+local function set_square_timer_color(frame, col)
+    if not frame then return end
+    for _, n in ipairs(frame.fills) do gui.set_color(n, col) end
+end
+
+local function set_square_timer_enabled(frame, on)
+    if not frame then return end
+    for _, n in ipairs(frame.fills) do gui.set_enabled(n, on) end
+end
+
+local function delete_square_timer(frame)
+    if not frame then return end
+    for _, n in ipairs(frame.track or {}) do pcall(gui.delete_node, n) end
+    for _, n in ipairs(frame.fills or {}) do pcall(gui.delete_node, n) end
+end
+
 -- FLIP CLOCK LOGIC
 
 -- Constructing the highly realistic 3D flip clock nodes...
@@ -866,6 +928,56 @@ local function hide_round_story(self)
     if self.story_wrap then gui.set_enabled(self.story_wrap, false) end
 end
 
+-- ── 4-player tournament: eliminated-player graveyard (right-centre) ───────────
+local function t4_add_grave(self, name, avatar)
+    self.t4_graves = self.t4_graves or {}
+    local idx = #self.t4_graves
+    -- Stack down the right edge, starting below the exit button, so the column
+    -- clears the right-hand seat (which only exists while 3+ players remain).
+    local gx = LOGICAL_W - 60
+    local gy = LOGICAL_H - 130 - idx * 80
+    local disc = gui.new_box_node(vmath.vector3(gx, gy, 0), vmath.vector3(58, 58, 0))
+    gui.set_color(disc, vmath.vector4(0.16, 0.06, 0.06, 1))
+    gui.set_xanchor(disc, gui.ANCHOR_RIGHT); gui.set_yanchor(disc, gui.ANCHOR_NONE)
+    local av = gui.new_box_node(vmath.vector3(0, 0, 0), vmath.vector3(50, 50, 0))
+    gui.set_parent(av, disc)
+    pcall(function() gui.set_texture(av, "avatars"); gui.play_flipbook(av, hash("avatar_" .. tostring(avatar or 1))) end)
+    gui.set_color(av, vmath.vector4(0.6, 0.6, 0.6, 1))
+    local nm = label(vmath.vector3(gx, gy - 38, 0), string.upper(tostring(name or "")), 13, vmath.vector4(0.72, 0.74, 0.78, 1), gui.PIVOT_CENTER, "poppins_bold")
+    gui.set_xanchor(nm, gui.ANCHOR_RIGHT); gui.set_yanchor(nm, gui.ANCHOR_NONE)
+    local tag = label(vmath.vector3(gx + 24, gy + 24, 0), "OUT", 11, vmath.vector4(0.95, 0.40, 0.40, 1), gui.PIVOT_CENTER, "poppins_bold")
+    gui.set_xanchor(tag, gui.ANCHOR_RIGHT); gui.set_yanchor(tag, gui.ANCHOR_NONE)
+    gui.set_scale(disc, vmath.vector3(0.4, 0.4, 1))
+    gui.animate(disc, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTBACK, 0.4)
+    table.insert(self.t4_graves, { disc = disc, nm = nm, tag = tag })
+end
+
+local function t4_clear_graves(self)
+    for _, g in ipairs(self.t4_graves or {}) do
+        pcall(gui.delete_node, g.disc); pcall(gui.delete_node, g.nm); pcall(gui.delete_node, g.tag)
+    end
+    self.t4_graves = {}
+end
+
+-- ── 4-player tournament: centre counting readout ─────────────────────────────
+local function t4_ensure_counter(self)
+    if self.t4_count_root then return end
+    local root = gui.new_box_node(vmath.vector3(LOGICAL_W / 2, LOGICAL_H / 2 - 120, 0), vmath.vector3(240, 70, 0))
+    gui.set_color(root, vmath.vector4(0, 0, 0, 0))
+    gui.set_xanchor(root, gui.ANCHOR_NONE); gui.set_yanchor(root, gui.ANCHOR_NONE)
+    local nm = label(vmath.vector3(0, 20, 0), "", 16, vmath.vector4(0.82, 0.86, 0.92, 1), gui.PIVOT_CENTER, "poppins_bold")
+    gui.set_parent(nm, root)
+    local num = label(vmath.vector3(0, -14, 0), "", 42, vmath.vector4(1, 0.84, 0.2, 1), gui.PIVOT_CENTER, "helvetica_bold")
+    gui.set_parent(num, root)
+    gui.set_enabled(root, false)
+    self.t4_count_root, self.t4_count_name, self.t4_count_num = root, nm, num
+end
+
+local function t4_delete_counter(self)
+    if self.t4_count_root then pcall(gui.delete_node, self.t4_count_root) end
+    self.t4_count_root, self.t4_count_name, self.t4_count_num = nil, nil, nil
+end
+
 -- Script Hooks: init, update, and input handling...
 function init(self)
     msg.post(".", "acquire_input_focus")
@@ -902,16 +1014,16 @@ function update(self, dt)
         if left <= 0 then self.conn_count_active = false end
     end
 
-    -- 4-player active-seat timer pie (depletes over the seat's turn; AI too).
+    -- 4-player active-seat square timer (depletes over the seat's turn; AI too).
     if self.t4_active_slot and self.t4_badges and self.t4_badges[self.t4_active_slot] then
         self.t4_timer_left = math.max(0, (self.t4_timer_left or 0) - dt)
         local frac = (self.t4_timer_total and self.t4_timer_total > 0) and (self.t4_timer_left / self.t4_timer_total) or 0
-        local pie = self.t4_badges[self.t4_active_slot].pie
-        if pie then
-            gui.set_fill_angle(pie, frac * 360)
+        local frame = self.t4_badges[self.t4_active_slot].timer
+        if frame then
+            set_square_timer(frame, frac)
             local col = C_T_GREEN
             if frac < 0.33 then col = C_T_RED elseif frac < 0.66 then col = C_T_ORANGE end
-            gui.set_color(pie, col)
+            set_square_timer_color(frame, col)
         end
     end
 
@@ -1023,75 +1135,118 @@ function on_message(self, message_id, message)
         pcall(function() gui.play_flipbook(self.p_avatar_img, hash("avatar_" .. tostring(p_av))) end)
         pcall(function() gui.play_flipbook(self.o_avatar_img, hash("avatar_" .. tostring(o_av))) end)
 
-    -- ── 4-player tournament: opponent seat badge (name + live count + avatar)
     -- ── 4-player tournament HUD ──────────────────────────────────────────
     elseif message_id == hash("t4_mode") then
-        -- Hide the 2-player avatar HUD; the per-seat widgets take over.
+        -- Hide the 2-player avatar HUD; the per-seat widgets take over, and a
+        -- fresh bracket starts with an empty graveyard.
         if message.on then
             if self.p_avatar_bg then gui.set_enabled(self.p_avatar_bg, false) end
             if self.o_avatar_bg then gui.set_enabled(self.o_avatar_bg, false) end
+            t4_clear_graves(self)
+            if self.t4_count_root then gui.set_enabled(self.t4_count_root, false) end
         end
 
     elseif message_id == hash("t4_clear") then
+        -- Drop the per-seat badges (slots may be reassigned on collapse); the
+        -- graveyard persists across deals so it keeps showing who is out.
         if self.t4_badges then
             for _, b in pairs(self.t4_badges) do
-                pcall(gui.delete_node, b.pie); pcall(gui.delete_node, b.disc)
-                pcall(gui.delete_node, b.av);  pcall(gui.delete_node, b.nm); pcall(gui.delete_node, b.ct)
+                delete_square_timer(b.timer)
+                pcall(gui.delete_node, b.disc)   -- deletes the avatar child too
+                pcall(gui.delete_node, b.nm); pcall(gui.delete_node, b.tot)
             end
         end
         self.t4_badges = {}
         self.t4_active_slot = nil
+        if self.t4_count_root then gui.set_enabled(self.t4_count_root, false) end
 
     elseif message_id == hash("t4_seat") then
+        -- A seat badge: bigger avatar + name, with a square timer frame that
+        -- hugs the container. The avatar sits behind the player's card arc.
         self.t4_badges = self.t4_badges or {}
         local slot = message.slot or "top"
         local x, y = message.x or 0, message.y or 0
         local b = self.t4_badges[slot]
         if not b then
-            -- timer pie ring BEHIND the avatar (depletes on the active turn)
-            local pie = gui.new_pie_node(vmath.vector3(x, y + 10, 0), vmath.vector3(76, 76, 0))
-            gui.set_rotation(pie, vmath.vector3(0, 0, 90))
-            gui.set_parent(pie, self.hud_root)
-            gui.set_enabled(pie, false)
-            local disc = box(vmath.vector3(x, y + 10, 0), vmath.vector3(64, 64, 0), vmath.vector4(0.06, 0.07, 0.10, 1), gui.PIVOT_CENTER)
-            local av = box(vmath.vector3(x, y + 10, 0), vmath.vector3(58, 58, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
+            local timer_frame = build_square_timer(x, y)
+            set_square_timer(timer_frame, 1.0)
+            set_square_timer_enabled(timer_frame, false)
+            local disc = gui.new_box_node(vmath.vector3(x, y, 0), vmath.vector3(84, 84, 0))
+            gui.set_color(disc, vmath.vector4(0.06, 0.07, 0.10, 1))
+            gui.set_xanchor(disc, gui.ANCHOR_NONE); gui.set_yanchor(disc, gui.ANCHOR_NONE)
+            local av = gui.new_box_node(vmath.vector3(0, 0, 0), vmath.vector3(76, 76, 0))
+            gui.set_parent(av, disc)
+            gui.set_color(av, vmath.vector4(1, 1, 1, 1))
             pcall(function() gui.set_texture(av, "avatars"); gui.play_flipbook(av, hash("avatar_" .. tostring(message.avatar or 1))) end)
-            local nm = label(vmath.vector3(x, y - 30, 0), "", 13, C_WHITE, gui.PIVOT_CENTER)
-            local ct = label(vmath.vector3(x, y - 48, 0), "", 13, vmath.vector4(1,0.84,0.2,1), gui.PIVOT_CENTER)
-            b = { pie = pie, disc = disc, av = av, nm = nm, ct = ct }
+            local nm = label(vmath.vector3(x, y - 62, 0), "", 20, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
+            gui.set_xanchor(nm, gui.ANCHOR_NONE); gui.set_yanchor(nm, gui.ANCHOR_NONE)
+            local tot = label(vmath.vector3(x, y - 86, 0), "", 18, vmath.vector4(1, 0.84, 0.2, 1), gui.PIVOT_CENTER, "poppins_bold")
+            gui.set_xanchor(tot, gui.ANCHOR_NONE); gui.set_yanchor(tot, gui.ANCHOR_NONE)
+            gui.set_enabled(tot, false)
+            b = { disc = disc, av = av, nm = nm, tot = tot, timer = timer_frame }
             self.t4_badges[slot] = b
         end
         gui.set_text(b.nm, string.upper(tostring(message.name or "AI")))
-        gui.set_text(b.ct, (message.eliminated and "OUT") or (tostring(message.count or 0) .. (message.count == 1 and " card" or " cards")))
-        local frame_col = message.eliminated and vmath.vector4(0.22,0.05,0.05,1)
-            or (message.active and vmath.vector4(0.10,0.12,0.05,1) or vmath.vector4(0.06,0.07,0.10,1))
+        local frame_col = message.eliminated and vmath.vector4(0.22, 0.05, 0.05, 1)
+            or (message.active and vmath.vector4(0.10, 0.12, 0.05, 1) or vmath.vector4(0.06, 0.07, 0.10, 1))
         gui.set_color(b.disc, frame_col)
-        if not message.active then gui.set_enabled(b.pie, false) end
+        if message.eliminated then
+            gui.set_text(b.tot, "OUT"); gui.set_enabled(b.tot, true)
+        end
+        if not message.active then set_square_timer_enabled(b.timer, false) end
 
     elseif message_id == hash("t4_active") then
-        -- Start (or clear) the active seat's depleting timer pie.
+        -- Start (or clear) the active seat's depleting square timer.
         self.t4_active_slot = message.slot
         self.t4_timer_total = message.duration or 3
         self.t4_timer_left  = self.t4_timer_total
         for s, b in pairs(self.t4_badges or {}) do
             if s == message.slot then
-                gui.set_enabled(b.pie, true)
-                gui.set_fill_angle(b.pie, 360)
-                gui.set_color(b.pie, C_T_GREEN)
+                set_square_timer_enabled(b.timer, true)
+                set_square_timer(b.timer, 1.0)
+                set_square_timer_color(b.timer, C_T_GREEN)
+                gui.set_color(b.disc, vmath.vector4(0.10, 0.12, 0.05, 1))
             else
-                gui.set_enabled(b.pie, false)
+                set_square_timer_enabled(b.timer, false)
+                gui.set_color(b.disc, vmath.vector4(0.06, 0.07, 0.10, 1))
             end
         end
 
     elseif message_id == hash("t4_count") then
-        -- Counting pass: pulse the seat being tallied and flash its number.
+        -- Counting pass: pulse the whole avatar of the seat being tallied.
         local b = (self.t4_badges or {})[message.slot]
         if b then
             gui.set_color(b.disc, vmath.vector4(0.16, 0.18, 0.06, 1))
-            gui.set_scale(b.av, vmath.vector3(1.18, 1.18, 1))
-            gui.animate(b.av, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTSINE, 0.5)
-            gui.set_text(b.ct, "= " .. tostring(message.count or 0))
+            gui.set_scale(b.disc, vmath.vector3(1.12, 1.12, 1))
+            gui.animate(b.disc, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTSINE, 0.5)
         end
+
+    elseif message_id == hash("t4_count_begin") then
+        -- A player's count starts: light up the centre readout.
+        t4_ensure_counter(self)
+        gui.set_enabled(self.t4_count_root, true)
+        gui.set_text(self.t4_count_name, string.upper(tostring(message.name or "")))
+        gui.set_text(self.t4_count_num, "0")
+
+    elseif message_id == hash("t4_count_tick") then
+        if self.t4_count_num then
+            gui.set_text(self.t4_count_num, tostring(message.total or 0))
+            gui.set_scale(self.t4_count_num, vmath.vector3(1.3, 1.3, 1))
+            gui.animate(self.t4_count_num, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTSINE, 0.18)
+        end
+
+    elseif message_id == hash("t4_count_seat_done") then
+        local b = (self.t4_badges or {})[message.slot]
+        if b then
+            gui.set_text(b.tot, "= " .. tostring(message.total or 0))
+            gui.set_enabled(b.tot, true)
+        end
+
+    elseif message_id == hash("t4_count_end") then
+        if self.t4_count_root then gui.set_enabled(self.t4_count_root, false) end
+
+    elseif message_id == hash("t4_grave") then
+        t4_add_grave(self, message.name, message.avatar)
 
     elseif message_id == hash("t4_flash") then
         local fl = label(vmath.vector3(LOGICAL_W/2, LOGICAL_H/2 + 80, 0), tostring(message.text or ""), 40, vmath.vector4(1, 0.84, 0.2, 1), gui.PIVOT_CENTER, "title")
@@ -1348,15 +1503,19 @@ function on_message(self, message_id, message)
         hide_ai_notices(self)
         if self.exit_popover then gui.set_enabled(self.exit_popover, false) end
 
-        -- Drop any 4-player tournament seat widgets + restore the 2-player HUD.
+        -- Drop any 4-player tournament seat widgets, graveyard + counter, and
+        -- restore the 2-player HUD.
         if self.t4_badges then
             for _, b in pairs(self.t4_badges) do
-                pcall(gui.delete_node, b.pie); pcall(gui.delete_node, b.disc)
-                pcall(gui.delete_node, b.av);  pcall(gui.delete_node, b.nm); pcall(gui.delete_node, b.ct)
+                delete_square_timer(b.timer)
+                pcall(gui.delete_node, b.disc)   -- deletes the avatar child too
+                pcall(gui.delete_node, b.nm); pcall(gui.delete_node, b.tot)
             end
             self.t4_badges = nil
         end
         self.t4_active_slot = nil
+        t4_clear_graves(self)
+        t4_delete_counter(self)
         if self.p_avatar_bg then gui.set_enabled(self.p_avatar_bg, true) end
         if self.o_avatar_bg then gui.set_enabled(self.o_avatar_bg, true) end
 
