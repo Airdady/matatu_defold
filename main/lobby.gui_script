@@ -669,7 +669,7 @@ local function rebuild_tournament(self)
     gui.set_color(thbg, vmath.vector4(1, 1, 1, 0.14))
     track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.55)))
 
-    local pw, ph = 740, 460
+    local pw, ph = 740, 470
     shadow(self, CX, CY, pw, ph, 14, 0.20)
     track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), "container_bg"))
     track(self, ui.box(vmath.vector3(CX, CY + ph / 2 - 5, 0),
@@ -677,44 +677,72 @@ local function rebuild_tournament(self)
     glow(self, CX, CY, pw, ph, C_PURPLE_L, 0.030)
 
     text_sh(self, vmath.vector3(CX, CY + ph / 2 - 46, 0),
-        "QUICK TOURNAMENT", "title", C_WHITE, 2, -2)
+        "4-PLAYER TABLE", "title", C_WHITE, 2, -2)
     track(self, ui.text(vmath.vector3(CX, CY + ph / 2 - 80, 0),
-        "Jump straight into a bracket", "small", C_MUTED))
+        "1 human + 3 AI  ·  choose a mode", "small", C_MUTED))
 
-    local sizes = {
-        { label = "4 Players",  desc = "2 rounds to glory",  sz = 4  },
-        { label = "8 Players",  desc = "3 rounds to glory",  sz = 8  },
+    -- Two offline game modes.
+    local modes = {
+        { id = "bracket", label = "QUICK BRACKET",       desc = "Most cards out each deal" },
+        { id = "chamber", label = "ELIMINATION CHAMBER", desc = "Hit the score cap, you're out" },
     }
-    local sz_w  = 220
-    local sz_h  = 110
-    local sz_y  = CY + 40
-    local cur   = app_state.tournament_size or 4
-    for i, s in ipairs(sizes) do
-        local sx     = CX - sz_w / 2 - 130 + (i - 1) * (sz_w + 30)
-        local active = (cur == s.sz)
-        if active then glow(self, sx, sz_y, sz_w + 28, sz_h + 28, C_PURPLE_L, 0.07) end
-        shadow(self, sx, sz_y, sz_w, sz_h, 6, 0.14)
-        track(self, ui.panel9(vmath.vector3(sx, sz_y, 0), vmath.vector3(sz_w, sz_h, 0),
+    local m_w, m_h = 300, 104
+    local m_y      = CY + 64
+    local cur_mode = app_state.t4_mode or "bracket"
+    for i, m in ipairs(modes) do
+        local mx     = CX - (m_w + 24) / 2 + (i - 1) * (m_w + 24)
+        local active = (cur_mode == m.id)
+        if active then glow(self, mx, m_y, m_w + 28, m_h + 28, C_PURPLE_L, 0.07) end
+        shadow(self, mx, m_y, m_w, m_h, 6, 0.14)
+        track(self, ui.panel9(vmath.vector3(mx, m_y, 0), vmath.vector3(m_w, m_h, 0),
             active and "container_bg_active" or "container_bg"))
         if active then
-            track(self, ui.box(vmath.vector3(sx, sz_y + sz_h / 2 - 4, 0),
-                vmath.vector3(sz_w - 8, 4, 0), C_PURPLE_L))
+            track(self, ui.box(vmath.vector3(mx, m_y + m_h / 2 - 4, 0),
+                vmath.vector3(m_w - 8, 4, 0), C_PURPLE_L))
         end
-        text_sh(self, vmath.vector3(sx, sz_y + 20, 0),
-            s.label, "body", active and C_PURPLE_L or C_WHITE, 1, -1)
-        track(self, ui.text(vmath.vector3(sx, sz_y - 14, 0), s.desc, "small", C_MUTED))
-        local hit = track(self, ui.box(vmath.vector3(sx, sz_y, 0),
-            vmath.vector3(sz_w, sz_h, 0), C_TRANSP))
-        self.buttons[#self.buttons + 1] = { node = hit, id = "tournament_size", data = s.sz }
+        text_sh(self, vmath.vector3(mx, m_y + 18, 0),
+            m.label, "body", active and C_PURPLE_L or C_WHITE, 1, -1)
+        track(self, ui.text(vmath.vector3(mx, m_y - 16, 0), m.desc, "small", C_MUTED))
+        local hit = track(self, ui.box(vmath.vector3(mx, m_y, 0),
+            vmath.vector3(m_w, m_h, 0), C_TRANSP))
+        self.buttons[#self.buttons + 1] = { node = hit, id = "t4_mode", data = m.id }
     end
 
-    local fb_y = CY - 150
+    -- Score cap (only meaningful for Elimination Chamber).
+    local is_chamber = (cur_mode == "chamber")
+    local thr_y      = CY - 66
+    track(self, ui.text(vmath.vector3(CX, thr_y + 40, 0),
+        is_chamber and "SCORE CAP  —  reach it and you're eliminated" or "Score cap (Elimination Chamber only)",
+        "small", is_chamber and C_WHITE or C_MUTED))
+    local caps    = { 100, 200, 300 }
+    local cap_w   = 120
+    local cur_cap = app_state.chamber_threshold or 100
+    for i, cap in ipairs(caps) do
+        local cx     = CX - (cap_w + 16) + (i - 1) * (cap_w + 16)
+        local active = is_chamber and (cur_cap == cap)
+        track(self, ui.panel9(vmath.vector3(cx, thr_y, 0), vmath.vector3(cap_w, 50, 0),
+            active and "container_bg_active" or "container_bg"))
+        if active then
+            track(self, ui.box(vmath.vector3(cx, thr_y + 22, 0),
+                vmath.vector3(cap_w - 8, 3, 0), C_PURPLE_L))
+        end
+        text_sh(self, vmath.vector3(cx, thr_y - 2, 0), tostring(cap), "body",
+            active and C_PURPLE_L or (is_chamber and C_WHITE or C_MUTED), 1, -1)
+        if is_chamber then
+            local hit = track(self, ui.box(vmath.vector3(cx, thr_y, 0),
+                vmath.vector3(cap_w, 50, 0), C_TRANSP))
+            self.buttons[#self.buttons + 1] = { node = hit, id = "chamber_threshold", data = cap }
+        end
+    end
+
+    local fb_y = CY - 168
     shadow(self, CX, fb_y, 320, 62, 10, 0.20)
     local fb = track(self, ui.btn9(vmath.vector3(CX, fb_y, 0),
         vmath.vector3(320, 62, 0), "play_btn"))
-    text_sh(self, vmath.vector3(CX, fb_y + 4, 0), "FIND MATCH", "body", C_WHITE, 2, -2)
+    text_sh(self, vmath.vector3(CX, fb_y + 4, 0), "START", "body", C_WHITE, 2, -2)
     track(self, ui.text(vmath.vector3(CX, fb_y - 20, 0),
-        "Joins or creates a bracket", "small", C_MUTED))
+        is_chamber and ("First to " .. tostring(cur_cap) .. " leaves the table") or "Last player standing wins",
+        "small", C_MUTED))
     self.buttons[#self.buttons + 1] = { node = fb, id = "start_tournament" }
 
     local bkb = track(self, ui.btn9(vmath.vector3(CX - pw / 2 + 52, CY + ph / 2 - 26, 0),
@@ -831,15 +859,23 @@ local function handle(self, b)
         })
         msg.post("#controller", "goto_game")
 
-    -- ---- Tournament -------------------------------------------------------
-    elseif b.id == "tournament_size" then
-        app_state.tournament_size = b.data
+    -- ---- 4-player table (Quick Bracket / Elimination Chamber) -------------
+    elseif b.id == "t4_mode" then
+        app_state.t4_mode = b.data
+        set_state(self, STATE_TOURNEY)
+
+    elseif b.id == "chamber_threshold" then
+        app_state.chamber_threshold = b.data
         set_state(self, STATE_TOURNEY)
 
     elseif b.id == "start_tournament" then
-        -- Quick bracket = OFFLINE 4-player elimination chamber (1 human + 3 AI).
+        -- Both modes are OFFLINE 4-player (1 human + 3 AI).
         app_state.tournament_size = 4
-        app_state.mode = "tournament4"
+        if (app_state.t4_mode or "bracket") == "chamber" then
+            app_state.mode = "chamber4"
+        else
+            app_state.mode = "tournament4"
+        end
         msg.post("#controller", "goto_game")
     end
 end
@@ -859,6 +895,8 @@ function init(self)
     refresh_wh()
     if not app_state.ai_series        then app_state.ai_series        = 3 end
     if not app_state.tournament_size  then app_state.tournament_size  = 4 end
+    if not app_state.t4_mode          then app_state.t4_mode          = "bracket" end
+    if not app_state.chamber_threshold then app_state.chamber_threshold = 100 end
     msg.post(".", "acquire_input_focus")
     rebuild(self)
 end

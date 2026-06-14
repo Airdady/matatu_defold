@@ -277,7 +277,7 @@ function update(self, dt)
         self.dlg_alpha, self.dialog.time_left = math.min(1, (self.dlg_alpha or 0) + dt * 4), (self.dialog.time_left or 10) - dt
         if self.dialog.time_left <= 0 then
             if self.dialog.kind == "incoming" and self.dialog.request_id then ws.decline_game_request(self.dialog.request_id) end
-            self.dialog = nil
+            self.dialog, self.list_scroll = nil, 0
         end
         need_rebuild = true
     end
@@ -310,7 +310,7 @@ function on_message(self, message_id, message, sender)
         if self.dialog and self.dialog.opponent_id and tostring(d.opponentId or "") == self.dialog.opponent_id then self.dialog.h2h = d.headToHead; if self._active then rebuild(self) end end
     elseif message_id == hash("ws_request_declined") or message_id == hash("ws_request_cancelled") then
         if self.banners and message and message.request_id then for i = #self.banners, 1, -1 do if self.banners[i].request_id == message.request_id then table.remove(self.banners, i) end end; if #self.banners == 0 then self.banners = nil end end
-        self.dialog = nil; if self._active then rebuild(self) end
+        self.dialog, self.list_scroll = nil, 0; if self._active then rebuild(self) end
     end
 end
 
@@ -342,9 +342,9 @@ function on_input(self, action_id, action)
                         ex = { gameType = "TOURNAMENT", tournamentId = u.myBattle._id or u.myBattle.id, rules = u.myBattle.rules }
                     end
                     ws.send_game_request({ _id=u._id, username=u.username, isAI=u.isAI, avatar=u.avatar }, sd, ex); open_dialog(self, "challenging", u.username or "opponent", sd, nil, u.avatar, u._id, nil); ws.request_head_to_head(u._id)
-                elseif id == "accept" then if self.dialog and self.dialog.request_id then ws.accept_game_request(self.dialog.request_id) end; self.dialog = nil; rebuild(self)
-                elseif id == "decline" or id == "cancel_wait" then if self.dialog and self.dialog.request_id then ws.decline_game_request(self.dialog.request_id) end; self.dialog = nil; rebuild(self)
-                elseif id == "banner_accept" or id == "banner_decline" then if b.data and b.data ~= "" then if id == "banner_accept" then ws.accept_game_request(b.data) else ws.decline_game_request(b.data) end end; for j = #self.banners, 1, -1 do if self.banners[j].request_id == b.data then table.remove(self.banners, j) end end; if #self.banners == 0 then self.banners = nil end; rebuild(self)
+                elseif id == "accept" then if self.dialog and self.dialog.request_id then ws.accept_game_request(self.dialog.request_id) end; self.dialog, self.list_scroll = nil, 0; rebuild(self)
+                elseif id == "decline" or id == "cancel_wait" then if self.dialog and self.dialog.request_id then ws.decline_game_request(self.dialog.request_id) end; self.dialog, self.list_scroll = nil, 0; rebuild(self)
+                elseif id == "banner_accept" or id == "banner_decline" then if b.data and b.data ~= "" then if id == "banner_accept" then ws.accept_game_request(b.data) else ws.decline_game_request(b.data) end end; for j = #self.banners, 1, -1 do if self.banners[j].request_id == b.data then table.remove(self.banners, j) end end; if #self.banners == 0 then self.banners = nil end; self.list_scroll = 0; rebuild(self)
                 elseif id == "nav_lobby" then msg.post("#controller", "goto_lobby")
                 elseif id == "nav_payments" then msg.post("#controller", "goto_payments")
                 elseif id == "nav_themes" then msg.post("#controller", "goto_themes")
@@ -360,7 +360,7 @@ function on_input(self, action_id, action)
                     for j, t in ipairs(right_panel.BATTLE_TIERS) do if t.amount == amt then s_i = j; break end end
                     for j, fdef in ipairs(right_panel.BATTLE_TIERS[s_i].formats) do if fdef.games == fmtv then f_i = j; break end end
                     self.battle_modal = { editing = true, id = tostring(mb._id or mb.id or ""), stake_i = s_i, fmt_i = f_i }; rebuild(self)
-                elseif id == "bm_close" then self.battle_modal = nil; rebuild(self)
+                elseif id == "bm_close" then self.battle_modal, self.list_scroll = nil, 0; rebuild(self)
                 elseif id == "bm_fee_minus" or id == "bm_fee_plus" then
                     local bm = self.battle_modal
                     if bm and not bm.submitting then bm.stake_i = math.max(1, math.min(#right_panel.BATTLE_TIERS, bm.stake_i + (id == "bm_fee_plus" and 1 or -1))); bm.fmt_i = math.min(bm.fmt_i, #right_panel.BATTLE_TIERS[bm.stake_i].formats); rebuild(self) end
