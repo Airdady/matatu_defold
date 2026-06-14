@@ -17,6 +17,7 @@
 local ui     = require("modules.ui")
 local ws     = require("modules.websocket_manager")
 local screen = require("modules.screen")
+local app_state = require("modules.app_state")
 local dialog_incoming = require("modules.dialog_incoming")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
@@ -111,12 +112,68 @@ local function make_ctx()
     }
 end
 
+-- ── Compact toast (shown while the user is mid-game) ──────────────────────────
+-- A small, non-modal notification pinned to the TOP-RIGHT corner so an incoming
+-- challenge never blacks out the board. It reuses the SAME button ids ("accept"
+-- / "decline") so on_input dispatches exactly as the full dialog does. No scrim
+-- and no "dlg_block" button: input outside the two buttons falls through to the
+-- game (see on_input's compact branch).
+local function draw_toast(self, d, a)
+    local m = screen.metrics()
+    local TW, TH = 300, 74
+    local margin = 16
+    -- Anchor top-right, dropped a little below the very top so the toast clears
+    -- the screen's exit button. Use the real visible edges (m.R / m.T) so it
+    -- hugs the physical corner on any aspect ratio.
+    local cx = m.R - margin - TW / 2
+    local cy = m.T - 70 - TH / 2
+
+    -- Panel background.
+    track(self, ui.panel9(vmath.vector3(cx, cy, 0), vmath.vector3(TW, TH, 0), "container_bg"))
+
+    -- Opponent avatar on the left.
+    local av_size = 48
+    local av_x = cx - TW / 2 + 8 + av_size / 2
+    track(self, ui.pie(vmath.vector3(av_x, cy, 0), av_size / 2 + 4, with_a(DLG_AV_BG, a)))
+    gui.set_color(track(self, ui.avatar(vmath.vector3(av_x, cy, 0), vmath.vector3(av_size, av_size, 0), d.avatar or 1)), with_a(COL_WHITE, a))
+
+    -- Buttons (small ✓ / ✗) pinned to the right edge.
+    local btn = 30
+    local acc_x = cx + TW / 2 - 8 - btn / 2
+    local dec_x = acc_x - btn - 8
+    mkbtn(self, "accept",  vmath.vector3(acc_x, cy, 0), vmath.vector3(btn, btn, 0), "✓", "secondary_btn", nil, "small", with_a(COL_WHITE, a))
+    mkbtn(self, "decline", vmath.vector3(dec_x, cy, 0), vmath.vector3(btn, btn, 0), "✗", "primary_btn",   nil, "small", with_a(COL_WHITE, a))
+
+    -- Text block between the avatar and the buttons.
+    local txt_left = av_x + av_size / 2 + 8
+    local name     = tostring(d.name or "Player")
+    if #name > 14 then name = name:sub(1, 13) .. "…" end
+    local t1 = track(self, ui.text(vmath.vector3(txt_left, cy + 14, 0), name, "body", with_a(COL_WHITE, a)))
+    gui.set_pivot(t1, gui.PIVOT_W)
+    pcall(gui.set_scale, t1, vmath.vector3(0.85, 0.85, 1))
+    local t2 = track(self, ui.text(vmath.vector3(txt_left, cy - 10, 0), "wants to play online", "small", with_a(COL_CYAN, a)))
+    gui.set_pivot(t2, gui.PIVOT_W)
+
+    -- Slim countdown bar along the bottom edge of the toast.
+    local frac = math.max(0, math.min(1, (d.time_left or 0) / (d.max_time or 10)))
+    local bar_full = TW - 16
+    local bar_w    = bar_full * frac
+    local bar_y    = cy - TH / 2 + 5
+    local bar_col  = (d.time_left or 0) <= 3 and COL_RED or COL_CYAN
+    local bx = (cx - bar_full / 2) + bar_w / 2
+    track(self, ui.box(vmath.vector3(bx, bar_y, 0), vmath.vector3(bar_w, 3, 0), with_a(bar_col, a)))
+end
+
 -- ── Rendering ─────────────────────────────────────────────────────────────────
 local function rebuild(self)
     clear(self)
     if not self.dialog then return end
     local ok, err = pcall(function()
-        dialog_incoming.draw(self, make_ctx(), self.dialog, self.dlg_alpha or 1)
+        if self.dialog.compact then
+            draw_toast(self, self.dialog, self.dlg_alpha or 1)
+        else
+            dialog_incoming.draw(self, make_ctx(), self.dialog, self.dlg_alpha or 1)
+        end
     end)
     if not ok then
         print("[INCOMING] draw error: " .. tostring(err))
@@ -125,16 +182,22 @@ local function rebuild(self)
 end
 
 -- ── Dialog lifecycle ──────────────────────────────────────────────────────────
-local function open_dialog(self, name, stake, request_id, avatar, opponent_id, h2h)
+local function open_dialog(self, name, stake, request_id, avatar, opponent_id, h2h, compact)
     self.dialog = {
         kind = "incoming", name = name, stake = stake or {}, request_id = request_id,
         avatar = tonumber(avatar) or 1, time_left = 10, max_time = 10,
         opponent_id = opponent_id and tostring(opponent_id) or nil, h2h = h2h,
+        -- When the user is mid-game we surface a small top-right toast instead of
+        -- the full-screen modal (set from on_message via app_state.current_screen).
+        compact = compact and true or false,
     }
     self.dlg_alpha = 0
     -- Audible cue when an opponent's challenge arrives. snd_alert lives on the
-    -- controller object (our sibling), addressable with a bare "#" url.
-    pcall(msg.post, "#snd_alert", "play_sound")
+    -- controller object (our sibling), addressable with a bare "#" url. Suppressed
+    -- in compact mode so the request stays non-disruptive while in a game.
+    if not self.dialog.compact then
+        pcall(msg.post, "#snd_alert", "play_sound")
+    end
     refresh_wh()
     rebuild(self)
 end
@@ -203,13 +266,17 @@ function on_message(self, message_id, message)
         -- brief overlap there is acceptable and far better than a missed invite.
         local r   = ws.last_game_request or {}
         local raw = (ws.last_game_request or {}).raw or {}
+        -- Mid-game → small, non-disruptive top-right toast (no sound). Anywhere
+        -- else → the regular full-screen challenge dialog.
+        local compact = app_state.current_screen == "game"
         open_dialog(self,
             (r.user or {}).username or "A player",
             r.stake or {},
             r.requestId,
             (r.user or {}).avatar,
             (r.user or {})._id,
-            (type(raw) == "table" and raw.headToHead) or nil)
+            (type(raw) == "table" and raw.headToHead) or nil,
+            compact)
     elseif message_id == hash("incoming_clear") then
         -- Clear if the event targets the dialog we're showing (or carries no id).
         local rid = message and message.request_id
@@ -246,10 +313,15 @@ function on_input(self, action_id, action)
                 return true
             end
         end
-        -- Modal scrim: swallow taps anywhere while the dialog is up.
+        -- Full dialog is modal: swallow taps anywhere while it is up. The compact
+        -- toast is non-disruptive, so taps outside its buttons fall through to the
+        -- game underneath.
+        if self.dialog.compact then return false end
         return true
     end
 
-    -- Block all other input (drags, releases, keys) while the dialog is visible.
+    -- Full dialog blocks all other input (drags, releases, keys) while visible.
+    -- The compact toast lets everything else through so play continues normally.
+    if self.dialog.compact then return false end
     return true
 end

@@ -317,3 +317,28 @@ embedded_components {
   data: "sound: \"/assets/sounds/goodbye.ogg\"\n"
   ""
 }
+embedded_components {
+  id: "snd_suspense"
+  type: "sound"
+  data: "sound: \"/assets/sounds/suspense.ogg\"\n"
+  "loopcount: -1\n"
+  ""
+}
+embedded_components {
+  id: "snd_found"
+  type: "sound"
+  data: "sound: \"/assets/sounds/found.ogg\"\n"
+  ""
+}
+embedded_components {
+  id: "snd_fail"
+  type: "sound"
+  data: "sound: \"/assets/sounds/fail.ogg\"\n"
+  ""
+}
+embedded_components {
+  id: "snd_ping"
+  type: "sound"
+  data: "sound: \"/assets/sounds/ping.ogg\"\n"
+  ""
+}

@@ -30,6 +30,10 @@ local function show(self, screen)
         msg.post("#game_logic", "disable")
     end
     self.screen = screen
+    -- Publish the active screen so global overlays (e.g. the incoming-request
+    -- dialog) can adapt their presentation — notably showing a small, non-
+    -- disruptive toast instead of a full-screen modal while in a game.
+    app_state.current_screen = screen
 end
 
 -- Decide where to go once we have a user identified for online play.
@@ -116,6 +120,9 @@ function init(self)
     local function intercept_for_search(self_)
         if app_state.searching_tournament and self_.screen == "tournaments" then
             app_state.searching_tournament = false
+            -- Opponent found: kill the looping suspense bed, fire the found sting.
+            pcall(msg.post, "#snd_suspense", "stop_sound")
+            pcall(msg.post, "#snd_found", "play_sound")
             msg.post("#tournaments", "ws_match_found")
             timer.delay(1.8, false, function()
                 if self_.screen == "tournaments" then show(self_, "game") end
@@ -182,6 +189,9 @@ function init(self)
 
     -- Tournament matchmaking came back empty.
     table.insert(self.tokens, ws.on("tournament_no_opponents", function(d)
+        -- Stop suspense and play the fail sting BEFORE the search overlay closes.
+        pcall(msg.post, "#snd_suspense", "stop_sound")
+        pcall(msg.post, "#snd_fail", "play_sound")
         msg.post("#tournaments", "ws_search_failed",
             { reason = (type(d) == "table" and d.message) or "No opponents available right now" })
     end))
@@ -259,6 +269,12 @@ function init(self)
     table.insert(self.tokens, ws.on("game_request_declined", function(reason)
         msg.post("#game_logic", "ws_replay_declined", { reason = tostring(reason or "Declined") })
         -- The tournaments screen shows search failures on its lottery overlay.
+        -- If a tournament opponent search is live, stop suspense and play the
+        -- fail sting before the overlay reports the failure.
+        if app_state.searching_tournament then
+            pcall(msg.post, "#snd_suspense", "stop_sound")
+            pcall(msg.post, "#snd_fail", "play_sound")
+        end
         msg.post("#tournaments", "ws_search_failed", { reason = tostring(reason or "Declined") })
     end))
 end
@@ -430,6 +446,9 @@ function on_message(self, message_id, message, sender)
 
     -- ── Tournament play (websocket game request) ─────────────────────────────
     elseif message_id == hash("tournament_play") then
+        -- Opponent search just began: start the looping suspense bed. It is
+        -- stopped on match-found (intercept_for_search) or search-failed.
+        pcall(msg.post, "#snd_suspense", "play_sound")
         ws.send_game_request({}, message.stake, {
             gameType       = "TOURNAMENT",
             tournamentId   = message.tournament_id,
