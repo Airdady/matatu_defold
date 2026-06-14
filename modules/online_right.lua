@@ -5,17 +5,12 @@ local ws = require("modules.websocket_manager")
 
 local M = {}
 
+-- Battle stakes cap out at 2000 (the 5000 / 10000 tiers were removed).
 M.BATTLE_TIERS = {
     { amount = 500,   formats = { { games = 3, charge = 75,  points = 9 } } },
     { amount = 1000,  formats = { { games = 3, charge = 75,  points = 9 }, { games = 5, charge = 125, points = 15 } } },
     { amount = 2000,  formats = { { games = 3, charge = 75,  points = 9 }, { games = 5, charge = 125, points = 15 },
                                   { games = 7, charge = 175, points = 21 }, { games = 9, charge = 225, points = 27 } } },
-    { amount = 5000,  formats = { { games = 3, charge = 150, points = 9 }, { games = 5, charge = 250, points = 15 },
-                                  { games = 7, charge = 350, points = 21 }, { games = 9, charge = 400, points = 27 },
-                                  { games = 11, charge = 500, points = 33 }, { games = 13, charge = 600, points = 39 } } },
-    { amount = 10000, formats = { { games = 3, charge = 300, points = 9 }, { games = 5, charge = 500, points = 15 },
-                                  { games = 7, charge = 700, points = 21 }, { games = 9, charge = 800, points = 27 },
-                                  { games = 11, charge = 1000, points = 33 }, { games = 13, charge = 1200, points = 39 } } },
 }
 
 local INVITE_AVATAR_MAX = 60

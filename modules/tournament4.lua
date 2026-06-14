@@ -414,15 +414,11 @@ function M.ai_seat_turn(self, seat)
     end
 
     local result = RE.evaluate_play(self, rec, seat.hand)
-    
-    -- STACK PENALTIES: Instead of overwriting, we add any newly generated penalty to the active pool.
-    local generated = result.next_player_penalty_count or 0
-    if generated > 0 then
-        self.active_penalty = penalty + generated
-    else
-        self.active_penalty = 0
-    end
-    
+
+    -- Penalties do NOT stack: the next player faces ONLY this card's penalty,
+    -- exactly like the 2-player game (game_flow.after_play_settled).
+    self.active_penalty = result.next_player_penalty_count or 0
+
     local NA = Rules.NextActionType
     if result.type == NA.CHOOSE_SUIT then
         self.chosen_suit = AI.best_suit_for_hand(seat.hand)
@@ -431,7 +427,19 @@ function M.ai_seat_turn(self, seat)
         M.advance(self)
     elseif result.type == NA.SKIP_TURN then
         M.apply_skip(self, rec)
+    elseif result.type == NA.REDUCE_PENALTY then
+        -- Partial penalty: THIS player absorbs the balance by drawing it (just
+        -- like 2-player); nothing is passed on to the next player.
+        local remaining = result.current_penalty_count or 0
+        self.active_penalty = 0
+        self.chosen_suit = ""
+        if remaining > 0 then
+            ai_draw(self, seat, remaining, function() M.advance(self) end)
+        else
+            M.advance(self)
+        end
     else
+        -- default + TRANSFER_PENALTY: active_penalty already reflects this card.
         self.chosen_suit = ""
         M.advance(self)
     end
