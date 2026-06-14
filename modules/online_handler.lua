@@ -304,7 +304,12 @@ function M.setup_ws_listeners(self)
             ws.active_game_state = gs
             msg.post(board, "ws_new_game_start")
         elseif not self.game_over then
+            -- Authoritative START for the current game (the backend only sends
+            -- this once EVERY player is ready): release the post-deal hold, start
+            -- the timers, and let any queued opponent move animate now.
+            self._await_start = false
             M.sync_timers(self, gs)
+            M.pump_move_queue(self)
         end
     end))
 
@@ -600,6 +605,11 @@ function M.pump_move_queue(self)
     if self.is_processing_move then return end
     if #self.move_queue == 0    then return end
     if self.game_over           then return end
+    -- Hold opponent moves in the queue until OUR shuffle/deal is done and the
+    -- backend START has unlocked play, so the opponent's move never animates on
+    -- a half-dealt board.
+    if self.is_animating        then return end
+    if self._await_start        then return end
 
     self.is_processing_move = true
     local seq = self._seq
@@ -627,6 +637,7 @@ function M.start_game(self, state)
     self.is_processing_move = false
     self.is_waiting_for_server_response = false
     self._online_reshuffling = false
+    self._await_start = false
 
     M.setup_ws_listeners(self)
 
@@ -856,13 +867,34 @@ function M.start_game(self, state)
             msg.post(GUI_SUIT, "suit_badge", { suit = self.chosen_suit })
 
             self.is_animating = false
-            M.sync_timers(self, state)
 
             local st_final = tostring(state.status or "")
             local is_res_final = (st_final == "STARTED" or st_final == "PLAYING" or st_final == "RESHUFFLING")
-            if not is_res_final then
+            if is_res_final then
+                -- Resuming an already-started game: timers run right away and any
+                -- queued opponent moves can play now that dealing is done.
+                M.sync_timers(self, state)
+                M.pump_move_queue(self)
+            else
+                -- Fresh game: shuffle + deal are fully done, so tell the backend
+                -- we are READY and then HOLD timers + input until it broadcasts
+                -- START (which it only does once EVERY player is ready). This
+                -- keeps both clients in lock-step for normal and tournament games.
+                self._await_start = true
                 local gid = state.gameId or state.id or self.online_game_id
                 ws.send_message("PLAYER_READY", { gameId = gid, _id = self.my_player_id })
+
+                -- Safety net: if the START somehow never arrives (lost packet),
+                -- release the hold after a long grace so the board can't wedge.
+                -- The backend's own no-show logic fires well before this.
+                local seq = self._seq
+                timer.delay(45.0, false, function()
+                    if seq == self._seq and self._await_start and not self.game_over then
+                        self._await_start = false
+                        M.sync_timers(self, self.game_state)
+                        M.pump_move_queue(self)
+                    end
+                end)
             end
         end)
     end
