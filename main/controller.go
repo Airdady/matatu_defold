@@ -58,6 +58,10 @@ components {
   id: "incoming"
   component: "/main/incoming.gui"
 }
+components {
+  id: "coins"
+  component: "/main/coins.gui"
+}
 embedded_components {
   id: "background"
   type: "sprite"
