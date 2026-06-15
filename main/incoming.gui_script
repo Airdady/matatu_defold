@@ -59,7 +59,7 @@ local function mkbtn(self, id, pos, size, label, style, data, font, text_color)
     local bg
     if type(style) == "string" then bg = track(self, ui.btn9(pos, size, style)) else bg = track(self, ui.box(pos, size, style)) end
     if label then
-        local btn_font = font or (size.y >= 44 and "luckiest_guy_md" or "luckiest_guy_sm")
+        local btn_font = font or (size.y >= 44 and "btn_md" or "btn_sm")
         track(self, ui.text(vmath.vector3(pos.x, pos.y - 3, pos.z), label, btn_font, text_color or COL_WHITE))
     end
     self.buttons[#self.buttons+1] = { node = bg, id = id, data = data }

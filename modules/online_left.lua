@@ -91,7 +91,7 @@ function M.draw(self, ctx)
     local btn_size = 54
     local gap = 12
     local btn_x = cx - pw/2 + btn_size/2
-    mkbtn(self, "nav_lobby", vmath.vector3(btn_x, tcy, 0), vmath.vector3(btn_size, btn_size, 0), "<", "secondary_btn", nil, "luckiest_guy_md")
+    mkbtn(self, "nav_lobby", vmath.vector3(btn_x, tcy, 0), vmath.vector3(btn_size, btn_size, 0), "<", "secondary_btn", nil, "btn_md")
 
     -- Shifted timer container
     local timer_pw = pw - btn_size - gap

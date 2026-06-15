@@ -1,0 +1,15 @@
+# ext.manifest for GameServices Native Extension
+name: "GameServices"
+
+platforms:
+  android:
+    context:
+      flags: []
+
+  arm64-osx:
+    context:
+      flags: []
+
+  x86_64-osx:
+    context:
+      flags: []

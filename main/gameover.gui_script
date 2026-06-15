@@ -37,9 +37,9 @@ local FONT_BASE = {
     title = 44, 
     small = 18,
     helvetica_bold = 36,
-    luckiest_guy_lg = 48,
-    luckiest_guy_md = 36,
-    luckiest_guy_sm = 24
+    btn_lg = 48,
+    btn_md = 36,
+    btn_sm = 24
 }
 
 ----------------------------------------------------------------------
@@ -330,14 +330,14 @@ local function build(self)
     -- Luckiest Guy styled buttons mapped closely under the top content
     self.n_again_bg = box(vmath.vector3(0, 0, 0), vmath.vector3(264, 58, 0), C_VICTORY, gui.PIVOT_CENTER)
     attach(self.n_again_bg, 0, -215)
-    self.n_again_lbl = label(vmath.vector3(0, 0, 0), "PLAY AGAIN", 32, C_BTN_TEXT, gui.PIVOT_CENTER, "luckiest_guy_lg")
+    self.n_again_lbl = label(vmath.vector3(0, 0, 0), "PLAY AGAIN", 32, C_BTN_TEXT, gui.PIVOT_CENTER, "btn_lg")
     gui.set_parent(self.n_again_lbl, self.n_again_bg)
     gui.set_position(self.n_again_lbl, vmath.vector3(0, 0, 0))
 
     -- Exit button gap increased exactly to 80px (previously 50px)
     self.n_exit_hit = box(vmath.vector3(0, 0, 0), vmath.vector3(264, 42, 0), vmath.vector4(0, 0, 0, 0), gui.PIVOT_CENTER)
     attach(self.n_exit_hit, 0, -295)
-    self.n_exit_lbl = label(vmath.vector3(0, 0, 0), "BACK TO LOBBY", 24, C_SECONDARY, gui.PIVOT_CENTER, "luckiest_guy_lg")
+    self.n_exit_lbl = label(vmath.vector3(0, 0, 0), "BACK TO LOBBY", 24, C_SECONDARY, gui.PIVOT_CENTER, "btn_lg")
     gui.set_parent(self.n_exit_lbl, self.n_exit_hit)
     gui.set_position(self.n_exit_lbl, vmath.vector3(0, 0, 0))
 end
