@@ -116,6 +116,14 @@ function M.clear(self)
     self.t4_active_slot = nil
     if self.t4_tally_root then pcall(gui.delete_node, self.t4_tally_root); self.t4_tally_root = nil end
     M.clear_graves(self)
+    -- NOTE: the Elimination Chamber standings table is intentionally NOT torn
+    -- down here. t4_clear fires on every deal/restage to rebuild the per-seat
+    -- badges (deal_round), and the chamber score table must persist across all
+    -- of those. It is cleared explicitly via M.clear_chamber on reset_hud.
+end
+
+-- Tear down the Elimination Chamber standings table (screen leave / new game).
+function M.clear_chamber(self)
     if self.t4_chamber and self.t4_chamber.root then pcall(gui.delete_node, self.t4_chamber.root) end
     self.t4_chamber = nil
 end

@@ -197,14 +197,6 @@ function on_message(self, message_id, message)
     elseif message_id == hash("update_standings") then
         overlay.update_standings(self, message.ranks or {})
 
-    elseif message_id == hash("update_stake") then
-        overlay.update_stake(self, (type(message.amount) == "table") and message.amount.amount or message.amount)
-
-    elseif message_id == hash("hide_stake_chip") then
-        -- The live coin pot now represents the stake at the chip's position.
-        self._pot_stake = true
-        if self.stake_chip then gui.set_enabled(self.stake_chip, false) end
-
     elseif message_id == hash("network_quality") then
         hud.update_network_quality(self, message)
 
@@ -223,9 +215,9 @@ function on_message(self, message_id, message)
     elseif message_id == hash("reset_hud") then
         hud.stop_timers(self)
         overlay.reset(self)
-        self._pot_stake = false
 
         t4.clear(self)
+        t4.clear_chamber(self)
         self.is_t4_mode = false
         hud.set_t4_mode(self, false)
 
