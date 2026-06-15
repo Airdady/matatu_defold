@@ -208,6 +208,8 @@ end
 function M.update_stake(self, amount)
     amount = tonumber(amount) or 0
     if not self.stake_chip then return end
+    -- The live coin pot has taken over the stake display at this spot.
+    if self._pot_stake then gui.set_enabled(self.stake_chip, false); return end
     if amount < 200 then
         gui.set_enabled(self.stake_chip, false)
     else
