@@ -102,6 +102,7 @@ function init(self)
     self._game_over_settle_time = 0
     self._game_over_absolute_timeout = 0
     self._gs_anim_locks = 0
+    self._is_processing_game_over = false -- Safely lock game over to prevent duplicate triggers
 
     -- ---- self.* dispatch table -------------------------------------------
     self.play_sound       = function(name) play_sound(self, name) end
@@ -204,15 +205,19 @@ function init(self)
 end
 
 ----------------------------------------------------------------------
--- Deferred Game Over dispatcher
+-- Deferred Game Over dispatcher (Sequenced Step-by-Step)
 ----------------------------------------------------------------------
 local function process_game_over_queue(self, results)
     print("[DEBUG] process_game_over_queue executing. self.game_over=" .. tostring(self.game_over))
-    if not self.online_mode or self.game_over then 
-        print("[DEBUG] Ignoring game over processing because already game_over or offline.")
+    if not self.online_mode or self.game_over or self._is_processing_game_over then 
+        print("[DEBUG] Ignoring game over processing because already game_over, offline, or processing.")
         return 
     end
 
+    -- Lock to ensure we perform this sequence exactly once
+    self._is_processing_game_over = true
+
+    -- Step 1: Update UI Standings & Scoreboard (Triggers Flip/Dots animations)
     if type(results.rank) == "table" and #results.rank > 0 then
         notify_gui(self.gui_hud, "update_standings", { ranks = OnlineHandler.slim_ranks(results.rank) })
     end
@@ -228,20 +233,39 @@ local function process_game_over_queue(self, results)
         self._final_state_locked = false
     end
     
+    -- Step 2: WAIT for Scoreboard animations to finish BEFORE flipping cards or showing round transitions
+    -- This prevents conflicting steps and FPS drops.
     local is_cut = results.isCut or (results.reason == "CUTTING_CARD")
-    self.end_game((results.winner == self.my_player_id), is_cut, results)
+    
+    timer.delay(1.2, false, function()
+        -- Start Step 3: Flip cards and display round transitions cleanly
+        self.end_game((results.winner == self.my_player_id), is_cut, results)
+        
+        -- Release lock
+        self._is_processing_game_over = false
+    end)
 end
 
 ----------------------------------------------------------------------
 -- Watchdogs (online only): release stale locks the moment it's our turn
 ----------------------------------------------------------------------
 function update(self, dt)
-    if self.round_story_active and socket.gettime() > (self.round_story_deadline or 0) then
-        print("[ROUND-STORY] watchdog released the next-round hold")
-        self.round_story_active = false
-        local pending = self._pending_next_state
-        self._pending_next_state = nil
-        if pending then start_new_online_game(self, pending, false) end
+    -- BUG FIX: Round story watchdog shouldn't default to 0 for deadline
+    if self.round_story_active then
+        if not self.round_story_deadline then
+            self.round_story_deadline = socket.gettime() + 6.5
+        end
+        
+        if socket.gettime() > self.round_story_deadline then
+            print("[ROUND-STORY] watchdog released the next-round hold safely")
+            self.round_story_active = false
+            self.round_story_deadline = nil
+            local pending = self._pending_next_state
+            self._pending_next_state = nil
+            if pending then start_new_online_game(self, pending, false) end
+        end
+    else
+        self.round_story_deadline = nil
     end
 
     if self.online_mode then
@@ -575,7 +599,6 @@ local function start_new_online_game(self, state, is_explicit_start_event)
     print("[DEBUG] Proceeding to GF.start_game. ID: " .. tostring(new_id))
 
     -- --- BUG FIX: CLEAR LEFTOVER GAME OVER STATE ---
-    -- If a game over animation watchdog is still ticking while we start the new round, 
     if self.pending_game_over_data then
         print("[DEBUG] WARNING: Clearing stale pending_game_over_data because a new game is starting!")
         self.pending_game_over_data = nil
@@ -583,6 +606,7 @@ local function start_new_online_game(self, state, is_explicit_start_event)
         self._game_over_absolute_timeout = 0
         self._gs_anim_locks = 0
     end
+    self._is_processing_game_over = false -- Free processing lock
     
     -- Flush move queue to prevent ghost moves carrying into the next round
     self.move_queue = self.move_queue or {}
@@ -647,6 +671,7 @@ function on_message(self, message_id, message, sender)
 
     elseif message_id == hash("round_story_done") then
         self.round_story_active = false
+        self.round_story_deadline = nil
         local pending = self._pending_next_state
         self._pending_next_state = nil
         if pending then
@@ -663,11 +688,13 @@ function on_message(self, message_id, message, sender)
         self.active = false
         self._seq = (self._seq or 0) + 1
         self.round_story_active = false
+        self.round_story_deadline = nil
         self._pending_next_state = nil
         
         self.pending_game_over_data = nil
         self._game_over_settle_time = 0
         self._game_over_absolute_timeout = 0
+        self._is_processing_game_over = false
         
         notify_gui(self.gui_suit, "reset_hud")
         notify_gui(self.gui_over, "reset_hud")
