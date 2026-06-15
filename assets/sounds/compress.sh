@@ -1,51 +1,67 @@
 #!/bin/bash
 
-# =============================================================================
-# Audio Minification Script for macOS (Error-Resistant)
-# Operation: Minifies all OGG files. If one fails, it skips and continues.
-# =============================================================================
-
 OUTPUT_DIR="compress"
 
-# Create the compress directory if it doesn't exist
 mkdir -p "$OUTPUT_DIR"
 
-# Check if FFmpeg is installed
 if ! command -v ffmpeg &> /dev/null; then
-    echo "ERROR: ffmpeg was not found on your system."
+    echo "ERROR: ffmpeg is not installed."
     exit 1
 fi
 
-echo "================================================================="
-echo " Starting OGG Audio Minification"
-echo " Output Destination: ./${OUTPUT_DIR}/"
-echo "================================================================="
+echo "======================================================"
+echo " Starting Extreme (Vorbis) Audio Compression"
+echo "======================================================"
 
-# Case-insensitive matching for OGG files
 shopt -s nocaseglob
 
-count=0
+count_compressed=0
+count_kept=0
+failed=0
+
 for audio in *.ogg; do
-    # Skip if no .ogg files are found
     [ -e "$audio" ] || continue
 
     filename=$(basename "$audio")
     target_path="${OUTPUT_DIR}/${filename}"
-    
-    echo "Minifying: $filename..."
 
-    # ── MINIFY VIA FFMPEG ──
-    # If ffmpeg fails for any reason (like corrupt metadata), it will catch the 
-    # error, copy the original file to the folder instead, and KEEP GOING.
-    if ffmpeg -i "$audio" -c:a libvorbis -q:a 5 -y "$target_path" &> /dev/null; then
-        count=$((count + 1))
+    echo ""
+    echo "Processing: $filename"
+
+    # Switched to libvorbis for VS Code compatibility
+    # -q:a 0 is the lowest Vorbis quality setting for maximum minification
+    if ffmpeg -v error \
+        -i "$audio" \
+        -c:a libvorbis \
+        -q:a 0 \
+        -map_metadata -1 \
+        -y "$target_path"; then
+
+        original_size=$(stat -f%z "$audio" 2>/dev/null || stat -c%s "$audio")
+        compressed_size=$(stat -f%z "$target_path" 2>/dev/null || stat -c%s "$target_path")
+
+        # FAIL-SAFE: Did we actually save space?
+        if [ "$compressed_size" -ge "$original_size" ]; then
+            echo "✓ Kept Original (Already highly compressed)"
+            cp "$audio" "$target_path"
+            count_kept=$((count_kept + 1))
+        else
+            echo "✓ Successfully Compressed"
+            echo "  Original:   ${original_size} bytes"
+            echo "  Compressed: ${compressed_size} bytes"
+            count_compressed=$((count_compressed + 1))
+        fi
     else
-        echo "   ⚠️ Warning on $filename. Copying original file instead."
+        echo "⚠️ Failed: $filename"
         cp "$audio" "$target_path"
+        failed=$((failed + 1))
     fi
-
 done
 
-echo "================================================================="
-echo " Done! Successfully processed files into ./${OUTPUT_DIR}/"
-echo "================================================================="
+echo ""
+echo "======================================================"
+echo " Finished"
+echo " Files Compressed:   $count_compressed"
+echo " Originals Kept:     $count_kept"
+echo " Failed:             $failed"
+echo "======================================================"
