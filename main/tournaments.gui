@@ -9,7 +9,7 @@ fonts {
 }
 fonts {
   name: "small"
-  font: "/fonts/small.font"
+  font: "/fonts/caption.font"
 }
 textures {
   name: "ui"

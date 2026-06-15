@@ -72,8 +72,8 @@ function M.draw(self, ctx)
     self.buttons[#self.buttons+1] = { node = btn_q, id = "tab_quick" }
     self.buttons[#self.buttons+1] = { node = btn_b, id = "tab_battles" }
 
-    track(self, ui.text(vmath.vector3(tab_qx, cy - tab_h/2 - 3, 0), "QUICK PLAY",     "luckiest_guy_md", q_col))
-    track(self, ui.text(vmath.vector3(tab_bx, cy - tab_h/2 - 3, 0), "BATTLE GROUNDS", "luckiest_guy_md", b_col))
+    track(self, ui.text(vmath.vector3(tab_qx, cy - tab_h/2 - 3, 0), "QUICK PLAY",     "btn_md", q_col))
+    track(self, ui.text(vmath.vector3(tab_bx, cy - tab_h/2 - 3, 0), "BATTLE GROUNDS", "btn_md", b_col))
 
     if self.tab == TAB_QUICK then
         track(self, ui.box(vmath.vector3(tab_qx, cy - tab_h, 0), vmath.vector3(tabw, 2, 0), C.COL_WHITE))

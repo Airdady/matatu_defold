@@ -1,0 +1,8 @@
+dependencies {
+    // In-App Update Dependency
+    implementation 'com.google.android.play:app-update:2.1.0'
+    implementation 'com.google.android.gms:play-services-tasks:18.1.0'
+
+    // OneSignal Push Notification Dependency
+    implementation 'com.onesignal:OneSignal:5.4.2'
+}

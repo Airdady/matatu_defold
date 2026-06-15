@@ -9,15 +9,15 @@ fonts {
 }
 fonts {
   name: "small"
-  font: "/fonts/small.font"
+  font: "/fonts/caption.font"
 }
 fonts {
-  name: "luckiest_guy_md"
-  font: "/fonts/luckiest_guy_md.font"
+  name: "btn_md"
+  font: "/fonts/btn_md.font"
 }
 fonts {
-  name: "luckiest_guy_sm"
-  font: "/fonts/luckiest_guy_sm.font"
+  name: "btn_sm"
+  font: "/fonts/btn_sm.font"
 }
 fonts {
   name: "helvetica_bold"

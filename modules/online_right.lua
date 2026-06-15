@@ -42,7 +42,7 @@ local function draw_battle_modal(self, ctx)
 
     txtL(self, l, top - 8, bm.editing and "UPDATE BATTLE" or "CREATE BATTLE", "body", ctx.C.COL_WHITE)
     mkbtn(self, "bm_close", vmath.vector3(r - 10, top - 8, 0), vmath.vector3(30, 30, 0), nil, vmath.vector4(0,0,0,0.001))
-    track(self, ui.text(vmath.vector3(r - 10, top - 8, 0), "X", "luckiest_guy_sm", ctx.C.COL_MID))
+    track(self, ui.text(vmath.vector3(r - 10, top - 8, 0), "X", "btn_sm", ctx.C.COL_MID))
 
     local tier         = M.BATTLE_TIERS[bm.stake_i] or M.BATTLE_TIERS[1]
     local fmts         = tier.formats
@@ -74,7 +74,7 @@ local function draw_battle_modal(self, ctx)
     end
 
     local sub_label = bm.submitting and "SUBMITTING..." or (bm.editing and "UPDATE BATTLE" or "CREATE BATTLE")
-    mkbtn(self, "bm_submit", vmath.vector3(CX, CY - ph/2 + 46, 0), vmath.vector3(pw - 60, 60, 0), sub_label, "secondary_btn", nil, "luckiest_guy_md", BM_TAN)
+    mkbtn(self, "bm_submit", vmath.vector3(CX, CY - ph/2 + 46, 0), vmath.vector3(pw - 60, 60, 0), sub_label, "secondary_btn", nil, "btn_md", BM_TAN)
 end
 
 -- ── Invite Modal Drawing ──────────────────────────────────────────────────────
@@ -304,7 +304,7 @@ function M.draw(self, ctx, left_M)
     local icon_y = cy - 48
 
     track(self, ui.image(vmath.vector3(icon_x, icon_y, 0), vmath.vector3(42, 42, 0), "battle_icon"))
-    txtL(self, txt_x, hdr_y, "BATTLES", "luckiest_guy_md", C.COL_WHITE)
+    txtL(self, txt_x, hdr_y, "BATTLES", "btn_md", C.COL_WHITE)
 
     -- Adjusted padding and spacing for the buttons
     local btn_pad = 24
@@ -334,13 +334,13 @@ function M.draw(self, ctx, left_M)
     
     local icon_x = cx - 74
     track(self, ui.image(vmath.vector3(icon_x, tcy2, 0), vmath.vector3(28, 28, 0), "tournament_icon"))
-    txtL(self, icon_x + 22, tcy2, "TOURNAMENTS", "luckiest_guy_md", C.COL_WHITE)
+    txtL(self, icon_x + 22, tcy2, "TOURNAMENTS", "btn_md", C.COL_WHITE)
 
     local nx = cx + pw/2 - 36
     local ny = tcy2
     track(self, ui.box(vmath.vector3(nx, ny, 0), vmath.vector3(44, 18, 0), vmath.vector4(0.15, 0.8, 0.25, 1.0)))
     track(self, ui.box(vmath.vector3(nx, ny + 9, 0), vmath.vector3(44, 1, 0), C.COL_WHITE))
-    track(self, ui.text(vmath.vector3(nx, ny, 0), "NEW", "luckiest_guy_sm", C.COL_WHITE))
+    track(self, ui.text(vmath.vector3(nx, ny, 0), "NEW", "btn_sm", C.COL_WHITE))
     cy = cy - t_h - C.BLOCK_GAP
 
     -- ── Footer links ──────────────────────────────────────────────────────
