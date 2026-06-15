@@ -1,0 +1,268 @@
+----------------------------------------------------------------------
+-- coins.gui_script
+-- Global coin / pot animation overlay. Mounted as a controller sibling
+-- (render order 16) so it draws above every screen and the pot persists
+-- across the lobby -> game transition.
+--
+-- Everything is driven by messages and runs through a SERIALIZED queue: one
+-- animation plays at a time (animation-locked), so a stake-collection, a
+-- balance delta and a final settlement never fight each other. Callers only
+-- describe WHAT happens (amount + screen positions); the engine owns the art.
+--
+-- Messages (post to "#coins"):
+--   coin_collect_pot { amount, sources = {{x,y},...}, center = {x,y} }
+--   coin_pot_to      { x, y }                       -- re-anchor the live pot
+--   coin_settle      { to = {x,y}, amount, win }    -- pot -> winner/balance
+--   coin_delta       { from = {x,y}, to = {x,y}, amount, sign }
+--   coin_clear       {}
+----------------------------------------------------------------------
+local LOGICAL_W, LOGICAL_H = 1280, 720
+local ATLAS = "coins"
+local COIN  = 40
+local GOLD  = vmath.vector4(1.0, 0.84, 0.30, 1)
+local GLOW  = vmath.vector4(1.0, 0.80, 0.20, 0.0)
+
+local function v3(x, y, z) return vmath.vector3(x, y, z or 0) end
+local function rnd(a, b) return a + math.random() * (b - a) end
+local function play(comp) pcall(msg.post, "#" .. comp, "play_sound") end
+
+local function loose_node(n)
+    gui.set_xanchor(n, gui.ANCHOR_NONE)
+    gui.set_yanchor(n, gui.ANCHOR_NONE)
+    return n
+end
+
+local function new_coin(x, y, spin)
+    local n = loose_node(gui.new_box_node(v3(x, y), vmath.vector3(COIN, COIN, 0)))
+    pcall(function() gui.set_texture(n, ATLAS); gui.play_flipbook(n, hash(spin or "spin_horizontal")) end)
+    return n
+end
+
+local function track(self, n) self.fx[#self.fx + 1] = n; return n end
+
+-- Fly a coin from its current spot to `tx,ty` along a raised curve (2-segment),
+-- staggered by `delay`. Calls `on_land` when it arrives.
+local function fly(self, n, fx, fy, tx, ty, delay, on_land)
+    local mx = (fx + tx) / 2 + rnd(-30, 30)
+    local my = math.max(fy, ty) + rnd(90, 150)   -- arc up over the table
+    gui.set_scale(n, vmath.vector3(0.4, 0.4, 1))
+    gui.animate(n, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTBACK, 0.22, delay)
+    gui.animate(n, "position", v3(mx, my), gui.EASING_OUTSINE, 0.30, delay, function()
+        gui.animate(n, "position", v3(tx + rnd(-16, 16), ty + rnd(-12, 12)), gui.EASING_INSINE, 0.28, 0, function()
+            if on_land then on_land() end
+        end)
+    end)
+end
+
+-- ── the live pot ─────────────────────────────────────────────────────────────
+local function set_pot_bundle(self, amount)
+    if not self.pot then return end
+    local img = "bundle_stack_multi"
+    if amount and amount <= 600 then img = "bundle_stack_3"
+    elseif amount and amount <= 1200 then img = "bundle_stack_4" end
+    pcall(function() gui.set_texture(self.pot.bundle, ATLAS); gui.play_flipbook(self.pot.bundle, hash(img)) end)
+end
+
+local function ensure_pot(self, x, y, amount)
+    if not self.pot then
+        local glow = loose_node(gui.new_box_node(v3(x, y), vmath.vector3(170, 170, 0)))
+        gui.set_color(glow, GLOW)
+        local bundle = loose_node(gui.new_box_node(v3(x, y), vmath.vector3(118, 118, 0)))
+        gui.set_color(bundle, vmath.vector4(1, 1, 1, 1))
+        local label = loose_node(gui.new_text_node(v3(x, y - 78), tostring(amount or 0)))
+        gui.set_font(label, "helvetica_bold")
+        gui.set_color(label, GOLD)
+        gui.set_pivot(label, gui.PIVOT_CENTER)
+        self.pot = { glow = glow, bundle = bundle, label = label, amount = amount or 0, x = x, y = y }
+        -- soft breathing glow keeps the pot "alive" on the table
+        gui.animate(glow, "color.w", 0.35, gui.EASING_INOUTSINE, 1.1, 0, nil, gui.PLAYBACK_LOOP_PINGPONG)
+        gui.set_scale(bundle, vmath.vector3(0.2, 0.2, 1))
+        gui.animate(bundle, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTBACK, 0.4)
+    end
+    self.pot.amount = amount or self.pot.amount
+    set_pot_bundle(self, self.pot.amount)
+    if self.pot.label then gui.set_text(self.pot.label, tostring(self.pot.amount)) end
+    -- a little impact bounce each time coins land in
+    gui.cancel_animation(self.pot.bundle, "scale")
+    gui.set_scale(self.pot.bundle, vmath.vector3(1.14, 1.14, 1))
+    gui.animate(self.pot.bundle, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTSINE, 0.25)
+end
+
+local function clear_pot(self)
+    if self.pot then
+        pcall(gui.delete_node, self.pot.glow)
+        pcall(gui.delete_node, self.pot.bundle)
+        pcall(gui.delete_node, self.pot.label)
+        self.pot = nil
+    end
+end
+
+-- ── number counter (tweens a label from -> to in update) ─────────────────────
+local function add_counter(self, x, y, from, to, dur, color, sign)
+    local lbl = loose_node(gui.new_text_node(v3(x, y), tostring(math.floor(from))))
+    gui.set_font(lbl, "helvetica_bold")
+    gui.set_color(lbl, color or GOLD)
+    gui.set_pivot(lbl, gui.PIVOT_CENTER)
+    self.counters[#self.counters + 1] = { lbl = lbl, from = from, to = to, t = 0, dur = dur or 0.8, sign = sign }
+end
+
+-- ── handlers (each calls done() when its animation finishes) ──────────────────
+local HANDLERS = {}
+
+HANDLERS.coin_collect_pot = function(self, d, done)
+    local cx = (d.center and d.center.x) or LOGICAL_W / 2
+    local cy = (d.center and d.center.y) or LOGICAL_H / 2
+    local sources = d.sources or { { x = cx - 320, y = cy }, { x = cx + 320, y = cy } }
+    local per = d.coins_per or 8
+    local total = #sources * per
+    if total == 0 then ensure_pot(self, cx, cy, d.amount); done(); return end
+    local landed = 0
+    for si, src in ipairs(sources) do
+        for i = 1, per do
+            local delay = (i - 1) * 0.06 + (si - 1) * 0.04
+            local c = track(self, new_coin(src.x, src.y, (si % 2 == 0) and "spin_vertical" or "spin_horizontal"))
+            fly(self, c, src.x, src.y, cx, cy, delay, function()
+                play("snd_pick")
+                pcall(gui.delete_node, c)
+                landed = landed + 1
+                ensure_pot(self, cx, cy, d.amount)
+                if landed >= total then
+                    local seq = self._seq
+                    timer.delay(0.35, false, function() if seq == self._seq then done() end end)
+                end
+            end)
+        end
+    end
+end
+
+HANDLERS.coin_pot_to = function(self, d, done)
+    if self.pot then
+        local x, y = d.x or self.pot.x, d.y or self.pot.y
+        for _, n in ipairs({ self.pot.glow, self.pot.bundle }) do
+            gui.animate(n, "position", v3(x, y), gui.EASING_INOUTSINE, 0.5)
+        end
+        gui.animate(self.pot.label, "position", v3(x, y - 78), gui.EASING_INOUTSINE, 0.5)
+        self.pot.x, self.pot.y = x, y
+    end
+    local seq = self._seq
+    timer.delay(0.5, false, function() if seq == self._seq then done() end end)
+end
+
+HANDLERS.coin_settle = function(self, d, done)
+    local tx = (d.to and d.to.x) or LOGICAL_W - 120
+    local ty = (d.to and d.to.y) or LOGICAL_H - 60
+    local px = self.pot and self.pot.x or LOGICAL_W / 2
+    local py = self.pot and self.pot.y or LOGICAL_H / 2
+    local amount = (self.pot and self.pot.amount) or d.amount or 0
+    clear_pot(self)
+    local n = math.min(14, math.max(6, math.floor(amount / 80)))
+    local landed = 0
+    for i = 1, n do
+        local c = track(self, new_coin(px + rnd(-30, 30), py + rnd(-24, 24), "spin_horizontal"))
+        fly(self, c, px, py, tx, ty, (i - 1) * 0.05, function()
+            play("snd_pick")
+            -- icon zoom/pulse on impact at the HUD
+            gui.set_scale(c, vmath.vector3(1.3, 1.3, 1))
+            gui.animate(c, "scale", vmath.vector3(0.1, 0.1, 1), gui.EASING_INSINE, 0.18, 0, function() pcall(gui.delete_node, c) end)
+            landed = landed + 1
+            if landed == 1 then add_counter(self, tx, ty - 40, 0, amount, n * 0.05 + 0.4, d.win and vmath.vector4(0.2, 1, 0.4, 1) or GOLD, "+") end
+        end)
+    end
+    local seq = self._seq
+    timer.delay(n * 0.05 + 1.0, false, function() if seq == self._seq then done() end end)
+end
+
+HANDLERS.coin_delta = function(self, d, done)
+    local fx = (d.from and d.from.x) or LOGICAL_W / 2
+    local fy = (d.from and d.from.y) or LOGICAL_H / 2
+    local tx = (d.to and d.to.x) or LOGICAL_W - 120
+    local ty = (d.to and d.to.y) or LOGICAL_H - 60
+    local amount = tonumber(d.amount) or 0
+    local n = math.min(10, math.max(3, math.floor(math.abs(amount) / 60)))
+    for i = 1, n do
+        local c = track(self, new_coin(fx + rnd(-16, 16), fy + rnd(-12, 12), "spin_horizontal"))
+        fly(self, c, fx, fy, tx, ty, (i - 1) * 0.05, function()
+            play("snd_pick")
+            gui.set_scale(c, vmath.vector3(1.25, 1.25, 1))
+            gui.animate(c, "scale", vmath.vector3(0.1, 0.1, 1), gui.EASING_INSINE, 0.16, 0, function() pcall(gui.delete_node, c) end)
+        end)
+    end
+    add_counter(self, tx, ty - 36, 0, math.abs(amount), n * 0.05 + 0.4, (d.sign == "-") and vmath.vector4(1, 0.4, 0.4, 1) or GOLD, d.sign or "+")
+    local seq = self._seq
+    timer.delay(n * 0.05 + 0.9, false, function() if seq == self._seq then done() end end)
+end
+
+HANDLERS.coin_clear = function(self, d, done)
+    clear_pot(self)
+    for _, n in ipairs(self.fx) do pcall(gui.delete_node, n) end
+    self.fx = {}
+    done()
+end
+
+-- ── serialized queue runner ──────────────────────────────────────────────────
+local function run_next(self)
+    if #self.queue == 0 then self.running = false; return end
+    self.running = true
+    local item = table.remove(self.queue, 1)
+    local h = HANDLERS[item.kind]
+    if not h then self.running = false; return run_next(self) end
+    local fired = false
+    h(self, item.data, function()
+        if fired then return end
+        fired = true
+        self.running = false
+        run_next(self)
+    end)
+end
+
+local function enqueue(self, kind, data)
+    self.queue[#self.queue + 1] = { kind = kind, data = data or {} }
+    if not self.running then run_next(self) end
+end
+
+----------------------------------------------------------------------
+function init(self)
+    gui.set_render_order(16)
+    self.queue, self.fx, self.counters = {}, {}, {}
+    self.running = false
+    self.pot = nil
+    self._seq = 0
+end
+
+function update(self, dt)
+    if #self.counters == 0 then return end
+    for i = #self.counters, 1, -1 do
+        local c = self.counters[i]
+        c.t = c.t + dt
+        local k = math.min(1, c.t / c.dur)
+        local val = math.floor(c.from + (c.to - c.from) * k)
+        gui.set_text(c.lbl, (c.sign or "") .. tostring(val))
+        if k >= 1 then
+            -- pop + fade the settled number, then drop it
+            gui.animate(c.lbl, "color.w", 0, gui.EASING_INSINE, 0.5, 0.4, function() pcall(gui.delete_node, c.lbl) end)
+            table.remove(self.counters, i)
+        end
+    end
+end
+
+function on_message(self, message_id, message)
+    if message_id == hash("coin_collect_pot") then
+        enqueue(self, "coin_collect_pot", message)
+    elseif message_id == hash("coin_pot_to") then
+        enqueue(self, "coin_pot_to", message)
+    elseif message_id == hash("coin_settle") then
+        enqueue(self, "coin_settle", message)
+    elseif message_id == hash("coin_delta") then
+        enqueue(self, "coin_delta", message)
+    elseif message_id == hash("coin_clear") then
+        -- a clear jumps the queue: wipe everything immediately
+        self.queue = {}
+        self.running = false
+        self._seq = self._seq + 1
+        clear_pot(self)
+        for _, n in ipairs(self.fx) do pcall(gui.delete_node, n) end
+        self.fx = {}
+        for _, c in ipairs(self.counters) do pcall(gui.delete_node, c.lbl) end
+        self.counters = {}
+    end
+end

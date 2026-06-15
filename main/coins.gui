@@ -1,0 +1,26 @@
+script: "/main/coins.gui_script"
+fonts {
+  name: "title"
+  font: "/fonts/title.font"
+}
+fonts {
+  name: "body"
+  font: "/fonts/body.font"
+}
+fonts {
+  name: "helvetica_bold"
+  font: "/fonts/helvetica_bold.font"
+}
+textures {
+  name: "coins"
+  texture: "/assets/coins.atlas"
+}
+background_color {
+  x: 0.0
+  y: 0.0
+  z: 0.0
+  w: 0.0
+}
+material: "/builtins/materials/gui.material"
+adjust_reference: ADJUST_REFERENCE_PARENT
+max_nodes: 256

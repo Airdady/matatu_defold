@@ -98,8 +98,20 @@ function on_message(self, message_id, message)
 
     elseif message_id == hash("update_balance") then
         if message.balance and self.p_balance then
+            local newb = tonumber(message.balance) or 0
+            local oldb = self._coin_last_bal
+            self._coin_last_bal = newb
             gui.set_text(self.p_balance, "Bal: " .. tostring(message.balance))
             gui.set_enabled(self.p_balance, true)
+            -- Server-delta driven: on a balance GAIN, coins fly to the balance
+            -- HUD with number-tween + icon pulse + sound (handled by #coins).
+            if oldb and newb > oldb then
+                pcall(msg.post, "#coins", "coin_delta", {
+                    from = { x = 640, y = 360 },
+                    to   = { x = 160, y = 56 },
+                    amount = newb - oldb, sign = "+",
+                })
+            end
         end
 
     elseif message_id == hash("update_scoreboard") then
