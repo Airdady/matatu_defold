@@ -89,11 +89,13 @@ local function draw_invite_search(self, ctx)
     track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W * 2, ctx.LOGICAL_H * 2, 0), vmath.vector4(0, 0, 0, 0.78)))
     track(self, ui.grad_backdrop(ctx.LOGICAL_W, ctx.LOGICAL_H))
 
-    local title = sr.found and "OPPONENT FOUND!" or "SEARCHING FOR OPPONENT"
-    local t_col = sr.found and vmath.vector4(0.15, 0.85, 0.35, 1) or ctx.C.COL_WHITE
+    local title = sr.found and "OPPONENT FOUND!" or (sr.failed and "NO OPPONENT FOUND" or "SEARCHING FOR OPPONENT")
+    local t_col = sr.found and vmath.vector4(0.15, 0.85, 0.35, 1) or (sr.failed and ctx.C.COL_GOLD or ctx.C.COL_WHITE)
     track(self, ui.text(vmath.vector3(CX, CY + 130, 0), title, "title", t_col))
-    
-    if not sr.found then
+
+    if sr.failed then
+        track(self, ui.text(vmath.vector3(CX, CY + 96, 0), sr.fail_msg or "No one accepted your invite", "small", ctx.C.COL_DIM))
+    elseif not sr.found then
         local dots = string.rep(".", 1 + (math.floor((sr.t or 0) * 2) % 3))
         track(self, ui.text(vmath.vector3(CX, CY + 96, 0), "inviting a player to your battle" .. dots, "small", ctx.C.COL_DIM))
     else
@@ -108,11 +110,18 @@ local function draw_invite_search(self, ctx)
     track(self, ui.text(vmath.vector3(ax, ay - 86, 0), "YOU", "body", ctx.C.COL_GOLD))
     track(self, ui.text(vmath.vector3(CX, ay, 0), "VS", "title", vmath.vector4(1, 0.4, 0.4, 1)))
 
-    local frame_col = sr.found and vmath.vector4(0.15, 0.85, 0.35, 1) or vmath.vector4(0.25, 0.25, 0.30, 1)
+    local frame_col = sr.found and vmath.vector4(0.15, 0.85, 0.35, 1)
+        or (sr.failed and vmath.vector4(0.85, 0.25, 0.25, 1) or vmath.vector4(0.25, 0.25, 0.30, 1))
     local frame = track(self, ui.box(vmath.vector3(bx, ay, 0), vmath.vector3(124, 124, 0), frame_col))
     local reel  = track(self, ui.avatar(vmath.vector3(bx, ay, 0), vmath.vector3(108, 108, 0), sr.reel_ix or 1))
     self.invite_reel_node = reel
-    local who = sr.found and (sr.opp_name or "PLAYER") or "? ? ?"
+    if sr.failed then
+        -- Freeze + dim the slot: drop the reel-node handle so the online update
+        -- loop stops cycling avatars into this (now failed) slot.
+        gui.set_color(reel, vmath.vector4(0.55, 0.55, 0.55, 1))
+        self.invite_reel_node = nil
+    end
+    local who = sr.found and (sr.opp_name or "PLAYER") or (sr.failed and "—" or "? ? ?")
     track(self, ui.text(vmath.vector3(bx, ay - 86, 0), who, "body", sr.found and ctx.C.COL_WHITE or ctx.C.COL_DIM))
 
     if sr.found then
@@ -120,6 +129,19 @@ local function draw_invite_search(self, ctx)
         gui.animate(frame, "scale", vmath.vector3(1.12, 1.12, 1), gui.EASING_OUTBACK, 0.35, 0, function()
             pcall(gui.animate, frame, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTSINE, 0.18)
         end)
+    elseif sr.failed then
+        -- "no opponent" transition: the empty slot shakes and fades back, signalling
+        -- the miss before the overlay closes. Run the shake only on the first failed
+        -- rebuild so the periodic redraw underneath doesn't restart it each frame.
+        if not sr.failed_anim then
+            sr.failed_anim = true
+            gui.animate(frame, "position.x", bx + 10, gui.EASING_OUTSINE, 0.06, 0, function()
+                pcall(gui.animate, frame, "position.x", bx - 8, gui.EASING_INOUTSINE, 0.08, 0, function()
+                    pcall(gui.animate, frame, "position.x", bx, gui.EASING_OUTSINE, 0.06)
+                end)
+            end, gui.PLAYBACK_ONCE_FORWARD)
+        end
+        gui.set_color(frame, vmath.vector4(0.85, 0.25, 0.25, 0.6))
     else
         -- Native, fully smooth animated timer
         local time_left = math.max(0, 10 - (sr.t or 0))
@@ -418,14 +440,43 @@ function M.start_invite_search(self, app_state, rebuild_cb)
         rules        = "JOKERS",
     })
 
-    -- Add a 10-second auto-timeout
+    -- Add a 10-second auto-timeout. Instead of closing abruptly, show a clear
+    -- "NO OPPONENT FOUND" state, play the fail sound, then close after a short beat.
     self.invite_search.timer_handle = timer.delay(10, false, function()
         if self.invite_search and not self.invite_search.found then
-            M.stop_invite_search(self, app_state, rebuild_cb)
+            M.fail_invite_search(self, app_state, rebuild_cb, "No one accepted your invite")
         end
     end)
 
     rebuild_cb()
+end
+
+-- Transition the invite overlay into the "no opponent found" state: render the
+-- NO OPPONENT FOUND message + miss transition, play a playful fail sound, then
+-- close after ~1.5s (instead of the overlay just snapping shut).
+function M.fail_invite_search(self, app_state, rebuild_cb, reason)
+    local sr = self.invite_search
+    if not sr or sr.found or sr.failed then return end
+
+    -- Cancel the auto-timeout so it can't fire again on top of this.
+    if sr.timer_handle then pcall(timer.cancel, sr.timer_handle); sr.timer_handle = nil end
+
+    sr.failed   = true
+    sr.fail_msg = reason or "No one accepted your invite"
+    app_state.searching_invite = false
+
+    -- Stop the looping search cue and play a playful fail sting on the controller.
+    pcall(msg.post, "#snd_suspense", "stop_sound")
+    pcall(msg.post, "#snd_fail", "play_sound")
+
+    rebuild_cb()
+
+    -- Close after a short beat so the player reads the message + sees the transition.
+    timer.delay(1.5, false, function()
+        if self.invite_search == sr then
+            M.stop_invite_search(self, app_state, rebuild_cb)
+        end
+    end)
 end
 
 function M.stop_invite_search(self, app_state, rebuild_cb)

@@ -55,10 +55,8 @@ function M.build(self, logical_w, logical_h)
     gui.set_parent(lbl, self.skip_btn)
     gui.set_enabled(self.skip_btn, false)
 
-    -- Stake Chip
-    self.stake_chip = box(vmath.vector3(340, logical_h/2, 0), vmath.vector3(170, 170, 0), C_WHITE, gui.PIVOT_CENTER)
-    gui.set_xanchor(self.stake_chip, gui.ANCHOR_LEFT); gui.set_yanchor(self.stake_chip, gui.ANCHOR_NONE)
-    gui.set_enabled(self.stake_chip, false)
+    -- (The stake is now shown entirely by the live coin bundle/pot overlay
+    --  in #coins — the old static stake chip has been removed.)
 
     -- Standings
     local st_y, st_x = logical_h - EXIT_BTN_MARGIN_TOP - EXIT_BTN_SIZE - 20, logical_w - EXIT_BTN_MARGIN_RIGHT
@@ -205,27 +203,6 @@ function M.update_standings(self, ranks)
     end
 end
 
-function M.update_stake(self, amount)
-    amount = tonumber(amount) or 0
-    if not self.stake_chip then return end
-    -- The live coin pot has taken over the stake display at this spot.
-    if self._pot_stake then gui.set_enabled(self.stake_chip, false); return end
-    if amount < 200 then
-        gui.set_enabled(self.stake_chip, false)
-    else
-        local img = "stake_200"
-        if amount >= 10000 then img = "stake_10000"
-        elseif amount >= 5000  then img = "stake_5000"
-        elseif amount >= 2000  then img = "stake_2000"
-        elseif amount >= 1000  then img = "stake_1000"
-        elseif amount >= 500   then img = "stake_500" end
-        local ok = pcall(function()
-            gui.set_texture(self.stake_chip, "ui")
-            gui.play_flipbook(self.stake_chip, hash(img))
-        end)
-        gui.set_enabled(self.stake_chip, ok)
-    end
-end
 
 function M.set_conn_overlay(self, opts)
     if not self.conn_scrim then return end
@@ -290,7 +267,6 @@ function M.reset(self)
     M.set_conn_overlay(self, { show = false })
     M.hide_ai_notices(self)
     if self.exit_popover then gui.set_enabled(self.exit_popover, false) end
-    if self.stake_chip then gui.set_enabled(self.stake_chip, false) end
     if self.standings_title then gui.set_enabled(self.standings_title, false) end
     for _, row in ipairs(self.standings_rows or {}) do gui.set_enabled(row.bg, false) end
 end

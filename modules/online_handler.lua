@@ -691,7 +691,6 @@ function M.start_game(self, state)
     self.active_penalty = state.activePenaltyCount or 0
     self.chosen_suit    = state.chosenSuit or ""
 
-    if state.stake then msg.post(GUI_HUD, "update_stake", { amount = state.stake }) end
     if state.rank then msg.post(GUI_HUD, "update_standings", { ranks = M.slim_ranks(state.rank) }) end
 
     local my_pub = M.public_player_info(mp)

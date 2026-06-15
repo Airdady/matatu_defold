@@ -268,6 +268,24 @@ function on_message(self, message_id, message, sender)
 			self.resend, self._resend_acc = 30, 0
 		elseif s == "idle" then
 			self._otp_phase = false
+		elseif s == "done" then
+			-- Auth succeeded (OTP verify OR an auto-login / already-authenticated
+			-- DEVICE_BOUND response). The controller's route_after_auth only
+			-- redirects on its own to game/profile/explicit-online and otherwise
+			-- falls through, leaving a returning user with a complete profile
+			-- stuck here. Hand routing back to the controller via play_online:
+			-- it re-runs the full routing (deferring to game/profile first) and,
+			-- since we're already identified, reaches the online lobby — covering
+			-- both the socket-connected and connection-still-pending cases.
+			self._otp_phase = false
+			app_state.auth_state = "idle"
+			if self._active then
+				clear(self)
+				self._active = false
+				msg.post(".", "release_input_focus")
+				msg.post("#controller", "play_online")
+			end
+			return
 		end
 		if self._active then rebuild(self) end
 	end
