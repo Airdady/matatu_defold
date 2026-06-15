@@ -614,6 +614,14 @@ function on_message(self, message_id, message)
 
         if message.my_id then self.my_id = tostring(message.my_id) end
 
+        -- Resolve the stake pot: burst the coins to the winner's avatar on this
+        -- screen with incremental counting (the pot entity is then cleared by
+        -- #coins). Routed by the final server-confirmed result.
+        pcall(msg.post, "#coins", "coin_settle", {
+            to  = is_victory and { x = 460, y = 370 } or { x = 820, y = 370 },
+            win = is_victory,
+        })
+
         if self.avatars_ok then
             pcall(function() gui.play_flipbook(self.n_you_av, hash("avatar_" .. tostring(self.my_avatar))) end)
             pcall(function() gui.play_flipbook(self.n_opp_av, hash("avatar_" .. tostring(self.opp_avatar))) end)
