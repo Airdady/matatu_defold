@@ -120,38 +120,40 @@ end
 -- game (see on_input's compact branch).
 local function draw_toast(self, d, a)
     local m = screen.metrics()
-    local TW, TH = 300, 74
+    local TW, TH = 340, 120
     local margin = 16
-    -- Anchor top-right, dropped a little below the very top so the toast clears
-    -- the screen's exit button. Use the real visible edges (m.R / m.T) so it
-    -- hugs the physical corner on any aspect ratio.
+    -- Anchor top-right, dropped below the very top so the toast clears the
+    -- screen's exit button. Real visible edges (m.R / m.T) hug the corner.
     local cx = m.R - margin - TW / 2
-    local cy = m.T - 70 - TH / 2
+    local cy = m.T - 78 - TH / 2
+    local top = cy + TH / 2
 
     -- Panel background.
     track(self, ui.panel9(vmath.vector3(cx, cy, 0), vmath.vector3(TW, TH, 0), "container_bg"))
 
-    -- Opponent avatar on the left.
-    local av_size = 48
-    local av_x = cx - TW / 2 + 8 + av_size / 2
-    track(self, ui.pie(vmath.vector3(av_x, cy, 0), av_size / 2 + 4, with_a(DLG_AV_BG, a)))
-    gui.set_color(track(self, ui.avatar(vmath.vector3(av_x, cy, 0), vmath.vector3(av_size, av_size, 0), d.avatar or 1)), with_a(COL_WHITE, a))
+    -- Opponent avatar + name on the top row.
+    local av_size = 46
+    local av_y = top - 14 - av_size / 2
+    local av_x = cx - TW / 2 + 12 + av_size / 2
+    track(self, ui.pie(vmath.vector3(av_x, av_y, 0), av_size / 2 + 4, with_a(DLG_AV_BG, a)))
+    gui.set_color(track(self, ui.avatar(vmath.vector3(av_x, av_y, 0), vmath.vector3(av_size, av_size, 0), d.avatar or 1)), with_a(COL_WHITE, a))
 
     -- Buttons (small ✓ / ✗) pinned to the right edge.
-    local btn = 30
-    local acc_x = cx + TW / 2 - 8 - btn / 2
-    local dec_x = acc_x - btn - 8
-    mkbtn(self, "accept",  vmath.vector3(acc_x, cy, 0), vmath.vector3(btn, btn, 0), "✓", "secondary_btn", nil, "small", with_a(COL_WHITE, a))
-    mkbtn(self, "decline", vmath.vector3(dec_x, cy, 0), vmath.vector3(btn, btn, 0), "✗", "primary_btn",   nil, "small", with_a(COL_WHITE, a))
+    local bw, bh = (TW - 36) / 2, 40
+    local by = cy - TH / 2 + bh / 2 + 12
+    local dec_x = cx - bw / 2 - 6
+    local acc_x = cx + bw / 2 + 6
+    mkbtn(self, "decline", vmath.vector3(dec_x, by, 0), vmath.vector3(bw, bh, 0), "DECLINE", "primary_btn",   nil, "small", with_a(COL_WHITE, a))
+    mkbtn(self, "accept",  vmath.vector3(acc_x, by, 0), vmath.vector3(bw, bh, 0), "ACCEPT",  "secondary_btn", nil, "small", with_a(COL_WHITE, a))
 
     -- Text block between the avatar and the buttons.
     local txt_left = av_x + av_size / 2 + 8
     local name     = tostring(d.name or "Player")
     if #name > 14 then name = name:sub(1, 13) .. "…" end
-    local t1 = track(self, ui.text(vmath.vector3(txt_left, cy + 14, 0), name, "body", with_a(COL_WHITE, a)))
+    local t1 = track(self, ui.text(vmath.vector3(txt_left, av_y + 11, 0), name, "body", with_a(COL_WHITE, a)))
     gui.set_pivot(t1, gui.PIVOT_W)
     pcall(gui.set_scale, t1, vmath.vector3(0.85, 0.85, 1))
-    local t2 = track(self, ui.text(vmath.vector3(txt_left, cy - 10, 0), "wants to play online", "small", with_a(COL_CYAN, a)))
+    local t2 = track(self, ui.text(vmath.vector3(txt_left, av_y - 12, 0), "wants to play online", "small", with_a(COL_CYAN, a)))
     gui.set_pivot(t2, gui.PIVOT_W)
 
     -- Slim countdown bar along the bottom edge of the toast.
@@ -266,9 +268,11 @@ function on_message(self, message_id, message)
         -- brief overlap there is acceptable and far better than a missed invite.
         local r   = ws.last_game_request or {}
         local raw = (ws.last_game_request or {}).raw or {}
-        -- Mid-game → small, non-disruptive top-right toast (no sound). Anywhere
-        -- else → the regular full-screen challenge dialog.
-        local compact = app_state.current_screen == "game"
+        -- The small non-disruptive toast is used ONLY while the user is in an
+        -- ACTIVE OFFLINE game (offline / tournament4 / chamber4) — online players
+        -- are marked busy server-side and won't get requests mid-match. Anywhere
+        -- else (lobby, online list) shows the regular full-screen dialog.
+        local compact = (app_state.current_screen == "game") and (app_state.mode ~= "online")
         open_dialog(self,
             (r.user or {}).username or "A player",
             r.stake or {},

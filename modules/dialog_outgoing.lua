@@ -48,12 +48,17 @@ function M.draw(self, ctx, d, a)
     track(self, ui.text(vmath.vector3(me_x, av_y - av_size/2 - 18, 0), "YOU", "body", with_a(ctx.DLG_SEARCH, a)))
     track(self, ui.text(vmath.vector3(me_x, av_y - av_size/2 - 40, 0), "Bal: "..commas(u.balance or 0), "small", with_a(C.COL_GOLD, a)))
 
-    track(self, ui.text(vmath.vector3(CX, av_y + 36, 0), "VS", "title", with_a(ctx.DLG_RED, a)))
-    
-    local amt    = tonumber((d.stake or {}).amount) or 0
-    local st_txt = amt == 0 and "Practice Game" or (commas(amt).." Coins")
-    track(self, ui.text(vmath.vector3(CX, av_y + 6, 0), st_txt, "small", with_a(C.COL_DIM, a)))
-    dlg_timer(self, CX, av_y - 36, d.time_left, d.max_time, a)
+    track(self, ui.text(vmath.vector3(CX, av_y + 46, 0), "VS", "title", with_a(ctx.DLG_RED, a)))
+
+    local amt = tonumber((d.stake or {}).amount) or 0
+    -- Coin bundle: the pot that forms on accept (the magic starts on the dialog).
+    if amt > 0 then
+        local bundle = track(self, ui.box(vmath.vector3(CX, av_y + 12, 0), vmath.vector3(54, 54, 0), with_a(vmath.vector4(1, 1, 1, 1), a)))
+        pcall(function() gui.set_texture(bundle, "coins"); gui.play_flipbook(bundle, hash("bundle_stack_multi")) end)
+    end
+    local st_txt = amt == 0 and "Practice Game" or (commas(amt * 2) .. " Coin Pot")
+    track(self, ui.text(vmath.vector3(CX, av_y - 24, 0), st_txt, "small", with_a(C.COL_DIM, a)))
+    dlg_timer(self, CX, av_y - 46, d.time_left, d.max_time, a)
 
     track(self, ui.text(vmath.vector3(CX, CY - 80, 0), "Waiting for player to accept...", "small", with_a(C.COL_MID, a)))
 

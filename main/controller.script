@@ -182,7 +182,10 @@ function init(self)
         })
         -- then settle the pot just above the discard pile so it stays visible
         -- on the table without covering play.
-        pcall(msg.post, "#coins", "coin_pot_to", { x = 640, y = 560 })
+        pcall(msg.post, "#coins", "coin_pot_to", { x = 340, y = 360 })
+        -- The live pot now IS the stake display at the chip's old spot; hide the
+        -- static stake chip so the bundle coins replace it.
+        pcall(msg.post, "#game", "hide_stake_chip")
     end))
 
     local function broadcast(evt)
