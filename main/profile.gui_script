@@ -121,16 +121,16 @@ local function rebuild(self)
     local ok, msg_txt = validate(self.username)
 
     -- Top bar — gold title, flat gold SAVE, bordered BACK. (Title text made gold color)
-    track(self, ui.text(vmath.vector3(CX, EDGE_T - 40, 0), "COMPLETE YOUR PROFILE", "poppins_black", P_GOLD))
+    track(self, ui.text(vmath.vector3(CX, EDGE_T - 40, 0), "COMPLETE YOUR PROFILE", "subtitle1", P_GOLD))
     if ok then
         framed(self, EDGE_L + 90, EDGE_T - 40, 140, 44, P_BORDER, 1, P_PANEL)
         local back_btn = track(self, ui.box(vmath.vector3(EDGE_L + 90, EDGE_T - 40, 0), vmath.vector3(140, 44, 0), vmath.vector4(0,0,0,0.001)))
-        track(self, ui.text(vmath.vector3(EDGE_L + 90, EDGE_T - 40, 0), "< BACK", "poppins_bold", P_CREAM_DIM))
+        track(self, ui.text(vmath.vector3(EDGE_L + 90, EDGE_T - 40, 0), "< BACK", "subtitle2", P_CREAM_DIM))
         self.buttons[#self.buttons+1] = { node = back_btn, id = "back" }
     end
     local save_btn = track(self, ui.box(vmath.vector3(EDGE_R - 110, EDGE_T - 40, 0), vmath.vector3(170, 48, 0),
         (ok and not self._saving) and P_GOLD or P_BADGE_BG))
-    track(self, ui.text(vmath.vector3(EDGE_R - 110, EDGE_T - 40, 0), self._saving and "SAVING..." or "SAVE", "poppins_bold",
+    track(self, ui.text(vmath.vector3(EDGE_R - 110, EDGE_T - 40, 0), self._saving and "SAVING..." or "SAVE", "subtitle2",
         (ok and not self._saving) and P_DARK_TXT or P_MUTED))
     self.buttons[#self.buttons+1] = { node = save_btn, id = "save" }
 
@@ -164,13 +164,13 @@ local function rebuild(self)
     local start_x = lx - line_w / 2
 
     -- Prefix label (inline left)
-    local prefix = txtL(self, start_x + 10, input_y, "USERNAME:", "poppins_bold", P_MUTED)
+    local prefix = txtL(self, start_x + 10, input_y, "USERNAME:", "subtitle2", P_MUTED)
     gui.set_scale(prefix, vmath.vector3(0.55, 0.55, 1))
 
     -- Main input value (increased horizontal gap from prefix to avoid congestion)
     local shown = (self.username ~= "") and self.username or "Type here..."
     local val_color = (self.username ~= "") and P_CREAM or P_MUTED
-    local val = txtL(self, start_x + 150, input_y, shown, "poppins", val_color)
+    local val = txtL(self, start_x + 150, input_y, shown, "body", val_color)
     gui.set_scale(val, vmath.vector3(0.85, 0.85, 1))
 
     -- Material bottom border line
@@ -178,13 +178,13 @@ local function rebuild(self)
     track(self, ui.box(vmath.vector3(lx, input_y - 18, 0), vmath.vector3(line_w, 2, 0), line_color))
 
     -- Tiny Status Text perfectly tucked below the bottom line
-    local status_lbl = txtL(self, start_x + 10, input_y - 34, ok and "Looks good!" or msg_txt, "poppins", ok and P_SUCCESS or P_ERROR)
+    local status_lbl = txtL(self, start_x + 10, input_y - 34, ok and "Looks good!" or msg_txt, "body", ok and P_SUCCESS or P_ERROR)
     gui.set_scale(status_lbl, vmath.vector3(0.40, 0.40, 1))
 
     -- Draw the keyboard
     local function key(px, py, w, ch, label)
         framed(self, px, py, w, kh, P_BORDER, 1, P_BADGE_BG)
-        track(self, ui.text(vmath.vector3(px, py, 0), label or ch, "poppins_bold", P_CREAM))
+        track(self, ui.text(vmath.vector3(px, py, 0), label or ch, "subtitle2", P_CREAM))
         local hit = track(self, ui.box(vmath.vector3(px, py, 0), vmath.vector3(w, kh, 0), vmath.vector4(0, 0, 0, 0.001)))
         self.buttons[#self.buttons+1] = { node = hit, id = "k_"..ch, data = (ch ~= "back") and ch or nil }
     end
@@ -224,7 +224,7 @@ local function rebuild(self)
 
     -- Scaled down and repositioned downwards to prevent clipping into the divider
     local sel_lbl = track(self, ui.text(vmath.vector3(rx, EDGE_T - 130, 0),
-        "SELECT AVATAR   ("..self.avatar.." / "..AVATARS..")", "poppins_bold", P_MUTED))
+        "SELECT AVATAR   ("..self.avatar.." / "..AVATARS..")", "subtitle2", P_MUTED))
     gui.set_scale(sel_lbl, vmath.vector3(0.45, 0.45, 1))
         
     for i = 1, AVATARS do

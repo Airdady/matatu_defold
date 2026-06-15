@@ -26,7 +26,7 @@ end
 local function label(pos, text, size, color, align, font_name)
     local n = gui.new_text_node(pos, text)
     gui.set_font(n, font_name or "body")
-    local base_size = (font_name == "poppins_bold" or font_name == "title" or font_name == "helvetica_bold") and 36 or 24
+    local base_size = (font_name == "subtitle2" or font_name == "title" or font_name == "helvetica_bold") and 36 or 24
     gui.set_scale(n, vmath.vector3(size / base_size, size / base_size, 1.0))
     gui.set_color(n, color or C_WHITE)
     gui.set_pivot(n, align or gui.PIVOT_CENTER)
@@ -35,7 +35,7 @@ end
 
 local function poppins(pos, text, px, color, bold, align)
     local n = gui.new_text_node(pos, text)
-    gui.set_font(n, bold and "poppins_bold" or "poppins")
+    gui.set_font(n, bold and "subtitle2" or "body")
     local base = bold and 34 or 28
     gui.set_scale(n, vmath.vector3(px / base, px / base, 1.0))
     gui.set_color(n, color or C_WHITE)
@@ -89,7 +89,7 @@ function M.build(self, logical_w, logical_h)
 
     self.exit_popover = box(vmath.vector3(logical_w - EXIT_BTN_MARGIN_RIGHT, logical_h - EXIT_BTN_MARGIN_TOP - EXIT_BTN_SIZE + EXIT_POPOVER_OFFSET_Y, 0), vmath.vector3(EXIT_POPOVER_WIDTH, EXIT_POPOVER_HEIGHT, 0), C_PANEL, gui.PIVOT_NE)
     gui.set_xanchor(self.exit_popover, gui.ANCHOR_RIGHT); gui.set_yanchor(self.exit_popover, gui.ANCHOR_TOP)
-    local ext_title = label(vmath.vector3(-EXIT_POPOVER_WIDTH/2, -30, 0), "Exit Game?", 16, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
+    local ext_title = label(vmath.vector3(-EXIT_POPOVER_WIDTH/2, -30, 0), "Exit Game?", 16, C_WHITE, gui.PIVOT_CENTER, "subtitle2")
     gui.set_parent(ext_title, self.exit_popover)
     
     self.btn_yes = box(vmath.vector3(-EXIT_POPOVER_WIDTH/2 - 45, -80, 0), vmath.vector3(80, 40, 0), C_PANEL_BORDER, gui.PIVOT_CENTER)
@@ -106,9 +106,9 @@ function M.build(self, logical_w, logical_h)
     gui.set_adjust_mode(self.conn_scrim, gui.ADJUST_STRETCH)
     self.conn_panel = box(vmath.vector3(0, 0, 0), vmath.vector3(460, 190, 0), vmath.vector4(0.07, 0.08, 0.11, 0.98), gui.PIVOT_CENTER)
     gui.set_parent(self.conn_panel, self.conn_scrim)
-    self.conn_title = label(vmath.vector3(0, 48, 0), "RECONNECTING", 24, vmath.vector4(0.0, 0.722, 0.831, 1.0), gui.PIVOT_CENTER, "poppins_bold")
+    self.conn_title = label(vmath.vector3(0, 48, 0), "RECONNECTING", 24, vmath.vector4(0.0, 0.722, 0.831, 1.0), gui.PIVOT_CENTER, "subtitle2")
     gui.set_parent(self.conn_title, self.conn_panel)
-    self.conn_sub = label(vmath.vector3(0, 8, 0), "", 16, vmath.vector4(0.70, 0.74, 0.80, 1.0), gui.PIVOT_CENTER, "poppins")
+    self.conn_sub = label(vmath.vector3(0, 8, 0), "", 16, vmath.vector4(0.70, 0.74, 0.80, 1.0), gui.PIVOT_CENTER, "body")
     gui.set_parent(self.conn_sub, self.conn_panel)
     self.conn_count = label(vmath.vector3(0, -44, 0), "", 34, C_WHITE, gui.PIVOT_CENTER, "helvetica_bold")
     gui.set_parent(self.conn_count, self.conn_panel)
