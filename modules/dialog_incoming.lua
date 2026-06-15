@@ -13,7 +13,6 @@ function M.draw(self, ctx, d, a)
     local commas       = ctx.commas
     local with_a       = ctx.with_a
     local dlg_avatar   = ctx.dlg_avatar
-    local dlg_timer    = ctx.dlg_timer
     local h2h_view     = ctx.h2h_view
     local draw_h2h_row = ctx.draw_h2h_row
 
@@ -33,45 +32,93 @@ function M.draw(self, ctx, d, a)
     local opp_x, me_x = CX - col_gap, CX + col_gap
     local av_y, av_size = CY + 40, 92
 
+    -- Circular timer wrapped around the avatars
+    local function draw_avatar_ring(x, y)
+        local ring_dia = av_size + 16
+        local size = vmath.vector3(ring_dia, ring_dia, 0)
+        local pos = vmath.vector3(x, y, 0)
+        
+        -- Dark background ring
+        local bg = track(self, gui.new_pie_node(pos, size))
+        gui.set_color(bg, with_a(vmath.vector4(0, 0, 0, 0.5), a))
+        gui.set_fill_angle(bg, 360)
+        gui.set_perimeter_vertices(bg, 64)
+        
+        -- Progress filling ring
+        local pct = (d.max_time and d.max_time > 0) and (d.time_left / d.max_time) or 0
+        local timer_col = pct > 0.25 and C.COL_GREEN or C.COL_RED
+        
+        local fg = track(self, gui.new_pie_node(pos, size))
+        gui.set_color(fg, with_a(timer_col, a))
+        gui.set_fill_angle(fg, pct * 360)
+        gui.set_perimeter_vertices(fg, 64)
+        
+        -- Rotate by 90 degrees so the depletion starts perfectly at the top
+        gui.set_rotation(bg, vmath.quat_rotation_z(math.rad(90)))
+        gui.set_rotation(fg, vmath.quat_rotation_z(math.rad(90)))
+    end
+
+    -- Draw timer rings BEFORE avatars so they sit neatly behind as a border
+    draw_avatar_ring(opp_x, av_y)
+    draw_avatar_ring(me_x, av_y)
+
+    -- Avatars
     dlg_avatar(self, opp_x, av_y, av_size, d.avatar or 1, a)
-    track(self, ui.text(vmath.vector3(opp_x, av_y - av_size/2 - 18, 0), (d.name or "PLAYER"):upper(), "body", with_a(C.COL_WHITE, a)))
+    track(self, ui.text(vmath.vector3(opp_x, av_y - av_size/2 - 24, 0), (d.name or "PLAYER"):upper(), "body", with_a(C.COL_WHITE, a)))
     
     local hv = h2h_view(d.h2h)
     if hv and hv.opp_winrate then
         local wr     = math.floor(hv.opp_winrate + 0.5)
         local wr_col = wr >= 60 and C.COL_GREEN or (wr >= 40 and C.COL_GOLD or C.COL_RED)
-        track(self, ui.text(vmath.vector3(opp_x, av_y - av_size/2 - 40, 0), "WR "..wr.."%", "small", with_a(wr_col, a)))
+        track(self, ui.text(vmath.vector3(opp_x, av_y - av_size/2 - 46, 0), "WR "..wr.."%", "small", with_a(wr_col, a)))
     end
 
     local u = ws.current_user_data or {}
     dlg_avatar(self, me_x, av_y, av_size, u.avatar or 1, a)
-    track(self, ui.text(vmath.vector3(me_x, av_y - av_size/2 - 18, 0), "YOU", "body", with_a(ctx.DLG_SEARCH, a)))
-    track(self, ui.text(vmath.vector3(me_x, av_y - av_size/2 - 40, 0), "Bal: "..commas(u.balance or 0), "small", with_a(C.COL_GOLD, a)))
+    track(self, ui.text(vmath.vector3(me_x, av_y - av_size/2 - 24, 0), "YOU", "body", with_a(ctx.DLG_SEARCH, a)))
+    track(self, ui.text(vmath.vector3(me_x, av_y - av_size/2 - 46, 0), "Bal: "..commas(u.balance or 0), "small", with_a(C.COL_GOLD, a)))
 
-    track(self, ui.text(vmath.vector3(CX, av_y + 52, 0), "VS", "title", with_a(ctx.DLG_RED, a)))
+    -- Central VS & Pot Elements
+    track(self, ui.text(vmath.vector3(CX, av_y + 54, 0), "VS", "title", with_a(ctx.DLG_RED, a)))
 
     local amt = tonumber((d.stake or {}).amount) or 0
+    local pot_amt = amt * 2
 
-    -- The stake rendered as a COIN BUNDLE — the same pot art that flows onto the
-    -- table when the request is accepted. This is where the pot story begins.
+    -- Render Dynamic Coin Bundle
     if amt > 0 then
-        local bundle = track(self, ui.box(vmath.vector3(CX, av_y + 16, 0), vmath.vector3(62, 62, 0), with_a(vmath.vector4(1, 1, 1, 1), a)))
-        pcall(function() gui.set_texture(bundle, "coins"); gui.play_flipbook(bundle, hash("bundle_stack_multi")) end)
+        local img = "100"
+        if pot_amt >= 2000 then img = "2000"
+        elseif pot_amt >= 1000 then img = "1000"
+        elseif pot_amt >= 500 then img = "500"
+        elseif pot_amt >= 200 then img = "200"
+        end
+
+        local bundle = track(self, gui.new_box_node(vmath.vector3(CX, av_y + 10, 0), vmath.vector3(60, 60, 0)))
+        gui.set_color(bundle, with_a(vmath.vector4(1, 1, 1, 1), a))
+        pcall(function() gui.set_texture(bundle, "coins"); gui.play_flipbook(bundle, hash(img)) end)
     end
 
-    local st_txt = amt == 0 and "PRACTICE GAME" or (commas(amt * 2) .. " COIN POT")
-    local stake_node = track(self, ui.text(vmath.vector3(CX, av_y - 28, 0), st_txt, "helvetica_black", with_a(C.COL_GOLD, a)))
+    -- Render Bordered Stake Amount
+    local st_txt = amt == 0 and "PRACTICE" or (commas(pot_amt) .. " POT")
+    local border_w, border_h = 130, 32
+    local border_pos = vmath.vector3(CX, av_y - 34, 0)
+    
+    local border_box = track(self, gui.new_box_node(border_pos, vmath.vector3(border_w + 4, border_h + 4, 0)))
+    gui.set_color(border_box, with_a(C.COL_GOLD, a))
+    
+    local inner_box = track(self, gui.new_box_node(border_pos, vmath.vector3(border_w, border_h, 0)))
+    gui.set_color(inner_box, with_a(vmath.vector4(0.08, 0.08, 0.1, 1), a))
+    
+    local stake_node = track(self, ui.text(border_pos, st_txt, "helvetica_black", with_a(C.COL_GOLD, a)))
     gui.set_scale(stake_node, vmath.vector3(0.85, 0.85, 0.85))
 
-    dlg_timer(self, CX, av_y - 52, d.time_left, d.max_time, a)
+    -- Additional Status Info
+    track(self, ui.text(vmath.vector3(CX, CY - 88, 0), "Wants to play!", "small", with_a(C.COL_MID, a)))
 
-    track(self, ui.text(vmath.vector3(CX, CY - 80, 0), "Wants to play!", "small", with_a(C.COL_MID, a)))
+    if hv then draw_h2h_row(self, CX, CY - 114, hv, a) end
 
-    if hv then draw_h2h_row(self, CX, CY - 108, hv, a) end
-
-    -- Swapped the button styles as requested
-    mkbtn(self, "decline", vmath.vector3(CX - 95, CY - 148, 0), vmath.vector3(150, 48, 0), "DECLINE", "primary_btn")
-    mkbtn(self, "accept",  vmath.vector3(CX + 95, CY - 148, 0), vmath.vector3(150, 48, 0), "ACCEPT",  "secondary_btn")
+    mkbtn(self, "decline", vmath.vector3(CX - 95, CY - 156, 0), vmath.vector3(150, 48, 0), "DECLINE", "primary_btn")
+    mkbtn(self, "accept",  vmath.vector3(CX + 95, CY - 156, 0), vmath.vector3(150, 48, 0), "ACCEPT",  "secondary_btn")
 end
 
 return M

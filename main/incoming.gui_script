@@ -262,17 +262,19 @@ end
 
 function on_message(self, message_id, message)
     if message_id == hash("incoming_request") then
-        -- Show the incoming dialog for ALL requests (plain AND tournament/battle)
-        -- so a challenge is never missed regardless of the active screen. The
-        -- online screen keeps its own inline banner for tournament/battle; a
-        -- brief overlap there is acceptable and far better than a missed invite.
         local r   = ws.last_game_request or {}
         local raw = (ws.last_game_request or {}).raw or {}
+        
+        -- FIX: Intercept and drop tournament/battle requests from the global dialog.
+        -- We want these handled strictly by the inline banners in online.gui_script.
+        if type(raw) == "table" and (raw.gameType == "TOURNAMENT" or raw.gameType == "BATTLE" or raw.tournament or raw.tournamentId) then
+            return
+        end
+
         -- The small non-disruptive toast is used ONLY while the user is in an
-        -- ACTIVE OFFLINE game (offline / tournament4 / chamber4) — online players
-        -- are marked busy server-side and won't get requests mid-match. Anywhere
-        -- else (lobby, online list) shows the regular full-screen dialog.
+        -- ACTIVE OFFLINE game (offline / tournament4 / chamber4).
         local compact = (app_state.current_screen == "game") and (app_state.mode ~= "online")
+        
         open_dialog(self,
             (r.user or {}).username or "A player",
             r.stake or {},
@@ -281,6 +283,7 @@ function on_message(self, message_id, message)
             (r.user or {})._id,
             (type(raw) == "table" and raw.headToHead) or nil,
             compact)
+            
     elseif message_id == hash("incoming_clear") then
         -- Clear if the event targets the dialog we're showing (or carries no id).
         local rid = message and message.request_id

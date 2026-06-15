@@ -1,59 +1,63 @@
 images {
-  image: "/assets/images/coins/coin_rx0_ry0.png"
+  image: "/assets/images/coins/100.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/images/coins/bundle_stack_3.png"
+  image: "/assets/images/coins/200.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/images/coins/bundle_stack_4.png"
+  image: "/assets/images/coins/500.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/images/coins/bundle_stack_multi.png"
+  image: "/assets/images/coins/1000.png"
+  sprite_trim_mode: SPRITE_TRIM_MODE_OFF
+}
+images {
+  image: "/assets/images/coins/2000.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 animations {
   id: "spin_horizontal"
   images {
-    image: "/assets/images/coins/coin_rx0_ry0.png"
+    image: "/assets/images/coins/coin_R1_C1_rx0_ry0.png"
     sprite_trim_mode: SPRITE_TRIM_MODE_OFF
   }
   images {
-    image: "/assets/images/coins/coin_rx0_ry36.png"
+    image: "/assets/images/coins/coin_R1_C2_rx0_ry36.png"
     sprite_trim_mode: SPRITE_TRIM_MODE_OFF
   }
   images {
-    image: "/assets/images/coins/coin_rx0_ry72.png"
+    image: "/assets/images/coins/coin_R1_C3_rx0_ry72.png"
     sprite_trim_mode: SPRITE_TRIM_MODE_OFF
   }
   images {
-    image: "/assets/images/coins/coin_rx0_ry108.png"
+    image: "/assets/images/coins/coin_R1_C4_rx0_ry108.png"
     sprite_trim_mode: SPRITE_TRIM_MODE_OFF
   }
   images {
-    image: "/assets/images/coins/coin_rx0_ry144.png"
+    image: "/assets/images/coins/coin_R1_C5_rx0_ry144.png"
     sprite_trim_mode: SPRITE_TRIM_MODE_OFF
   }
   images {
-    image: "/assets/images/coins/coin_rx0_ry180.png"
+    image: "/assets/images/coins/coin_R2_C1_rx0_ry180.png"
     sprite_trim_mode: SPRITE_TRIM_MODE_OFF
   }
   images {
-    image: "/assets/images/coins/coin_rx0_ry216.png"
+    image: "/assets/images/coins/coin_R2_C2_rx0_ry216.png"
     sprite_trim_mode: SPRITE_TRIM_MODE_OFF
   }
   images {
-    image: "/assets/images/coins/coin_rx0_ry252.png"
+    image: "/assets/images/coins/coin_R2_C3_rx0_ry252.png"
     sprite_trim_mode: SPRITE_TRIM_MODE_OFF
   }
   images {
-    image: "/assets/images/coins/coin_rx0_ry288.png"
+    image: "/assets/images/coins/coin_R2_C4_rx0_ry288.png"
     sprite_trim_mode: SPRITE_TRIM_MODE_OFF
   }
   images {
-    image: "/assets/images/coins/coin_rx0_ry324.png"
+    image: "/assets/images/coins/coin_R2_C5_rx0_ry324.png"
     sprite_trim_mode: SPRITE_TRIM_MODE_OFF
   }
   playback: PLAYBACK_LOOP_FORWARD
@@ -64,43 +68,43 @@ animations {
 animations {
   id: "spin_vertical"
   images {
-    image: "/assets/images/coins/coin_rx0_ry0.png"
+    image: "/assets/images/coins/coin_R1_C1_rx0_ry0.png"
     sprite_trim_mode: SPRITE_TRIM_MODE_OFF
   }
   images {
-    image: "/assets/images/coins/coin_rx36_ry0.png"
+    image: "/assets/images/coins/coin_R3_C1_rx36_ry0.png"
     sprite_trim_mode: SPRITE_TRIM_MODE_OFF
   }
   images {
-    image: "/assets/images/coins/coin_rx72_ry0.png"
+    image: "/assets/images/coins/coin_R3_C2_rx72_ry0.png"
     sprite_trim_mode: SPRITE_TRIM_MODE_OFF
   }
   images {
-    image: "/assets/images/coins/coin_rx108_ry0.png"
+    image: "/assets/images/coins/coin_R3_C3_rx108_ry0.png"
     sprite_trim_mode: SPRITE_TRIM_MODE_OFF
   }
   images {
-    image: "/assets/images/coins/coin_rx144_ry0.png"
+    image: "/assets/images/coins/coin_R3_C4_rx144_ry0.png"
     sprite_trim_mode: SPRITE_TRIM_MODE_OFF
   }
   images {
-    image: "/assets/images/coins/coin_rx180_ry0.png"
+    image: "/assets/images/coins/coin_R3_C5_rx180_ry0.png"
     sprite_trim_mode: SPRITE_TRIM_MODE_OFF
   }
   images {
-    image: "/assets/images/coins/coin_rx216_ry0.png"
+    image: "/assets/images/coins/coin_R4_C1_rx216_ry0.png"
     sprite_trim_mode: SPRITE_TRIM_MODE_OFF
   }
   images {
-    image: "/assets/images/coins/coin_rx252_ry0.png"
+    image: "/assets/images/coins/coin_R4_C2_rx252_ry0.png"
     sprite_trim_mode: SPRITE_TRIM_MODE_OFF
   }
   images {
-    image: "/assets/images/coins/coin_rx288_ry0.png"
+    image: "/assets/images/coins/coin_R4_C3_rx288_ry0.png"
     sprite_trim_mode: SPRITE_TRIM_MODE_OFF
   }
   images {
-    image: "/assets/images/coins/coin_rx324_ry0.png"
+    image: "/assets/images/coins/coin_R4_C4_rx324_ry0.png"
     sprite_trim_mode: SPRITE_TRIM_MODE_OFF
   }
   playback: PLAYBACK_LOOP_FORWARD
