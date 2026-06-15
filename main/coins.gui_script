@@ -57,9 +57,17 @@ end
 -- ── the live pot ─────────────────────────────────────────────────────────────
 local function set_pot_bundle(self, amount)
     if not self.pot then return end
-    local img = "bundle_stack_multi"
-    if amount and amount <= 600 then img = "bundle_stack_3"
-    elseif amount and amount <= 1200 then img = "bundle_stack_4" end
+    
+    -- Determine the correct bundle image based on the stake amount
+    local img = "100" 
+    if amount then
+        if amount >= 2000 then img = "2000"
+        elseif amount >= 1000 then img = "1000"
+        elseif amount >= 500 then img = "500"
+        elseif amount >= 200 then img = "200"
+        end
+    end
+    
     pcall(function() gui.set_texture(self.pot.bundle, ATLAS); gui.play_flipbook(self.pot.bundle, hash(img)) end)
 end
 
