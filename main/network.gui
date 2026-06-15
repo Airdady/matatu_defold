@@ -12,12 +12,8 @@ fonts {
   font: "/fonts/caption.font"
 }
 fonts {
-  name: "poppins"
-  font: "/fonts/poppins.font"
-}
-fonts {
-  name: "poppins_bold"
-  font: "/fonts/poppins_bold.font"
+  name: "subtitle2"
+  font: "/fonts/subtitle2.font"
 }
 background_color {
   x: 0.0

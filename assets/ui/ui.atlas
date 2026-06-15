@@ -18,10 +18,7 @@ images {
   image: "/assets/ui/clubs.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
-images {
-  image: "/assets/ui/coins.png"
-  sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-}
+
 images {
   image: "/assets/ui/tournament_icon.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF

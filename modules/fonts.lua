@@ -14,12 +14,12 @@ local M = {}
 
 -- role            .font resource    base px (size in the .font file)
 M.TITLE       = { name = "title",         base = 44 } -- big screen titles (ProtestStrike)
-M.HEADER      = { name = "poppins_black", base = 34 } -- dialog/section headers
-M.BUTTON      = { name = "poppins_bold",  base = 34 } -- buttons / emphasized labels
+M.HEADER      = { name = "subtitle1", base = 34 } -- dialog/section headers
+M.BUTTON      = { name = "subtitle2",  base = 34 } -- buttons / emphasized labels
 M.BODY        = { name = "body",          base = 26 } -- standard copy
 M.SMALL       = { name = "small",         base = 18 } -- captions, hints, badges
-M.MODAL       = { name = "poppins",       base = 28 } -- modal body copy
-M.MODAL_BOLD  = { name = "poppins_bold",  base = 34 } -- modal titles/buttons
+M.MODAL       = { name = "body",       base = 28 } -- modal body copy
+M.MODAL_BOLD  = { name = "subtitle2",  base = 34 } -- modal titles/buttons
 
 -- gui.set_scale factor that renders `role` at exactly `px` pixels.
 function M.scale(role, px)

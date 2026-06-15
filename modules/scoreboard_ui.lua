@@ -30,7 +30,7 @@ local function label(pos, text, size, color, align, font_name)
     local n = gui.new_text_node(pos, text)
     gui.set_font(n, font_name or "body")
     local base_size = 24
-    if font_name == "poppins_bold" or font_name == "title" or font_name == "helvetica_bold" then
+    if font_name == "subtitle2" or font_name == "title" or font_name == "helvetica_bold" then
         base_size = 36
     end
     gui.set_scale(n, vmath.vector3(size / base_size, size / base_size, 1.0))
@@ -245,10 +245,10 @@ function M.build(self, parent_node, logical_w, logical_h)
     gui.set_parent(self.sb_div1, parent_node)
     gui.set_parent(self.sb_div2, parent_node)
 
-    self.sb_title = label(vmath.vector3(0, 0, 0), "BEST OF 3", 15, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
+    self.sb_title = label(vmath.vector3(0, 0, 0), "BEST OF 3", 15, C_WHITE, gui.PIVOT_CENTER, "subtitle2")
     gui.set_parent(self.sb_title, parent_node)
 
-    self.h2h_alltime_lbl = label(vmath.vector3(-110, 0, 0), "ALL TIME 0-0", 16, C_H2H_GOLD, gui.PIVOT_CENTER, "poppins_bold")
+    self.h2h_alltime_lbl = label(vmath.vector3(-110, 0, 0), "ALL TIME 0-0", 16, C_H2H_GOLD, gui.PIVOT_CENTER, "subtitle2")
     gui.set_rotation(self.h2h_alltime_lbl, vmath.vector3(0, 0, -90))
     gui.set_parent(self.h2h_alltime_lbl, parent_node)
     gui.set_enabled(self.h2h_alltime_lbl, false)
@@ -258,7 +258,7 @@ function M.build(self, parent_node, logical_w, logical_h)
     gui.set_yanchor(self.h2h_container, gui.ANCHOR_NONE)
     gui.set_enabled(self.h2h_container, false)
 
-    self.h2h_form_lbl = label(vmath.vector3(0, 22, 0), "YOUR LAST 5 GAMES WITH OPPONENT", 11, C_H2H_DIM, gui.PIVOT_CENTER, "poppins_bold")
+    self.h2h_form_lbl = label(vmath.vector3(0, 22, 0), "YOUR LAST 5 GAMES WITH OPPONENT", 11, C_H2H_DIM, gui.PIVOT_CENTER, "subtitle2")
     gui.set_parent(self.h2h_form_lbl, self.h2h_container)
 
     self.h2h_badges = {}
@@ -266,7 +266,7 @@ function M.build(self, parent_node, logical_w, logical_h)
         local x_pos = (i - 3) * 42 
         local bg = box(vmath.vector3(x_pos, -10, 0), vmath.vector3(34, 34, 0), vmath.vector4(0.2, 0.2, 0.2, 0.5), gui.PIVOT_CENTER)
         gui.set_parent(bg, self.h2h_container)
-        local lbl = label(vmath.vector3(0, 0, 0), "", 18, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
+        local lbl = label(vmath.vector3(0, 0, 0), "", 18, C_WHITE, gui.PIVOT_CENTER, "subtitle2")
         gui.set_parent(lbl, bg)
         gui.set_enabled(bg, false)
         self.h2h_badges[i] = { bg = bg, lbl = lbl }

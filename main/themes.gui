@@ -1,19 +1,15 @@
 script: "/main/themes.gui_script"
 fonts {
-name: "poppins"
-font: "/fonts/poppins.font"
-}
-fonts {
-name: "poppins_bold"
-font: "/fonts/poppins_bold.font"
-}
-fonts {
 name: "body"
 font: "/fonts/body.font"
 }
 fonts {
-name: "poppins_black"
-font: "/fonts/poppins_black.font"
+name: "subtitle2"
+font: "/fonts/subtitle2.font"
+}
+fonts {
+name: "subtitle1"
+font: "/fonts/subtitle1.font"
 }
 textures {
 name: "ui"

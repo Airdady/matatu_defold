@@ -19,7 +19,7 @@ end
 local function label(pos, text, size, color, align, font_name)
     local n = gui.new_text_node(pos, text)
     gui.set_font(n, font_name or "body")
-    local base_size = (font_name == "poppins_bold") and 36 or 24
+    local base_size = (font_name == "subtitle2") and 36 or 24
     gui.set_scale(n, vmath.vector3(size / base_size, size / base_size, 1.0))
     gui.set_color(n, color or C_WHITE)
     gui.set_pivot(n, align or gui.PIVOT_CENTER)
@@ -36,7 +36,7 @@ local function build_network_badge(parent, pos)
         gui.set_parent(bar, bg)
         bars[i] = bar
     end
-    local lbl = label(vmath.vector3(-5, 0, 0), "Good", 12, C_T_GREEN, gui.PIVOT_W, "poppins_bold")
+    local lbl = label(vmath.vector3(-5, 0, 0), "Good", 12, C_T_GREEN, gui.PIVOT_W, "subtitle2")
     gui.set_parent(lbl, bg)
     return { bg = bg, bars = bars, lbl = lbl }
 end
@@ -59,7 +59,7 @@ function M.build(self, logical_w, logical_h)
     gui.set_parent(self.o_avatar_img, self.o_avatar_bg)
     pcall(function() gui.set_texture(self.o_avatar_img, "avatars"); gui.play_flipbook(self.o_avatar_img, hash("avatar_1")) end)
 
-    self.o_avatar_name = label(vmath.vector3(0, 215, 0), "Opponent", 18, C_WHITE, gui.PIVOT_CENTER, "poppins_bold")
+    self.o_avatar_name = label(vmath.vector3(0, 215, 0), "Opponent", 18, C_WHITE, gui.PIVOT_CENTER, "subtitle2")
     gui.set_parent(self.o_avatar_name, self.hud_root)
 
     self.p_net = build_network_badge(self.hud_root, vmath.vector3(0, -215, 0))
