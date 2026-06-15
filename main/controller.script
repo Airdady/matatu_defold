@@ -11,6 +11,8 @@ local app_state = require("modules.app_state")
 local SCREENS = { "lobby", "auth", "profile", "online", "themes", "payments", "tournaments", "game" }
 
 local function show(self, screen)
+    -- Leaving the table clears any live stake pot / coin animations.
+    if screen ~= "game" then pcall(msg.post, "#coins", "coin_clear") end
     for _, s in ipairs(SCREENS) do
         if s == screen then
             msg.post("#" .. s, "enable")
@@ -169,6 +171,18 @@ function init(self)
         else
             msg.post("#game_logic", "ws_new_game_start")
         end
+        -- Stake pot: drain both players' coins into a glowing pot at the table
+        -- centre while the lobby->game transition plays underneath (#coins is a
+        -- global overlay, so the animation is never interrupted).
+        local stake = (type(gs) == "table" and type(gs.stake) == "table" and tonumber(gs.stake.amount)) or 500
+        pcall(msg.post, "#coins", "coin_collect_pot", {
+            amount  = stake * 2,
+            sources = { { x = 150, y = 64 }, { x = 150, y = 656 } },
+            center  = { x = 640, y = 360 },
+        })
+        -- then settle the pot just above the discard pile so it stays visible
+        -- on the table without covering play.
+        pcall(msg.post, "#coins", "coin_pot_to", { x = 640, y = 560 })
     end))
 
     local function broadcast(evt)
