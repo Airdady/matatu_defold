@@ -246,10 +246,6 @@ check("A2: series scoreboard visible with flip clocks at 0-0",
   and hud("o_flipper") and hud("o_flipper").val == "00",
   "title=" .. tostring(hud("sb_title") and hud("sb_title").text))
 
-local chip = hud("stake_chip")
-check("A3: stake chip clear of the HUD column (x >= 190)",
-  not (chip and chip.enabled and chip.pos.x < 190),
-  chip and string.format("chip enabled=%s x=%s", tostring(chip.enabled), tostring(chip.pos.x)) or "no chip")
 
 check("A4: head-to-head strip shows all-time 3-2 and 5 form badges",
   hud("h2h_alltime_lbl") and hud("h2h_alltime_lbl").enabled == true
@@ -440,9 +436,8 @@ check("D2: flip clocks read 1-1 after START-delivered round",
   hud("p_flipper") and hud("p_flipper").val == "01" and hud("o_flipper") and hud("o_flipper").val == "01",
   string.format("p=%s o=%s", tostring(hud("p_flipper") and hud("p_flipper").val),
     tostring(hud("o_flipper") and hud("o_flipper").val)))
-check("D3: scoreboard still visible and chip still aside",
-  hud("sb_title") and hud("sb_title").enabled == true
-  and (not (hud("stake_chip") and hud("stake_chip").enabled) or hud("stake_chip").pos.x >= 190))
+check("D3: scoreboard still visible",
+  hud("sb_title") and hud("sb_title").enabled == true)
 
 ----------------------------------------------------------------------
 -- match decided on g3 → the organized game-over modal returns

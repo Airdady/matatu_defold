@@ -298,6 +298,10 @@ function on_message(self, message_id, message, sender)
         -- Stop the looping search cue and play a distinct "found" sting.
         stop_snd("snd_notify"); play_snd("snd_found")
         rebuild(self)
+    elseif message_id == hash("ws_search_failed") and self.invite_search then
+        -- No opponent found / declined: play the playful miss transition on the
+        -- reel, then close the overlay (fail_invite_search handles the timing).
+        right_panel.fail_invite_search(self, app_state, function() rebuild(self) end, message and message.reason)
     elseif message_id == hash("enable") then refresh_wh(); self._active = true
     elseif message_id == hash("disable") then self._active = false; clear(self)
     elseif message_id == hash("layout_changed") or message_id == hash("user_data_updated") or message_id == hash("ws_online_users") or message_id == hash("ws_connected") or message_id == hash("ws_disconnected") then if self._active then rebuild(self) end

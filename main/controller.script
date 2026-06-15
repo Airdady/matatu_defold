@@ -45,6 +45,10 @@ local function route_after_auth(self)
     elseif self._explicit_online then
         self._explicit_online = false
         show(self, "online")
+    elseif self.screen == "auth" then
+        -- Successful (auto-)login with a complete profile and no pending game:
+        -- never leave the user stranded on the auth screen.
+        show(self, "online")
     end
 end
 
@@ -181,11 +185,9 @@ function init(self)
             center  = { x = 640, y = 360 },
         })
         -- then settle the pot just above the discard pile so it stays visible
-        -- on the table without covering play.
+        -- on the table without covering play. The live coin bundle IS the stake
+        -- display now (the old static stake chip has been removed entirely).
         pcall(msg.post, "#coins", "coin_pot_to", { x = 340, y = 360 })
-        -- The live pot now IS the stake display at the chip's old spot; hide the
-        -- static stake chip so the bundle coins replace it.
-        pcall(msg.post, "#game", "hide_stake_chip")
     end))
 
     local function broadcast(evt)
@@ -201,8 +203,14 @@ function init(self)
     table.insert(self.tokens, ws.on("tournament_no_opponents", function(d)
         pcall(msg.post, "#snd_suspense", "stop_sound")
         pcall(msg.post, "#snd_fail", "play_sound")
-        msg.post("#tournaments", "ws_search_failed",
-            { reason = (type(d) == "table" and d.message) or "No opponents available right now" })
+        local reason = (type(d) == "table" and d.message) or "No opponents available right now"
+        -- A battle-invite search runs on the online screen; the tournament reel
+        -- runs on the tournaments screen. Route the failure to whichever is open.
+        if app_state.searching_invite then
+            msg.post("#online", "ws_search_failed", { reason = reason })
+        else
+            msg.post("#tournaments", "ws_search_failed", { reason = reason })
+        end
     end))
 
     table.insert(self.tokens, ws.on("head_to_head", function()
@@ -253,11 +261,15 @@ function init(self)
 
     table.insert(self.tokens, ws.on("game_request_declined", function(reason)
         msg.post("#game_logic", "ws_replay_declined", { reason = tostring(reason or "Declined") })
-        if app_state.searching_tournament then
+        if app_state.searching_tournament or app_state.searching_invite then
             pcall(msg.post, "#snd_suspense", "stop_sound")
             pcall(msg.post, "#snd_fail", "play_sound")
         end
-        msg.post("#tournaments", "ws_search_failed", { reason = tostring(reason or "Declined") })
+        if app_state.searching_invite then
+            msg.post("#online", "ws_search_failed", { reason = tostring(reason or "Declined") })
+        else
+            msg.post("#tournaments", "ws_search_failed", { reason = tostring(reason or "Declined") })
+        end
     end))
 end
 

@@ -131,17 +131,6 @@ function M.pie(pos, radius, color)
 	return n
 end
 
--- Stake amount -> stake chip image name in the ui atlas.
-function M.stake_image(amount)
-	amount = tonumber(amount) or 0
-	if     amount >= 10000 then return "stake_10000"
-	elseif amount >= 5000  then return "stake_5000"
-	elseif amount >= 2000  then return "stake_2000"
-	elseif amount >= 1000  then return "stake_1000"
-	elseif amount >= 500   then return "stake_500"
-	else                        return "stake_200" end
-end
-
 -- Background image name for a given stake amount (matches the Godot tiers).
 function M.stake_bg(amount)
 	amount = tonumber(amount) or 0
