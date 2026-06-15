@@ -63,10 +63,7 @@ images {
   image: "/assets/ui/lock.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
-images {
-  image: "/assets/ui/play_btn.png"
-  sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-}
+
 images {
   image: "/assets/ui/points.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF

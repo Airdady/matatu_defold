@@ -372,7 +372,7 @@ local function draw_tutorial(self)
         text_sh(self, vmath.vector3(CX - 92, by - 1, 0), "BACK", "body", C_WHITE, 1, -1)
         self.buttons[#self.buttons+1] = { node = bkb, id = "tut_back" }
     end
-    local nxb = track(self, ui.btn9(vmath.vector3(CX + 92, by, 0), vmath.vector3(150, 46, 0), "play_btn"))
+    local nxb = track(self, ui.btn9(vmath.vector3(CX + 92, by, 0), vmath.vector3(150, 46, 0), "primary_btn"))
     text_sh(self, vmath.vector3(CX + 92, by - 1, 0), (page == total) and "START" or "NEXT", "body", C_WHITE, 1, -1)
     self.buttons[#self.buttons+1] = { node = nxb, id = "tut_next" }
 end
@@ -654,7 +654,7 @@ local function rebuild_ai_select(self)
     local sb_y = CY - 130
     shadow(self, CX, sb_y, 300, 62, 10, 0.20)
     local sb = track(self, ui.btn9(vmath.vector3(CX, sb_y, 0),
-        vmath.vector3(300, 62, 0), "play_btn"))
+        vmath.vector3(300, 62, 0), "primary_btn"))
     text_sh(self, vmath.vector3(CX, sb_y + 4, 0), "START BATTLE", "body", C_WHITE, 2, -2)
     track(self, ui.text(vmath.vector3(CX, sb_y - 20, 0),
         "vs Matatu Bot", "small", C_MUTED))
@@ -748,7 +748,7 @@ local function rebuild_tournament(self)
     local fb_y = CY - 168
     shadow(self, CX, fb_y, 320, 62, 10, 0.20)
     local fb = track(self, ui.btn9(vmath.vector3(CX, fb_y, 0),
-        vmath.vector3(320, 62, 0), "play_btn"))
+        vmath.vector3(320, 62, 0), "primary_btn"))
     text_sh(self, vmath.vector3(CX, fb_y + 4, 0), "START", "body", C_WHITE, 2, -2)
     track(self, ui.text(vmath.vector3(CX, fb_y - 20, 0),
         is_chamber and ("First to " .. tostring(cur_cap) .. " leaves the table") or "Last player standing wins",

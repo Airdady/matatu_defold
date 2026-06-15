@@ -296,7 +296,7 @@ function on_message(self, message_id, message, sender)
         for k, pl in pairs(gs.players or {}) do if tostring((type(pl) == "table" and (pl._id or pl.id)) or k) ~= me then opp = pl end end
         self.invite_search.found, self.invite_search.reel_ix, self.invite_search.opp_name, app_state.searching_invite = true, (type(opp) == "table" and tonumber(opp.avatar)) or self.invite_search.reel_ix, string.upper(tostring((type(opp) == "table" and (opp.username or opp.name)) or "PLAYER")), false
         -- Stop the looping search cue and play a distinct "found" sting.
-        stop_snd("snd_connecting"); play_snd("snd_win")
+        stop_snd("snd_notify"); play_snd("snd_found")
         rebuild(self)
     elseif message_id == hash("enable") then refresh_wh(); self._active = true
     elseif message_id == hash("disable") then self._active = false; clear(self)
@@ -367,8 +367,8 @@ function on_input(self, action_id, action)
                 elseif id == "nav_tournaments" then msg.post("#controller", "goto_tournaments")
                 elseif id == "nav_support" then msg.post("#controller", "goto_support")
                 elseif id == "nav_account" then msg.post("#controller", "goto_profile")
-                elseif id == "nav_invite" then right_panel.start_invite_search(self, app_state, function() rebuild(self) end); play_snd("snd_connecting")
-                elseif id == "cancel_invite" then right_panel.stop_invite_search(self, app_state, function() rebuild(self) end); stop_snd("snd_connecting")
+                elseif id == "nav_invite" then right_panel.start_invite_search(self, app_state, function() rebuild(self) end); play_snd("snd_suspense")
+                elseif id == "cancel_invite" then right_panel.stop_invite_search(self, app_state, function() rebuild(self) end); stop_snd("snd_suspense")
                 elseif id == "create_battle" then self.battle_modal = { editing = false, stake_i = 1, fmt_i = 1 }; rebuild(self)
                 elseif id == "update_battle" then
                     local mb = (ws.current_user_data or {}).myBattle or (ws.current_user_data or {}).myTournament or {}
