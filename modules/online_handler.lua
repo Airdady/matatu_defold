@@ -884,13 +884,20 @@ function M.start_game(self, state)
                 ws.send_message("PLAYER_READY", { gameId = gid, _id = self.my_player_id })
 
                 -- Safety net: if the START somehow never arrives (lost packet),
-                -- release the hold after a long grace so the board can't wedge.
-                -- The backend's own no-show logic fires well before this.
+                -- release the hold and START THE TIMERS. This must fire BEFORE a
+                -- turn could silently time out, otherwise the player sits on a
+                -- board with no timer on either side and is then eliminated with
+                -- no warning. Use the freshest state and make sure it carries a
+                -- currentTurn (else sync_timers would just stop the timers).
                 local seq = self._seq
-                timer.delay(45.0, false, function()
+                timer.delay(12.0, false, function()
                     if seq == self._seq and self._await_start and not self.game_over then
                         self._await_start = false
-                        M.sync_timers(self, self.game_state)
+                        local recover = self.game_state or state or {}
+                        if not recover.currentTurn or tostring(recover.currentTurn) == "" then
+                            recover.currentTurn = state.currentTurn
+                        end
+                        M.sync_timers(self, recover)
                         M.pump_move_queue(self)
                     end
                 end)

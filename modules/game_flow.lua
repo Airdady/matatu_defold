@@ -677,6 +677,11 @@ function M.start_game(self)
     GS.destroy_all(self)
     GS.fresh_state(self)
     apply_stake_background(self)
+    -- Recompute the board layout for THIS game. Without this the desk/deck and
+    -- seat positions stay cached from the previous game (e.g. an offline match),
+    -- so an online game opens with the deck stuck mid-table instead of its
+    -- proper extreme position.
+    BL.update_layout(self)
 
     -- keep_scoreboard: a board (re)start inside the same series must not
     -- blank the running match score — online_handler refreshes or hides it
