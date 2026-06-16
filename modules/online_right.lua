@@ -13,6 +13,40 @@ M.BATTLE_TIERS = {
                                   { games = 7, charge = 175, points = 21 }, { games = 9, charge = 225, points = 27 } } },
 }
 
+-- Elimination/Party battles use a flat low-stake ladder (no per-format charge
+-- table; the entry fee stepper just cycles these amounts).
+M.ELIMINATION_TIERS = { 100, 200, 300, 500 }
+
+-- The three independent battle types. Internal keys map to display labels.
+M.BATTLE_TYPES = { "NORMAL", "ELIMINATION", "PARTY" }
+M.BATTLE_TYPE_LABELS = { NORMAL = "BATTLE", ELIMINATION = "ELIMINATION", PARTY = "PARTY" }
+
+-- Resolve the battle a user holds for a given type T ∈ {NORMAL,ELIMINATION,PARTY}.
+-- Prefers the new per-type map u.myBattles[T]; falls back to the legacy single
+-- u.myBattle / u.myTournament keyed by its matchType (missing ⇒ NORMAL).
+function M.battle_of_type(u, T)
+    u = u or {}
+    T = tostring(T or "NORMAL"):upper()
+    local map = u.myBattles
+    if type(map) == "table" then
+        local b = map[T]
+        if type(b) == "table" and next(b) ~= nil then return b end
+        return nil
+    end
+    local legacy = u.myBattle or u.myTournament
+    if type(legacy) == "table" and next(legacy) ~= nil then
+        local lt = tostring(legacy.matchType or "NORMAL"):upper()
+        if lt == T then return legacy end
+    end
+    return nil
+end
+
+-- Pull a numeric stake amount out of a battle record regardless of shape.
+local function battle_amount(b)
+    if type(b) ~= "table" then return 0 end
+    return tonumber(b.stakeAmount) or tonumber((type(b.stake) == "table" and b.stake.amount) or nil) or 0
+end
+
 local INVITE_AVATAR_MAX = 60
 local BM_TAN = vmath.vector4(0.702, 0.604, 0.467, 1)
 
@@ -40,55 +74,111 @@ local function draw_battle_modal(self, ctx)
     local r   = CX + pw/2 - 30
     local top = CY + ph/2 - 30
 
-    txtL(self, l, top - 8, bm.editing and "UPDATE BATTLE" or "CREATE BATTLE", "body", ctx.C.COL_WHITE)
+    -- Normalise the active type up-front so every branch agrees on it.
+    local btype  = tostring(bm.type or "NORMAL"):upper()
+    if btype ~= "ELIMINATION" and btype ~= "PARTY" then btype = "NORMAL" end
+    local is_norm  = (btype == "NORMAL")
+    local is_elim  = (btype == "ELIMINATION")
+    local is_party = (btype == "PARTY")
+
+    local type_word = M.BATTLE_TYPE_LABELS[btype] or "BATTLE"
+    local title     = (bm.editing and "UPDATE " or "CREATE ") .. type_word
+    txtL(self, l, top - 8, title, "body", ctx.C.COL_WHITE)
     mkbtn(self, "bm_close", vmath.vector3(r - 10, top - 8, 0), vmath.vector3(30, 30, 0), nil, vmath.vector4(0,0,0,0.001))
     track(self, ui.text(vmath.vector3(r - 10, top - 8, 0), "X", "btn_sm", ctx.C.COL_MID))
 
-    -- BATTLE TYPE: normal head-to-head vs elimination chamber. Battles share the
-    -- same model / endpoints as tournaments; the backend stores type="ELIMINATION".
-    local is_elim = (tostring(bm.type or "NORMAL"):upper() == "ELIMINATION")
+    -- BATTLE TYPE: three-way segmented control (BATTLE / ELIMINATION / PARTY).
+    -- Battles share the same model / endpoints as tournaments; the backend stores
+    -- matchType = "NORMAL" | "ELIMINATION" | "PARTY".
     local type_y  = top - 50
     txtL(self, l, type_y + 26, "BATTLE TYPE", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
-    local seg_w = (pw - 64) / 2
-    local nx, ex = CX - seg_w/2 - 4, CX + seg_w/2 + 4
+    local seg_gap = 8
+    local seg_w   = (pw - 60 - seg_gap * 2) / 3
+    local seg_specs = {
+        { id = "bm_type_normal", label = "BATTLE",      on = is_norm  },
+        { id = "bm_type_elim",   label = "ELIMINATION", on = is_elim  },
+        { id = "bm_type_party",  label = "PARTY",       on = is_party },
+    }
     local SEL_C, UNSEL_C = vmath.vector4(0.45, 0.14, 0.58, 0.95), vmath.vector4(0.16, 0.16, 0.18, 1)
-    local bn = track(self, ui.box(vmath.vector3(nx, type_y - 10, 0), vmath.vector3(seg_w, 40, 0), is_elim and UNSEL_C or SEL_C))
-    local be = track(self, ui.box(vmath.vector3(ex, type_y - 10, 0), vmath.vector3(seg_w, 40, 0), is_elim and SEL_C or UNSEL_C))
-    self.buttons[#self.buttons+1] = { node = bn, id = "bm_type_normal" }
-    self.buttons[#self.buttons+1] = { node = be, id = "bm_type_elim" }
-    track(self, ui.text(vmath.vector3(nx, type_y - 10, 0), "NORMAL", "btn_sm", is_elim and ctx.C.COL_MID or ctx.C.COL_WHITE))
-    track(self, ui.text(vmath.vector3(ex, type_y - 10, 0), "ELIMINATION", "btn_sm", is_elim and ctx.C.COL_WHITE or ctx.C.COL_MID))
+    local seg0_cx = l + seg_w/2
+    for i, s in ipairs(seg_specs) do
+        local sx  = seg0_cx + (i - 1) * (seg_w + seg_gap)
+        local box = track(self, ui.box(vmath.vector3(sx, type_y - 10, 0), vmath.vector3(seg_w, 40, 0), s.on and SEL_C or UNSEL_C))
+        self.buttons[#self.buttons+1] = { node = box, id = s.id }
+        track(self, ui.text(vmath.vector3(sx, type_y - 10, 0), s.label, "btn_sm", s.on and ctx.C.COL_WHITE or ctx.C.COL_MID))
+    end
 
-    local tier         = M.BATTLE_TIERS[bm.stake_i] or M.BATTLE_TIERS[1]
-    local fmts         = tier.formats
-    if bm.fmt_i > #fmts then bm.fmt_i = #fmts end
-    local fmt          = fmts[bm.fmt_i] or fmts[1]
-    local winner_takes = tier.amount * 2 - fmt.charge
+    -- ENTRY FEE: NORMAL cycles BATTLE_TIERS (bm.stake_i); ELIMINATION/PARTY cycle
+    -- the flat ELIMINATION_TIERS amounts (bm.elim_i).
+    local amount, fmt, winner_takes
+    if is_norm then
+        local tier = M.BATTLE_TIERS[bm.stake_i] or M.BATTLE_TIERS[1]
+        local fmts = tier.formats
+        if bm.fmt_i > #fmts then bm.fmt_i = #fmts end
+        fmt          = fmts[bm.fmt_i] or fmts[1]
+        amount       = tier.amount
+        winner_takes = tier.amount * 2 - fmt.charge
+    else
+        local ei = bm.elim_i or 1
+        if ei < 1 then ei = 1 elseif ei > #M.ELIMINATION_TIERS then ei = #M.ELIMINATION_TIERS end
+        bm.elim_i = ei
+        amount = M.ELIMINATION_TIERS[ei]
+    end
 
     local fee_y = top - 120
     txtL(self, l, fee_y + 28, "ENTRY FEE", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
     mkbtn(self, "bm_fee_minus", vmath.vector3(l + 20, fee_y - 8, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
     track(self, ui.box(vmath.vector3(CX, fee_y - 8, 0), vmath.vector3(pw - 200, 40, 0), ctx.C.COL_NAMEID_BG))
-    track(self, ui.text(vmath.vector3(CX, fee_y - 8, 0), commas(tier.amount) .. " COINS", "body", vmath.vector4(1, 0.8, 0.4, 1)))
+    track(self, ui.text(vmath.vector3(CX, fee_y - 8, 0), commas(amount) .. " COINS", "body", vmath.vector4(1, 0.8, 0.4, 1)))
     mkbtn(self, "bm_fee_plus", vmath.vector3(r - 20, fee_y - 8, 0), vmath.vector3(40, 40, 0), "+", "secondary_btn")
-    track(self, ui.text(vmath.vector3(CX, fee_y - 44, 0),
-        string.format("Winner Takes: %s + %d Pts", commas(winner_takes), fmt.points), "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+    if is_norm then
+        track(self, ui.text(vmath.vector3(CX, fee_y - 44, 0),
+            string.format("Winner Takes: %s + %d Pts", commas(winner_takes), fmt.points), "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+    elseif is_party then
+        track(self, ui.text(vmath.vector3(CX, fee_y - 44, 0),
+            "Pooled prize · last player standing wins", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+    else
+        track(self, ui.text(vmath.vector3(CX, fee_y - 44, 0),
+            "Knockout chamber · survive to win", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+    end
 
+    -- Bottom row: PARTY shows a PLAYER COUNT selector; NORMAL/ELIMINATION keep the
+    -- GAME FORMAT stepper. (ELIMINATION has no per-format charge table, so its
+    -- "format" is fixed — we reuse the BEST OF stepper only for NORMAL.)
     local fmt_y = top - 212
-    txtL(self, l, fmt_y + 28, "GAME FORMAT", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
-    mkbtn(self, "bm_fmt_minus", vmath.vector3(l + 20, fmt_y - 8, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
-    track(self, ui.box(vmath.vector3(CX, fmt_y - 8, 0), vmath.vector3(pw - 200, 40, 0), ctx.C.COL_NAMEID_BG))
-    track(self, ui.text(vmath.vector3(CX, fmt_y - 8, 0), "BEST OF " .. fmt.games, "body", ctx.C.COL_WHITE))
-    mkbtn(self, "bm_fmt_plus", vmath.vector3(r - 20, fmt_y - 8, 0), vmath.vector3(40, 40, 0), "+", "secondary_btn")
-    track(self, ui.text(vmath.vector3(CX, fmt_y - 44, 0),
-        string.format("Charge: %s  ·  %d Pts to the winner", commas(fmt.charge), fmt.points), "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+    if is_party then
+        local players = bm.players or "AUTO"
+        txtL(self, l, fmt_y + 28, "PLAYER COUNT", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
+        mkbtn(self, "bm_players_minus", vmath.vector3(l + 20, fmt_y - 8, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
+        track(self, ui.box(vmath.vector3(CX, fmt_y - 8, 0), vmath.vector3(pw - 200, 40, 0), ctx.C.COL_NAMEID_BG))
+        local p_txt = (players == "AUTO") and "AUTO" or (tostring(players) .. " PLAYERS")
+        track(self, ui.text(vmath.vector3(CX, fmt_y - 8, 0), p_txt, "body", ctx.C.COL_WHITE))
+        mkbtn(self, "bm_players_plus", vmath.vector3(r - 20, fmt_y - 8, 0), vmath.vector3(40, 40, 0), "+", "secondary_btn")
+        track(self, ui.text(vmath.vector3(CX, fmt_y - 44, 0),
+            (players == "AUTO") and "Auto-fill the table as players join" or "Starts once the table is full",
+            "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+    elseif is_elim then
+        txtL(self, l, fmt_y + 28, "GAME FORMAT", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
+        track(self, ui.box(vmath.vector3(CX, fmt_y - 8, 0), vmath.vector3(pw - 60, 40, 0), ctx.C.COL_NAMEID_BG))
+        track(self, ui.text(vmath.vector3(CX, fmt_y - 8, 0), "SINGLE ELIMINATION", "body", ctx.C.COL_WHITE))
+        track(self, ui.text(vmath.vector3(CX, fmt_y - 44, 0),
+            "One loss and you're out", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+    else
+        txtL(self, l, fmt_y + 28, "GAME FORMAT", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
+        mkbtn(self, "bm_fmt_minus", vmath.vector3(l + 20, fmt_y - 8, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
+        track(self, ui.box(vmath.vector3(CX, fmt_y - 8, 0), vmath.vector3(pw - 200, 40, 0), ctx.C.COL_NAMEID_BG))
+        track(self, ui.text(vmath.vector3(CX, fmt_y - 8, 0), "BEST OF " .. fmt.games, "body", ctx.C.COL_WHITE))
+        mkbtn(self, "bm_fmt_plus", vmath.vector3(r - 20, fmt_y - 8, 0), vmath.vector3(40, 40, 0), "+", "secondary_btn")
+        track(self, ui.text(vmath.vector3(CX, fmt_y - 44, 0),
+            string.format("Charge: %s  ·  %d Pts to the winner", commas(fmt.charge), fmt.points), "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+    end
 
     if bm.msg then
         track(self, ui.text(vmath.vector3(CX, CY - ph/2 + 102, 0), bm.msg, "small",
             bm.msg_ok and vmath.vector4(0.3, 1.0, 0.3, 1) or vmath.vector4(1, 0.3, 0.3, 1)))
     end
 
-    local sub_label = bm.submitting and "SUBMITTING..." or (bm.editing and "UPDATE BATTLE" or "CREATE BATTLE")
+    local sub_label = bm.submitting and "SUBMITTING..." or title
     mkbtn(self, "bm_submit", vmath.vector3(CX, CY - ph/2 + 46, 0), vmath.vector3(pw - 60, 60, 0), sub_label, "secondary_btn", nil, "btn_md", BM_TAN)
 end
 
@@ -327,39 +417,66 @@ function M.draw(self, ctx, left_M)
 
     cy = cy - cont_h - C.BLOCK_GAP
 
-    -- ── Battles panel ─────────────────────────────────────────────────────
-    local battle_h = 140
+    -- ── Battles panel (three independent types) ───────────────────────────
+    -- Layout: header band + 3 rows. Each row is INDEPENDENT — it either shows the
+    -- battle's summary with INVITE/EDIT, or a single CREATE button for that type.
+    local hdr_band = 36   -- header row (icon + "BATTLES")
+    local row_h    = 50   -- per-type row height
+    local top_pad  = 10
+    local bot_pad  = 10
+    local battle_h = top_pad + hdr_band + (row_h * 3) + bot_pad
     local scy = cy - battle_h/2
     glass(self, vmath.vector3(cx, scy, 0), vmath.vector3(pw, battle_h, 0), "container_bg")
-    
-    local mb         = u.myBattle or u.myTournament
-    local has_battle = type(mb) == "table" and next(mb) ~= nil
-    
+
     local icon_x = cx - pw/2 + 40
-    local txt_x  = icon_x + 35
-    local hdr_y  = cy - 36
-    local icon_y = cy - 48
+    local hdr_tx = icon_x + 35
+    local hdr_y  = cy - top_pad - hdr_band/2
 
-    track(self, ui.image(vmath.vector3(icon_x, icon_y, 0), vmath.vector3(42, 42, 0), "battle_icon"))
-    txtL(self, txt_x, hdr_y, "BATTLES", "btn_md", C.COL_WHITE)
+    track(self, ui.image(vmath.vector3(icon_x, hdr_y, 0), vmath.vector3(42, 42, 0), "battle_icon"))
+    txtL(self, hdr_tx, hdr_y, "BATTLES", "btn_md", C.COL_WHITE)
 
-    -- Adjusted padding and spacing for the buttons
-    local btn_pad = 24
-    local btn_gap = 14
-    local btn_w   = (pw - (btn_pad * 2) - btn_gap) / 2
-    local left_bx = cx - btn_gap/2 - btn_w/2
-    local rght_bx = cx + btn_gap/2 + btn_w/2
+    -- Row geometry: text column on the left, buttons hugging the right edge.
+    local row_l   = cx - pw/2 + 18      -- left text margin
+    local row_r   = cx + pw/2 - 16      -- right edge for buttons
+    local pair_w  = 78                  -- width of each INVITE/EDIT button
+    local pair_gap = 8
+    local create_w = 124                -- width of the single CREATE button
+    local rows_top = cy - top_pad - hdr_band   -- y of the top of the first row band
 
-    if has_battle then
-        local amt = tonumber(mb.stakeAmount) or tonumber((mb.stake or {}).amount) or 0
-        local fmt = tonumber(mb.matchFormat) or 3
-        txtL(self, txt_x, hdr_y - 24, string.format("BEST OF %d   ~   %s", fmt, commas(amt)), "body", C.COL_GREEN)
-        
-        mkbtn(self, "nav_invite",    vmath.vector3(left_bx, cy - 100, 0), vmath.vector3(btn_w, 40, 0), "INVITE", "primary_btn")
-        mkbtn(self, "update_battle", vmath.vector3(rght_bx, cy - 100, 0), vmath.vector3(btn_w, 40, 0), "EDIT",   "secondary_btn")
-    else
-        txtL(self, txt_x, hdr_y - 24, "CREATE A CUSTOM GAME", "body", C.COL_DIM)
-        mkbtn(self, "create_battle", vmath.vector3(cx, cy - 100, 0), vmath.vector3(pw - (btn_pad * 2), 44, 0), "CREATE BATTLE", "primary_btn")
+    for ri, T in ipairs(M.BATTLE_TYPES) do
+        local row_cy = rows_top - (ri - 0.5) * row_h
+        -- Subtle divider above every row except the first.
+        if ri > 1 then
+            track(self, ui.box(vmath.vector3(cx, rows_top - (ri - 1) * row_h, 0), vmath.vector3(pw - 36, 1, 0), vmath.vector4(1, 1, 1, 0.05)))
+        end
+
+        local label = M.BATTLE_TYPE_LABELS[T] or T
+        txtL(self, row_l, row_cy + 9, label, "btn_sm", C.COL_WHITE)
+
+        local b = M.battle_of_type(u, T)
+        if b then
+            local amt = battle_amount(b)
+            local detail
+            if T == "PARTY" then
+                local players = b.players or "AUTO"
+                local pstr    = (type(players) == "table") and tostring(#players) or tostring(players)
+                detail = string.format("%s PLAYERS  ~  %s", pstr, commas(amt))
+            else
+                local fmt = tonumber(b.matchFormat) or 3
+                detail = string.format("BEST OF %d  ~  %s", fmt, commas(amt))
+            end
+            txtL(self, row_l, row_cy - 11, detail, "small", C.COL_GREEN)
+
+            local edit_bx   = row_r - pair_w/2
+            local invite_bx = edit_bx - pair_w - pair_gap
+            mkbtn(self, "nav_invite",    vmath.vector3(invite_bx, row_cy, 0), vmath.vector3(pair_w, 34, 0), "INVITE", "primary_btn",   T, "btn_sm")
+            mkbtn(self, "update_battle", vmath.vector3(edit_bx,   row_cy, 0), vmath.vector3(pair_w, 34, 0), "EDIT",   "secondary_btn", T, "btn_sm")
+        else
+            txtL(self, row_l, row_cy - 11, "Not created yet", "small", C.COL_DIM)
+            local create_bx  = row_r - create_w/2
+            local create_lbl = (T == "NORMAL") and "+ CREATE" or ("+ " .. label)
+            mkbtn(self, "create_battle", vmath.vector3(create_bx, row_cy, 0), vmath.vector3(create_w, 34, 0), create_lbl, "primary_btn", T, "btn_sm")
+        end
     end
     cy = cy - battle_h - C.BLOCK_GAP
 
@@ -395,19 +512,35 @@ end
 function M.bm_submit(self, rebuild_cb)
     local bm = self.battle_modal
     if not bm or bm.submitting then return end
-    
-    local tier = M.BATTLE_TIERS[bm.stake_i] or M.BATTLE_TIERS[1]
-    local fmt  = tier.formats[math.min(bm.fmt_i, #tier.formats)]
+
+    local btype = tostring(bm.type or "NORMAL"):upper()
+    if btype ~= "ELIMINATION" and btype ~= "PARTY" then btype = "NORMAL" end
+
     local uid  = ws.get_current_user_id()
     if uid == "" then
         bm.msg, bm.msg_ok = "User ID missing. Please log in.", false
         rebuild_cb(); return
     end
 
+    -- Amount + format come from the tier set selected by the battle type.
+    local amount, match_format
+    if btype == "NORMAL" then
+        local tier = M.BATTLE_TIERS[bm.stake_i] or M.BATTLE_TIERS[1]
+        local fmt  = tier.formats[math.min(bm.fmt_i or 1, #tier.formats)]
+        amount       = tier.amount
+        match_format = fmt.games
+    else
+        local ei = bm.elim_i or 1
+        if ei < 1 then ei = 1 elseif ei > #M.ELIMINATION_TIERS then ei = #M.ELIMINATION_TIERS end
+        amount       = M.ELIMINATION_TIERS[ei]
+        match_format = (btype == "PARTY") and 1 or 1   -- single elimination per match
+    end
+
     bm.submitting = true; bm.msg, bm.msg_ok = nil, nil; rebuild_cb()
 
-    local payload = { userId = uid, amount = tier.amount, matchFormat = fmt.games, rules = "JOKERS",
-                      matchType = (tostring(bm.type or "NORMAL"):upper()) }
+    local payload = { userId = uid, amount = amount, matchFormat = match_format, rules = "JOKERS",
+                      matchType = btype }
+    if btype == "PARTY" then payload.players = bm.players or "AUTO" end
 
     local function on_result(result)
         local cur = self.battle_modal
@@ -417,7 +550,11 @@ function M.bm_submit(self, rebuild_cb)
             local data   = result.data or {}
             local battle = data.tournament or data.data or data
             local u      = ws.current_user_data or {}
-            u.myBattle   = battle; ws.current_user_data = u
+            -- Store the result per-type so the three rows stay independent, and
+            -- keep the legacy single field pointed at the last-touched battle.
+            u.myBattles = (type(u.myBattles) == "table") and u.myBattles or {}
+            u.myBattles[btype] = battle
+            u.myBattle  = battle; ws.current_user_data = u
             cur.msg, cur.msg_ok = bm.editing and "Battle updated successfully!" or "Battle created successfully!", true
             if self._active then rebuild_cb() end
             timer.delay(1.0, false, function()
@@ -440,9 +577,9 @@ function M.bm_submit(self, rebuild_cb)
     end
 end
 
-function M.start_invite_search(self, app_state, rebuild_cb)
+function M.start_invite_search(self, app_state, rebuild_cb, battle_type)
     local u  = ws.current_user_data or {}
-    local mb = u.myBattle or u.myTournament
+    local mb = M.battle_of_type(u, battle_type or "NORMAL")
     if type(mb) ~= "table" or next(mb) == nil then return end
 
     local stake = (type(mb.stake) == "table") and mb.stake or { amount = tonumber(mb.stakeAmount) or 0, charge = 0 }
@@ -454,7 +591,7 @@ function M.start_invite_search(self, app_state, rebuild_cb)
         gameType     = "TOURNAMENT",
         tournamentId = tostring(mb._id or mb.id or ""),
         rules        = "JOKERS",
-        matchType    = (tostring(mb.matchType or "NORMAL"):upper()),
+        matchType    = (tostring(mb.matchType or battle_type or "NORMAL"):upper()),
     })
 
     -- Add a 10-second auto-timeout. Instead of closing abruptly, show a clear
