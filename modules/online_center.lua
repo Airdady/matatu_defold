@@ -219,7 +219,7 @@ function M.draw(self, ctx)
             -- ELIMINATION badge sits next to the name when this battle is an
             -- elimination-type battle (vs a normal head-to-head battle).
             if self.tab == TAB_BATTLES and type(pu.myBattle) == "table"
-               and tostring(pu.myBattle.type or ""):upper() == "ELIMINATION" then
+               and tostring(pu.myBattle.matchType or ""):upper() == "ELIMINATION" then
                 local bw = 96
                 track(self, ui.box(vmath.vector3(badge_x + bw/2, row_cy, 0), vmath.vector3(bw, 18, 0), vmath.vector4(0.45, 0.14, 0.58, 0.92)))
                 txtL(self, badge_x + 8, row_cy, "ELIMINATION", "small", vmath.vector4(1.0, 0.88, 1.0, 1.0))
