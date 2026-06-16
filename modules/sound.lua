@@ -16,6 +16,7 @@ local MAP = {
   play50    = "snd_play50",
   draw      = "snd_draw",
   pick      = "snd_pick",
+  coin      = "snd_coin",
   win       = "snd_win",
   lose      = "snd_lose",
   alert     = "snd_alert",

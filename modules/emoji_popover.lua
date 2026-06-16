@@ -7,15 +7,16 @@ local C_TEXT = vmath.vector4(0.95, 0.97, 0.95, 1.0)
 local C_GOLD = vmath.vector4(1.0, 0.84, 0.35, 1.0)
 local GAME = "/controller#game_logic"
 
+-- Names and Sound IDs now synchronized directly with the Godot client structure
 local EMOJI_SERIES = {
-    { name = "joy",        anim = "face_with_tears_of_joy",       sounds = { {id="snd_laugh_mzeei", lbl="Laugh Mzeei"}, {id="snd_kawedemu", lbl="Kawedemu"}, {id="snd_igoing", lbl="Igoing"}, {id="snd_avuga_obula", lbl="Avuga Obula"} } },
-    { name = "tongue",     anim = "face_with_tongue",             sounds = { {id="snd_kawedemu", lbl="Kawedemu"}, {id="snd_mbooko", lbl="Mbooko"}, {id="snd_kasongo", lbl="Kasongo"}, {id="snd_towedde", lbl="Towedde"}, {id="snd_towedde_alt", lbl="Towedde Alt"} } },
-    { name = "hot",        anim = "hot_face",                     sounds = { {id="snd_banamwe", lbl="Banamwe"}, {id="snd_oh_my_god", lbl="Oh My God"}, {id="snd_abarongo", lbl="Abarongo"}, {id="snd_eheh", lbl="Eheh"}, {id="snd_i_wonder", lbl="I Wonder"} } },
-    { name = "money",      anim = "money_mouth_face",             sounds = { {id="snd_kigozi", lbl="Kigozi"}, {id="snd_olyaa", lbl="Olyaa"}, {id="snd_connecting", lbl="Connecting"} } },
-    { name = "party",      anim = "partying_face",                sounds = { {id="snd_bamukubye", lbl="Bamukubye"}, {id="snd_omukwomu", lbl="Omukwomu"}, {id="snd_kigozi", lbl="Kigozi"}, {id="snd_kawedemu", lbl="Kawedemu"}, {id="snd_towedde", lbl="Towedde"}, {id="snd_towedde_alt", lbl="Towedde Alt"} } },
-    { name = "sleep",      anim = "sleeping_face",                sounds = { {id="snd_snoring", lbl="Snoring"} } },
-    { name = "thumbsdown", anim = "thumbs_down",                  sounds = { {id="snd_i_cant_accept_that", lbl="I Can't Accept That"}, {id="snd_togenda_kuba", lbl="Togenda Kuba"}, {id="snd_tokirizibwa", lbl="Tokirizibwa"} } },
-    { name = "wave",       anim = "waving_hand_animated_default", sounds = { {id="snd_goodbye", lbl="Goodbye"} } },
+    { name = "face-with-tears-of-joy", anim = "face_with_tears_of_joy",       sounds = { {id="VoiceLaughMzeei", lbl="Laugh Mzeei"}, {id="VoiceKawedemu", lbl="Kawedemu"}, {id="VoiceIgoing", lbl="Igoing"}, {id="VoiceAvugaObula", lbl="Avuga Obula"} } },
+    { name = "face-with-tongue",       anim = "face_with_tongue",             sounds = { {id="VoiceKawedemu", lbl="Kawedemu"}, {id="VoiceMbooko", lbl="Mbooko"}, {id="VoiceKasongo", lbl="Kasongo"}, {id="VoiceTowedde", lbl="Towedde"}, {id="VoiceToweddeAlt", lbl="Towedde Alt"} } },
+    { name = "hot-face",               anim = "hot_face",                     sounds = { {id="VoiceBanamwe", lbl="Banamwe"}, {id="VoiceOhMyGod", lbl="Oh My God"}, {id="VoiceAbarongo", lbl="Abarongo"}, {id="VoiceEheh", lbl="Eheh"}, {id="VoiceIWonder", lbl="I Wonder"} } },
+    { name = "money_mouth_face",       anim = "money_mouth_face",             sounds = { {id="VoiceKigozi", lbl="Kigozi"}, {id="VoiceOlyaa", lbl="Olyaa"}, {id="SoundConnecting", lbl="Connecting"} } },
+    { name = "partying-face",          anim = "partying_face",                sounds = { {id="VoiceBamukubye", lbl="Bamukubye"}, {id="VoiceOmukwomu", lbl="Omukwomu"}, {id="VoiceKigozi", lbl="Kigozi"}, {id="VoiceKawedemu", lbl="Kawedemu"}, {id="VoiceTowedde", lbl="Towedde"}, {id="VoiceToweddeAlt", lbl="Towedde Alt"} } },
+    { name = "sleeping_face",          anim = "sleeping_face",                sounds = { {id="VoiceSnoring", lbl="Snoring"} } },
+    { name = "thumbs_down",            anim = "thumbs_down",                  sounds = { {id="VoiceICantAcceptThat", lbl="I Can't Accept That"}, {id="VoiceTogendaKuba", lbl="Togenda Kuba"}, {id="VoiceTokirizibwa", lbl="Tokirizibwa"} } },
+    { name = "waving_hand",            anim = "waving_hand_animated_default", sounds = { {id="VoiceGoodbye", lbl="Goodbye"} } },
 }
 
 local EMOJI_VALID = {}
@@ -26,9 +27,9 @@ local CELL_SIZE = 64
 local THUMB_SCALE = 1.3
 local FLY_SIZE = 96
 
--- Top-left destination in absolute screen space (where opponent emoji lands)
-local DEST_X = 70
-local DEST_Y = LOGICAL_H - 70
+-- Top-left destination synced with Godot BUBBLE_OFFSET (125 * 1.8 = ~225, 40 * 1.8 = ~72)
+local DEST_X = 225
+local DEST_Y = LOGICAL_H - 72
 
 local function play_sound(sound_id)
     if not sound_id or sound_id == "" then return end
@@ -56,24 +57,12 @@ local function hit(node, action)
     return gui.is_enabled(node) and gui.pick_node(node, action.x, action.y)
 end
 
--- Convert a world-space absolute position into local space of a given parent node.
--- For nodes parented directly to the gui root (no parent), world == local.
-local function world_to_local(parent_node, world_pos)
-    local parent_world = gui.get_position(parent_node)
-    return vmath.vector3(
-        world_pos.x - parent_world.x,
-        world_pos.y - parent_world.y,
-        0
-    )
-end
-
 function M.init(self)
     local btn_size = 140
     local gap = 16
     local p_w = 368
     local GRID_H = 230
     
-    -- Margins adjusted to push the button further bottom/right (was 10)
     local MARGIN_RIGHT = 0
     local MARGIN_BOTTOM = -5
 
@@ -114,7 +103,7 @@ function M.init(self)
     self.sound_root = box(vmath.vector3(p_w, 0, 0), vmath.vector3(1, 1, 0), vmath.vector4(1,1,1,0), gui.PIVOT_S)
     gui.set_parent(self.sound_root, self.clipping_box)
 
-    -- Floating Active Thumbnail (unclipped, uses live animated flipbook)
+    -- Floating Active Thumbnail
     self.active_thumb = box(vmath.vector3(0, 0, 0), vmath.vector3(CELL_SIZE, CELL_SIZE, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
     gui.set_parent(self.active_thumb, self.popover_anchor)
     gui.set_enabled(self.active_thumb, false)
@@ -179,7 +168,6 @@ function M.close(self)
         gui.set_enabled(self.active_thumb, false)
         self.emoji_closing = false
         
-        -- Notify the main game controller that the popover has closed AFTER animation
         msg.post(GAME, "emoji_state", { open = false })
     end)
 end
@@ -188,8 +176,6 @@ function M.reset(self)
     gui.set_enabled(self.popover_anchor, false)
     self.emoji_open = false
     self.emoji_closing = false
-    
-    -- Notify the main game controller to unlock screen touches
     msg.post(GAME, "emoji_state", { open = false })
     
     for k, n in pairs(self.emoji_fx or {}) do
@@ -204,7 +190,6 @@ local function emoji_show_grid(self)
     self.emoji_open = true
     self.emoji_view = "grid"
     
-    -- Notify the main game controller to block card/deck touches
     msg.post(GAME, "emoji_state", { open = true })
 
     gui.set_size(self.popover_bg, vmath.vector3(self.p_w, self.GRID_H, 0))
@@ -223,7 +208,6 @@ local function transition_to_sounds(self, cell)
     local e = EMOJI_SERIES[cell.idx]
     self.emoji_sel = cell.idx
 
-    -- Use the live animated flipbook so the thumbnail keeps animating
     pcall(function()
         gui.set_texture(self.active_thumb, "emojis")
         gui.play_flipbook(self.active_thumb, hash(e.anim))
@@ -279,7 +263,7 @@ local function transition_to_grid(self)
 end
 
 local function show_emoji_anim(self, name, fly, local_start_pos, start_scale)
-    if not EMOJI_VALID[name] then name = "joy" end
+    if not EMOJI_VALID[name] then name = "face-with-tears-of-joy" end
 
     local anim_id = "face_with_tears_of_joy"
     for _, e in ipairs(EMOJI_SERIES) do
@@ -290,13 +274,10 @@ local function show_emoji_anim(self, name, fly, local_start_pos, start_scale)
     self.emoji_fx = self.emoji_fx or {}
     if self.emoji_fx[key] then pcall(gui.delete_node, self.emoji_fx[key]); self.emoji_fx[key] = nil end
 
-    -- Absolute screen-space destination: top-left corner area
     local dest_world = vmath.vector3(DEST_X, DEST_Y, 0)
-
     local n
 
     if fly then
-        -- Node is parented to flight_anchor; convert destination to flight_anchor local space
         local anchor_world = gui.get_position(self.flight_anchor)
         local dest_local = vmath.vector3(
             dest_world.x - anchor_world.x,
@@ -307,7 +288,6 @@ local function show_emoji_anim(self, name, fly, local_start_pos, start_scale)
         if local_start_pos then
             n = box(local_start_pos, vmath.vector3(FLY_SIZE, FLY_SIZE, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
         else
-            -- Default start: same position as emoji_btn in flight_anchor local space
             local btn_world = gui.get_position(self.emoji_btn)
             local btn_local = vmath.vector3(
                 btn_world.x - anchor_world.x,
@@ -325,51 +305,56 @@ local function show_emoji_anim(self, name, fly, local_start_pos, start_scale)
             if self.emoji_fx[key] == n then self.emoji_fx[key] = nil end
         end
 
-        -- Bounce the emoji button
         gui.set_scale(self.emoji_btn, vmath.vector3(1.15, 1.15, 1))
         gui.animate(self.emoji_btn, "scale", vmath.vector3(1.0, 1.0, 1), gui.EASING_OUTELASTIC, 0.6)
 
-        -- Flight duration: a brisk arc. Kept short on purpose — a long flight
-        -- means the multi-frame emoji flipbook is resampled for many extra
-        -- frames while it travels, which was dragging the card/emoji FPS down.
-        local fly_duration = 1.0
-        local fade_delay  = fly_duration - 0.3   -- fade starts near the end, close to top-left
+        -- Synced to Godot flight timings (1.5s total flight, fades in last 0.5s)
+        local fly_duration = 1.5
+        local fade_delay  = 1.0
+        local fade_duration = 0.5
 
         if start_scale then
             local s0 = type(start_scale) == "number" and vmath.vector3(start_scale, start_scale, 1) or start_scale
             gui.set_scale(n, s0)
-            -- Gentle pop, then chain the shrink to avoid overlapping animations
             gui.animate(n, "scale", vmath.vector3(s0.x * 1.3, s0.y * 1.3, 1), gui.EASING_OUTBACK, 0.25, 0, function()
                 gui.animate(n, "scale", vmath.vector3(0.5, 0.5, 1), gui.EASING_INOUTSINE, fly_duration - 0.25)
             end)
-            -- Slow arc to top-left
             gui.animate(n, "position", dest_local, gui.EASING_INOUTSINE, fly_duration, 0.1)
-            -- Fade out only when almost at destination
-            gui.animate(n, "color.w", 0.0, gui.EASING_INSINE, 0.35, fade_delay, done)
+            gui.animate(n, "color.w", 0.0, gui.EASING_INSINE, fade_duration, fade_delay, done)
         else
             gui.set_scale(n, vmath.vector3(0.1, 0.1, 1))
-            -- Bloom up, then chain the shrink to avoid overlapping animations
             gui.animate(n, "scale", vmath.vector3(3.0, 3.0, 1), gui.EASING_OUTELASTIC, 0.4, 0, function()
                 gui.animate(n, "scale", vmath.vector3(0.5, 0.5, 1), gui.EASING_INOUTSINE, fly_duration - 0.4)
             end)
-            -- Slow arc to top-left
             gui.animate(n, "position", dest_local, gui.EASING_INOUTSINE, fly_duration, 0.1)
-            -- Fade out only when almost at destination
-            gui.animate(n, "color.w", 0.0, gui.EASING_INSINE, 0.4, fade_delay, done)
+            gui.animate(n, "color.w", 0.0, gui.EASING_INSINE, fade_duration, fade_delay, done)
         end
     else
-        -- Received emoji: appears at top-left, pops, then fades
-        n = box(dest_world, vmath.vector3(FLY_SIZE, FLY_SIZE, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
+        -- Received emoji: Container holding the Bubble and Emoji
+        local container = box(dest_world, vmath.vector3(1, 1, 0), vmath.vector4(0,0,0,0), gui.PIVOT_CENTER)
+        
+        -- The Bubble graphical background
+        local bubble = box(vmath.vector3(0, 0, 0), vmath.vector3(120, 120, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
+        gui.set_parent(bubble, container)
+        pcall(function() gui.set_texture(bubble, "ui"); gui.play_flipbook(bubble, hash("bubble")) end)
+        gui.set_rotation(bubble, vmath.vector3(0, 0, -20)) -- 20 degree tilt
+
+        -- The nested emoji payload (-9 matches the UI_SCALE_MULTIPLIER offset visually)
+        n = box(vmath.vector3(0, -9, 0), vmath.vector3(90, 90, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
+        gui.set_parent(n, container)
         pcall(function() gui.set_texture(n, "emojis"); gui.play_flipbook(n, hash(anim_id)) end)
-        self.emoji_fx[key] = n
+        
+        self.emoji_fx[key] = container
         local function done()
-            pcall(gui.delete_node, n)
-            if self.emoji_fx[key] == n then self.emoji_fx[key] = nil end
+            pcall(gui.delete_node, container)
+            if self.emoji_fx[key] == container then self.emoji_fx[key] = nil end
         end
 
-        gui.set_scale(n, vmath.vector3(0.3, 0.3, 1))
-        gui.animate(n, "scale", vmath.vector3(1.2, 1.2, 1), gui.EASING_OUTBACK, 0.3)
-        gui.animate(n, "color.w", 0.0, gui.EASING_INSINE, 0.5, 1.1, done)
+        -- Synchronized receiving animation (3s total: 0.3s pop, 2.5 wait, 0.5 fade)
+        gui.set_scale(container, vmath.vector3(0.01, 0.01, 1))
+        gui.animate(container, "scale", vmath.vector3(1.0, 1.0, 1), gui.EASING_OUTBACK, 0.3)
+        gui.animate(bubble, "color.w", 0.0, gui.EASING_INSINE, 0.5, 2.5)
+        gui.animate(n, "color.w", 0.0, gui.EASING_INSINE, 0.5, 2.5, done)
     end
 end
 
@@ -377,7 +362,6 @@ local function emoji_send(self, idx, sound_data, local_start_pos, start_scale)
     local e = EMOJI_SERIES[idx]
     if not e then return end
 
-    -- Do NOT disable active_thumb here; let it keep animating until the popover closes
     M.close(self)
 
     show_emoji_anim(self, e.name, true, local_start_pos, start_scale)
@@ -391,7 +375,7 @@ end
 function M.on_message(self, message_id, message)
     if message_id == hash("emoji_received") then
         if not message.is_me then
-            show_emoji_anim(self, message.emoji or "joy", false)
+            show_emoji_anim(self, message.emoji or "face-with-tears-of-joy", false)
             play_sound(message.sound)
         end
     end
@@ -400,13 +384,11 @@ end
 function M.on_input(self, action_id, action)
     if action_id ~= hash("touch") then return false end
 
-    -- Keep swallowing input if touch gesture is captured and not released
     if self.emoji_touch_captured and not action.pressed then
         if action.released then self.emoji_touch_captured = false end
         return true
     end
 
-    -- Actively swallow ALL touches while open OR while closing animation plays
     if self.emoji_open or self.emoji_closing then
         if action.pressed and self.emoji_open then
             self.emoji_touch_captured = true
@@ -446,7 +428,6 @@ function M.on_input(self, action_id, action)
                 return true
             end
 
-            -- Clicked outside popover_bg, close popover.
             M.close(self)
             return true
         end
