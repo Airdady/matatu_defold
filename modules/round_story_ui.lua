@@ -78,9 +78,9 @@ function M.show(self, m, opp_display_name)
     local seq = self.story_seq
     self.story_active = true
 
-    gui.set_enabled(self.story_scrim, true)
-    local sc = gui.get_color(self.story_scrim); sc.w = 0; gui.set_color(self.story_scrim, sc)
-    gui.animate(self.story_scrim, "color.w", 0.88, gui.EASING_OUTSINE, 0.25)
+    -- Round transitions show ONLY the animated text now — no dimmed colour
+    -- overlay. The scrim node is kept (disabled) for layout but never shown.
+    gui.set_enabled(self.story_scrim, false)
 
     local p, o = tonumber(m.p_score) or 0, tonumber(m.o_score) or 0
     local won = m.won and true or false
@@ -104,9 +104,7 @@ function M.show(self, m, opp_display_name)
 
     story_phase(self, seq, t1, s1, c1, 1.35, function()
         story_phase(self, seq, t2, s2, c2, 1.15, function()
-            gui.animate(self.story_scrim, "color.w", 0.0, gui.EASING_INSINE, 0.28, 0, function()
-                story_finish(self, seq)
-            end)
+            story_finish(self, seq)
         end)
     end)
 end
