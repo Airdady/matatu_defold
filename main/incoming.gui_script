@@ -264,19 +264,32 @@ function on_message(self, message_id, message)
     if message_id == hash("incoming_request") then
         local r   = ws.last_game_request or {}
         local raw = (ws.last_game_request or {}).raw or {}
-        
-        -- FIX: Intercept and drop tournament/battle requests from the global dialog.
-        -- We want these handled strictly by the inline banners in online.gui_script.
-        if type(raw) == "table" and (raw.gameType == "TOURNAMENT" or raw.gameType == "BATTLE" or raw.tournament or raw.tournamentId) then
+
+        local is_tb = type(raw) == "table"
+            and (raw.gameType == "TOURNAMENT" or raw.gameType == "BATTLE" or raw.tournament or raw.tournamentId)
+
+        -- Tournament / battle invites are rendered inline by online.gui_script
+        -- while the user is ON the online screen. Everywhere else (the lobby and,
+        -- crucially, the game screen) this GLOBAL overlay surfaces them so they
+        -- are never lost — e.g. a tournament invite arriving during an offline
+        -- game still comes through as a top banner.
+        if is_tb and app_state.current_screen == "online" then
             return
         end
 
-        -- The small non-disruptive toast is used ONLY while the user is in an
-        -- ACTIVE OFFLINE game (offline / tournament4 / chamber4).
-        local compact = (app_state.current_screen == "game") and (app_state.mode ~= "online")
-        
+        -- Compact, non-disruptive top banner ONLY while a game board is actively
+        -- in play; otherwise show the FULL dialog so the request can't be missed
+        -- (covers the case where the game already ended but we're still parked on
+        -- the game screen — the sound used to play with no visible notification).
+        local compact = app_state.game_active and true or false
+
+        local disp_name = (r.user or {}).username or "A player"
+        if is_tb then
+            disp_name = (type(raw) == "table" and (raw.tournamentName or raw.name)) or "Tournament Match"
+        end
+
         open_dialog(self,
-            (r.user or {}).username or "A player",
+            disp_name,
             r.stake or {},
             r.requestId,
             (r.user or {}).avatar,

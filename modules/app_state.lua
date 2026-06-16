@@ -6,6 +6,15 @@ local M = {}
 -- "offline" (Quick Play vs AI) or "online" (multiplayer over websocket)
 M.mode = "offline"
 
+-- True only while a game board is actively in play (set on game screen_enter,
+-- cleared on the final game-over modal or when leaving the game screen). Used
+-- by the global incoming-request overlay to decide between the compact top
+-- banner (mid-game) and the full dialog (no active game).
+M.game_active = false
+
+-- Name of the screen currently shown (set by the controller's show()).
+M.current_screen = nil
+
 -- The active offline game_logic object (set by the lobby on Quick Play).
 M.offline_game = nil
 
