@@ -894,7 +894,17 @@ function on_message(self, message_id, message, sender)
         end
 
     elseif message_id == hash("ws_player_dc") then
-        -- masked: seamless gameplay for the opponent
+        -- Surface the disconnect to the player with the grace countdown instead
+        -- of silently letting their turn time out while nothing visibly happens.
+        if self.online_mode and not self.game_over then
+            local grace = tonumber((message and message.grace)) or 30
+            notify_gui(self.gui_hud, "conn_overlay", {
+                show = true,
+                title = "OPPONENT DISCONNECTED",
+                subtitle = "Waiting for them to reconnect…",
+                grace = grace,
+            })
+        end
 
     elseif message_id == hash("ws_player_rc") then
         notify_gui(self.gui_hud, "conn_overlay", { show = false })
