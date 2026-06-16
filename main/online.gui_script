@@ -378,13 +378,16 @@ function on_input(self, action_id, action)
                 elseif id == "nav_account" then msg.post("#controller", "goto_profile")
                 elseif id == "nav_invite" then right_panel.start_invite_search(self, app_state, function() rebuild(self) end); play_snd("snd_suspense")
                 elseif id == "cancel_invite" then right_panel.stop_invite_search(self, app_state, function() rebuild(self) end); stop_snd("snd_suspense")
-                elseif id == "create_battle" then self.battle_modal = { editing = false, stake_i = 1, fmt_i = 1 }; rebuild(self)
+                elseif id == "create_battle" then self.battle_modal = { editing = false, stake_i = 1, fmt_i = 1, type = "NORMAL" }; rebuild(self)
                 elseif id == "update_battle" then
                     local mb = (ws.current_user_data or {}).myBattle or (ws.current_user_data or {}).myTournament or {}
                     local amt, fmtv, s_i, f_i = tonumber(mb.stakeAmount) or tonumber((mb.stake or {}).amount) or 0, tonumber(mb.matchFormat) or 3, 1, 1
                     for j, t in ipairs(right_panel.BATTLE_TIERS) do if t.amount == amt then s_i = j; break end end
                     for j, fdef in ipairs(right_panel.BATTLE_TIERS[s_i].formats) do if fdef.games == fmtv then f_i = j; break end end
-                    self.battle_modal = { editing = true, id = tostring(mb._id or mb.id or ""), stake_i = s_i, fmt_i = f_i }; rebuild(self)
+                    self.battle_modal = { editing = true, id = tostring(mb._id or mb.id or ""), stake_i = s_i, fmt_i = f_i, type = (tostring(mb.type or "NORMAL"):upper()) }; rebuild(self)
+                elseif id == "bm_type_normal" or id == "bm_type_elim" then
+                    local bm = self.battle_modal
+                    if bm and not bm.submitting then bm.type = (id == "bm_type_elim") and "ELIMINATION" or "NORMAL"; rebuild(self) end
                 elseif id == "bm_close" then self.battle_modal, self.list_scroll = nil, 0; rebuild(self)
                 elseif id == "bm_fee_minus" or id == "bm_fee_plus" then
                     local bm = self.battle_modal
