@@ -32,7 +32,7 @@ local function draw_battle_modal(self, ctx)
     self.buttons[#self.buttons+1] = { node = dim, id = "bm_block" }
 
     -- Further reduced the height to perfectly close the empty space gap
-    local pw, ph = 500, 330
+    local pw, ph = 500, 410
     track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), ctx.C.COL_BG))
     track(self, ui.btn9(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), "container_bg"))
 
@@ -44,13 +44,28 @@ local function draw_battle_modal(self, ctx)
     mkbtn(self, "bm_close", vmath.vector3(r - 10, top - 8, 0), vmath.vector3(30, 30, 0), nil, vmath.vector4(0,0,0,0.001))
     track(self, ui.text(vmath.vector3(r - 10, top - 8, 0), "X", "btn_sm", ctx.C.COL_MID))
 
+    -- BATTLE TYPE: normal head-to-head vs elimination chamber. Battles share the
+    -- same model / endpoints as tournaments; the backend stores type="ELIMINATION".
+    local is_elim = (tostring(bm.type or "NORMAL"):upper() == "ELIMINATION")
+    local type_y  = top - 50
+    txtL(self, l, type_y + 26, "BATTLE TYPE", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
+    local seg_w = (pw - 64) / 2
+    local nx, ex = CX - seg_w/2 - 4, CX + seg_w/2 + 4
+    local SEL_C, UNSEL_C = vmath.vector4(0.45, 0.14, 0.58, 0.95), vmath.vector4(0.16, 0.16, 0.18, 1)
+    local bn = track(self, ui.box(vmath.vector3(nx, type_y - 10, 0), vmath.vector3(seg_w, 40, 0), is_elim and UNSEL_C or SEL_C))
+    local be = track(self, ui.box(vmath.vector3(ex, type_y - 10, 0), vmath.vector3(seg_w, 40, 0), is_elim and SEL_C or UNSEL_C))
+    self.buttons[#self.buttons+1] = { node = bn, id = "bm_type_normal" }
+    self.buttons[#self.buttons+1] = { node = be, id = "bm_type_elim" }
+    track(self, ui.text(vmath.vector3(nx, type_y - 10, 0), "NORMAL", "btn_sm", is_elim and ctx.C.COL_MID or ctx.C.COL_WHITE))
+    track(self, ui.text(vmath.vector3(ex, type_y - 10, 0), "ELIMINATION", "btn_sm", is_elim and ctx.C.COL_WHITE or ctx.C.COL_MID))
+
     local tier         = M.BATTLE_TIERS[bm.stake_i] or M.BATTLE_TIERS[1]
     local fmts         = tier.formats
     if bm.fmt_i > #fmts then bm.fmt_i = #fmts end
     local fmt          = fmts[bm.fmt_i] or fmts[1]
     local winner_takes = tier.amount * 2 - fmt.charge
 
-    local fee_y = top - 64
+    local fee_y = top - 120
     txtL(self, l, fee_y + 28, "ENTRY FEE", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
     mkbtn(self, "bm_fee_minus", vmath.vector3(l + 20, fee_y - 8, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
     track(self, ui.box(vmath.vector3(CX, fee_y - 8, 0), vmath.vector3(pw - 200, 40, 0), ctx.C.COL_NAMEID_BG))
@@ -59,7 +74,7 @@ local function draw_battle_modal(self, ctx)
     track(self, ui.text(vmath.vector3(CX, fee_y - 44, 0),
         string.format("Winner Takes: %s + %d Pts", commas(winner_takes), fmt.points), "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
 
-    local fmt_y = top - 156
+    local fmt_y = top - 212
     txtL(self, l, fmt_y + 28, "GAME FORMAT", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
     mkbtn(self, "bm_fmt_minus", vmath.vector3(l + 20, fmt_y - 8, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
     track(self, ui.box(vmath.vector3(CX, fmt_y - 8, 0), vmath.vector3(pw - 200, 40, 0), ctx.C.COL_NAMEID_BG))
@@ -391,7 +406,8 @@ function M.bm_submit(self, rebuild_cb)
 
     bm.submitting = true; bm.msg, bm.msg_ok = nil, nil; rebuild_cb()
 
-    local payload = { userId = uid, amount = tier.amount, matchFormat = fmt.games, rules = "JOKERS" }
+    local payload = { userId = uid, amount = tier.amount, matchFormat = fmt.games, rules = "JOKERS",
+                      type = (tostring(bm.type or "NORMAL"):upper()) }
 
     local function on_result(result)
         local cur = self.battle_modal
@@ -438,6 +454,7 @@ function M.start_invite_search(self, app_state, rebuild_cb)
         gameType     = "TOURNAMENT",
         tournamentId = tostring(mb._id or mb.id or ""),
         rules        = "JOKERS",
+        type         = (tostring(mb.type or "NORMAL"):upper()),
     })
 
     -- Add a 10-second auto-timeout. Instead of closing abruptly, show a clear
