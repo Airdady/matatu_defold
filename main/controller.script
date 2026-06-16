@@ -11,8 +11,16 @@ local app_state = require("modules.app_state")
 local SCREENS = { "lobby", "auth", "profile", "online", "themes", "payments", "tournaments", "game" }
 
 local function show(self, screen)
-    -- Leaving the table clears any live stake pot / coin animations.
-    if screen ~= "game" then pcall(msg.post, "#coins", "coin_clear") end
+    -- Leaving the table clears any live stake pot / coin animations, and resets
+    -- the game mode. Otherwise a stale "tournament4" / "chamber4" / "online"
+    -- mode makes the NEXT game re-enter the wrong branch in game_flow.start_game
+    -- — which left the deck stuck at the 4-player position and re-created the
+    -- chamber standings container. The lobby / online flow sets the correct mode
+    -- again right before the next game starts.
+    if screen ~= "game" then
+        pcall(msg.post, "#coins", "coin_clear")
+        app_state.mode = "offline"
+    end
     for _, s in ipairs(SCREENS) do
         if s == screen then
             msg.post("#" .. s, "enable")
