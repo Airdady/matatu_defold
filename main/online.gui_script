@@ -376,25 +376,60 @@ function on_input(self, action_id, action)
                 elseif id == "nav_tournaments" then msg.post("#controller", "goto_tournaments")
                 elseif id == "nav_support" then msg.post("#controller", "goto_support")
                 elseif id == "nav_account" then msg.post("#controller", "goto_profile")
-                elseif id == "nav_invite" then right_panel.start_invite_search(self, app_state, function() rebuild(self) end); play_snd("snd_suspense")
+                elseif id == "nav_invite" then right_panel.start_invite_search(self, app_state, function() rebuild(self) end, b.data); play_snd("snd_suspense")
                 elseif id == "cancel_invite" then right_panel.stop_invite_search(self, app_state, function() rebuild(self) end); stop_snd("snd_suspense")
-                elseif id == "create_battle" then self.battle_modal = { editing = false, stake_i = 1, fmt_i = 1, type = "NORMAL" }; rebuild(self)
+                elseif id == "create_battle" then self.battle_modal = { editing = false, type = (b.data or "NORMAL"), stake_i = 1, fmt_i = 1, elim_i = 1, players = "AUTO" }; rebuild(self)
                 elseif id == "update_battle" then
-                    local mb = (ws.current_user_data or {}).myBattle or (ws.current_user_data or {}).myTournament or {}
-                    local amt, fmtv, s_i, f_i = tonumber(mb.stakeAmount) or tonumber((mb.stake or {}).amount) or 0, tonumber(mb.matchFormat) or 3, 1, 1
-                    for j, t in ipairs(right_panel.BATTLE_TIERS) do if t.amount == amt then s_i = j; break end end
-                    for j, fdef in ipairs(right_panel.BATTLE_TIERS[s_i].formats) do if fdef.games == fmtv then f_i = j; break end end
-                    self.battle_modal = { editing = true, id = tostring(mb._id or mb.id or ""), stake_i = s_i, fmt_i = f_i, type = (tostring(mb.matchType or "NORMAL"):upper()) }; rebuild(self)
-                elseif id == "bm_type_normal" or id == "bm_type_elim" then
+                    local T  = b.data or "NORMAL"
+                    local mb = right_panel.battle_of_type(ws.current_user_data or {}, T) or {}
+                    local btype = (tostring(mb.matchType or T or "NORMAL"):upper())
+                    local amt = tonumber(mb.stakeAmount) or tonumber((mb.stake or {}).amount) or 0
+                    local fmtv = tonumber(mb.matchFormat) or 3
+                    local s_i, f_i, elim_i = 1, 1, 1
+                    if btype == "NORMAL" then
+                        for j, t in ipairs(right_panel.BATTLE_TIERS) do if t.amount == amt then s_i = j; break end end
+                        for j, fdef in ipairs(right_panel.BATTLE_TIERS[s_i].formats) do if fdef.games == fmtv then f_i = j; break end end
+                    else
+                        for j, a in ipairs(right_panel.ELIMINATION_TIERS) do if a == amt then elim_i = j; break end end
+                    end
+                    local players = mb.players
+                    if type(players) == "table" then players = #players end
+                    self.battle_modal = { editing = true, id = tostring(mb._id or mb.id or ""), type = btype,
+                        stake_i = s_i, fmt_i = f_i, elim_i = elim_i, players = players or "AUTO" }; rebuild(self)
+                elseif id == "bm_type_normal" or id == "bm_type_elim" or id == "bm_type_party" then
                     local bm = self.battle_modal
-                    if bm and not bm.submitting then bm.type = (id == "bm_type_elim") and "ELIMINATION" or "NORMAL"; rebuild(self) end
+                    if bm and not bm.submitting then
+                        bm.type = (id == "bm_type_party") and "PARTY" or (id == "bm_type_elim") and "ELIMINATION" or "NORMAL"
+                        bm.stake_i = bm.stake_i or 1; bm.fmt_i = bm.fmt_i or 1; bm.elim_i = bm.elim_i or 1; bm.players = bm.players or "AUTO"
+                        rebuild(self)
+                    end
                 elseif id == "bm_close" then self.battle_modal, self.list_scroll = nil, 0; rebuild(self)
                 elseif id == "bm_fee_minus" or id == "bm_fee_plus" then
                     local bm = self.battle_modal
-                    if bm and not bm.submitting then bm.stake_i = math.max(1, math.min(#right_panel.BATTLE_TIERS, bm.stake_i + (id == "bm_fee_plus" and 1 or -1))); bm.fmt_i = math.min(bm.fmt_i, #right_panel.BATTLE_TIERS[bm.stake_i].formats); rebuild(self) end
+                    if bm and not bm.submitting then
+                        local step = (id == "bm_fee_plus") and 1 or -1
+                        local bt = tostring(bm.type or "NORMAL"):upper()
+                        if bt == "ELIMINATION" or bt == "PARTY" then
+                            bm.elim_i = math.max(1, math.min(#right_panel.ELIMINATION_TIERS, (bm.elim_i or 1) + step))
+                        else
+                            bm.stake_i = math.max(1, math.min(#right_panel.BATTLE_TIERS, (bm.stake_i or 1) + step))
+                            bm.fmt_i = math.min(bm.fmt_i or 1, #right_panel.BATTLE_TIERS[bm.stake_i].formats)
+                        end
+                        rebuild(self)
+                    end
                 elseif id == "bm_fmt_minus" or id == "bm_fmt_plus" then
                     local bm = self.battle_modal
-                    if bm and not bm.submitting then bm.fmt_i = math.max(1, math.min(#right_panel.BATTLE_TIERS[bm.stake_i].formats, bm.fmt_i + (id == "bm_fmt_plus" and 1 or -1))); rebuild(self) end
+                    if bm and not bm.submitting then bm.fmt_i = math.max(1, math.min(#right_panel.BATTLE_TIERS[bm.stake_i or 1].formats, (bm.fmt_i or 1) + (id == "bm_fmt_plus" and 1 or -1))); rebuild(self) end
+                elseif id == "bm_players_minus" or id == "bm_players_plus" then
+                    local bm = self.battle_modal
+                    if bm and not bm.submitting then
+                        -- Cycle AUTO ↔ 2 ↔ 3 ↔ 4 (index 1 = AUTO).
+                        local opts = { "AUTO", 2, 3, 4 }
+                        local cur = 1
+                        for j, o in ipairs(opts) do if tostring(o) == tostring(bm.players or "AUTO") then cur = j; break end end
+                        cur = math.max(1, math.min(#opts, cur + (id == "bm_players_plus" and 1 or -1)))
+                        bm.players = opts[cur]; rebuild(self)
+                    end
                 elseif id == "bm_submit" then right_panel.bm_submit(self, function() rebuild(self) end)
                 end
                 return true
