@@ -133,6 +133,10 @@ function M.trigger_play_effects(self, rec, is_last)
     -- The LAST card on the table ends the round: it lands with the normal
     -- play sound — no penalty fanfare, since no pick follows a winning card.
     if is_last and snd ~= "SoundPlayCut" then snd = "SoundPlay" end
+    -- A penalty-value card played to ANSWER an already-active penalty (a partial
+    -- / stacked penalty response) lands with the normal play sound, not the
+    -- penalty fanfare.
+    if (self.active_penalty or 0) > 0 and snd ~= "SoundPlayCut" then snd = "SoundPlay" end
     self.play_sound(snd)
 end
 

@@ -1,5 +1,7 @@
 local GAME = "/controller#game_logic"
 
+local app_state = require("modules.app_state")
+
 local LOGICAL_W = 1280
 local LOGICAL_H = 720
 local CX = LOGICAL_W / 2
@@ -614,13 +616,25 @@ function on_message(self, message_id, message)
 
         if message.my_id then self.my_id = tostring(message.my_id) end
 
-        -- Resolve the stake pot: burst the coins to the winner's avatar on this
-        -- screen with incremental counting (the pot entity is then cleared by
-        -- #coins). Routed by the final server-confirmed result.
-        pcall(msg.post, "#coins", "coin_settle", {
-            to  = is_victory and { x = 460, y = 370 } or { x = 820, y = 370 },
-            win = is_victory,
-        })
+        -- The board is no longer live once the result modal is up: let the global
+        -- incoming-request overlay surface full dialogs again.
+        app_state.game_active = false
+
+        -- Resolve the stake pot: burst the coins to the winner ONLY at the FINAL
+        -- conclusion of a real staked game. A continuing tournament/battle round
+        -- keeps the pot on the table (it pays out once the whole match/tournament
+        -- completes), and practice / offline games have no pot to settle.
+        local stake_amt = tonumber((res.stake or {}).amount) or 0
+        local round_continues =
+            (game_type == "TOURNAMENT" or game_type == "BATTLE" or game_type == "ELIMINATION")
+            and not (res.isMatchComplete or res.tournamentCompleted or res.tournamentEndedByTimeout or res.isNoShowScenario)
+        if message.series_active and not message.series_over then round_continues = true end
+        if stake_amt > 0 and not round_continues then
+            pcall(msg.post, "#coins", "coin_settle", {
+                to  = is_victory and { x = 460, y = 370 } or { x = 820, y = 370 },
+                win = is_victory,
+            })
+        end
 
         if self.avatars_ok then
             pcall(function() gui.play_flipbook(self.n_you_av, hash("avatar_" .. tostring(self.my_avatar))) end)

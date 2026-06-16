@@ -364,6 +364,18 @@ local function parse_message(json_string)
       end
     end
     emit("game_over", results)
+    -- Once a game is FINALLY over (i.e. NOT a continuing tournament/battle round)
+    -- drop the cached active game. Otherwise the finished state lingers and the
+    -- controller resurrects the old board on the next identify/route — the "game
+    -- board comes back with the previous state" bug.
+    local gt = tostring(results.gameType or "")
+    local round_continues =
+        (gt == "TOURNAMENT" or gt == "BATTLE" or gt == "ELIMINATION")
+        and not (results.isMatchComplete or results.tournamentCompleted
+                 or results.tournamentEndedByTimeout or results.isNoShowScenario)
+    if not round_continues then
+      M.active_game_state = {}
+    end
   elseif t == "TOURNAMENT_NO_OPPONENTS_FOUND" or t == "TOURNAMENT_REQUESTS_CANCELLED" then
     emit("tournament_no_opponents", d)
   elseif t == "HEAD_TO_HEAD" then

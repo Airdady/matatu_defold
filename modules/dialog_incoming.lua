@@ -32,33 +32,16 @@ function M.draw(self, ctx, d, a)
     local opp_x, me_x = CX - col_gap, CX + col_gap
     local av_y, av_size = CY + 40, 92
 
-    -- Circular timer wrapped around the avatars
+    -- Simple static ring/border behind each avatar (NO timer, NO progress, NO animation)
     local function draw_avatar_ring(x, y)
         local ring_dia = av_size + 16
-        local size = vmath.vector3(ring_dia, ring_dia, 0)
-        local pos = vmath.vector3(x, y, 0)
-        
-        -- Dark background ring
-        local bg = track(self, gui.new_pie_node(pos, size))
-        gui.set_color(bg, with_a(vmath.vector4(0, 0, 0, 0.5), a))
-        gui.set_fill_angle(bg, 360)
-        gui.set_perimeter_vertices(bg, 64)
-        
-        -- Progress filling ring
-        local pct = (d.max_time and d.max_time > 0) and (d.time_left / d.max_time) or 0
-        local timer_col = pct > 0.25 and C.COL_GREEN or C.COL_RED
-        
-        local fg = track(self, gui.new_pie_node(pos, size))
-        gui.set_color(fg, with_a(timer_col, a))
-        gui.set_fill_angle(fg, pct * 360)
-        gui.set_perimeter_vertices(fg, 64)
-        
-        -- Rotate by 90 degrees so the depletion starts perfectly at the top
-        gui.set_rotation(bg, vmath.quat_rotation_z(math.rad(90)))
-        gui.set_rotation(fg, vmath.quat_rotation_z(math.rad(90)))
+        local ring = track(self, gui.new_pie_node(vmath.vector3(x, y, 0), vmath.vector3(ring_dia, ring_dia, 0)))
+        gui.set_color(ring, with_a(vmath.vector4(0, 0, 0, 0.5), a))
+        gui.set_fill_angle(ring, 360)
+        gui.set_perimeter_vertices(ring, 64)
     end
 
-    -- Draw timer rings BEFORE avatars so they sit neatly behind as a border
+    -- Draw static rings BEFORE avatars so they sit neatly behind as a border
     draw_avatar_ring(opp_x, av_y)
     draw_avatar_ring(me_x, av_y)
 
@@ -84,7 +67,9 @@ function M.draw(self, ctx, d, a)
     local amt = tonumber((d.stake or {}).amount) or 0
     local pot_amt = amt * 2
 
-    -- Render Dynamic Coin Bundle
+    -- Render Dynamic Coin Bundle (bigger, centered between the avatars)
+    local bundle_y = av_y + 4
+    local bundle_h = 96
     if amt > 0 then
         local img = "100"
         if pot_amt >= 2000 then img = "2000"
@@ -93,9 +78,17 @@ function M.draw(self, ctx, d, a)
         elseif pot_amt >= 200 then img = "200"
         end
 
-        local bundle = track(self, gui.new_box_node(vmath.vector3(CX, av_y + 10, 0), vmath.vector3(60, 60, 0)))
+        local bundle = track(self, gui.new_box_node(vmath.vector3(CX, bundle_y, 0), vmath.vector3(96, bundle_h, 0)))
         gui.set_color(bundle, with_a(vmath.vector4(1, 1, 1, 1), a))
         pcall(function() gui.set_texture(bundle, "coins"); gui.play_flipbook(bundle, hash(img)) end)
+    end
+
+    -- Simple text countdown timer directly under the coin bundle
+    do
+        local secs      = math.max(0, math.ceil(d.time_left or 0))
+        local timer_col = ((d.time_left or 0) <= 3) and C.COL_RED or C.COL_GOLD
+        local timer_pos = vmath.vector3(CX, bundle_y - bundle_h/2 - 14, 0)
+        track(self, ui.text(timer_pos, secs .. "s", "body", with_a(timer_col, a)))
     end
 
     -- Render Bordered Stake Amount
