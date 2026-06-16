@@ -390,7 +390,9 @@ function on_input(self, action_id, action)
                         for j, t in ipairs(right_panel.BATTLE_TIERS) do if t.amount == amt then s_i = j; break end end
                         for j, fdef in ipairs(right_panel.BATTLE_TIERS[s_i].formats) do if fdef.games == fmtv then f_i = j; break end end
                     else
-                        for j, a in ipairs(right_panel.ELIMINATION_TIERS) do if a == amt then elim_i = j; break end end
+                        -- ELIMINATION's selector is the SCORE CAP, PARTY's is the entry fee.
+                        local match_val = (btype == "ELIMINATION") and (tonumber(mb.scoreCap) or 200) or amt
+                        for j, a in ipairs(right_panel.ELIMINATION_TIERS) do if a == match_val then elim_i = j; break end end
                     end
                     local players = mb.players
                     if type(players) == "table" then players = #players end

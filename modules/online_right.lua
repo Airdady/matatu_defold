@@ -125,11 +125,15 @@ local function draw_battle_modal(self, ctx)
         amount = M.ELIMINATION_TIERS[ei]
     end
 
+    -- Row 1: NORMAL/PARTY pick an ENTRY FEE (coins); ELIMINATION picks a SCORE
+    -- CAP (reach it and you're out — like the offline chamber). Both cycle the
+    -- 100/200/300/500 ladder; only the meaning + labels differ.
     local fee_y = top - 120
-    txtL(self, l, fee_y + 28, "ENTRY FEE", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
+    txtL(self, l, fee_y + 28, is_elim and "SCORE CAP" or "ENTRY FEE", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
     mkbtn(self, "bm_fee_minus", vmath.vector3(l + 20, fee_y - 8, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
     track(self, ui.box(vmath.vector3(CX, fee_y - 8, 0), vmath.vector3(pw - 200, 40, 0), ctx.C.COL_NAMEID_BG))
-    track(self, ui.text(vmath.vector3(CX, fee_y - 8, 0), commas(amount) .. " COINS", "body", vmath.vector4(1, 0.8, 0.4, 1)))
+    track(self, ui.text(vmath.vector3(CX, fee_y - 8, 0),
+        is_elim and tostring(amount) or (commas(amount) .. " COINS"), "body", vmath.vector4(1, 0.8, 0.4, 1)))
     mkbtn(self, "bm_fee_plus", vmath.vector3(r - 20, fee_y - 8, 0), vmath.vector3(40, 40, 0), "+", "secondary_btn")
     if is_norm then
         track(self, ui.text(vmath.vector3(CX, fee_y - 44, 0),
@@ -139,7 +143,7 @@ local function draw_battle_modal(self, ctx)
             "Pooled prize · last player standing wins", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
     else
         track(self, ui.text(vmath.vector3(CX, fee_y - 44, 0),
-            "Knockout chamber · survive to win", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+            "Hit the score cap and you're eliminated", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
     end
 
     -- Bottom row: PARTY shows a PLAYER COUNT selector; NORMAL/ELIMINATION keep the
@@ -158,11 +162,11 @@ local function draw_battle_modal(self, ctx)
             (players == "AUTO") and "Auto-fill the table as players join" or "Starts once the table is full",
             "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
     elseif is_elim then
-        txtL(self, l, fmt_y + 28, "GAME FORMAT", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
+        txtL(self, l, fmt_y + 28, "ENTRY", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
         track(self, ui.box(vmath.vector3(CX, fmt_y - 8, 0), vmath.vector3(pw - 60, 40, 0), ctx.C.COL_NAMEID_BG))
-        track(self, ui.text(vmath.vector3(CX, fmt_y - 8, 0), "SINGLE ELIMINATION", "body", ctx.C.COL_WHITE))
+        track(self, ui.text(vmath.vector3(CX, fmt_y - 8, 0), "FREE  ·  SCORE CHAMBER", "body", ctx.C.COL_WHITE))
         track(self, ui.text(vmath.vector3(CX, fmt_y - 44, 0),
-            "One loss and you're out", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+            "Live score table — first to the cap is out", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
     else
         txtL(self, l, fmt_y + 28, "GAME FORMAT", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
         mkbtn(self, "bm_fmt_minus", vmath.vector3(l + 20, fmt_y - 8, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
@@ -461,6 +465,9 @@ function M.draw(self, ctx, left_M)
                 local players = b.players or "AUTO"
                 local pstr    = (type(players) == "table") and tostring(#players) or tostring(players)
                 detail = string.format("%s PLAYERS  ~  %s", pstr, commas(amt))
+            elseif T == "ELIMINATION" then
+                local cap = tonumber(b.scoreCap) or 200
+                detail = "SCORE CAP  " .. tostring(cap)
             else
                 local fmt = tonumber(b.matchFormat) or 3
                 detail = string.format("BEST OF %d  ~  %s", fmt, commas(amt))
@@ -522,8 +529,10 @@ function M.bm_submit(self, rebuild_cb)
         rebuild_cb(); return
     end
 
-    -- Amount + format come from the tier set selected by the battle type.
-    local amount, match_format
+    -- Amount/cap come from the ladder selected by the battle type.
+    -- ELIMINATION: the 100/200/300/500 is the SCORE CAP (free chamber, hit the
+    -- cap and you're out). PARTY: it's the entry fee. NORMAL: bracket tier.
+    local amount, match_format, score_cap
     if btype == "NORMAL" then
         local tier = M.BATTLE_TIERS[bm.stake_i] or M.BATTLE_TIERS[1]
         local fmt  = tier.formats[math.min(bm.fmt_i or 1, #tier.formats)]
@@ -532,14 +541,20 @@ function M.bm_submit(self, rebuild_cb)
     else
         local ei = bm.elim_i or 1
         if ei < 1 then ei = 1 elseif ei > #M.ELIMINATION_TIERS then ei = #M.ELIMINATION_TIERS end
-        amount       = M.ELIMINATION_TIERS[ei]
-        match_format = (btype == "PARTY") and 1 or 1   -- single elimination per match
+        match_format = 1
+        if btype == "ELIMINATION" then
+            score_cap = M.ELIMINATION_TIERS[ei]
+            amount    = 0
+        else
+            amount    = M.ELIMINATION_TIERS[ei]
+        end
     end
 
     bm.submitting = true; bm.msg, bm.msg_ok = nil, nil; rebuild_cb()
 
     local payload = { userId = uid, amount = amount, matchFormat = match_format, rules = "JOKERS",
                       matchType = btype }
+    if btype == "ELIMINATION" then payload.scoreCap = score_cap end
     if btype == "PARTY" then payload.players = bm.players or "AUTO" end
 
     local function on_result(result)
