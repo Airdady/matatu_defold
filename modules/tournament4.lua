@@ -35,7 +35,7 @@ local function get_card_value(v, s)
     local val = tonumber(v)
     if not val then return 0 end
     if val == 50 then return 50 end
-    if val == 14 or val == 1 then
+    if val == 14 or val == 1 or val == 15 then
         if s == "S" then return 60 else return 15 end
     end
     if val == 2 then return 20 end
@@ -359,7 +359,25 @@ function M.advance(self)
     local top = self.played_cards[#self.played_cards]
     local is_cut = false
     if top and self.cutting_card then
-        if tostring(top.v) == "7" and top.s == self.cutting_card.s then is_cut = true end
+        if tostring(top.v) == "7" then
+            local cv = tonumber(self.cutting_card.v)
+            if cv == 50 then
+                -- Target is a Joker: cross-reference color instead of strict suit
+                local cs = self.cutting_card.s
+                local ts = top.s
+                local cut_red = (cs == "H" or cs == "D" or cs == "R")
+                local top_red = (ts == "H" or ts == "D")
+                local cut_black = (cs == "S" or cs == "C" or cs == "B")
+                local top_black = (ts == "S" or ts == "C")
+                
+                if (cut_red and top_red) or (cut_black and top_black) then
+                    is_cut = true
+                end
+            elseif top.s == self.cutting_card.s then
+                -- Target is a normal card: requires strict suit match
+                is_cut = true
+            end
+        end
     end
     
     if is_cut then
@@ -394,8 +412,32 @@ function M.ai_seat_turn(self, seat)
     local penalty = RE.get_active_penalty(self)
 
     local choice
+    local best_score = -math.huge
+    
+    local next_idx = step_index(self, self.t4.turn_idx)
+    local next_seat = self.t4.seats[next_idx]
+    local next_hand_size = next_seat and #next_seat.hand or 5
+    
+    local top_card = self.played_cards[#self.played_cards]
+    local current_card = top_card and {v = top_card.v, s = top_card.s} or nil
+    
+    local ai_state = {
+        rules = Rules.RULES_JOKERS,
+        currentCard = current_card,
+        chosenSuit = self.chosen_suit,
+        activePenaltyCount = penalty,
+        next_player_cards = next_hand_size
+    }
+
     for _, c in ipairs(seat.hand) do
-        if RE.evaluate_play(self, c, seat.hand).valid then choice = c; break end
+        local res = RE.evaluate_play(self, c, seat.hand)
+        if res.valid then 
+            local score = AI.score_card(c, res.type, seat.hand, ai_state)
+            if score > best_score then
+                best_score = score
+                choice = c
+            end
+        end
     end
 
     if not choice then
@@ -407,9 +449,15 @@ function M.ai_seat_turn(self, seat)
         return
     end
 
+    -- Evaluate the effect BEFORE animate_to_pile pushes it onto played_cards!
+    -- This ensures we evaluate against the actual top card and not falsely
+    -- trigger a same_value penalty match against itself.
+    local result = RE.evaluate_play(self, choice, seat.hand)
+
     for i, c in ipairs(seat.hand) do
         if c.v == choice.v and c.s == choice.s then table.remove(seat.hand, i); break end
     end
+    
     local rec = table.remove(seat.cards)
     if rec then rec.v, rec.s = choice.v, choice.s; self.set_face(rec)
     else local a = anchor_for(self, seat.slot); rec = self.spawn_card(choice.v, choice.s, vmath.vector3(a.x, a.y, BL.Z_FLY)); self.set_face(rec) end
@@ -425,8 +473,6 @@ function M.ai_seat_turn(self, seat)
         timer.delay(0.5, false, function() if seq == self._seq then M.finish_round(self, seat) end end)
         return
     end
-
-    local result = RE.evaluate_play(self, rec, seat.hand)
 
     -- Penalties do NOT stack: the next player faces ONLY this card's penalty,
     -- exactly like the 2-player game (game_flow.after_play_settled).

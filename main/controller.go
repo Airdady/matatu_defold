@@ -148,6 +148,12 @@ embedded_components {
   ""
 }
 embedded_components {
+  id: "snd_coin"
+  type: "sound"
+  data: "sound: \"/assets/sounds/coin.ogg\"\n"
+  ""
+}
+embedded_components {
   id: "snd_win"
   type: "sound"
   data: "sound: \"/assets/sounds/win_alt.ogg\"\n"
