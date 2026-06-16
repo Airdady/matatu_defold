@@ -407,7 +407,7 @@ function M.bm_submit(self, rebuild_cb)
     bm.submitting = true; bm.msg, bm.msg_ok = nil, nil; rebuild_cb()
 
     local payload = { userId = uid, amount = tier.amount, matchFormat = fmt.games, rules = "JOKERS",
-                      type = (tostring(bm.type or "NORMAL"):upper()) }
+                      matchType = (tostring(bm.type or "NORMAL"):upper()) }
 
     local function on_result(result)
         local cur = self.battle_modal
@@ -454,7 +454,7 @@ function M.start_invite_search(self, app_state, rebuild_cb)
         gameType     = "TOURNAMENT",
         tournamentId = tostring(mb._id or mb.id or ""),
         rules        = "JOKERS",
-        type         = (tostring(mb.type or "NORMAL"):upper()),
+        matchType    = (tostring(mb.matchType or "NORMAL"):upper()),
     })
 
     -- Add a 10-second auto-timeout. Instead of closing abruptly, show a clear
