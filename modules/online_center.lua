@@ -242,8 +242,16 @@ function M.draw(self, ctx)
                     track(self, ui.box(vmath.vector3(jx, row_cy, 0), vmath.vector3(70, 18, 0), vmath.vector4(0.3, 0.1, 0.1, 0.8)))
                     track(self, ui.text(vmath.vector3(jx, row_cy, 0), "NO JOKERS", "small", C.COL_RED))
                 end
-                -- Used "body" here instead of "small" to match Quick Play font size
-                txtR(self, info_x, row_cy, string.format("BEST OF %d ~ %s", fmt, commas(amt)), "body", C.COL_GOLD)
+                -- Used "body" here instead of "small" to match Quick Play font size.
+                -- ELIMINATION is a score-cap chamber, so it shows its SCORE CAP
+                -- (with the stake) rather than a BEST OF format.
+                local detail
+                if tostring(mb.matchType or ""):upper() == "ELIMINATION" then
+                    detail = string.format("SCORE CAP %d  ~  %s", tonumber(mb.scoreCap) or 200, commas(amt))
+                else
+                    detail = string.format("BEST OF %d ~ %s", fmt, commas(amt))
+                end
+                txtR(self, info_x, row_cy, detail, "body", C.COL_GOLD)
             else
                 local s_amt = tonumber((pu.stake or {}).amount) or 0
                 txtR(self, info_x, row_cy, s_amt == 0 and "FREE" or commas(s_amt), "body", C.COL_BRIGHT)

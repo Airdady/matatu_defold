@@ -15,7 +15,13 @@ M.BATTLE_TIERS = {
 
 -- Elimination/Party battles use a flat low-stake ladder (no per-format charge
 -- table; the entry fee stepper just cycles these amounts).
+-- For ELIMINATION this ladder is the SCORE CAP (charge = cap/2); PARTY uses it
+-- as the entry fee.
 M.ELIMINATION_TIERS = { 100, 200, 300, 500 }
+
+-- ELIMINATION is a STAKED score-cap chamber: players put up one of these stake
+-- amounts, and the charge is derived from the score cap (cap/2).
+M.ELIM_STAKES = { 1000, 2000 }
 
 -- The three independent battle types. Internal keys map to display labels.
 M.BATTLE_TYPES = { "NORMAL", "ELIMINATION", "PARTY" }
@@ -108,9 +114,10 @@ local function draw_battle_modal(self, ctx)
         track(self, ui.text(vmath.vector3(sx, type_y - 10, 0), s.label, "btn_sm", s.on and ctx.C.COL_WHITE or ctx.C.COL_MID))
     end
 
-    -- ENTRY FEE: NORMAL cycles BATTLE_TIERS (bm.stake_i); ELIMINATION/PARTY cycle
-    -- the flat ELIMINATION_TIERS amounts (bm.elim_i).
-    local amount, fmt, winner_takes
+    -- ENTRY FEE: NORMAL cycles BATTLE_TIERS (bm.stake_i); PARTY cycles the flat
+    -- ELIMINATION_TIERS amounts (bm.elim_i). ELIMINATION is now a STAKED chamber:
+    -- it stakes ELIM_STAKES (bm.estake_i) and caps on ELIMINATION_TIERS (bm.cap_i).
+    local amount, fmt, winner_takes, estake, cap
     if is_norm then
         local tier = M.BATTLE_TIERS[bm.stake_i] or M.BATTLE_TIERS[1]
         local fmts = tier.formats
@@ -118,6 +125,15 @@ local function draw_battle_modal(self, ctx)
         fmt          = fmts[bm.fmt_i] or fmts[1]
         amount       = tier.amount
         winner_takes = tier.amount * 2 - fmt.charge
+    elseif is_elim then
+        local si = bm.estake_i or 1
+        if si < 1 then si = 1 elseif si > #M.ELIM_STAKES then si = #M.ELIM_STAKES end
+        bm.estake_i = si
+        estake = M.ELIM_STAKES[si]
+        local ci = bm.cap_i or 2
+        if ci < 1 then ci = 1 elseif ci > #M.ELIMINATION_TIERS then ci = #M.ELIMINATION_TIERS end
+        bm.cap_i = ci
+        cap = M.ELIMINATION_TIERS[ci]
     else
         local ei = bm.elim_i or 1
         if ei < 1 then ei = 1 elseif ei > #M.ELIMINATION_TIERS then ei = #M.ELIMINATION_TIERS end
@@ -125,15 +141,15 @@ local function draw_battle_modal(self, ctx)
         amount = M.ELIMINATION_TIERS[ei]
     end
 
-    -- Row 1: NORMAL/PARTY pick an ENTRY FEE (coins); ELIMINATION picks a SCORE
-    -- CAP (reach it and you're out — like the offline chamber). Both cycle the
-    -- 100/200/300/500 ladder; only the meaning + labels differ.
+    -- Row 1: NORMAL/PARTY pick an ENTRY FEE (coins); ELIMINATION picks a STAKE
+    -- (one of the ELIM_STAKES amounts). NORMAL/PARTY cycle their ladders via
+    -- bm.stake_i / bm.elim_i; ELIMINATION cycles ELIM_STAKES via bm.estake_i.
     local fee_y = top - 120
-    txtL(self, l, fee_y + 28, is_elim and "SCORE CAP" or "ENTRY FEE", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
+    txtL(self, l, fee_y + 28, is_elim and "STAKE" or "ENTRY FEE", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
     mkbtn(self, "bm_fee_minus", vmath.vector3(l + 20, fee_y - 8, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
     track(self, ui.box(vmath.vector3(CX, fee_y - 8, 0), vmath.vector3(pw - 200, 40, 0), ctx.C.COL_NAMEID_BG))
     track(self, ui.text(vmath.vector3(CX, fee_y - 8, 0),
-        is_elim and tostring(amount) or (commas(amount) .. " COINS"), "body", vmath.vector4(1, 0.8, 0.4, 1)))
+        is_elim and (commas(estake) .. " COINS") or (commas(amount) .. " COINS"), "body", vmath.vector4(1, 0.8, 0.4, 1)))
     mkbtn(self, "bm_fee_plus", vmath.vector3(r - 20, fee_y - 8, 0), vmath.vector3(40, 40, 0), "+", "secondary_btn")
     if is_norm then
         track(self, ui.text(vmath.vector3(CX, fee_y - 44, 0),
@@ -143,12 +159,12 @@ local function draw_battle_modal(self, ctx)
             "Pooled prize · last player standing wins", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
     else
         track(self, ui.text(vmath.vector3(CX, fee_y - 44, 0),
-            "Hit the score cap and you're eliminated", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+            "Staked score chamber · charge from the cap", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
     end
 
-    -- Bottom row: PARTY shows a PLAYER COUNT selector; NORMAL/ELIMINATION keep the
-    -- GAME FORMAT stepper. (ELIMINATION has no per-format charge table, so its
-    -- "format" is fixed — we reuse the BEST OF stepper only for NORMAL.)
+    -- Bottom row: PARTY shows a PLAYER COUNT selector; ELIMINATION shows a SCORE
+    -- CAP selector (reach the cap and you're out; charge = cap/2); NORMAL keeps
+    -- the GAME FORMAT (BEST OF) stepper.
     local fmt_y = top - 212
     if is_party then
         local players = bm.players or "AUTO"
@@ -162,11 +178,13 @@ local function draw_battle_modal(self, ctx)
             (players == "AUTO") and "Auto-fill the table as players join" or "Starts once the table is full",
             "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
     elseif is_elim then
-        txtL(self, l, fmt_y + 28, "ENTRY", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
-        track(self, ui.box(vmath.vector3(CX, fmt_y - 8, 0), vmath.vector3(pw - 60, 40, 0), ctx.C.COL_NAMEID_BG))
-        track(self, ui.text(vmath.vector3(CX, fmt_y - 8, 0), "FREE  ·  SCORE CHAMBER", "body", ctx.C.COL_WHITE))
+        txtL(self, l, fmt_y + 28, "SCORE CAP", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
+        mkbtn(self, "bm_cap_minus", vmath.vector3(l + 20, fmt_y - 8, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
+        track(self, ui.box(vmath.vector3(CX, fmt_y - 8, 0), vmath.vector3(pw - 200, 40, 0), ctx.C.COL_NAMEID_BG))
+        track(self, ui.text(vmath.vector3(CX, fmt_y - 8, 0), tostring(cap), "body", ctx.C.COL_WHITE))
+        mkbtn(self, "bm_cap_plus", vmath.vector3(r - 20, fmt_y - 8, 0), vmath.vector3(40, 40, 0), "+", "secondary_btn")
         track(self, ui.text(vmath.vector3(CX, fmt_y - 44, 0),
-            "Live score table — first to the cap is out", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+            string.format("Charge: %d  ·  reach the cap and you're out", math.floor(cap / 2)), "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
     else
         txtL(self, l, fmt_y + 28, "GAME FORMAT", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
         mkbtn(self, "bm_fmt_minus", vmath.vector3(l + 20, fmt_y - 8, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
@@ -467,7 +485,7 @@ function M.draw(self, ctx, left_M)
                 detail = string.format("%s PLAYERS  ~  %s", pstr, commas(amt))
             elseif T == "ELIMINATION" then
                 local cap = tonumber(b.scoreCap) or 200
-                detail = "SCORE CAP  " .. tostring(cap)
+                detail = string.format("SCORE CAP %d  ~  %s", cap, commas(amt))
             else
                 local fmt = tonumber(b.matchFormat) or 3
                 detail = string.format("BEST OF %d  ~  %s", fmt, commas(amt))
@@ -530,24 +548,24 @@ function M.bm_submit(self, rebuild_cb)
     end
 
     -- Amount/cap come from the ladder selected by the battle type.
-    -- ELIMINATION: the 100/200/300/500 is the SCORE CAP (free chamber, hit the
-    -- cap and you're out). PARTY: it's the entry fee. NORMAL: bracket tier.
+    -- ELIMINATION: a STAKED score-cap chamber — amount is the ELIM_STAKES stake
+    -- (1000/2000) and scoreCap is the ELIMINATION_TIERS cap (charge = cap/2).
+    -- PARTY: ELIMINATION_TIERS is the entry fee. NORMAL: bracket tier.
     local amount, match_format, score_cap
     if btype == "NORMAL" then
         local tier = M.BATTLE_TIERS[bm.stake_i] or M.BATTLE_TIERS[1]
         local fmt  = tier.formats[math.min(bm.fmt_i or 1, #tier.formats)]
         amount       = tier.amount
         match_format = fmt.games
+    elseif btype == "ELIMINATION" then
+        match_format = 1
+        amount       = M.ELIM_STAKES[bm.estake_i or 1] or M.ELIM_STAKES[1]
+        score_cap    = M.ELIMINATION_TIERS[bm.cap_i or 2] or M.ELIMINATION_TIERS[2]
     else
         local ei = bm.elim_i or 1
         if ei < 1 then ei = 1 elseif ei > #M.ELIMINATION_TIERS then ei = #M.ELIMINATION_TIERS end
         match_format = 1
-        if btype == "ELIMINATION" then
-            score_cap = M.ELIMINATION_TIERS[ei]
-            amount    = 0
-        else
-            amount    = M.ELIMINATION_TIERS[ei]
-        end
+        amount       = M.ELIMINATION_TIERS[ei]
     end
 
     bm.submitting = true; bm.msg, bm.msg_ok = nil, nil; rebuild_cb()
