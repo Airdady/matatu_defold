@@ -7,7 +7,7 @@ local C_T_RED     = vmath.vector4(0.94, 0.27, 0.27, 0.6)
 
 local T4_TIMER_SQ = 96   
 local T4_TIMER_TH = 7    
-local T4_CHAMBER_ROW_GAP = 42
+local T4_CHAMBER_ROW_GAP = 46
 local LOGICAL_W, LOGICAL_H = 1280, 720
 
 local function label(pos, text, size, color, align, font_name)
@@ -116,13 +116,8 @@ function M.clear(self)
     self.t4_active_slot = nil
     if self.t4_tally_root then pcall(gui.delete_node, self.t4_tally_root); self.t4_tally_root = nil end
     M.clear_graves(self)
-    -- NOTE: the Elimination Chamber standings table is intentionally NOT torn
-    -- down here. t4_clear fires on every deal/restage to rebuild the per-seat
-    -- badges (deal_round), and the chamber score table must persist across all
-    -- of those. It is cleared explicitly via M.clear_chamber on reset_hud.
 end
 
--- Tear down the Elimination Chamber standings table (screen leave / new game).
 function M.clear_chamber(self)
     if self.t4_chamber and self.t4_chamber.root then pcall(gui.delete_node, self.t4_chamber.root) end
     self.t4_chamber = nil
@@ -241,6 +236,7 @@ function M.count_tick(self, message)
         gui.set_shadow(ftxt, vmath.vector4(0, 0, 0, 1))
         gui.animate(ftxt, "position", vmath.vector3(T4_PODIUM_X + 90, T4_PODIUM_Y, 0), gui.EASING_INSINE, 0.42, 0, function()
             pcall(gui.delete_node, ftxt)
+            gui.cancel_animation(b.tot, "scale")
             gui.set_text(b.tot, tostring(message.total))
             gui.set_scale(b.tot, vmath.vector3(3.0, 3.0, 1))
             gui.animate(b.tot, "scale", vmath.vector3(2.4, 2.4, 1), gui.EASING_OUTBOUNCE, 0.3)
@@ -301,7 +297,7 @@ function M.elimination_sequence(self, message)
     end)
 end
 
-local function t4_chamber_row_y(i) return -52 - i * T4_CHAMBER_ROW_GAP end
+local function t4_chamber_row_y(i) return -58 - i * T4_CHAMBER_ROW_GAP end
 
 local function t4_chamber_reflow(self)
     if not (self.t4_chamber and self.t4_chamber.list) then return end
@@ -319,6 +315,7 @@ local function t4_chamber_reflow(self)
         local base_y = t4_chamber_row_y(slot - 1)
         gui.set_text(e.rk, tostring(slot))
         for _, nd in ipairs(e.nodes) do
+            gui.cancel_animation(nd.node, "position.y")
             gui.animate(nd.node, "position.y", base_y + nd.dy, gui.EASING_INOUTSINE, 0.4)
         end
     end
@@ -329,44 +326,51 @@ function M.chamber_init(self, message)
     local threshold = message.threshold or 100
     local rows = message.rows or {}
     local n = #rows
-    local height = 52 + n * T4_CHAMBER_ROW_GAP
-    -- Default: top-left (offline chamber). "left_center" pins it to the extreme
-    -- left, vertically centred — where online knockout puts it (the battle
-    -- scoreboard's spot is free since it's hidden for knockout).
-    local rx, ry = 14, LOGICAL_H - 14
-    if message.placement == "left_center" then
+    local height = 66 + n * T4_CHAMBER_ROW_GAP
+    
+    local gap_left = 40
+    local width = 340
+    local rx = gap_left
+    local ry = LOGICAL_H - 14
+    
+    if message.placement == "left_center" or message.placement == "right_center" then
+        rx = gap_left
         ry = math.floor(LOGICAL_H / 2 + height / 2)
     end
-    local root = gui.new_box_node(vmath.vector3(rx, ry, 0), vmath.vector3(250, height, 0))
-    gui.set_pivot(root, gui.PIVOT_NW); gui.set_color(root, vmath.vector4(0.05, 0.06, 0.09, 0.86))
-    gui.set_xanchor(root, gui.ANCHOR_LEFT); gui.set_yanchor(root, gui.ANCHOR_TOP)
-    local title = label(vmath.vector3(125, -24, 0), "SCORE CAP  " .. tostring(threshold), 16, vmath.vector4(1, 0.84, 0.2, 1), gui.PIVOT_CENTER, "subtitle2")
+    
+    local root = gui.new_box_node(vmath.vector3(rx, ry, 0), vmath.vector3(width, height, 0))
+    gui.set_pivot(root, gui.PIVOT_NW)
+    
+    gui.set_color(root, vmath.vector4(0.08, 0.1, 0.14, 0.95))
+    gui.set_xanchor(root, gui.ANCHOR_LEFT); gui.set_yanchor(root, gui.ANCHOR_NONE)
+    
+    local title = label(vmath.vector3(width/2, -26, 0), "SCORE CAP  " .. tostring(threshold), 30, vmath.vector4(1, 0.84, 0.2, 1), gui.PIVOT_CENTER, "title")
     gui.set_parent(title, root)
     
     self.t4_chamber = { root = root, threshold = threshold, rows = {}, list = {} }
     for i, r in ipairs(rows) do
         local ry = t4_chamber_row_y(i - 1)
         local total = r.total or 0
-        local bg = gui.new_box_node(vmath.vector3(125, ry - 4, 0), vmath.vector3(242, 38, 0))
-        if not pcall(function() gui.set_texture(bg, "ui"); gui.play_flipbook(bg, hash("secondary_btn")); gui.set_slice9(bg, vmath.vector4(24, 18, 24, 18)) end) then
-            gui.set_color(bg, vmath.vector4(1, 1, 1, 0.06))
-        end
+        
+        local bg = gui.new_box_node(vmath.vector3(width/2, ry - 4, 0), vmath.vector3(width - 16, 42, 0))
+        gui.set_color(bg, vmath.vector4(0.14, 0.16, 0.22, 0.8))
         gui.set_parent(bg, root)
         
-        local rk = label(vmath.vector3(14, ry, 0), tostring(i), 14, vmath.vector4(1, 0.84, 0.2, 1), gui.PIVOT_W, "subtitle2"); gui.set_parent(rk, root)
-        local nm = label(vmath.vector3(34, ry, 0), string.upper(tostring(r.name or "")), 14, C_WHITE, gui.PIVOT_W, "subtitle2"); gui.set_parent(nm, root)
-        local val = label(vmath.vector3(236, ry, 0), tostring(total), 16, C_WHITE, gui.PIVOT_E, "subtitle2"); gui.set_parent(val, root)
+        local rk = label(vmath.vector3(18, ry, 0), tostring(i), 15, vmath.vector4(1, 0.84, 0.2, 1), gui.PIVOT_W, "subtitle2"); gui.set_parent(rk, root)
+        local nm = label(vmath.vector3(44, ry, 0), string.upper(tostring(r.name or "")), 18, C_WHITE, gui.PIVOT_W, "subtitle2"); gui.set_parent(nm, root)
         
-        local trk = gui.new_box_node(vmath.vector3(34, ry - 15, 0), vmath.vector3(202, 5, 0))
+        local val = label(vmath.vector3(width - 16, ry, 0), tostring(total), 34, C_WHITE, gui.PIVOT_E, "title"); gui.set_parent(val, root)
+        
+        local trk = gui.new_box_node(vmath.vector3(44, ry - 17, 0), vmath.vector3(width - 64, 5, 0))
         gui.set_pivot(trk, gui.PIVOT_W); gui.set_color(trk, vmath.vector4(1, 1, 1, 0.12)); gui.set_parent(trk, root)
-        local fill = gui.new_box_node(vmath.vector3(34, ry - 15, 0), vmath.vector3(202, 5, 0))
+        local fill = gui.new_box_node(vmath.vector3(44, ry - 17, 0), vmath.vector3(width - 64, 5, 0))
         gui.set_pivot(fill, gui.PIVOT_W); gui.set_color(fill, C_T_GREEN); gui.set_parent(fill, root)
         local frac = math.min(1, total / math.max(1, threshold))
         gui.set_scale(fill, vmath.vector3(frac, 1, 1))
         
         local entry = {
             idx = i, total = total, eliminated = false, rk = rk, nm = nm, val = val, fill = fill,
-            nodes = { {node=bg, dy=-4}, {node=rk, dy=0}, {node=nm, dy=0}, {node=val, dy=0}, {node=trk, dy=-15}, {node=fill, dy=-15} }
+            nodes = { {node=bg, dy=-4}, {node=rk, dy=0}, {node=nm, dy=0}, {node=val, dy=0}, {node=trk, dy=-17}, {node=fill, dy=-17} }
         }
         self.t4_chamber.rows[string.upper(tostring(r.name or i))] = entry
         self.t4_chamber.list[i] = entry
@@ -380,7 +384,6 @@ function M.chamber_update(self, message)
     local thr = message.threshold or self.t4_chamber.threshold or 100
     row.total = message.total or 0
     if message.eliminated then row.eliminated = true end
-    gui.set_text(row.val, tostring(row.total))
     
     local frac = math.min(1, row.total / math.max(1, thr))
     gui.animate(row.fill, "scale.x", frac, gui.EASING_OUTCUBIC, 0.5)
@@ -389,10 +392,38 @@ function M.chamber_update(self, message)
     gui.set_color(row.fill, col)
     
     if message.added and message.added > 0 then
-        pcall(msg.post, "/controller#snd_ping", "play_sound")
-        gui.set_scale(row.val, vmath.vector3(1.6, 1.6, 1))
-        gui.animate(row.val, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTBOUNCE, 0.4)
+        if message.cx and message.cy then
+            -- Shrunk the flying coin number (18pt) and shifted it safely left
+            local ftxt = label(vmath.vector3(message.cx, message.cy, 0), "+" .. tostring(message.added), 18, vmath.vector4(1, 0.55, 0.2, 1), gui.PIVOT_CENTER, "title")
+            gui.set_shadow(ftxt, vmath.vector4(0, 0, 0, 1))
+            
+            local rx = gui.get_position(self.t4_chamber.root).x
+            local ry = gui.get_position(self.t4_chamber.root).y
+            local val_pos = gui.get_position(row.val)
+            
+            -- Targeted cleanly to the left of the row values so the 34pt score is perfectly visible
+            local target_x = (rx + val_pos.x) - 90
+            local target_y = ry + val_pos.y
+            
+            gui.animate(ftxt, "position", vmath.vector3(target_x, target_y, 0), gui.EASING_INSINE, 0.42, 0, function()
+                pcall(gui.delete_node, ftxt)
+                pcall(msg.post, "/controller#snd_ping", "play_sound")
+                gui.cancel_animation(row.val, "scale")
+                gui.set_text(row.val, tostring(row.total))
+                gui.set_scale(row.val, vmath.vector3(1.4, 1.4, 1))
+                gui.animate(row.val, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTBOUNCE, 0.4)
+            end)
+        else
+            pcall(msg.post, "/controller#snd_ping", "play_sound")
+            gui.cancel_animation(row.val, "scale")
+            gui.set_text(row.val, tostring(row.total))
+            gui.set_scale(row.val, vmath.vector3(1.4, 1.4, 1))
+            gui.animate(row.val, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTBOUNCE, 0.4)
+        end
+    else
+        gui.set_text(row.val, tostring(row.total))
     end
+    
     if message.eliminated then
         gui.set_color(row.nm, vmath.vector4(0.5, 0.5, 0.55, 1))
         gui.set_color(row.val, vmath.vector4(0.95, 0.32, 0.32, 1))

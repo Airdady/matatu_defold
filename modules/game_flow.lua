@@ -42,8 +42,6 @@ function M.play_card(self, rec, is_player, result)
     local is_last = (#src_hand <= 1)
     
     -- Sequence Tracker for Swift Validation (Rapid Tapping)
-    -- We assign a ticket to every card played. If multiple cards are flying,
-    -- only the one with the highest ticket gets to resolve the rules.
     self._play_ticket = (self._play_ticket or 0) + 1
     local current_ticket = self._play_ticket
 
@@ -54,12 +52,6 @@ function M.play_card(self, rec, is_player, result)
 
     notify_gui(self.gui_hud, "skip", { show = false })
     self.chosen_suit = ""
-    -- The freshly played card now defines what matches next, so a chosen-suit
-    -- constraint (from a prior ace) is consumed. Online, get_active_suit reads
-    -- game_state.chosenSuit, so clear it there too — otherwise a continued turn
-    -- after a skip (e.g. chaining 8s) keeps validating against the stale suit
-    -- and the second skip card is wrongly rejected. An ace re-sets the suit via
-    -- the suit-select flow (self.chosen_suit).
     if is_player and self.online_mode and type(self.game_state) == "table" then
         self.game_state.chosenSuit = ""
     end
@@ -75,16 +67,12 @@ function M.play_card(self, rec, is_player, result)
         end
     end)
     self.position_hands(true)
-    -- Re-validate immediately after removing the played card from hand
     RE.pre_validate_hand(self)
 end
 
 function M.after_play_settled(self, rec, is_player, result, ticket)
     if self.game_over then return end
     
-    -- SWIFT VALIDATION PROTECTOR
-    -- If a newer card has already been played while this one was animating, 
-    -- silently abort this callback. Let the final card run the rules!
     if ticket and self._play_ticket and ticket < self._play_ticket then
         return
     end
@@ -95,8 +83,6 @@ function M.after_play_settled(self, rec, is_player, result, ticket)
 
     if M.check_win(self, rec, is_player, result) then return end
 
-    -- A winning LAST card never hands a pick to the opponent: the round is
-    -- over the moment it lands, so no partial (or full) picking can follow.
     local hand_now = is_player and self.player_hand or self.ai_hand
     if #hand_now == 0 then
         self.active_penalty = 0
@@ -116,7 +102,12 @@ function M.after_play_settled(self, rec, is_player, result, ticket)
             else
                 self.is_suit_selection_active = true
                 RE.pre_validate_hand(self)
-                timer.delay(0.05, false, function() notify_gui(self.gui_suit, "suit_select", { mode = "open" }) end)
+                timer.delay(0.05, false, function() 
+                    local cx = self.CENTER and self.CENTER.x or 640
+                    local dx = self.DECK_POS and self.DECK_POS.x or 1150
+                    local mid_x = cx + (dx - cx) / 2
+                    notify_gui(self.gui_suit, "suit_select", { mode = "open", x = mid_x }) 
+                end)
             end
             return
         else
@@ -125,8 +116,6 @@ function M.after_play_settled(self, rec, is_player, result, ticket)
     elseif result.type == NA.SKIP_TURN then
         log(actor .. " skips opponent!")
         notify_gui(self.gui_suit, "suit_select", { mode = "close" })
-        -- 4-player: 8 skips the next seat; J/11 reverses the direction of play
-        -- (or skips in the 2-player endgame). It is NOT a free "play again".
         if self.t4 then
             require("modules.tournament4").apply_skip(self, rec)
             return
@@ -144,7 +133,6 @@ function M.after_play_settled(self, rec, is_player, result, ticket)
             self.player_has_drawn = false
             self.is_local_action_locked = false
             notify_gui(self.gui_hud, "skip", { show = false })
-            -- Turn continues for player: refresh validation for new top card
             RE.pre_validate_hand(self)
         else
             OfflineHandler.do_ai_turn(self, true)
@@ -286,9 +274,6 @@ end
 
 ----------------------------------------------------------------------
 -- Reshuffle
--- Keeps the current top card, shuffles the rest of the pile with a proper
--- riffle animation, then flies the cards back to the deck. The freshly
--- shuffled cards tuck UNDERNEATH the cards already on the deck.
 ----------------------------------------------------------------------
 function M.reshuffle_deck(self, done)
     if #self.played_cards <= 1 then if done then done() end return end
@@ -296,7 +281,6 @@ function M.reshuffle_deck(self, done)
 
     local seq = self._seq
 
-    -- Keep the current top card; recycle everything else from the pile.
     local top = table.remove(self.played_cards)
     local recycled = self.played_cards
     self.played_cards = { top }
@@ -307,13 +291,12 @@ function M.reshuffle_deck(self, done)
     local existing_n = #existing
     local recycled_n = #recycled
 
-    -- Fisher–Yates shuffle of the recycled pile.
     for i = recycled_n, 2, -1 do
         local k = math.random(i)
         recycled[i], recycled[k] = recycled[k], recycled[i]
     end
 
-    local stub, under = {}, {}
+    local stub, under = {} , {}
     if existing_n > 0 then
         stub  = existing
         under = recycled
@@ -367,7 +350,7 @@ function M.reshuffle_deck(self, done)
 
                 timer.delay(0.55, false, function()
                     if seq ~= self._seq then return end
-                    BL.restack_deck(self)  -- normalize the whole pile in one pass
+                    BL.restack_deck(self)
                     if done then done() end
                 end)
             end)
@@ -383,7 +366,6 @@ function M.next_turn(self)
         self.deactivate_turn()
         return
     end
-    -- 4-player elimination tournament: hand the turn to the next surviving seat.
     if self.t4 then
         require("modules.tournament4").advance(self)
         return
@@ -442,9 +424,6 @@ end
 function M.check_win(self, rec, is_player, result)
     if self.online_mode then return false end
 
-    -- 4-player tournament: the human emptying their hand ENDS the deal (they
-    -- survive) and triggers elimination of the most-cards seat — there is no
-    -- cutting-card instant-win and no 2-player ai_hand here.
     if self.t4 then
         if #self.player_hand == 0 then
             require("modules.tournament4").human_finished(self)
@@ -464,10 +443,6 @@ function M.check_win(self, rec, is_player, result)
     return false
 end
 
--- Only the fields the game-over modal renders. The raw gameOverState of a
--- tournament round also carries tournamentData.levels and friends, which can
--- push the table past Defold's ~2KB message ceiling — the post would then
--- fail and the modal silently never appear.
 local function slim_results(res)
     res = type(res) == "table" and res or {}
     local function two_player_map(m)
@@ -503,19 +478,22 @@ end
 function M.end_game(self, player_won, is_cut, backend_results)
     if self.game_over then return end
     self.game_over = true
+    
+    -- GAME QUEUE LOCK:
+    -- We are entering the highly-choreographed end-of-game animation. 
+    -- Any incoming network 'start_game' payloads will queue cleanly until we complete this visual story!
+    self.is_counting_scores = true
+    self.queued_start_game = false
+    
     notify_gui(self.gui_hud, "stop_timers")
 
     if self.online_mode and type(backend_results) == "table" then
-        -- Balance updated there and then: the backend settles wallets before
-        -- GAME_OVER and ships post-game balances in the payload.
         if type(backend_results.balances) == "table" then
             local bal = tonumber(backend_results.balances[tostring(self.my_player_id)])
             if bal ~= nil then
                 notify_gui(self.gui_hud, "update_balance", { balance = bal })
             end
         end
-        -- Refresh the board immediately with the final series score and the
-        -- updated all-time head-to-head / form the backend just recorded.
         if backend_results.currentScores or backend_results.headToHead then
             OnlineHandler.process_scoreboard(self, {
                 currentScores = backend_results.currentScores,
@@ -524,24 +502,24 @@ function M.end_game(self, player_won, is_cut, backend_results)
         end
     end
 
-    -- Mid-series round (tournament/battle match continues): instead of the
-    -- game-over modal we play the round-story interstitial, and game.script
-    -- holds the incoming next-round state until it finishes — the backend
-    -- often auto-accepts the continuation before the animations are done.
     local round_continues = false
     local story = nil
     local is_knockout = false
+    
     if self.online_mode and type(backend_results) == "table" then
         local gt = tostring(backend_results.gameType or ""):upper()
         local mt = tostring(backend_results.matchType or ""):upper()
-        is_knockout = (gt == "KNOCKOUT" or mt == "KNOCKOUT")
+        
+        if gt == "KNOCKOUT" or mt == "KNOCKOUT" then is_knockout = true end
+        if type(backend_results.tournamentData) == "table" and tostring(backend_results.tournamentData.matchType or ""):upper() == "KNOCKOUT" then
+            is_knockout = true
+        end
+        
         round_continues = (gt == "TOURNAMENT" or is_knockout)
             and not backend_results.isMatchComplete
             and not backend_results.tournamentCompleted
             and not backend_results.isNoShowScenario
-        -- KNOCKOUT does NOT play the best-of round-story interstitial: the score-
-        -- cap chamber table (re-shown each round with the new cumulative totals)
-        -- is the feedback, like the offline chamber. Battles keep their story.
+            
         if round_continues and not is_knockout then
             local p_sc, o_sc = 0, 0
             for pid, sc in pairs(backend_results.currentScores or {}) do
@@ -558,8 +536,6 @@ function M.end_game(self, player_won, is_cut, backend_results)
                 next_round = p_sc + o_sc + 1,
                 last_round = (p_sc == target - 1) and (o_sc == target - 1),
             }
-            -- Arm the hold NOW: the auto-accepted next round can land within
-            -- ~2s, well before the reveal + story complete.
             self.round_story_active = true
             self.round_story_deadline = socket.gettime() + 9.0
         end
@@ -605,15 +581,18 @@ function M.end_game(self, player_won, is_cut, backend_results)
         end
     end
 
+    -- UNSTOPPABLE ANIMATION SEQUENCE:
+    -- We specifically remove all `seq ~= self._seq` cancellation checks here so that
+    -- rapid incoming server messages DO NOT abort the counting sequence!
     local delay = 0
-    local seq = self._seq
     for _, c in ipairs(self.ai_hand) do
-        local start_y = go.get_position(c.id).y
         local cc = c
         timer.delay(delay, false, function()
-            if seq ~= self._seq then return end
+            if not pcall(go.get_position, cc.id) then return end
+            local start_y = go.get_position(cc.id).y
             go.animate(cc.id, "position.y", go.PLAYBACK_ONCE_PINGPONG, start_y + 26, go.EASING_INOUTSINE, 0.35)
             go.animate(cc.id, "scale.x", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_INSINE, 0.18, 0, function()
+                if not pcall(go.get_position, cc.id) then return end
                 self.set_face(cc)
                 go.animate(cc.id, "scale.x", go.PLAYBACK_ONCE_FORWARD, CARD_SCALE_F, go.EASING_OUTSINE, 0.18)
             end)
@@ -627,36 +606,156 @@ function M.end_game(self, player_won, is_cut, backend_results)
     end
 
     timer.delay(delay + 0.5, false, function()
-        if seq ~= self._seq then return end
-
-        -- KNOCKOUT: tally the round into the score-cap chamber table. Each
-        -- player's row animates from its previous total up to the new cumulative
-        -- (added = this round's points), like the offline chamber count.
         if is_knockout then
             local players = (self.game_state or {}).players or {}
-            local cs  = backend_results.currentScores or backend_results.cumulativeScores or {}
+            local cs = backend_results.currentScores or backend_results.cumulativeScores or {}
             local cap = tonumber(backend_results.scoreCap) or 200
             self._knockout_scores = self._knockout_scores or {}
-            for pid, total in pairs(cs) do
-                local t    = tonumber(total) or 0
-                local prev = tonumber(self._knockout_scores[tostring(pid)]) or 0
-                local p    = players[pid] or {}
-                notify_gui(self.gui_hud, "t4_chamber_update", {
-                    name       = tostring(p.username or p.name or pid),
-                    total      = t,
-                    threshold  = cap,
-                    eliminated = t >= cap,
-                    added      = math.max(0, t - prev),
-                })
-                self._knockout_scores[tostring(pid)] = t
+
+            local function get_card_value(v, s)
+                local val = tonumber(v)
+                if not val then return 0 end
+                if val == 50 then return 50 end
+                if val == 14 or val == 1 or val == 15 then
+                    if s == "S" then return 60 else return 15 end
+                end
+                if val == 2 then return 20 end
+                if val == 3 then return 30 end
+                return val
             end
+
+            local to_count = {
+                { pid = self.my_player_id, hand = self.player_hand },
+                { pid = self.opponent_id, hand = self.ai_hand }
+            }
+
+            local function count_next_player(idx, done_cb)
+                if idx > #to_count then done_cb(); return end
+                local cur = to_count[idx]
+                local pid = cur.pid
+                local hand = cur.hand
+
+                local current_total = tonumber(self._knockout_scores[tostring(pid)]) or 0
+                local final_total = tonumber(cs[tostring(pid)]) or 0
+                local added_so_far = 0
+                local server_added = math.max(0, final_total - current_total)
+
+                if #hand == 0 or server_added == 0 then
+                    self._knockout_scores[tostring(pid)] = final_total
+                    notify_gui(self.gui_hud, "t4_chamber_update", {
+                        name = (players[pid] or {}).username or (players[pid] or {}).name or pid,
+                        total = final_total, threshold = cap, eliminated = final_total >= cap
+                    })
+                    count_next_player(idx + 1, done_cb)
+                    return
+                end
+
+                local k = 0
+                local step = 46
+                local row_cx = self.CENTER.x
+                local row_cy = self.CENTER.y
+
+                local function fly_one()
+                    k = k + 1
+                    if k > #hand then
+                        local dp = self.DECK_POS
+                        for i, c in ipairs(hand) do
+                            local cid = c.id
+                            if pcall(go.get_position, cid) then
+                                go.animate(cid, "position", go.PLAYBACK_ONCE_FORWARD, vmath.vector3(dp.x + i * 0.5, dp.y - i * 0.5, BL.Z_FLY + i * 0.001), go.EASING_INCUBIC, 0.4, i * 0.05)
+                                go.animate(cid, "scale", go.PLAYBACK_ONCE_FORWARD, BL.CARD_SCALE, go.EASING_INSINE, 0.4, i * 0.05)
+                                timer.delay(0.45 + i * 0.05, false, function() pcall(go.delete, cid) end)
+                            end
+                        end
+                        
+                        if current_total + added_so_far ~= final_total then
+                            self._knockout_scores[tostring(pid)] = final_total
+                            notify_gui(self.gui_hud, "t4_chamber_update", {
+                                name = (players[pid] or {}).username or (players[pid] or {}).name or pid,
+                                total = final_total, threshold = cap, eliminated = final_total >= cap
+                            })
+                        end
+                        
+                        for i = #hand, 1, -1 do hand[i] = nil end
+                        
+                        local sweep_delay = 0.5 + (#hand * 0.05) + 0.4
+                        timer.delay(sweep_delay, false, function()
+                            count_next_player(idx + 1, done_cb)
+                        end)
+                        return
+                    end
+                    
+                    local c = hand[k]
+                    local val = get_card_value(c.v, c.s)
+                    if k == #hand then val = server_added - added_so_far end
+                    
+                    added_so_far = added_so_far + val
+                    local new_total = current_total + added_so_far
+                    self._knockout_scores[tostring(pid)] = new_total
+
+                    local cx = row_cx - ((#hand - 1) * step) / 2.0 + (k - 1) * step
+                    local cy = row_cy
+                    local z = BL.Z_FLY + k * 0.002
+                    
+                    if pcall(go.get_position, c.id) then
+                        go.set(c.id, "position.z", z)
+                        go.animate(c.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_OUTSINE, 0.4)
+                        go.animate(c.id, "scale", go.PLAYBACK_ONCE_FORWARD, BL.CARD_SCALE, go.EASING_OUTSINE, 0.4)
+                        go.animate(c.id, "position", go.PLAYBACK_ONCE_FORWARD, vmath.vector3(cx, cy, z), go.EASING_OUTCUBIC, 0.4, 0, function()
+                            if pcall(go.get_position, c.id) then
+                                go.animate(c.id, "scale", go.PLAYBACK_ONCE_PINGPONG, vmath.vector3(BL.CARD_SCALE_F * 1.12, BL.CARD_SCALE_F * 1.12, 1), go.EASING_INOUTSINE, 0.12)
+                            end
+                        end)
+                    end
+                    
+                    self.play_sound("SoundPick")
+                    local p_name = (players[pid] or {}).username or (players[pid] or {}).name or pid
+                    notify_gui(self.gui_hud, "t4_chamber_update", {
+                        name = p_name, total = new_total, threshold = cap, eliminated = new_total >= cap,
+                        added = val, cx = cx, cy = cy
+                    })
+                    
+                    timer.delay(0.42, false, function() fly_one() end)
+                end
+                
+                fly_one()
+            end
+
+            -- Execute the entire chamber story safely
+            count_next_player(1, function()
+                -- 1. Unlock the Game Queue!
+                self.is_counting_scores = false
+                
+                -- 2. Dispatch UI
+                if round_continues then
+                    if story then notify_gui(self.gui_hud, "round_story", story) end
+                else
+                    notify_gui(self.gui_over, "game_over", {
+                        won = player_won, player_score = p_score, ai_score = a_score,
+                        is_cut = is_cut, my_id = self.my_player_id, results = slim_results(backend_results),
+                        series_active = is_series_active, series_over = is_series_over
+                    })
+                end
+                
+                -- 3. Safely consume the queued game state if it arrived during the counting
+                if self.queued_start_game then
+                    self.queued_start_game = false
+                    log("Executing queued next round!")
+                    M.start_game(self)
+                end
+            end)
+            return
         end
+        
+        -- NON-KNOCKOUT FALLBACK
+        self.is_counting_scores = false
 
         if round_continues then
-            -- The match isn't decided yet, so the game-over modal stays out.
-            -- Battles show the round story; KNOCKOUT just counts up its chamber
-            -- table and the backend auto-deals the next round.
             if story then notify_gui(self.gui_hud, "round_story", story) end
+            if self.queued_start_game then
+                self.queued_start_game = false
+                M.start_game(self)
+            end
             return
         end
 
@@ -673,8 +772,13 @@ function M.end_game(self, player_won, is_cut, backend_results)
 
         if is_series_active and not is_series_over then
             timer.delay(3.5, false, function()
-                if seq == self._seq then M.start_game(self) end
+                M.start_game(self)
             end)
+        else
+            if self.queued_start_game then
+                self.queued_start_game = false
+                M.start_game(self)
+            end
         end
     end)
 end
@@ -682,8 +786,6 @@ end
 ----------------------------------------------------------------------
 -- Boot dispatcher
 ----------------------------------------------------------------------
--- Godot update_stake_display parity: the table background follows the
--- stake — bg_1 up to 200, bg_2 up to 500, bg_3 beyond.
 local function apply_stake_background(self)
     local amt = 0
     if app.mode == "online" then
@@ -705,18 +807,23 @@ local function apply_stake_background(self)
 end
 
 function M.start_game(self)
+    -- GAME QUEUE PROTECTOR
+    -- If we are currently counting up scores for the elimination chamber, 
+    -- safely pocket this incoming game and wait to call it later.
+    if self.is_counting_scores then
+        log("start_game: Round arrived but board is currently counting scores. Queuing...")
+        self.queued_start_game = true
+        return
+    end
+    
+    self.queued_start_game = false
+    self.is_counting_scores = false
+    
     GS.destroy_all(self)
     GS.fresh_state(self)
     apply_stake_background(self)
-    -- Recompute the board layout for THIS game. Without this the desk/deck and
-    -- seat positions stay cached from the previous game (e.g. an offline match),
-    -- so an online game opens with the deck stuck mid-table instead of its
-    -- proper extreme position.
     BL.update_layout(self)
 
-    -- keep_scoreboard: a board (re)start inside the same series must not
-    -- blank the running match score — online_handler refreshes or hides it
-    -- right after, based on the incoming state.
     notify_gui(self.gui_hud, "reset_hud", { keep_scoreboard = true })
     notify_gui(self.gui_suit, "reset_hud")
     notify_gui(self.gui_over, "reset_hud")
@@ -729,7 +836,6 @@ function M.start_game(self)
         end
     end
 
-    -- 4-player offline modes: Quick Bracket and Elimination Chamber.
     if app.mode == "tournament4" or app.mode == "chamber4" then
         local me = ws.current_user_data or {}
         require("modules.tournament4").start(self, me, {
