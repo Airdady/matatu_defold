@@ -530,12 +530,19 @@ function M.end_game(self, player_won, is_cut, backend_results)
     -- often auto-accepts the continuation before the animations are done.
     local round_continues = false
     local story = nil
+    local is_knockout = false
     if self.online_mode and type(backend_results) == "table" then
-        round_continues = tostring(backend_results.gameType or "") == "TOURNAMENT"
+        local gt = tostring(backend_results.gameType or ""):upper()
+        local mt = tostring(backend_results.matchType or ""):upper()
+        is_knockout = (gt == "KNOCKOUT" or mt == "KNOCKOUT")
+        round_continues = (gt == "TOURNAMENT" or is_knockout)
             and not backend_results.isMatchComplete
             and not backend_results.tournamentCompleted
             and not backend_results.isNoShowScenario
-        if round_continues then
+        -- KNOCKOUT does NOT play the best-of round-story interstitial: the score-
+        -- cap chamber table (re-shown each round with the new cumulative totals)
+        -- is the feedback, like the offline chamber. Battles keep their story.
+        if round_continues and not is_knockout then
             local p_sc, o_sc = 0, 0
             for pid, sc in pairs(backend_results.currentScores or {}) do
                 if tostring(pid) == tostring(self.my_player_id) then p_sc = tonumber(sc) or 0
@@ -622,10 +629,11 @@ function M.end_game(self, player_won, is_cut, backend_results)
     timer.delay(delay + 0.5, false, function()
         if seq ~= self._seq then return end
 
-        if round_continues and story then
-            -- The round story owns the screen; the modal stays out of the
-            -- way until the match itself is decided.
-            notify_gui(self.gui_hud, "round_story", story)
+        if round_continues then
+            -- The match isn't decided yet, so the game-over modal stays out.
+            -- Battles show the round story; KNOCKOUT just counts up its chamber
+            -- table and the backend auto-deals the next round.
+            if story then notify_gui(self.gui_hud, "round_story", story) end
             return
         end
 
