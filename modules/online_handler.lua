@@ -158,8 +158,57 @@ local function scores_from_user_data(t_id)
     return nil
 end
 
+-- ── Knockout (online elimination chamber) ────────────────────────────────────
+-- A knockout battle shows the offline-chamber score-cap standings table instead
+-- of the normal battle scoreboard. We reuse the t4 chamber messages.
+local function is_knockout_state(state)
+    local mt = tostring((state or {}).matchType or ""):upper()
+    return mt == "KNOCKOUT" or mt == "ELIMINATION"
+end
+
+local function knockout_chamber_rows(self, state)
+    local rows = {}
+    for pid, p in pairs((state or {}).players or {}) do
+        rows[#rows + 1] = {
+            slot       = (tostring(pid) == tostring(self.my_player_id)) and "bottom" or "top",
+            name       = tostring(p.username or p.name or pid),
+            avatar     = tonumber(p.avatar) or 1,
+            total      = tonumber(p.cumulativeScore) or 0,
+            eliminated = p.eliminated and true or false,
+        }
+    end
+    return rows
+end
+
+local function knockout_init_chamber(self, state)
+    msg.post(GUI_HUD, "t4_chamber_init", {
+        threshold = tonumber(state.scoreCap) or 200,
+        rows      = knockout_chamber_rows(self, state),
+    })
+end
+
+local function knockout_update_chamber(self, state)
+    local cap = tonumber((state or {}).scoreCap) or 200
+    for pid, p in pairs((state or {}).players or {}) do
+        msg.post(GUI_HUD, "t4_chamber_update", {
+            name       = tostring(p.username or p.name or pid),
+            total      = tonumber(p.cumulativeScore) or 0,
+            threshold  = cap,
+            eliminated = p.eliminated and true or false,
+            added      = 0,
+        })
+    end
+end
+
 function M.process_scoreboard(self, state)
     state = state or {}
+
+    -- Knockout games render the score-cap chamber table (handled at start_game /
+    -- state-sync), so the battle scoreboard stays hidden here.
+    if is_knockout_state(state) then
+        msg.post(GUI_HUD, "update_scoreboard", { show = false })
+        return
+    end
 
     local function read_scores(scores)
         if type(scores) ~= "table" then return nil, nil end
@@ -426,6 +475,7 @@ function M.finalize_state_sync(self, state, on_complete)
 
     if state.rank then msg.post(GUI_HUD, "update_standings", { ranks = M.slim_ranks(state.rank) }) end
     M.process_scoreboard(self, state)
+    if is_knockout_state(state) then knockout_update_chamber(self, state) end
 
     local function do_sync()
         local deck_target = state.deckCount or (state.deck and #state.deck) or #self.deck
@@ -698,6 +748,7 @@ function M.start_game(self, state)
     msg.post(GUI_HUD, "setup_avatars", { my_info = my_pub, op_info = op_pub })
     msg.post(GUI_OVER, "setup_avatars", { my_info = my_pub, op_info = op_pub })
     M.process_scoreboard(self, state)
+    if is_knockout_state(state) then knockout_init_chamber(self, state) end
 
     local p_count = #hand_data
     local a_count = opp_count
