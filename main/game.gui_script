@@ -115,6 +115,14 @@ function on_message(self, message_id, message)
         end
 
     elseif message_id == hash("update_scoreboard") then
+        -- While the score-cap chamber table is up (knockout), the battle
+        -- scoreboard must NEVER show — not even on a mid-game state sync that
+        -- happens to lack the matchType flag, nor at game-over. The chamber
+        -- table IS the standings.
+        if self.t4_chamber then
+            scoreboard.set_active(self, false)
+            return
+        end
         if message.show == false then
             scoreboard.set_active(self, false)
             scoreboard.set_h2h_strip(self, nil, false)
