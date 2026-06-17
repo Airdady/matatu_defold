@@ -13,35 +13,42 @@ M.BATTLE_TIERS = {
                                   { games = 7, charge = 175, points = 21 }, { games = 9, charge = 225, points = 27 } } },
 }
 
--- Elimination/Party battles use a flat low-stake ladder (no per-format charge
--- table; the entry fee stepper just cycles these amounts).
--- For ELIMINATION this ladder is the SCORE CAP (charge = cap/2); PARTY uses it
--- as the entry fee.
-M.ELIMINATION_TIERS = { 100, 200, 300, 500 }
+-- KNOCKOUT uses a flat low-stake ladder as its SCORE CAP (charge = cap/2).
+M.KNOCKOUT_CAPS = { 100, 200, 300, 500 }
 
--- ELIMINATION is a STAKED score-cap chamber: players put up one of these stake
+-- KNOCKOUT is a STAKED score-cap chamber: players put up one of these stake
 -- amounts, and the charge is derived from the score cap (cap/2).
-M.ELIM_STAKES = { 1000, 2000 }
+M.KNOCKOUT_STAKES = { 1000, 2000 }
+
+-- PARTY uses its own flat entry-fee ladder (the stepper just cycles these).
+M.PARTY_TIERS = { 100, 200, 500 }
 
 -- The three independent battle types. Internal keys map to display labels.
-M.BATTLE_TYPES = { "NORMAL", "ELIMINATION", "PARTY" }
-M.BATTLE_TYPE_LABELS = { NORMAL = "BATTLE", ELIMINATION = "ELIMINATION", PARTY = "PARTY" }
+M.BATTLE_TYPES = { "NORMAL", "KNOCKOUT", "PARTY" }
+M.BATTLE_TYPE_LABELS = { NORMAL = "BATTLE", KNOCKOUT = "KNOCKOUT", PARTY = "PARTY" }
 
--- Resolve the battle a user holds for a given type T ∈ {NORMAL,ELIMINATION,PARTY}.
+-- Resolve the battle a user holds for a given type T ∈ {NORMAL,KNOCKOUT,PARTY}.
 -- Prefers the new per-type map u.myBattles[T]; falls back to the legacy single
--- u.myBattle / u.myTournament keyed by its matchType (missing ⇒ NORMAL).
+-- u.myBattle / u.myTournament keyed by its matchType (missing ⇒ NORMAL). A legacy
+-- "ELIMINATION" matchType normalises to KNOCKOUT so old battles still resolve.
 function M.battle_of_type(u, T)
     u = u or {}
     T = tostring(T or "NORMAL"):upper()
+    if T == "ELIMINATION" then T = "KNOCKOUT" end
     local map = u.myBattles
     if type(map) == "table" then
         local b = map[T]
         if type(b) == "table" and next(b) ~= nil then return b end
+        if T == "KNOCKOUT" then
+            local legacy_b = map["ELIMINATION"]
+            if type(legacy_b) == "table" and next(legacy_b) ~= nil then return legacy_b end
+        end
         return nil
     end
     local legacy = u.myBattle or u.myTournament
     if type(legacy) == "table" and next(legacy) ~= nil then
         local lt = tostring(legacy.matchType or "NORMAL"):upper()
+        if lt == "ELIMINATION" then lt = "KNOCKOUT" end
         if lt == T then return legacy end
     end
     return nil
@@ -82,9 +89,10 @@ local function draw_battle_modal(self, ctx)
 
     -- Normalise the active type up-front so every branch agrees on it.
     local btype  = tostring(bm.type or "NORMAL"):upper()
-    if btype ~= "ELIMINATION" and btype ~= "PARTY" then btype = "NORMAL" end
+    if btype == "ELIMINATION" then btype = "KNOCKOUT" end
+    if btype ~= "KNOCKOUT" and btype ~= "PARTY" then btype = "NORMAL" end
     local is_norm  = (btype == "NORMAL")
-    local is_elim  = (btype == "ELIMINATION")
+    local is_knock = (btype == "KNOCKOUT")
     local is_party = (btype == "PARTY")
 
     local type_word = M.BATTLE_TYPE_LABELS[btype] or "BATTLE"
@@ -93,17 +101,17 @@ local function draw_battle_modal(self, ctx)
     mkbtn(self, "bm_close", vmath.vector3(r - 10, top - 8, 0), vmath.vector3(30, 30, 0), nil, vmath.vector4(0,0,0,0.001))
     track(self, ui.text(vmath.vector3(r - 10, top - 8, 0), "X", "btn_sm", ctx.C.COL_MID))
 
-    -- BATTLE TYPE: three-way segmented control (BATTLE / ELIMINATION / PARTY).
+    -- BATTLE TYPE: three-way segmented control (BATTLE / KNOCKOUT / PARTY).
     -- Battles share the same model / endpoints as tournaments; the backend stores
-    -- matchType = "NORMAL" | "ELIMINATION" | "PARTY".
+    -- matchType = "NORMAL" | "KNOCKOUT" | "PARTY".
     local type_y  = top - 50
     txtL(self, l, type_y + 26, "BATTLE TYPE", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
     local seg_gap = 8
     local seg_w   = (pw - 60 - seg_gap * 2) / 3
     local seg_specs = {
-        { id = "bm_type_normal", label = "BATTLE",      on = is_norm  },
-        { id = "bm_type_elim",   label = "ELIMINATION", on = is_elim  },
-        { id = "bm_type_party",  label = "PARTY",       on = is_party },
+        { id = "bm_type_normal", label = "BATTLE",   on = is_norm  },
+        { id = "bm_type_knock",  label = "KNOCKOUT", on = is_knock },
+        { id = "bm_type_party",  label = "PARTY",    on = is_party },
     }
     local SEL_C, UNSEL_C = vmath.vector4(0.45, 0.14, 0.58, 0.95), vmath.vector4(0.16, 0.16, 0.18, 1)
     local seg0_cx = l + seg_w/2
@@ -115,8 +123,8 @@ local function draw_battle_modal(self, ctx)
     end
 
     -- ENTRY FEE: NORMAL cycles BATTLE_TIERS (bm.stake_i); PARTY cycles the flat
-    -- ELIMINATION_TIERS amounts (bm.elim_i). ELIMINATION is now a STAKED chamber:
-    -- it stakes ELIM_STAKES (bm.estake_i) and caps on ELIMINATION_TIERS (bm.cap_i).
+    -- PARTY_TIERS amounts (bm.elim_i). KNOCKOUT is a STAKED chamber:
+    -- it stakes KNOCKOUT_STAKES (bm.estake_i) and caps on KNOCKOUT_CAPS (bm.cap_i).
     local amount, fmt, winner_takes, estake, cap
     if is_norm then
         local tier = M.BATTLE_TIERS[bm.stake_i] or M.BATTLE_TIERS[1]
@@ -125,31 +133,31 @@ local function draw_battle_modal(self, ctx)
         fmt          = fmts[bm.fmt_i] or fmts[1]
         amount       = tier.amount
         winner_takes = tier.amount * 2 - fmt.charge
-    elseif is_elim then
+    elseif is_knock then
         local si = bm.estake_i or 1
-        if si < 1 then si = 1 elseif si > #M.ELIM_STAKES then si = #M.ELIM_STAKES end
+        if si < 1 then si = 1 elseif si > #M.KNOCKOUT_STAKES then si = #M.KNOCKOUT_STAKES end
         bm.estake_i = si
-        estake = M.ELIM_STAKES[si]
+        estake = M.KNOCKOUT_STAKES[si]
         local ci = bm.cap_i or 2
-        if ci < 1 then ci = 1 elseif ci > #M.ELIMINATION_TIERS then ci = #M.ELIMINATION_TIERS end
+        if ci < 1 then ci = 1 elseif ci > #M.KNOCKOUT_CAPS then ci = #M.KNOCKOUT_CAPS end
         bm.cap_i = ci
-        cap = M.ELIMINATION_TIERS[ci]
+        cap = M.KNOCKOUT_CAPS[ci]
     else
         local ei = bm.elim_i or 1
-        if ei < 1 then ei = 1 elseif ei > #M.ELIMINATION_TIERS then ei = #M.ELIMINATION_TIERS end
+        if ei < 1 then ei = 1 elseif ei > #M.PARTY_TIERS then ei = #M.PARTY_TIERS end
         bm.elim_i = ei
-        amount = M.ELIMINATION_TIERS[ei]
+        amount = M.PARTY_TIERS[ei]
     end
 
-    -- Row 1: NORMAL/PARTY pick an ENTRY FEE (coins); ELIMINATION picks a STAKE
-    -- (one of the ELIM_STAKES amounts). NORMAL/PARTY cycle their ladders via
-    -- bm.stake_i / bm.elim_i; ELIMINATION cycles ELIM_STAKES via bm.estake_i.
+    -- Row 1: NORMAL/PARTY pick an ENTRY FEE (coins); KNOCKOUT picks a STAKE
+    -- (one of the KNOCKOUT_STAKES amounts). NORMAL/PARTY cycle their ladders via
+    -- bm.stake_i / bm.elim_i; KNOCKOUT cycles KNOCKOUT_STAKES via bm.estake_i.
     local fee_y = top - 120
-    txtL(self, l, fee_y + 28, is_elim and "STAKE" or "ENTRY FEE", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
+    txtL(self, l, fee_y + 28, is_knock and "STAKE" or "ENTRY FEE", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
     mkbtn(self, "bm_fee_minus", vmath.vector3(l + 20, fee_y - 8, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
     track(self, ui.box(vmath.vector3(CX, fee_y - 8, 0), vmath.vector3(pw - 200, 40, 0), ctx.C.COL_NAMEID_BG))
     track(self, ui.text(vmath.vector3(CX, fee_y - 8, 0),
-        is_elim and (commas(estake) .. " COINS") or (commas(amount) .. " COINS"), "body", vmath.vector4(1, 0.8, 0.4, 1)))
+        is_knock and (commas(estake) .. " COINS") or (commas(amount) .. " COINS"), "body", vmath.vector4(1, 0.8, 0.4, 1)))
     mkbtn(self, "bm_fee_plus", vmath.vector3(r - 20, fee_y - 8, 0), vmath.vector3(40, 40, 0), "+", "secondary_btn")
     if is_norm then
         track(self, ui.text(vmath.vector3(CX, fee_y - 44, 0),
@@ -162,7 +170,7 @@ local function draw_battle_modal(self, ctx)
             "Staked score chamber · charge from the cap", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
     end
 
-    -- Bottom row: PARTY shows a PLAYER COUNT selector; ELIMINATION shows a SCORE
+    -- Bottom row: PARTY shows a PLAYER COUNT selector; KNOCKOUT shows a SCORE
     -- CAP selector (reach the cap and you're out; charge = cap/2); NORMAL keeps
     -- the GAME FORMAT (BEST OF) stepper.
     local fmt_y = top - 212
@@ -177,7 +185,7 @@ local function draw_battle_modal(self, ctx)
         track(self, ui.text(vmath.vector3(CX, fmt_y - 44, 0),
             (players == "AUTO") and "Auto-fill the table as players join" or "Starts once the table is full",
             "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
-    elseif is_elim then
+    elseif is_knock then
         txtL(self, l, fmt_y + 28, "SCORE CAP", "small", vmath.vector4(0.7, 0.7, 0.7, 1))
         mkbtn(self, "bm_cap_minus", vmath.vector3(l + 20, fmt_y - 8, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
         track(self, ui.box(vmath.vector3(CX, fmt_y - 8, 0), vmath.vector3(pw - 200, 40, 0), ctx.C.COL_NAMEID_BG))
@@ -483,7 +491,7 @@ function M.draw(self, ctx, left_M)
                 local players = b.players or "AUTO"
                 local pstr    = (type(players) == "table") and tostring(#players) or tostring(players)
                 detail = string.format("%s PLAYERS  ~  %s", pstr, commas(amt))
-            elseif T == "ELIMINATION" then
+            elseif T == "KNOCKOUT" then
                 local cap = tonumber(b.scoreCap) or 200
                 detail = string.format("SCORE CAP %d  ~  %s", cap, commas(amt))
             else
@@ -539,7 +547,8 @@ function M.bm_submit(self, rebuild_cb)
     if not bm or bm.submitting then return end
 
     local btype = tostring(bm.type or "NORMAL"):upper()
-    if btype ~= "ELIMINATION" and btype ~= "PARTY" then btype = "NORMAL" end
+    if btype == "ELIMINATION" then btype = "KNOCKOUT" end
+    if btype ~= "KNOCKOUT" and btype ~= "PARTY" then btype = "NORMAL" end
 
     local uid  = ws.get_current_user_id()
     if uid == "" then
@@ -548,31 +557,31 @@ function M.bm_submit(self, rebuild_cb)
     end
 
     -- Amount/cap come from the ladder selected by the battle type.
-    -- ELIMINATION: a STAKED score-cap chamber — amount is the ELIM_STAKES stake
-    -- (1000/2000) and scoreCap is the ELIMINATION_TIERS cap (charge = cap/2).
-    -- PARTY: ELIMINATION_TIERS is the entry fee. NORMAL: bracket tier.
+    -- KNOCKOUT: a STAKED score-cap chamber — amount is the KNOCKOUT_STAKES stake
+    -- (1000/2000) and scoreCap is the KNOCKOUT_CAPS cap (charge = cap/2).
+    -- PARTY: PARTY_TIERS is the entry fee. NORMAL: bracket tier.
     local amount, match_format, score_cap
     if btype == "NORMAL" then
         local tier = M.BATTLE_TIERS[bm.stake_i] or M.BATTLE_TIERS[1]
         local fmt  = tier.formats[math.min(bm.fmt_i or 1, #tier.formats)]
         amount       = tier.amount
         match_format = fmt.games
-    elseif btype == "ELIMINATION" then
+    elseif btype == "KNOCKOUT" then
         match_format = 1
-        amount       = M.ELIM_STAKES[bm.estake_i or 1] or M.ELIM_STAKES[1]
-        score_cap    = M.ELIMINATION_TIERS[bm.cap_i or 2] or M.ELIMINATION_TIERS[2]
+        amount       = M.KNOCKOUT_STAKES[bm.estake_i or 1] or M.KNOCKOUT_STAKES[1]
+        score_cap    = M.KNOCKOUT_CAPS[bm.cap_i or 2] or M.KNOCKOUT_CAPS[2]
     else
         local ei = bm.elim_i or 1
-        if ei < 1 then ei = 1 elseif ei > #M.ELIMINATION_TIERS then ei = #M.ELIMINATION_TIERS end
+        if ei < 1 then ei = 1 elseif ei > #M.PARTY_TIERS then ei = #M.PARTY_TIERS end
         match_format = 1
-        amount       = M.ELIMINATION_TIERS[ei]
+        amount       = M.PARTY_TIERS[ei]
     end
 
     bm.submitting = true; bm.msg, bm.msg_ok = nil, nil; rebuild_cb()
 
     local payload = { userId = uid, amount = amount, matchFormat = match_format, rules = "JOKERS",
                       matchType = btype }
-    if btype == "ELIMINATION" then payload.scoreCap = score_cap end
+    if btype == "KNOCKOUT" then payload.scoreCap = score_cap end
     if btype == "PARTY" then payload.players = bm.players or "AUTO" end
 
     local function on_result(result)
