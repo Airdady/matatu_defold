@@ -629,6 +629,29 @@ function M.end_game(self, player_won, is_cut, backend_results)
     timer.delay(delay + 0.5, false, function()
         if seq ~= self._seq then return end
 
+        -- KNOCKOUT: tally the round into the score-cap chamber table. Each
+        -- player's row animates from its previous total up to the new cumulative
+        -- (added = this round's points), like the offline chamber count.
+        if is_knockout then
+            local players = (self.game_state or {}).players or {}
+            local cs  = backend_results.currentScores or backend_results.cumulativeScores or {}
+            local cap = tonumber(backend_results.scoreCap) or 200
+            self._knockout_scores = self._knockout_scores or {}
+            for pid, total in pairs(cs) do
+                local t    = tonumber(total) or 0
+                local prev = tonumber(self._knockout_scores[tostring(pid)]) or 0
+                local p    = players[pid] or {}
+                notify_gui(self.gui_hud, "t4_chamber_update", {
+                    name       = tostring(p.username or p.name or pid),
+                    total      = t,
+                    threshold  = cap,
+                    eliminated = t >= cap,
+                    added      = math.max(0, t - prev),
+                })
+                self._knockout_scores[tostring(pid)] = t
+            end
+        end
+
         if round_continues then
             -- The match isn't decided yet, so the game-over modal stays out.
             -- Battles show the round story; KNOCKOUT just counts up its chamber
