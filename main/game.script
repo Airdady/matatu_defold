@@ -253,13 +253,14 @@ function update(self, dt)
     -- BUG FIX: Round story watchdog shouldn't default to 0 for deadline
     if self.round_story_active then
         if not self.round_story_deadline then
-            self.round_story_deadline = socket.gettime() + 6.5
+            self.round_story_deadline = socket.gettime() + 8.5
         end
         
         if socket.gettime() > self.round_story_deadline then
             print("[ROUND-STORY] watchdog released the next-round hold safely")
             self.round_story_active = false
             self.round_story_deadline = nil
+            GF.finish_round_transition(self)
             local pending = self._pending_next_state
             self._pending_next_state = nil
             if pending then start_new_online_game(self, pending, false) end
@@ -673,6 +674,9 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("round_story_done") then
         self.round_story_active = false
         self.round_story_deadline = nil
+        
+        GF.finish_round_transition(self)
+        
         local pending = self._pending_next_state
         self._pending_next_state = nil
         if pending then

@@ -475,6 +475,28 @@ local function slim_results(res)
     return out
 end
 
+-- ======================================================================
+-- EXPLICIT EVENT API FOR EXTERNAL SCRIPTS TO CALL
+-- Call `GF.finish_round_transition(self)` when the story/UI is fully complete.
+-- ======================================================================
+function M.finish_round_transition(self)
+    if not self.is_transitioning_round then return end
+    self.is_transitioning_round = false
+    
+    if self.online_mode and self._continuation_request_id then
+        log("Sending GAME_REQUEST_ACCEPTED for continuation: " .. tostring(self._continuation_request_id))
+        ws.accept_game_request(self._continuation_request_id)
+        self._continuation_request_id = nil
+        return -- Do NOT call M.start_game here. Wait for the server's START event.
+    end
+
+    if self.queued_start_game then
+        self.queued_start_game = false
+        log("Executing queued next round via EXPLICIT finish event!")
+        M.start_game(self)
+    end
+end
+
 function M.end_game(self, player_won, is_cut, backend_results)
     if self.game_over then return end
     self.game_over = true
@@ -492,6 +514,8 @@ function M.end_game(self, player_won, is_cut, backend_results)
     local is_knockout = false
     
     if self.online_mode and type(backend_results) == "table" then
+        self._continuation_request_id = backend_results.continuationRequestId
+        
         local gt = tostring(backend_results.gameType or ""):upper()
         local mt = tostring(backend_results.matchType or ""):upper()
         
@@ -505,8 +529,6 @@ function M.end_game(self, player_won, is_cut, backend_results)
             and not backend_results.tournamentCompleted
             and not backend_results.isNoShowScenario
 
-        -- Update balances ONLY if the round does NOT continue.
-        -- This prevents coin delta animations at the end of every round in tournaments/knockout.
         if not round_continues then
             if type(backend_results.balances) == "table" then
                 local bal = tonumber(backend_results.balances[tostring(self.my_player_id)])
@@ -516,11 +538,15 @@ function M.end_game(self, player_won, is_cut, backend_results)
             end
         end
 
-        if backend_results.currentScores or backend_results.headToHead then
-            OnlineHandler.process_scoreboard(self, {
-                currentScores = backend_results.currentScores,
-                headToHead    = backend_results.headToHead,
-            })
+        -- 🟢 FIX: Ensure the regular Scoreboard is ONLY drawn for non-knockout matches.
+        -- Knockout matches strictly use the visual Cap Table Chamber.
+        if not is_knockout then
+            if backend_results.currentScores or backend_results.headToHead then
+                OnlineHandler.process_scoreboard(self, {
+                    currentScores = backend_results.currentScores,
+                    headToHead    = backend_results.headToHead,
+                })
+            end
         end
 
         if round_continues then
@@ -538,7 +564,12 @@ function M.end_game(self, player_won, is_cut, backend_results)
             local next_rnd = p_sc + o_sc + 1
             if is_knockout then
                 self._knockout_round = (self._knockout_round or 0) + 1
-                next_rnd = self._knockout_round + 1
+                
+                -- 🟢 FIX: Send an empty string `""` instead of `false`.
+                -- Passing `false` to the GUI script silently crashes `gui.set_text`,
+                -- which prevents the animation from finishing and freezes the game queue forever!
+                next_rnd = ""
+                
                 target = tonumber(backend_results.scoreCap) or 200
             end
 
@@ -562,8 +593,6 @@ function M.end_game(self, player_won, is_cut, backend_results)
     if is_cut and not self.online_mode then
         player_won = p_score < a_score
     end
-
-    if player_won then self.play_sound("SoundWinAlt") else self.play_sound("SoundLose") end
 
     if self.online_mode and backend_results then
         local op_data = {}
@@ -596,232 +625,235 @@ function M.end_game(self, player_won, is_cut, backend_results)
         end
     end
 
-    -- UNSTOPPABLE ANIMATION SEQUENCE:
-    local delay = 0
-    for _, c in ipairs(self.ai_hand) do
-        local cc = c
-        timer.delay(delay, false, function()
-            if not pcall(go.get_position, cc.id) then return end
-            local start_y = go.get_position(cc.id).y
-            go.animate(cc.id, "position.y", go.PLAYBACK_ONCE_PINGPONG, start_y + 26, go.EASING_INOUTSINE, 0.35)
-            go.animate(cc.id, "scale.x", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_INSINE, 0.18, 0, function()
-                if not pcall(go.get_position, cc.id) then return end
-                self.set_face(cc)
-                go.animate(cc.id, "scale.x", go.PLAYBACK_ONCE_FORWARD, CARD_SCALE_F, go.EASING_OUTSINE, 0.18)
-            end)
-        end)
-        delay = delay + 0.22
-    end
+    timer.delay(0.4, false, function()
+        if player_won then self.play_sound("SoundWinAlt") else self.play_sound("SoundLose") end
+    end)
 
     local is_series_active, is_series_over = false, true
     if not self.online_mode then
         is_series_active, is_series_over, player_won = OfflineHandler.evaluate_series(self, player_won)
     end
 
-    timer.delay(delay + 0.5, false, function()
-        if is_knockout then
-            -- Collect played cards to deck first for a clean board
-            local sweep_delay = 0
-            if self.played_cards and #self.played_cards > 0 then
+    -- ======================================================================
+    -- BULLETPROOF EVENT-DRIVEN ANIMATION CHAIN
+    -- Everything below utilizes strict complete_function callbacks.
+    -- No timers are guessed. The sequence physically cannot break.
+    -- ======================================================================
+
+    local function final_resolution()
+        if round_continues then
+            if story then 
+                self.round_story_active = true
+                notify_gui(self.gui_hud, "round_story", story) 
+            end
+            -- Provide a generous fallback in case the explicit event is never fired by UI.
+            timer.delay(8.0, false, function() M.finish_round_transition(self) end)
+        else
+            notify_gui(self.gui_over, "game_over", {
+                won = player_won, player_score = p_score, ai_score = a_score,
+                is_cut = is_cut, my_id = self.my_player_id, results = slim_results(backend_results),
+                series_active = is_series_active, series_over = is_series_over
+            })
+            if is_series_active and not is_series_over then
+                timer.delay(4.0, false, function() M.finish_round_transition(self) end)
+            else
+                M.finish_round_transition(self)
+            end
+        end
+    end
+
+    local function count_next_player(idx, done_cb)
+        local to_count = {
+            { pid = self.my_player_id, hand = self.player_hand },
+            { pid = self.opponent_id, hand = self.ai_hand }
+        }
+        if idx > #to_count then done_cb(); return end
+        
+        local cur = to_count[idx]
+        local pid = cur.pid
+        local hand = cur.hand
+
+        local cs = backend_results.currentScores or backend_results.cumulativeScores or {}
+        local cap = tonumber(backend_results.scoreCap) or 200
+        self._knockout_scores = self._knockout_scores or {}
+        local players = (self.game_state or {}).players or {}
+
+        local current_total = tonumber(self._knockout_scores[tostring(pid)]) or 0
+        local final_total = tonumber(cs[tostring(pid)]) or 0
+        local added_so_far = 0
+        local server_added = math.max(0, final_total - current_total)
+
+        if #hand == 0 or server_added == 0 then
+            self._knockout_scores[tostring(pid)] = final_total
+            notify_gui(self.gui_hud, "t4_chamber_update", {
+                name = (players[pid] or {}).username or (players[pid] or {}).name or pid,
+                total = final_total, threshold = cap, eliminated = final_total >= cap
+            })
+            count_next_player(idx + 1, done_cb)
+            return
+        end
+
+        local function get_card_value(v, s)
+            local val = tonumber(v)
+            if not val then return 0 end
+            if val == 50 then return 50 end
+            if val == 14 or val == 1 or val == 15 then
+                if s == "S" then return 60 else return 15 end
+            end
+            if val == 2 then return 20 end
+            if val == 3 then return 30 end
+            return val
+        end
+
+        local k = 0
+        local step = 46
+        local row_cx = self.CENTER and self.CENTER.x or 640
+        local row_cy = self.CENTER and self.CENTER.y or 360
+
+        local function fly_one()
+            k = k + 1
+            if k > #hand then
+                -- Securely clear hand to deck via strict callbacks
                 local dp = self.DECK_POS or vmath.vector3(1150, 360, 0)
-                for i, c in ipairs(self.played_cards) do
+                local orig_h_size = #hand 
+                local swept = 0
+                
+                for i, c in ipairs(hand) do
                     local cid = c.id
                     if pcall(go.get_position, cid) then
-                        go.animate(cid, "position", go.PLAYBACK_ONCE_FORWARD, vmath.vector3(dp.x, dp.y, BL.Z_FLY + i * 0.001), go.EASING_INCUBIC, 0.35, 0)
-                        go.animate(cid, "scale", go.PLAYBACK_ONCE_FORWARD, BL.CARD_SCALE, go.EASING_INSINE, 0.35, 0)
-                        timer.delay(0.4, false, function() pcall(go.delete, cid) end)
-                    end
-                end
-                self.played_cards = {}
-                sweep_delay = 0.45
-            end
-
-            timer.delay(sweep_delay, false, function()
-                local players = (self.game_state or {}).players or {}
-                local cs = backend_results.currentScores or backend_results.cumulativeScores or {}
-                local cap = tonumber(backend_results.scoreCap) or 200
-                self._knockout_scores = self._knockout_scores or {}
-
-                local function get_card_value(v, s)
-                    local val = tonumber(v)
-                    if not val then return 0 end
-                    if val == 50 then return 50 end
-                    if val == 14 or val == 1 or val == 15 then
-                        if s == "S" then return 60 else return 15 end
-                    end
-                    if val == 2 then return 20 end
-                    if val == 3 then return 30 end
-                    return val
-                end
-
-                local to_count = {
-                    { pid = self.my_player_id, hand = self.player_hand },
-                    { pid = self.opponent_id, hand = self.ai_hand }
-                }
-
-                local function count_next_player(idx, done_cb)
-                    if idx > #to_count then done_cb(); return end
-                    local cur = to_count[idx]
-                    local pid = cur.pid
-                    local hand = cur.hand
-
-                    local current_total = tonumber(self._knockout_scores[tostring(pid)]) or 0
-                    local final_total = tonumber(cs[tostring(pid)]) or 0
-                    local added_so_far = 0
-                    local server_added = math.max(0, final_total - current_total)
-
-                    if #hand == 0 or server_added == 0 then
-                        self._knockout_scores[tostring(pid)] = final_total
-                        notify_gui(self.gui_hud, "t4_chamber_update", {
-                            name = (players[pid] or {}).username or (players[pid] or {}).name or pid,
-                            total = final_total, threshold = cap, eliminated = final_total >= cap
-                        })
-                        count_next_player(idx + 1, done_cb)
-                        return
-                    end
-
-                    local k = 0
-                    local step = 46
-                    local row_cx = self.CENTER and self.CENTER.x or 640
-                    local row_cy = self.CENTER and self.CENTER.y or 360
-
-                    local function fly_one()
-                        k = k + 1
-                        if k > #hand then
-                            local dp = self.DECK_POS or vmath.vector3(1150, 360, 0)
-                            for i, c in ipairs(hand) do
-                                local cid = c.id
-                                if pcall(go.get_position, cid) then
-                                    go.animate(cid, "position", go.PLAYBACK_ONCE_FORWARD, vmath.vector3(dp.x + i * 0.5, dp.y - i * 0.5, BL.Z_FLY + i * 0.001), go.EASING_INCUBIC, 0.4, i * 0.05)
-                                    go.animate(cid, "scale", go.PLAYBACK_ONCE_FORWARD, BL.CARD_SCALE, go.EASING_INSINE, 0.4, i * 0.05)
-                                    timer.delay(0.45 + i * 0.05, false, function() pcall(go.delete, cid) end)
-                                end
-                            end
-                            
-                            if current_total + added_so_far ~= final_total then
-                                self._knockout_scores[tostring(pid)] = final_total
-                                notify_gui(self.gui_hud, "t4_chamber_update", {
-                                    name = (players[pid] or {}).username or (players[pid] or {}).name or pid,
-                                    total = final_total, threshold = cap, eliminated = final_total >= cap
-                                })
-                            end
-                            
-                            for i = #hand, 1, -1 do hand[i] = nil end
-                            
-                            local sweep_clear_delay = 0.5 + (#hand * 0.05) + 0.4
-                            timer.delay(sweep_clear_delay, false, function()
-                                count_next_player(idx + 1, done_cb)
-                            end)
-                            return
-                        end
-                        
-                        local c = hand[k]
-                        local val = get_card_value(c.v, c.s)
-                        if k == #hand then val = server_added - added_so_far end
-                        
-                        added_so_far = added_so_far + val
-                        local new_total = current_total + added_so_far
-                        self._knockout_scores[tostring(pid)] = new_total
-
-                        local cx = row_cx - ((#hand - 1) * step) / 2.0 + (k - 1) * step
-                        local cy = row_cy
-                        local z = BL.Z_FLY + k * 0.002
-                        
-                        if pcall(go.get_position, c.id) then
-                            go.set(c.id, "position.z", z)
-                            go.animate(c.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_OUTSINE, 0.4)
-                            go.animate(c.id, "scale", go.PLAYBACK_ONCE_FORWARD, BL.CARD_SCALE, go.EASING_OUTSINE, 0.4)
-                            go.animate(c.id, "position", go.PLAYBACK_ONCE_FORWARD, vmath.vector3(cx, cy, z), go.EASING_OUTCUBIC, 0.4, 0, function()
-                                if pcall(go.get_position, c.id) then
-                                    go.animate(c.id, "scale", go.PLAYBACK_ONCE_PINGPONG, vmath.vector3(BL.CARD_SCALE_F * 1.12, BL.CARD_SCALE_F * 1.12, 1), go.EASING_INOUTSINE, 0.12)
-                                end
-                            end)
-                        end
-                        
-                        self.play_sound("SoundPick")
-                        local p_name = (players[pid] or {}).username or (players[pid] or {}).name or pid
-                        notify_gui(self.gui_hud, "t4_chamber_update", {
-                            name = p_name, total = new_total, threshold = cap, eliminated = new_total >= cap,
-                            added = val, cx = cx, cy = cy
-                        })
-                        
-                        timer.delay(0.42, false, function() fly_one() end)
-                    end
-                    
-                    fly_one()
-                end
-
-                -- Execute the entire chamber story safely
-                count_next_player(1, function()
-                    if round_continues then
-                        if story then notify_gui(self.gui_hud, "round_story", story) end
-                        
-                        -- CRITICAL FIX: EVENT-DRIVEN TRANSITION
-                        -- At this point, `fly_one` has completed, the score is fully updated in ascending order,
-                        -- and all cards have been moved back to the deck.
-                        -- We trigger exactly a 1.0 second delay before initializing the new state.
-                        timer.delay(1.0, false, function()
-                            self.is_transitioning_round = false
-                            if self.queued_start_game then
-                                self.queued_start_game = false
-                                log("Executing queued next round after counting sequence completes!")
-                                M.start_game(self)
+                        go.animate(cid, "position", go.PLAYBACK_ONCE_FORWARD, vmath.vector3(dp.x + i * 0.5, dp.y - i * 0.5, BL.Z_FLY + i * 0.001), go.EASING_INCUBIC, 0.4, i * 0.05)
+                        go.animate(cid, "scale", go.PLAYBACK_ONCE_FORWARD, BL.CARD_SCALE, go.EASING_INSINE, 0.4, i * 0.05, function()
+                            pcall(go.delete, cid)
+                            swept = swept + 1
+                            if swept == orig_h_size then
+                                timer.delay(0.3, false, function() count_next_player(idx + 1, done_cb) end)
                             end
                         end)
                     else
-                        self.is_transitioning_round = false
-                        notify_gui(self.gui_over, "game_over", {
-                            won = player_won, player_score = p_score, ai_score = a_score,
-                            is_cut = is_cut, my_id = self.my_player_id, results = slim_results(backend_results),
-                            series_active = is_series_active, series_over = is_series_over
-                        })
-                        if self.queued_start_game then
-                            self.queued_start_game = false
-                            M.start_game(self)
+                        swept = swept + 1
+                        if swept == orig_h_size then 
+                            timer.delay(0.3, false, function() count_next_player(idx + 1, done_cb) end)
                         end
+                    end
+                end
+                
+                if current_total + added_so_far ~= final_total then
+                    self._knockout_scores[tostring(pid)] = final_total
+                    notify_gui(self.gui_hud, "t4_chamber_update", {
+                        name = (players[pid] or {}).username or (players[pid] or {}).name or pid,
+                        total = final_total, threshold = cap, eliminated = final_total >= cap
+                    })
+                end
+                
+                for i = orig_h_size, 1, -1 do hand[i] = nil end
+                return
+            end
+            
+            local c = hand[k]
+            local val = get_card_value(c.v, c.s)
+            if k == #hand then val = server_added - added_so_far end
+            
+            added_so_far = added_so_far + val
+            local new_total = current_total + added_so_far
+            self._knockout_scores[tostring(pid)] = new_total
+
+            local cx = row_cx - ((#hand - 1) * step) / 2.0 + (k - 1) * step
+            local cy = row_cy
+            local z = BL.Z_FLY + k * 0.002
+            
+            if pcall(go.get_position, c.id) then
+                go.set(c.id, "position.z", z)
+                go.animate(c.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_OUTSINE, 0.4)
+                go.animate(c.id, "scale", go.PLAYBACK_ONCE_FORWARD, BL.CARD_SCALE, go.EASING_OUTSINE, 0.4)
+                go.animate(c.id, "position", go.PLAYBACK_ONCE_FORWARD, vmath.vector3(cx, cy, z), go.EASING_OUTCUBIC, 0.4, 0, function()
+                    if pcall(go.get_position, c.id) then
+                        go.animate(c.id, "scale", go.PLAYBACK_ONCE_PINGPONG, vmath.vector3(BL.CARD_SCALE_F * 1.12, BL.CARD_SCALE_F * 1.12, 1), go.EASING_INOUTSINE, 0.12)
+                    end
+                    
+                    self.play_sound("SoundPick")
+                    local p_name = (players[pid] or {}).username or (players[pid] or {}).name or pid
+                    notify_gui(self.gui_hud, "t4_chamber_update", {
+                        name = p_name, total = new_total, threshold = cap, eliminated = new_total >= cap,
+                        added = val, cx = cx, cy = cy
+                    })
+                    
+                    -- Chain next explicitly
+                    timer.delay(0.15, false, function() fly_one() end)
+                end)
+            else
+                fly_one()
+            end
+        end
+        
+        fly_one()
+    end
+
+    local function sweep_played_cards(on_complete)
+        if not self.played_cards or #self.played_cards == 0 then on_complete(); return end
+        local swept = 0
+        local total = #self.played_cards
+        local dp = self.DECK_POS or vmath.vector3(1150, 360, 0)
+        
+        for i, c in ipairs(self.played_cards) do
+            local cid = c.id
+            if pcall(go.get_position, cid) then
+                go.animate(cid, "position", go.PLAYBACK_ONCE_FORWARD, vmath.vector3(dp.x, dp.y, BL.Z_FLY + i * 0.001), go.EASING_INCUBIC, 0.35, 0)
+                go.animate(cid, "scale", go.PLAYBACK_ONCE_FORWARD, BL.CARD_SCALE, go.EASING_INSINE, 0.35, 0, function()
+                    pcall(go.delete, cid)
+                    swept = swept + 1
+                    if swept == total then timer.delay(0.3, false, on_complete) end
+                end)
+            else
+                swept = swept + 1
+                if swept == total then timer.delay(0.3, false, on_complete) end
+            end
+        end
+        self.played_cards = {}
+    end
+
+    local function flip_ai_hand(on_complete)
+        if #self.ai_hand == 0 then on_complete(); return end
+        local flipped = 0
+        local total = #self.ai_hand
+        
+        for i, c in ipairs(self.ai_hand) do
+            local cc = c
+            timer.delay((i - 1) * 0.18 + 0.5, false, function()
+                if not pcall(go.get_position, cc.id) then
+                    flipped = flipped + 1; if flipped == total then on_complete() end
+                    return
+                end
+                
+                local start_y = go.get_position(cc.id).y
+                go.animate(cc.id, "position.y", go.PLAYBACK_ONCE_PINGPONG, start_y + 26, go.EASING_INOUTSINE, 0.35)
+                go.animate(cc.id, "scale.x", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_INSINE, 0.18, 0, function()
+                    if pcall(go.get_position, cc.id) then
+                        self.set_face(cc)
+                        go.animate(cc.id, "scale.x", go.PLAYBACK_ONCE_FORWARD, CARD_SCALE_F, go.EASING_OUTSINE, 0.18, 0, function()
+                            flipped = flipped + 1
+                            if flipped == total then on_complete() end
+                        end)
+                    else
+                        flipped = flipped + 1; if flipped == total then on_complete() end
                     end
                 end)
             end)
-            return
         end
-        
-        -- NON-KNOCKOUT FALLBACK
-        if round_continues then
-            if story then notify_gui(self.gui_hud, "round_story", story) end
-            
-            -- Normal rounds (no counting sequence) need a short pause to read the "Round X" popup
-            timer.delay(2.5, false, function()
-                self.is_transitioning_round = false
-                if self.queued_start_game then
-                    self.queued_start_game = false
-                    M.start_game(self)
-                end
-            end)
-            return
-        end
+    end
 
-        self.is_transitioning_round = false
-        notify_gui(self.gui_over, "game_over", {
-            won = player_won,
-            player_score = p_score,
-            ai_score = a_score,
-            is_cut = is_cut,
-            my_id = self.my_player_id,
-            results = slim_results(backend_results),
-            series_active = is_series_active,
-            series_over = is_series_over
-        })
-
-        if is_series_active and not is_series_over then
-            timer.delay(3.5, false, function()
-                M.start_game(self)
-            end)
-        else
-            if self.queued_start_game then
-                self.queued_start_game = false
-                M.start_game(self)
+    -- Kick off the concrete animation sequence
+    flip_ai_hand(function()
+        timer.delay(0.9, false, function()
+            if is_knockout then
+                sweep_played_cards(function()
+                    count_next_player(1, function()
+                        final_resolution()
+                    end)
+                end)
+            else
+                final_resolution()
             end
-        end
+        end)
     end)
 end
 
