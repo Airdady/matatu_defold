@@ -128,6 +128,16 @@ HANDLERS.coin_collect_pot = function(self, d, done)
     -- Calculate target directly based on screen width so coins fly straight to the final left position
     local target_x = LOGICAL_W * POT_REST_RATIO_X
     
+    -- [CRITICAL FIX]: ROUND CONTINUATION CHECK
+    -- The backend sends `isContinuation = true` on round transitions,
+    -- meaning `coin_settle` was never called and the pot correctly remained on the board.
+    -- If the pot is already present, we instantly skip the fly animation to keep gameplay seamless!
+    if self.pot then
+        ensure_pot(self, target_x, cy, d.amount)
+        done()
+        return
+    end
+    
     local sources = d.sources or { { x = cx - 320, y = cy }, { x = cx + 320, y = cy } }
     local per = d.coins_per or 8
     local total = #sources * per
