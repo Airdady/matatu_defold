@@ -216,13 +216,14 @@ function M.draw(self, ctx)
                 badge_x = badge_x + 84
             end
 
-            -- ELIMINATION badge sits next to the name when this battle is an
-            -- elimination-type battle (vs a normal head-to-head battle).
-            if self.tab == TAB_BATTLES and type(pu.myBattle) == "table"
-               and tostring(pu.myBattle.matchType or ""):upper() == "ELIMINATION" then
+            -- KNOCKOUT badge sits next to the name when this battle is a
+            -- knockout-type battle (vs a normal head-to-head battle). Legacy
+            -- "ELIMINATION" battles still count as KNOCKOUT.
+            local pu_mt = (type(pu.myBattle) == "table") and tostring(pu.myBattle.matchType or ""):upper() or ""
+            if self.tab == TAB_BATTLES and (pu_mt == "KNOCKOUT" or pu_mt == "ELIMINATION") then
                 local bw = 96
                 track(self, ui.box(vmath.vector3(badge_x + bw/2, row_cy, 0), vmath.vector3(bw, 18, 0), vmath.vector4(0.45, 0.14, 0.58, 0.92)))
-                txtL(self, badge_x + 8, row_cy, "ELIMINATION", "small", vmath.vector4(1.0, 0.88, 1.0, 1.0))
+                txtL(self, badge_x + 8, row_cy, "KNOCKOUT", "small", vmath.vector4(1.0, 0.88, 1.0, 1.0))
             end
 
             local info_x = content_r - C.INNER_PAD
@@ -243,10 +244,12 @@ function M.draw(self, ctx)
                     track(self, ui.text(vmath.vector3(jx, row_cy, 0), "NO JOKERS", "small", C.COL_RED))
                 end
                 -- Used "body" here instead of "small" to match Quick Play font size.
-                -- ELIMINATION is a score-cap chamber, so it shows its SCORE CAP
-                -- (with the stake) rather than a BEST OF format.
+                -- KNOCKOUT is a score-cap chamber, so it shows its SCORE CAP
+                -- (with the stake) rather than a BEST OF format. Legacy
+                -- "ELIMINATION" battles are treated as KNOCKOUT here too.
+                local mb_mt = tostring(mb.matchType or ""):upper()
                 local detail
-                if tostring(mb.matchType or ""):upper() == "ELIMINATION" then
+                if mb_mt == "KNOCKOUT" or mb_mt == "ELIMINATION" then
                     detail = string.format("SCORE CAP %d  ~  %s", tonumber(mb.scoreCap) or 200, commas(amt))
                 else
                     detail = string.format("BEST OF %d ~ %s", fmt, commas(amt))
