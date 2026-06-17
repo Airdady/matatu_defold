@@ -378,31 +378,40 @@ function on_input(self, action_id, action)
                 elseif id == "nav_account" then msg.post("#controller", "goto_profile")
                 elseif id == "nav_invite" then right_panel.start_invite_search(self, app_state, function() rebuild(self) end, b.data); play_snd("snd_suspense")
                 elseif id == "cancel_invite" then right_panel.stop_invite_search(self, app_state, function() rebuild(self) end); stop_snd("snd_suspense")
-                elseif id == "create_battle" then self.battle_modal = { editing = false, type = (b.data or "NORMAL"), stake_i = 1, fmt_i = 1, elim_i = 1, players = "AUTO" }; rebuild(self)
+                elseif id == "create_battle" then
+                    local ct = (b.data or "NORMAL")
+                    self.battle_modal = { editing = false, type = ct, stake_i = 1, fmt_i = 1, elim_i = 1, players = "AUTO" }
+                    if tostring(ct):upper() == "ELIMINATION" then self.battle_modal.estake_i = 1; self.battle_modal.cap_i = 2 end
+                    rebuild(self)
                 elseif id == "update_battle" then
                     local T  = b.data or "NORMAL"
                     local mb = right_panel.battle_of_type(ws.current_user_data or {}, T) or {}
                     local btype = (tostring(mb.matchType or T or "NORMAL"):upper())
                     local amt = tonumber(mb.stakeAmount) or tonumber((mb.stake or {}).amount) or 0
                     local fmtv = tonumber(mb.matchFormat) or 3
-                    local s_i, f_i, elim_i = 1, 1, 1
+                    local s_i, f_i, elim_i, estake_i, cap_i = 1, 1, 1, 1, 2
                     if btype == "NORMAL" then
                         for j, t in ipairs(right_panel.BATTLE_TIERS) do if t.amount == amt then s_i = j; break end end
                         for j, fdef in ipairs(right_panel.BATTLE_TIERS[s_i].formats) do if fdef.games == fmtv then f_i = j; break end end
+                    elseif btype == "ELIMINATION" then
+                        -- STAKED chamber: map stake amount -> estake_i, scoreCap -> cap_i.
+                        for j, a in ipairs(right_panel.ELIM_STAKES) do if a == amt then estake_i = j; break end end
+                        local capv = tonumber(mb.scoreCap) or 200
+                        for j, a in ipairs(right_panel.ELIMINATION_TIERS) do if a == capv then cap_i = j; break end end
                     else
-                        -- ELIMINATION's selector is the SCORE CAP, PARTY's is the entry fee.
-                        local match_val = (btype == "ELIMINATION") and (tonumber(mb.scoreCap) or 200) or amt
-                        for j, a in ipairs(right_panel.ELIMINATION_TIERS) do if a == match_val then elim_i = j; break end end
+                        -- PARTY's selector is the entry fee.
+                        for j, a in ipairs(right_panel.ELIMINATION_TIERS) do if a == amt then elim_i = j; break end end
                     end
                     local players = mb.players
                     if type(players) == "table" then players = #players end
                     self.battle_modal = { editing = true, id = tostring(mb._id or mb.id or ""), type = btype,
-                        stake_i = s_i, fmt_i = f_i, elim_i = elim_i, players = players or "AUTO" }; rebuild(self)
+                        stake_i = s_i, fmt_i = f_i, elim_i = elim_i, estake_i = estake_i, cap_i = cap_i, players = players or "AUTO" }; rebuild(self)
                 elseif id == "bm_type_normal" or id == "bm_type_elim" or id == "bm_type_party" then
                     local bm = self.battle_modal
                     if bm and not bm.submitting then
                         bm.type = (id == "bm_type_party") and "PARTY" or (id == "bm_type_elim") and "ELIMINATION" or "NORMAL"
                         bm.stake_i = bm.stake_i or 1; bm.fmt_i = bm.fmt_i or 1; bm.elim_i = bm.elim_i or 1; bm.players = bm.players or "AUTO"
+                        bm.estake_i = bm.estake_i or 1; bm.cap_i = bm.cap_i or 2
                         rebuild(self)
                     end
                 elseif id == "bm_close" then self.battle_modal, self.list_scroll = nil, 0; rebuild(self)
@@ -411,12 +420,21 @@ function on_input(self, action_id, action)
                     if bm and not bm.submitting then
                         local step = (id == "bm_fee_plus") and 1 or -1
                         local bt = tostring(bm.type or "NORMAL"):upper()
-                        if bt == "ELIMINATION" or bt == "PARTY" then
+                        if bt == "ELIMINATION" then
+                            bm.estake_i = math.max(1, math.min(#right_panel.ELIM_STAKES, (bm.estake_i or 1) + step))
+                        elseif bt == "PARTY" then
                             bm.elim_i = math.max(1, math.min(#right_panel.ELIMINATION_TIERS, (bm.elim_i or 1) + step))
                         else
                             bm.stake_i = math.max(1, math.min(#right_panel.BATTLE_TIERS, (bm.stake_i or 1) + step))
                             bm.fmt_i = math.min(bm.fmt_i or 1, #right_panel.BATTLE_TIERS[bm.stake_i].formats)
                         end
+                        rebuild(self)
+                    end
+                elseif id == "bm_cap_minus" or id == "bm_cap_plus" then
+                    local bm = self.battle_modal
+                    if bm and not bm.submitting and tostring(bm.type or "NORMAL"):upper() == "ELIMINATION" then
+                        local step = (id == "bm_cap_plus") and 1 or -1
+                        bm.cap_i = math.max(1, math.min(#right_panel.ELIMINATION_TIERS, (bm.cap_i or 2) + step))
                         rebuild(self)
                     end
                 elseif id == "bm_fmt_minus" or id == "bm_fmt_plus" then
