@@ -204,9 +204,10 @@ end
 function M.process_scoreboard(self, state)
     state = state or {}
 
-    -- Knockout games render the score-cap chamber table (handled at start_game /
-    -- state-sync), so the battle scoreboard stays hidden here.
-    if is_knockout_state(state) then
+    -- Knockout games render the score-cap chamber table, so the battle
+    -- scoreboard stays hidden. Use the sticky per-game flag too, because some
+    -- mid-game state syncs don't echo matchType.
+    if is_knockout_state(state) or self._is_knockout then
         msg.post(GUI_HUD, "update_scoreboard", { show = false })
         return
     end
@@ -748,8 +749,9 @@ function M.start_game(self, state)
     local op_pub = M.public_player_info(op)
     msg.post(GUI_HUD, "setup_avatars", { my_info = my_pub, op_info = op_pub })
     msg.post(GUI_OVER, "setup_avatars", { my_info = my_pub, op_info = op_pub })
+    self._is_knockout = is_knockout_state(state)
     M.process_scoreboard(self, state)
-    if is_knockout_state(state) then knockout_init_chamber(self, state) end
+    if self._is_knockout then knockout_init_chamber(self, state) end
 
     local p_count = #hand_data
     local a_count = opp_count

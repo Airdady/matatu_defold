@@ -688,6 +688,7 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("disable") then
         self.active = false
         app.game_active = false
+        self._knockout_scores = nil
         self._seq = (self._seq or 0) + 1
         self.round_story_active = false
         self.round_story_deadline = nil
