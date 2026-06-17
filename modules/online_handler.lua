@@ -184,6 +184,7 @@ local function knockout_init_chamber(self, state)
     msg.post(GUI_HUD, "t4_chamber_init", {
         threshold = tonumber(state.scoreCap) or 200,
         rows      = knockout_chamber_rows(self, state),
+        placement = "left_center",
     })
 end
 

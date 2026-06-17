@@ -329,7 +329,15 @@ function M.chamber_init(self, message)
     local threshold = message.threshold or 100
     local rows = message.rows or {}
     local n = #rows
-    local root = gui.new_box_node(vmath.vector3(14, LOGICAL_H - 14, 0), vmath.vector3(250, 52 + n * T4_CHAMBER_ROW_GAP, 0))
+    local height = 52 + n * T4_CHAMBER_ROW_GAP
+    -- Default: top-left (offline chamber). "left_center" pins it to the extreme
+    -- left, vertically centred — where online knockout puts it (the battle
+    -- scoreboard's spot is free since it's hidden for knockout).
+    local rx, ry = 14, LOGICAL_H - 14
+    if message.placement == "left_center" then
+        ry = math.floor(LOGICAL_H / 2 + height / 2)
+    end
+    local root = gui.new_box_node(vmath.vector3(rx, ry, 0), vmath.vector3(250, height, 0))
     gui.set_pivot(root, gui.PIVOT_NW); gui.set_color(root, vmath.vector4(0.05, 0.06, 0.09, 0.86))
     gui.set_xanchor(root, gui.ANCHOR_LEFT); gui.set_yanchor(root, gui.ANCHOR_TOP)
     local title = label(vmath.vector3(125, -24, 0), "SCORE CAP  " .. tostring(threshold), 16, vmath.vector4(1, 0.84, 0.2, 1), gui.PIVOT_CENTER, "subtitle2")
