@@ -83,6 +83,8 @@ function on_message(self, message_id, message)
 
     elseif message_id == hash("t4_chamber_init") then
         t4.chamber_init(self, message)
+        scoreboard.set_active(self, false)
+        scoreboard.set_h2h_strip(self, nil, false)
 
     elseif message_id == hash("t4_chamber_update") then
         t4.chamber_update(self, message)
@@ -115,21 +117,85 @@ function on_message(self, message_id, message)
         end
 
     elseif message_id == hash("update_scoreboard") then
+        local state = message.state or message.game_state or message
+        local is_knockout = false
+        
+        if state and type(state) == "table" then
+            local gt = tostring(state.gameType or ""):upper()
+            local mt = tostring(state.matchType or ""):upper()
+            if gt == "KNOCKOUT" or mt == "KNOCKOUT" then is_knockout = true end
+            
+            if state.gameOverState and type(state.gameOverState) == "table" then
+                local g_gt = tostring(state.gameOverState.gameType or ""):upper()
+                local g_mt = tostring(state.gameOverState.matchType or ""):upper()
+                if g_gt == "KNOCKOUT" or g_mt == "KNOCKOUT" then is_knockout = true end
+            end
+            
+            if state.tournamentData and type(state.tournamentData) == "table" then
+                local t_mt = tostring(state.tournamentData.matchType or ""):upper()
+                if t_mt == "KNOCKOUT" then is_knockout = true end
+            end
+            
+            if state.tournament and type(state.tournament) == "table" then
+                local t_mt = tostring(state.tournament.matchType or ""):upper()
+                if t_mt == "KNOCKOUT" then is_knockout = true end
+            end
+        end
+
         -- While the score-cap chamber table is up (knockout), the battle
         -- scoreboard must NEVER show — not even on a mid-game state sync that
         -- happens to lack the matchType flag, nor at game-over. The chamber
         -- table IS the standings.
-        if self.t4_chamber then
+        if self.t4_chamber or is_knockout then
             scoreboard.set_active(self, false)
+            scoreboard.set_h2h_strip(self, nil, false)
+            
+            -- Keep the chamber accurately updated with the last bit of scores 
+            -- immediately upon knockout completion.
+            local scores_to_apply = nil
+            local score_cap = 200
+            
+            if state and type(state) == "table" then
+                if state.gameOverState and state.gameOverState.currentScores then
+                    scores_to_apply = state.gameOverState.currentScores
+                    score_cap = tonumber(state.gameOverState.scoreCap) or score_cap
+                elseif state.currentScores then
+                    scores_to_apply = state.currentScores
+                    score_cap = tonumber(state.scoreCap) or score_cap
+                elseif state.tournamentScore and state.tournamentScore.scores then
+                    scores_to_apply = state.tournamentScore.scores
+                end
+            end
+            
+            if scores_to_apply and self.t4_chamber then
+                for pid, total in pairs(scores_to_apply) do
+                    local t = tonumber(total) or 0
+                    local p_name = tostring(pid)
+                    
+                    if state.players and state.players[pid] then
+                        p_name = state.players[pid].username or state.players[pid].name or pid
+                    elseif state.gameOverState and state.gameOverState.players and state.gameOverState.players[pid] then
+                        p_name = state.gameOverState.players[pid].username or state.gameOverState.players[pid].name or pid
+                    end
+                    
+                    t4.chamber_update(self, {
+                        name = p_name,
+                        total = t,
+                        threshold = score_cap,
+                        eliminated = t >= score_cap
+                    })
+                end
+            end
+            
             return
         end
+        
         if message.show == false then
             scoreboard.set_active(self, false)
             scoreboard.set_h2h_strip(self, nil, false)
             return
         end
 
-        local state = message.state or message.game_state or message
         local is_tournament = false
 
         if state and type(state) == "table" then
@@ -225,11 +291,12 @@ function on_message(self, message_id, message)
         overlay.reset(self)
 
         t4.clear(self)
-        t4.clear_chamber(self)
-        self.is_t4_mode = false
-        hud.set_t4_mode(self, false)
 
         if not (message and message.keep_scoreboard) then
+            t4.clear_chamber(self)
+            self.is_t4_mode = false
+            hud.set_t4_mode(self, false)
+
             story.hide(self)
             scoreboard.set_active(self, false)
             scoreboard.set_h2h_strip(self, nil, false)
