@@ -27,6 +27,11 @@ M.PARTY_TIERS = { 100, 200, 500 }
 M.BATTLE_TYPES = { "NORMAL", "KNOCKOUT", "PARTY" }
 M.BATTLE_TYPE_LABELS = { NORMAL = "BATTLE", KNOCKOUT = "KNOCKOUT", PARTY = "PARTY" }
 
+-- Battle types the UI is allowed to SHOW. PARTY is intentionally kept out of
+-- view for now while ALL of its code — tiers, is_party branches, resolution and
+-- submission — is retained. Re-enable it by simply adding "PARTY" back here.
+M.BATTLE_TYPES_VISIBLE = { "NORMAL", "KNOCKOUT" }
+
 -- Resolve the battle a user holds for a given type T ∈ {NORMAL,KNOCKOUT,PARTY}.
 -- Prefers the new per-type map u.myBattles[T]; falls back to the legacy single
 -- u.myBattle / u.myTournament keyed by its matchType (missing ⇒ NORMAL). A legacy
@@ -100,19 +105,27 @@ local function draw_battle_modal(self, ctx)
     track(self, ui.text(vmath.vector3(CX, CY + 240, 0), title, "title", ctx.C.COL_WHITE))
     mkbtn(self, "bm_close", vmath.vector3(CX + 340, CY + 240, 0), vmath.vector3(50, 50, 0), "X", "secondary_btn")
 
-    -- BATTLE TYPE: three-way segmented control
+    -- BATTLE TYPE: segmented control. Only the VISIBLE types are drawn (PARTY is
+    -- hidden but its code is retained), and the row recentres to however many
+    -- segments remain.
     local type_y  = CY + 140
     track(self, ui.text(vmath.vector3(CX, type_y + 42, 0), "BATTLE TYPE", "small", C_NEUTRAL))
     local seg_w   = 160
     local seg_gap = 12
-    local seg_specs = {
-        { id = "bm_type_normal", label = "BATTLE",   on = is_norm  },
-        { id = "bm_type_knock",  label = "KNOCKOUT", on = is_knock },
-        { id = "bm_type_party",  label = "PARTY",    on = is_party },
+    local SEG_META = {
+        NORMAL   = { id = "bm_type_normal", label = "BATTLE"   },
+        KNOCKOUT = { id = "bm_type_knock",  label = "KNOCKOUT" },
+        PARTY    = { id = "bm_type_party",  label = "PARTY"    },
     }
+    local seg_specs = {}
+    for _, T in ipairs(M.BATTLE_TYPES_VISIBLE) do
+        local meta = SEG_META[T]
+        if meta then seg_specs[#seg_specs+1] = { id = meta.id, label = meta.label, on = (btype == T) } end
+    end
     local UNSEL_C = vmath.vector4(0.16, 0.16, 0.18, 1)
+    local seg_n = #seg_specs
     for i, s in ipairs(seg_specs) do
-        local sx  = CX + (i - 2) * (seg_w + seg_gap)
+        local sx  = CX + (i - (seg_n + 1) / 2) * (seg_w + seg_gap)
         local box = track(self, ui.box(vmath.vector3(sx, type_y, 0), vmath.vector3(seg_w, 46, 0), s.on and C_VICTORY or UNSEL_C))
         self.buttons[#self.buttons+1] = { node = box, id = s.id }
         track(self, ui.text(vmath.vector3(sx, type_y, 0), s.label, "btn_md", s.on and C_BTN_TEXT or ctx.C.COL_WHITE))
@@ -422,7 +435,9 @@ function M.draw(self, ctx, left_M)
     local row_h    = 74
     local top_pad  = 12
     local bot_pad  = 12
-    local battle_h = top_pad + (row_h * 3) + bot_pad
+    -- Only the visible battle types get a row (PARTY hidden; code retained).
+    local list_types = M.BATTLE_TYPES_VISIBLE
+    local battle_h = top_pad + (row_h * #list_types) + bot_pad
     local scy = cy - battle_h/2
     glass(self, vmath.vector3(cx, scy, 0), vmath.vector3(pw, battle_h, 0), "container_bg")
 
@@ -430,7 +445,7 @@ function M.draw(self, ctx, left_M)
     local row_l    = cx - pw/2 + 16
     local row_r    = cx + pw/2 - 16
 
-    for ri, T in ipairs(M.BATTLE_TYPES) do
+    for ri, T in ipairs(list_types) do
         local row_cy = rows_top - (ri - 0.5) * row_h
         -- Subtle divider above every row except the first.
         if ri > 1 then
