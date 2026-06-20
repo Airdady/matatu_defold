@@ -12,6 +12,10 @@ fonts {
   font: "/fonts/caption.font"
 }
 fonts {
+  name: "subtitle1"
+  font: "/fonts/subtitle1.font"
+}
+fonts {
   name: "subtitle2"
   font: "/fonts/subtitle2.font"
 }

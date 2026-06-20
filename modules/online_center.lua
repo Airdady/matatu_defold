@@ -203,7 +203,7 @@ function M.draw(self, ctx)
 
             local name_x   = content_l + C.INNER_PAD
             local name_col = playing and vmath.vector4(0.5,0.5,0.5,1) or C.COL_WHITE
-            txtL(self, name_x, row_cy, string.upper(pu.username or "PLAYER"), "helvetica_bold", name_col)
+            txtL(self, name_x, row_cy, string.upper(pu.username or "PLAYER"), "body", name_col)
 
             local badge_x = content_l + 200
             if is_ai then

@@ -20,6 +20,10 @@ fonts {
   font: "/fonts/btn_sm.font"
 }
 fonts {
+  name: "btn_lg"
+  font: "/fonts/btn_lg.font"
+}
+fonts {
   name: "helvetica_bold"
   font: "/fonts/helvetica_bold.font"
 }

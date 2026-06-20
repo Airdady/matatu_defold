@@ -41,3 +41,6 @@ socket_timeout = 10000000
 
 [sound]
 max_component_count = 128
+
+[network]
+cleartext_traffic = 1
