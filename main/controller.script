@@ -178,24 +178,32 @@ function init(self)
         end
         app_state.mode = "online"
         if intercept_for_search(self) then return end
+        -- A genuine NEW match either arrives from a menu (screen ~= "game") or
+        -- from the game-over modal (board no longer active). A round transition
+        -- inside an ongoing series arrives while the board is still live — in
+        -- that case the pot stays on the table and we must NOT replay the coin
+        -- collection animation (coins only fly on game start / game over).
+        local is_round_continuation = (self.screen == "game") and app_state.game_active
         if self.screen ~= "game" then
             show(self, "game")
         else
             msg.post("#game_logic", "ws_new_game_start")
         end
-        -- Stake pot: drain both players' coins into a glowing pot at the table
-        -- centre while the lobby->game transition plays underneath (#coins is a
-        -- global overlay, so the animation is never interrupted).
-        local stake = (type(gs) == "table" and type(gs.stake) == "table" and tonumber(gs.stake.amount)) or 500
-        pcall(msg.post, "#coins", "coin_collect_pot", {
-            amount  = stake * 2,
-            sources = { { x = 150, y = 64 }, { x = 150, y = 656 } },
-            center  = { x = 640, y = 360 },
-        })
-        -- then settle the pot just above the discard pile so it stays visible
-        -- on the table without covering play. The live coin bundle IS the stake
-        -- display now (the old static stake chip has been removed entirely).
-        pcall(msg.post, "#coins", "coin_pot_to", { x = 340, y = 360 })
+        if not is_round_continuation then
+            -- Stake pot: drain both players' coins into a glowing pot at the table
+            -- centre while the lobby->game transition plays underneath (#coins is a
+            -- global overlay, so the animation is never interrupted).
+            local stake = (type(gs) == "table" and type(gs.stake) == "table" and tonumber(gs.stake.amount)) or 500
+            pcall(msg.post, "#coins", "coin_collect_pot", {
+                amount  = stake * 2,
+                sources = { { x = 150, y = 64 }, { x = 150, y = 656 } },
+                center  = { x = 640, y = 360 },
+            })
+            -- then settle the pot just above the discard pile so it stays visible
+            -- on the table without covering play. The live coin bundle IS the stake
+            -- display now (the old static stake chip has been removed entirely).
+            pcall(msg.post, "#coins", "coin_pot_to", { x = 340, y = 360 })
+        end
     end))
 
     local function broadcast(evt)

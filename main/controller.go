@@ -43,10 +43,6 @@ components {
   component: "/main/card.factory"
 }
 components {
-  id: "suit_select"
-  component: "/main/suit_select.gui"
-}
-components {
   id: "gameover"
   component: "/main/gameover.gui"
 }
@@ -61,6 +57,10 @@ components {
 components {
   id: "coins"
   component: "/main/coins.gui"
+}
+components {
+  id: "suit_select"
+  component: "/main/suit_select.gui"
 }
 embedded_components {
   id: "background"
