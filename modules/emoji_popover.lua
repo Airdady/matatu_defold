@@ -31,9 +31,40 @@ local FLY_SIZE = 96
 local DEST_X = 225
 local DEST_Y = LOGICAL_H - 72
 
+-- The popover's sound IDs are the Godot Voice* / Sound* names; the actual sound
+-- components live on the controller object as snd_*. Without this mapping the
+-- emoji posts to a non-existent component (e.g. "#VoiceLaughMzeei") and nothing
+-- plays.
+local SOUND_COMPONENT = {
+    VoiceLaughMzeei      = "snd_laugh_mzeei",
+    VoiceKawedemu        = "snd_kawedemu",
+    VoiceIgoing          = "snd_igoing",
+    VoiceAvugaObula      = "snd_avuga_obula",
+    VoiceMbooko          = "snd_mbooko",
+    VoiceKasongo         = "snd_kasongo",
+    VoiceTowedde         = "snd_towedde",
+    VoiceToweddeAlt      = "snd_towedde_alt",
+    VoiceBanamwe         = "snd_banamwe",
+    VoiceOhMyGod         = "snd_oh_my_god",
+    VoiceAbarongo        = "snd_abarongo",
+    VoiceEheh            = "snd_eheh",
+    VoiceIWonder         = "snd_i_wonder",
+    VoiceKigozi          = "snd_kigozi",
+    VoiceOlyaa           = "snd_olyaa",
+    SoundConnecting      = "snd_connecting",
+    VoiceBamukubye       = "snd_bamukubye",
+    VoiceOmukwomu        = "snd_omukwomu",
+    VoiceSnoring         = "snd_snoring",
+    VoiceICantAcceptThat = "snd_i_cant_accept_that",
+    VoiceTogendaKuba     = "snd_togenda_kuba",
+    VoiceTokirizibwa     = "snd_tokirizibwa",
+    VoiceGoodbye         = "snd_goodbye",
+}
+
 local function play_sound(sound_id)
     if not sound_id or sound_id == "" then return end
-    msg.post("/controller#" .. sound_id, "play_sound")
+    local comp = SOUND_COMPONENT[sound_id] or sound_id
+    pcall(msg.post, "/controller#" .. comp, "play_sound")
 end
 
 local function box(pos, size, color, pivot)

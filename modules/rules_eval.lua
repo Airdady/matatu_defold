@@ -133,10 +133,18 @@ function M.trigger_play_effects(self, rec, is_last)
     -- The LAST card on the table ends the round: it lands with the normal
     -- play sound — no penalty fanfare, since no pick follows a winning card.
     if is_last and snd ~= "SoundPlayCut" then snd = "SoundPlay" end
-    -- A penalty-value card played to ANSWER an already-active penalty (a partial
-    -- / stacked penalty response) lands with the normal play sound, not the
-    -- penalty fanfare.
-    if (self.active_penalty or 0) > 0 and snd ~= "SoundPlayCut" then snd = "SoundPlay" end
+    -- While a penalty is active, only a PARTIAL penalty (answering with a WEAKER
+    -- penalty card, which reduces the stack) drops to the normal play sound — a
+    -- final card already did so above. Answering with an equal or BIGGER penalty
+    -- keeps the card's special penalty sound.
+    if not is_last and snd ~= "SoundPlayCut" and (M.get_active_penalty(self) or 0) > 0 then
+        local tp = M.top_played(self)
+        if tp and Rules.is_penalty_card(rec, Rules.RULES_JOKERS) then
+            local prev_pen   = Rules.get_card_penalty_value(tp)
+            local played_pen = Rules.get_card_penalty_value(rec)
+            if prev_pen > played_pen then snd = "SoundPlay" end
+        end
+    end
     self.play_sound(snd)
 end
 
