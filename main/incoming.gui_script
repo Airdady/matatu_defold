@@ -194,12 +194,10 @@ local function open_dialog(self, name, stake, request_id, avatar, opponent_id, h
         compact = compact and true or false,
     }
     self.dlg_alpha = 0
-    -- Audible cue when an opponent's challenge arrives. snd_alert lives on the
-    -- controller object (our sibling), addressable with a bare "#" url. Suppressed
-    -- in compact mode so the request stays non-disruptive while in a game.
-    if not self.dialog.compact then
-        pcall(msg.post, "#snd_alert", "play_sound")
-    end
+    -- Audible cue when an opponent's challenge arrives. EVERY incoming request
+    -- (normal, battle, tournament, knockout — full dialog or compact banner)
+    -- uses the same request.ogg cue (snd_notify on the sibling controller object).
+    pcall(msg.post, "#snd_notify", "play_sound")
     refresh_wh()
     rebuild(self)
 end
@@ -277,11 +275,12 @@ function on_message(self, message_id, message)
             return
         end
 
-        -- Compact, non-disruptive top banner ONLY while a game board is actively
-        -- in play; otherwise show the FULL dialog so the request can't be missed
-        -- (covers the case where the game already ended but we're still parked on
-        -- the game screen — the sound used to play with no visible notification).
-        local compact = app_state.game_active and true or false
+        -- Tournament / battle / knockout invites ALWAYS use the dedicated compact
+        -- top banner (never the full modal) — that is their dedicated surface.
+        -- A plain NORMAL game request uses the full modal dialog, except while a
+        -- game board is actively in play, where it too drops to the compact banner
+        -- so it never blacks out the table.
+        local compact = (app_state.game_active or is_tb) and true or false
 
         local disp_name = (r.user or {}).username or "A player"
         if is_tb then
