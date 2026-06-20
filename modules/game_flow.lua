@@ -133,7 +133,10 @@ function M.after_play_settled(self, rec, is_player, result, ticket)
         end
     elseif result.type == NA.REDUCE_PENALTY then
         notify_gui(self.gui_suit, "suit_select", { mode = "close" })
-        local remaining = result.current_penalty_count or 0
+        -- `draw_cards` is the last-card-aware amount: it is 0 when this play
+        -- empties the hand, so the partial penalty does NOT take effect on a
+        -- final card — the player wins instead of being forced to draw.
+        local remaining = result.draw_cards or result.current_penalty_count or 0
         self.active_penalty = 0
         if remaining > 0 then
             log(actor .. " reduces penalty — draws " .. remaining .. ".")
