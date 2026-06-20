@@ -4,12 +4,6 @@
 -- drawing (with auto-reshuffle), the reshuffle itself, post-draw skip logic,
 -- win detection, end-of-game reveal/scoring, offline turn routing, and the
 -- boot dispatcher that picks online vs offline.
---
--- Cross-cutting calls follow the project's existing convention:
---   * rule queries        -> RE.* (rules_eval)
---   * animations/layout   -> self.* (wired in game.script init) and BL.*
---   * sibling flow funcs   -> M.*
---   * online/offline       -> OnlineHandler.* / OfflineHandler.*
 ----------------------------------------------------------------------
 local Rules          = require "modules.card_rules"
 local Defs           = require "modules.card_defs"
@@ -479,7 +473,10 @@ end
 -- EXPLICIT EVENT API FOR EXTERNAL SCRIPTS TO CALL
 -- Call `GF.finish_round_transition(self)` when the story/UI is fully complete.
 -- ======================================================================
-function M.finish_round_transition(self)
+function M.finish_round_transition(self, force)
+    if self._knockout_story_locked and not force then return end
+    self._knockout_story_locked = false
+
     if not self.is_transitioning_round then return end
     self.is_transitioning_round = false
     
@@ -538,8 +535,6 @@ function M.end_game(self, player_won, is_cut, backend_results)
             end
         end
 
-        -- 🟢 FIX: Ensure the regular Scoreboard is ONLY drawn for non-knockout matches.
-        -- Knockout matches strictly use the visual Cap Table Chamber.
         if not is_knockout then
             if backend_results.currentScores or backend_results.headToHead then
                 OnlineHandler.process_scoreboard(self, {
@@ -564,13 +559,18 @@ function M.end_game(self, player_won, is_cut, backend_results)
             local next_rnd = p_sc + o_sc + 1
             if is_knockout then
                 self._knockout_round = (self._knockout_round or 0) + 1
-                
-                -- 🟢 FIX: Send an empty string `""` instead of `false`.
-                -- Passing `false` to the GUI script silently crashes `gui.set_text`,
-                -- which prevents the animation from finishing and freezes the game queue forever!
                 next_rnd = ""
-                
                 target = tonumber(backend_results.scoreCap) or 200
+            end
+
+            local round_history = backend_results.roundHistory
+            if not round_history or #round_history == 0 then
+                self._knockout_history = self._knockout_history or {}
+                if backend_results.roundScores and not self._history_added_this_round then
+                    table.insert(self._knockout_history, backend_results.roundScores)
+                    self._history_added_this_round = true
+                end
+                round_history = self._knockout_history
             end
 
             story = {
@@ -580,7 +580,9 @@ function M.end_game(self, player_won, is_cut, backend_results)
                 target = target,
                 next_round = next_rnd,
                 last_round = (not is_knockout) and (p_sc == target - 1) and (o_sc == target - 1) or false,
-                is_knockout = is_knockout
+                is_knockout = is_knockout,
+                history = round_history,
+                players = backend_results.players
             }
         else
             self._knockout_round = 0
@@ -636,18 +638,46 @@ function M.end_game(self, player_won, is_cut, backend_results)
 
     -- ======================================================================
     -- BULLETPROOF EVENT-DRIVEN ANIMATION CHAIN
-    -- Everything below utilizes strict complete_function callbacks.
-    -- No timers are guessed. The sequence physically cannot break.
     -- ======================================================================
 
     local function final_resolution()
         if round_continues then
-            if story then 
+            
+            -- NEW UX STORYTELLING FLOW
+            if is_knockout then
+                self._knockout_story_locked = true
                 self.round_story_active = true
-                notify_gui(self.gui_hud, "round_story", story) 
+                if story then notify_gui(self.gui_hud, "round_story", story) end
+                
+                -- Wait for ROUND WON text to settle
+                timer.delay(1.5, false, function()
+                    -- Trigger History List Expansion
+                    notify_gui(self.gui_hud, "t4_chamber_expand", { 
+                        history = story.history, 
+                        players = story.players, 
+                        my_id = self.my_player_id 
+                    })
+                    
+                    -- Hold table open for exactly 2 seconds (+0.5 for animation)
+                    timer.delay(2.5, false, function()
+                        -- Trigger Table Collapse back to minimal
+                        notify_gui(self.gui_hud, "t4_chamber_collapse", {})
+                        
+                        -- Wait for Collapse animation to finish
+                        timer.delay(0.5, false, function()
+                            -- NOW safely accept and transition!
+                            M.finish_round_transition(self, true)
+                        end)
+                    end)
+                end)
+            else
+                if story then 
+                    self.round_story_active = true
+                    notify_gui(self.gui_hud, "round_story", story) 
+                end
+                timer.delay(8.0, false, function() M.finish_round_transition(self) end)
             end
-            -- Provide a generous fallback in case the explicit event is never fired by UI.
-            timer.delay(8.0, false, function() M.finish_round_transition(self) end)
+            
         else
             notify_gui(self.gui_over, "game_over", {
                 won = player_won, player_score = p_score, ai_score = a_score,
@@ -713,7 +743,6 @@ function M.end_game(self, player_won, is_cut, backend_results)
         local function fly_one()
             k = k + 1
             if k > #hand then
-                -- Securely clear hand to deck via strict callbacks
                 local dp = self.DECK_POS or vmath.vector3(1150, 360, 0)
                 local orig_h_size = #hand 
                 local swept = 0
@@ -777,7 +806,6 @@ function M.end_game(self, player_won, is_cut, backend_results)
                         added = val, cx = cx, cy = cy
                     })
                     
-                    -- Chain next explicitly
                     timer.delay(0.15, false, function() fly_one() end)
                 end)
             else
@@ -841,7 +869,6 @@ function M.end_game(self, player_won, is_cut, backend_results)
         end
     end
 
-    -- Kick off the concrete animation sequence
     flip_ai_hand(function()
         timer.delay(0.9, false, function()
             if is_knockout then
@@ -881,9 +908,6 @@ local function apply_stake_background(self)
 end
 
 function M.start_game(self)
-    -- GAME QUEUE PROTECTOR
-    -- If we are currently counting up scores or showing the round story, 
-    -- safely pocket this incoming game and wait to call it later!
     if self.is_transitioning_round then
         log("start_game: Round arrived but board is currently transitioning/busy. Queuing...")
         self.queued_start_game = true
@@ -892,6 +916,7 @@ function M.start_game(self)
     
     self.queued_start_game = false
     self.is_transitioning_round = false
+    self._history_added_this_round = false
     
     GS.destroy_all(self)
     GS.fresh_state(self)

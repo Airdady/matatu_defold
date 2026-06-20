@@ -11,6 +11,14 @@ fonts {
   name: "small"
   font: "/fonts/caption.font"
 }
+fonts {
+  name: "btn_md"
+  font: "/fonts/btn_md.font"
+}
+fonts {
+  name: "helvetica_bold"
+  font: "/fonts/helvetica_bold.font"
+}
 textures {
   name: "ui"
   texture: "/assets/ui/ui.atlas"
