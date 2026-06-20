@@ -711,21 +711,6 @@ function M.end_game(self, player_won, is_cut, backend_results)
         self._knockout_scores = self._knockout_scores or {}
         local players = (self.game_state or {}).players or {}
 
-        local current_total = tonumber(self._knockout_scores[tostring(pid)]) or 0
-        local final_total = tonumber(cs[tostring(pid)]) or 0
-        local added_so_far = 0
-        local server_added = math.max(0, final_total - current_total)
-
-        if #hand == 0 or server_added == 0 then
-            self._knockout_scores[tostring(pid)] = final_total
-            notify_gui(self.gui_hud, "t4_chamber_update", {
-                name = (players[pid] or {}).username or (players[pid] or {}).name or pid,
-                total = final_total, threshold = cap, eliminated = final_total >= cap
-            })
-            count_next_player(idx + 1, done_cb)
-            return
-        end
-
         local function get_card_value(v, s)
             local val = tonumber(v)
             if not val then return 0 end
@@ -736,6 +721,34 @@ function M.end_game(self, player_won, is_cut, backend_results)
             if val == 2 then return 20 end
             if val == 3 then return 30 end
             return val
+        end
+
+        local current_total = tonumber(self._knockout_scores[tostring(pid)]) or 0
+        local final_total = tonumber(cs[tostring(pid)]) or 0
+        local added_so_far = 0
+        local server_added = math.max(0, final_total - current_total)
+
+        -- Fallback: if the backend score didn't advance (missing / stale
+        -- currentScores) but the player is still holding cards, reconstruct this
+        -- round's add from the actual hand. Otherwise a hand full of cards would
+        -- silently populate the total and skip the counting story entirely.
+        if server_added == 0 and #hand > 0 then
+            local local_sum = 0
+            for _, c in ipairs(hand) do local_sum = local_sum + get_card_value(c.v, c.s) end
+            if local_sum > 0 then
+                server_added = local_sum
+                final_total  = current_total + local_sum
+            end
+        end
+
+        if #hand == 0 or server_added == 0 then
+            self._knockout_scores[tostring(pid)] = final_total
+            notify_gui(self.gui_hud, "t4_chamber_update", {
+                name = (players[pid] or {}).username or (players[pid] or {}).name or pid,
+                total = final_total, threshold = cap, eliminated = final_total >= cap
+            })
+            count_next_player(idx + 1, done_cb)
+            return
         end
 
         local k = 0
