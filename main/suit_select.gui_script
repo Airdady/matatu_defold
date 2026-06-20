@@ -57,12 +57,12 @@ local function build_suit_select(self)
     local SS_RADIUS   = (SS_SIZE / 2) - (SS_BTN_SIZE / 2) - 10
 
     self.ss_overlay = box(vmath.vector3(LOGICAL_W/2, LOGICAL_H/2, 0), vmath.vector3(5000, 5000, 0), vmath.vector4(0, 0, 0, 0.66))
-    -- Sit the suit wheel ABOVE the coins slot (the pot rests at ~x340,y360) so
-    -- the two never overlap.
-    local left_offset = vmath.vector3(-300, 170, 0)
+    -- Centre the suit wheel on screen. It renders above everything (incl. the
+    -- coin/stake overlay), so it no longer needs to dodge the pot slot.
+    local panel_offset = vmath.vector3(0, 0, 0)
     self.ss_panel = box(vmath.vector3(0, 0, 0), vmath.vector3(SS_SIZE, SS_SIZE, 0), vmath.vector4(0.14, 0.15, 0.18, 1.0))
     gui.set_parent(self.ss_panel, self.ss_overlay)
-    setup_centered_overlay(self.ss_overlay, self.ss_panel, left_offset)
+    setup_centered_overlay(self.ss_overlay, self.ss_panel, panel_offset)
 
     self.ss_buttons = {}
     for i, s in ipairs(SUIT_ORDER) do
@@ -95,7 +95,9 @@ end
 
 function init(self)
     msg.post(".", "acquire_input_focus")
-    gui.set_render_order(14)
+    -- Topmost: above the coin/stake overlay (16) and every dialog so the suit
+    -- wheel is never covered by the stake bundle or other components.
+    gui.set_render_order(17)
     build_suit_select(self)
 end
 

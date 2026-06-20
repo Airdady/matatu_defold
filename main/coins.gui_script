@@ -74,31 +74,51 @@ local function set_pot_bundle(self, amount)
     pcall(function() gui.set_texture(self.pot.bundle, ATLAS); gui.play_flipbook(self.pot.bundle, hash(img)) end)
 end
 
-local function ensure_pot(self, x, y, amount)
+-- `frac` (0..1) is the collection progress: as each small coin lands the bundle
+-- is nudged a little bigger and a little more opaque, so it grows organically out
+-- of the incoming coins instead of popping in fully formed. Called with no frac
+-- (e.g. a round-continuation re-anchor) it simply snaps to the finished bundle.
+local function ensure_pot(self, x, y, amount, frac)
     if not self.pot then
         local bundle = loose_node(gui.new_box_node(v3(x, y), vmath.vector3(118, 118, 0)))
-        
-        -- Start fully transparent for a smooth transition from flying coins
+
+        -- Start small + transparent; landing coins build it up from here.
         gui.set_color(bundle, vmath.vector4(1, 1, 1, 0))
-        
+        gui.set_scale(bundle, vmath.vector3(BUNDLE_SCALE * 0.3, BUNDLE_SCALE * 0.3, 1))
+
         local label = loose_node(gui.new_text_node(v3(x, y - 78), tostring(amount or 0)))
         gui.set_font(label, "helvetica_bold")
         gui.set_color(label, GOLD)
         gui.set_pivot(label, gui.PIVOT_CENTER)
-        
-        self.pot = { bundle = bundle, label = label, amount = amount or 0, x = x, y = y }
-        
-        -- Smoothly fade in and gently scale up the bundle once
-        gui.set_scale(bundle, vmath.vector3(BUNDLE_SCALE * 0.75, BUNDLE_SCALE * 0.75, 1))
-        gui.animate(bundle, "color.w", 1, gui.EASING_INOUTSINE, 0.6)
-        gui.animate(bundle, "scale", vmath.vector3(BUNDLE_SCALE, BUNDLE_SCALE, 1), gui.EASING_OUTSINE, 0.6)
+
+        self.pot = { bundle = bundle, label = label, amount = amount or 0, x = x, y = y, grew = 0 }
     end
-    
+
     self.pot.amount = amount or self.pot.amount
     set_pot_bundle(self, self.pot.amount)
     if self.pot.label then gui.set_text(self.pot.label, tostring(self.pot.amount)) end
-    
-    -- The pulse/bounce impact animations were removed from here
+
+    if frac ~= nil then
+        -- Progressive build-up. Only ever grow forward so out-of-order / repeat
+        -- calls can't shrink or re-fade an already-fuller bundle.
+        local f = math.max(0, math.min(1, frac))
+        if f >= (self.pot.grew or 0) then
+            self.pot.grew = f
+            local s = BUNDLE_SCALE * (0.3 + 0.7 * f)
+            local a = math.min(1, 0.12 + 0.88 * f)
+            gui.cancel_animation(self.pot.bundle, "scale")
+            gui.cancel_animation(self.pot.bundle, "color.w")
+            gui.animate(self.pot.bundle, "scale", vmath.vector3(s, s, 1), gui.EASING_OUTSINE, 0.18)
+            gui.animate(self.pot.bundle, "color.w", a, gui.EASING_OUTSINE, 0.18)
+        end
+    else
+        -- No progress info: present the finished bundle at full size + opacity.
+        self.pot.grew = 1
+        gui.cancel_animation(self.pot.bundle, "scale")
+        gui.cancel_animation(self.pot.bundle, "color.w")
+        gui.set_scale(self.pot.bundle, vmath.vector3(BUNDLE_SCALE, BUNDLE_SCALE, 1))
+        local c = gui.get_color(self.pot.bundle); c.w = 1; gui.set_color(self.pot.bundle, c)
+    end
 end
 
 local function clear_pot(self)
@@ -152,7 +172,7 @@ HANDLERS.coin_collect_pot = function(self, d, done)
                 play("coin")
                 pcall(gui.delete_node, c)
                 landed = landed + 1
-                ensure_pot(self, target_x, cy, d.amount)
+                ensure_pot(self, target_x, cy, d.amount, landed / total)
                 if landed >= total then
                     local seq = self._seq
                     timer.delay(0.35, false, function() if seq == self._seq then done() end end)

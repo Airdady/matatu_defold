@@ -135,6 +135,20 @@ function M.stop_timers(self)
     self.timer_remaining = 0
 end
 
+-- Fully hide the persistent avatar + turn-timer chrome. Used when the board is
+-- torn down (leaving the game) so nothing from the HUD — most visibly the
+-- current player's timer ring and its square avatar container — lingers on top
+-- of other screens. A fresh game re-shows it via set_t4_mode / setup_avatars.
+function M.hide_player_chrome(self)
+    local nodes = {
+        self.p_avatar_bg, self.o_avatar_bg, self.o_avatar_name,
+        self.p_balance, self.p_timer, self.o_timer,
+    }
+    for _, n in ipairs(nodes) do if n then gui.set_enabled(n, false) end end
+    if self.p_net and self.p_net.bg then gui.set_enabled(self.p_net.bg, false) end
+    if self.o_net and self.o_net.bg then gui.set_enabled(self.o_net.bg, false) end
+end
+
 function M.update(self, dt)
     if self.timer_remaining and self.timer_remaining > 0 then
         self.timer_remaining = self.timer_remaining - dt
