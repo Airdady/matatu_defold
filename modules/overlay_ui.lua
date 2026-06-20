@@ -300,6 +300,9 @@ function M.on_input(self, action)
             msg.post("/controller#game_logic", "exit_to_lobby")
         elseif hit(self.btn_no, action) then
             gui.set_enabled(self.exit_popover, false)
+        elseif not gui.pick_node(self.exit_popover, action.x, action.y) then
+            -- Tapping anywhere outside the popover dismisses it (same as "No").
+            gui.set_enabled(self.exit_popover, false)
         end
         return true
     end
