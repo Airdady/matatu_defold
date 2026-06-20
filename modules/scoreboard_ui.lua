@@ -233,7 +233,41 @@ function M.set_round_dots(flipper, needed, won, animate)
     flipper.dots_filled = won
 end
 
+-- Tear down every node + cached field this module created so the NEXT build
+-- yields a brand-new scoreboard instance. Deleting a flipper root recursively
+-- removes its halves, gears, dividers, round dots and skirting; deleting the
+-- H2H container removes its form label and badges. This guarantees no flipper
+-- values, round dots, layout, opponent name or head-to-head data leak across a
+-- game-mode / player-count / board change.
+function M.destroy(self)
+    local function del(n) if n then pcall(gui.delete_node, n) end end
+
+    if self.o_flipper then del(self.o_flipper.root) end
+    if self.p_flipper then del(self.p_flipper.root) end
+    del(self.sb_div1)
+    del(self.sb_div2)
+    del(self.sb_title)
+    del(self.h2h_alltime_lbl)
+    del(self.h2h_container)
+
+    self.o_flipper        = nil
+    self.p_flipper        = nil
+    self.sb_div1          = nil
+    self.sb_div2          = nil
+    self.sb_title         = nil
+    self.sb_root          = nil
+    self.h2h_alltime_lbl  = nil
+    self.h2h_container    = nil
+    self.h2h_form_lbl     = nil
+    self.h2h_badges       = nil
+    self.opp_display_name = nil
+end
+
 function M.build(self, parent_node, logical_w, logical_h)
+    -- Always start from a clean slate so a rebuild (one per fresh game) never
+    -- stacks nodes or inherits cached state from the previous match.
+    M.destroy(self)
+
     self.o_flipper = create_flipper(parent_node, vmath.vector3(0, 100, 0))
     self.p_flipper = create_flipper(parent_node, vmath.vector3(0, -100, 0))
     

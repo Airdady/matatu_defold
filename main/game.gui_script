@@ -247,26 +247,30 @@ function on_message(self, message_id, message)
         hud.stop_timers(self)
         overlay.reset(self)
 
-        -- Do not wipe the T4 Chamber entirely on every transition!
-        if not self.t4_chamber then
-            t4.clear(self)
+        local keep = message and message.keep_scoreboard
+
+        -- Per-deal seats/badges are always cleared. A knockout ROUND
+        -- continuation (keep_scoreboard) is the ONLY case that preserves the
+        -- score-cap chamber + t4 mode across deals. Every other reset is a full
+        -- teardown for a brand-new board and MUST destroy them, otherwise a
+        -- following Battle / 2-player game inherits the previous chamber.
+        t4.clear(self)
+        if not (keep and self.t4_chamber) then
+            t4.clear_chamber(self)
             self.is_t4_mode = false
             hud.set_t4_mode(self, false)
-        else
-            -- We are in knockout. Clear the badges/seats for the fresh deal, 
-            -- but DO NOT destroy the `self.t4_chamber.root` table.
-            t4.clear(self) 
         end
 
-        if not (message and message.keep_scoreboard) then
-            if not self.t4_chamber then
-                t4.clear_chamber(self)
-            end
+        if not keep then
             story.hide(self)
+            -- Rebuild the scoreboard from scratch so the next match starts with a
+            -- completely fresh instance: no cached flipper values, round dots,
+            -- player-count layout, opponents or head-to-head data carry over.
+            if self.hud_root then
+                scoreboard.build(self, self.hud_root, LOGICAL_W, LOGICAL_H)
+            end
             scoreboard.set_active(self, false)
             scoreboard.set_h2h_strip(self, nil, false)
-            scoreboard.snap_flipper(self.o_flipper, "00")
-            scoreboard.snap_flipper(self.p_flipper, "00")
         end
 
         emoji_popover.reset(self)
