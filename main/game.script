@@ -693,6 +693,8 @@ function on_message(self, message_id, message, sender)
         self.active = false
         app.game_active = false
         self._knockout_scores = nil
+        self._knockout_history = nil
+        self._knockout_round = 0
         self._seq = (self._seq or 0) + 1
         self.round_story_active = false
         self.round_story_deadline = nil
