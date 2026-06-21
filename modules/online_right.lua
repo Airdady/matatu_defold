@@ -1,7 +1,8 @@
 -- Right sidebar: Profile card, Standing badge, Form, Payments, Battles, Tournaments.
 -- Also manages the Battle Creation/Update modal and the Invite Search overlay.
 
-local ws = require("modules.websocket_manager")
+local ws            = require("modules.websocket_manager")
+local dialog_search = require("modules.dialog_search")
 
 local M = {}
 
@@ -223,95 +224,9 @@ end
 
 -- ── Invite Modal Drawing ──────────────────────────────────────────────────────
 local function draw_invite_search(self, ctx)
-    local sr = self.invite_search
-    if not sr then return end
-
-    local track = ctx.track
-    local ui    = ctx.ui
-    local CX, CY = ctx.CX, ctx.CY
-
-    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W * 2, ctx.LOGICAL_H * 2, 0), vmath.vector4(0, 0, 0, 0.78)))
-    track(self, ui.grad_backdrop(ctx.LOGICAL_W, ctx.LOGICAL_H))
-
-    local title = sr.found and "OPPONENT FOUND!" or (sr.failed and "NO OPPONENT FOUND" or "SEARCHING FOR OPPONENT")
-    local t_col = sr.found and vmath.vector4(0.15, 0.85, 0.35, 1) or (sr.failed and ctx.C.COL_GOLD or ctx.C.COL_WHITE)
-    track(self, ui.text(vmath.vector3(CX, CY + 130, 0), title, "title", t_col))
-
-    if sr.failed then
-        track(self, ui.text(vmath.vector3(CX, CY + 96, 0), sr.fail_msg or "No one accepted your invite", "small", ctx.C.COL_DIM))
-    elseif not sr.found then
-        local dots = string.rep(".", 1 + (math.floor((sr.t or 0) * 2) % 3))
-        track(self, ui.text(vmath.vector3(CX, CY + 96, 0), "inviting a player to your battle" .. dots, "small", ctx.C.COL_DIM))
-    else
-        track(self, ui.text(vmath.vector3(CX, CY + 96, 0), "get ready…", "small", ctx.C.COL_DIM))
-    end
-
-    local u = ws.current_user_data or {}
-    local ax, bx, ay = CX - 190, CX + 190, CY - 10
-
-    track(self, ui.box(vmath.vector3(ax, ay, 0), vmath.vector3(124, 124, 0), vmath.vector4(0.10, 0.10, 0.13, 0.9)))
-    track(self, ui.avatar(vmath.vector3(ax, ay, 0), vmath.vector3(108, 108, 0), u.avatar or 1))
-    track(self, ui.text(vmath.vector3(ax, ay - 86, 0), "YOU", "body", ctx.C.COL_GOLD))
-    track(self, ui.text(vmath.vector3(CX, ay, 0), "VS", "title", vmath.vector4(1, 0.4, 0.4, 1)))
-
-    local frame_col = sr.found and vmath.vector4(0.15, 0.85, 0.35, 1)
-        or (sr.failed and vmath.vector4(0.85, 0.25, 0.25, 1) or vmath.vector4(0.25, 0.25, 0.30, 1))
-    local frame = track(self, ui.box(vmath.vector3(bx, ay, 0), vmath.vector3(124, 124, 0), frame_col))
-    local reel  = track(self, ui.avatar(vmath.vector3(bx, ay, 0), vmath.vector3(108, 108, 0), sr.reel_ix or 1))
-    self.invite_reel_node = reel
-    if sr.failed then
-        -- Freeze + dim the slot: drop the reel-node handle so the online update
-        -- loop stops cycling avatars into this (now failed) slot.
-        gui.set_color(reel, vmath.vector4(0.55, 0.55, 0.55, 1))
-        self.invite_reel_node = nil
-    end
-    local who = sr.found and (sr.opp_name or "PLAYER") or (sr.failed and "—" or "? ? ?")
-    track(self, ui.text(vmath.vector3(bx, ay - 86, 0), who, "body", sr.found and ctx.C.COL_WHITE or ctx.C.COL_DIM))
-
-    if sr.found then
-        gui.set_scale(frame, vmath.vector3(0.9, 0.9, 1))
-        gui.animate(frame, "scale", vmath.vector3(1.12, 1.12, 1), gui.EASING_OUTBACK, 0.35, 0, function()
-            pcall(gui.animate, frame, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTSINE, 0.18)
-        end)
-    elseif sr.failed then
-        -- "no opponent" transition: the empty slot shakes and fades back, signalling
-        -- the miss before the overlay closes. Run the shake only on the first failed
-        -- rebuild so the periodic redraw underneath doesn't restart it each frame.
-        if not sr.failed_anim then
-            sr.failed_anim = true
-            gui.animate(frame, "position.x", bx + 10, gui.EASING_OUTSINE, 0.06, 0, function()
-                pcall(gui.animate, frame, "position.x", bx - 8, gui.EASING_INOUTSINE, 0.08, 0, function()
-                    pcall(gui.animate, frame, "position.x", bx, gui.EASING_OUTSINE, 0.06)
-                end)
-            end, gui.PLAYBACK_ONCE_FORWARD)
-        end
-        gui.set_color(frame, vmath.vector4(0.85, 0.25, 0.25, 0.6))
-    else
-        -- Native, fully smooth animated timer
-        local time_left = math.max(0, 10 - (sr.t or 0))
-        local frac = time_left / 10
-        local R = 34
-        
-        local bg = track(self, gui.new_pie_node(vmath.vector3(CX, CY - 140, 0), vmath.vector3(R*2, R*2, 0)))
-        gui.set_perimeter_vertices(bg, 48)
-        pcall(gui.set_inner_radius, bg, R * 0.80)
-        gui.set_color(bg, vmath.vector4(0.25, 0.25, 0.25, 0.45))
-
-        local col = time_left <= 3 and ctx.C.COL_RED or ctx.C.COL_CYAN
-        local fg = track(self, gui.new_pie_node(vmath.vector3(CX, CY - 140, 0), vmath.vector3(R*2, R*2, 0)))
-        gui.set_perimeter_vertices(fg, 48)
-        pcall(gui.set_inner_radius, fg, R * 0.80)
-        gui.set_rotation(fg, vmath.vector3(0, 0, 90))
-        gui.set_fill_angle(fg, frac * 360)
-        gui.set_color(fg, col)
-        
-        -- Native engine tween over properties guarantees 60fps independent of redraw cycle
-        if time_left > 0 then
-            pcall(gui.animate, fg, "fill_angle", 0, gui.EASING_LINEAR, time_left)
-        end
-        
-        track(self, ui.text(vmath.vector3(CX, CY - 140, 0), tostring(math.ceil(time_left)), "title", col))
-    end
+    -- The battle/knockout quick-invite renders the SHARED random-opponent reel
+    -- dialog (modules/dialog_search) — the same overlay the tournament map uses.
+    dialog_search.draw(self, ctx, self.invite_search, "invite_reel_node")
 end
 
 
