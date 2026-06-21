@@ -6,6 +6,14 @@ local app_state = require("modules.app_state")
 local ws        = require("modules.websocket_manager")
 local screen    = require("modules.screen")
 
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- TOURNAMENT TIME CONFIGURATION - Swiftly change these values as needed
+-- ═══════════════════════════════════════════════════════════════════════════════
+local TOURNAMENT_START_HOUR   = 8     -- 09:00 (24-hour format)
+local TOURNAMENT_START_MINUTE = 0
+local TOURNAMENT_END_HOUR     = 23    -- 23:59 (24-hour format)
+local TOURNAMENT_END_MINUTE   = 59
+
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local VISIBLE_W, VISIBLE_H = 1280, 720
 local EDGE_L, EDGE_R = 0, 1280
@@ -59,11 +67,40 @@ local function pick_tournament()
     local u = ws.current_user_data or {}
     local ts = u.tournaments
     if type(ts) ~= "table" or #ts == 0 then return nil end
-    for _, t in ipairs(ts) do
-        if t.scope == "GLOBAL" and t.status == "active" then return t end
+
+    -- Helper to check if a tournament is valid for the multi-level (7-level) map
+    local function is_valid_map_tournament(t)
+        local count = (type(t.levels) == "table") and #t.levels or 0
+        if count == 7 then return true end
+        if count > 1 then return true end
+        if count == 1 then return false end -- Reject 1-level tournaments explicitly
+        -- If no levels defined (0), assume GLOBAL scope is our 7-level default
+        if t.scope == "GLOBAL" then return true end
+        return false
     end
-    for _, t in ipairs(ts) do if t.status == "active" then return t end end
-    return ts[1]
+
+    -- 1. Try to find a GLOBAL active tournament that fits the multi-level criteria
+    for _, t in ipairs(ts) do
+        if t.scope == "GLOBAL" and t.status == "active" and is_valid_map_tournament(t) then 
+            return t 
+        end
+    end
+
+    -- 2. Try to find ANY active tournament that fits the criteria
+    for _, t in ipairs(ts) do 
+        if t.status == "active" and is_valid_map_tournament(t) then 
+            return t 
+        end 
+    end
+    
+    -- 3. Fallback to the first valid one even if dormant (so we can show results/timer)
+    for _, t in ipairs(ts) do
+        if is_valid_map_tournament(t) then
+            return t
+        end
+    end
+
+    return nil
 end
 
 local function clear(self)
@@ -357,19 +394,29 @@ check_timer_states = function(self)
     self.timer_str = "00:00:00"
     self.timer_desc = ""
 
-    -- Prelaunch logic (ISO simplification)
-    if t.launchDate and t.launchDate ~= "" then
-        -- Rough mock: For a real launch date, we would parse ISO.
-        -- We'll assume the active status handles this on the backend, 
-        -- but if explicitly provided, set pre_launch
-        -- self.is_pre_launch = true
-    end
+    -- Use the configurable start/end times from top of file
+    local sh, sm = TOURNAMENT_START_HOUR, TOURNAMENT_START_MINUTE
+    local eh, em = TOURNAMENT_END_HOUR, TOURNAMENT_END_MINUTE
+    
+    -- Format for display strings
+    local start_str = string.format("%02d:%02d", sh, sm)
+    local end_str = string.format("%02d:%02d", eh, em)
 
-    local start_str = (t.activeTime and t.activeTime.start) or "09:00"
-    local end_str = (t.activeTime and t.activeTime["end"]) or "23:59"
-    local sh, sm = start_str:match("(%d+):(%d+)")
-    local eh, em = end_str:match("(%d+):(%d+)")
-    sh, sm, eh, em = tonumber(sh) or 9, tonumber(sm) or 0, tonumber(eh) or 23, tonumber(em) or 59
+    -- Allow tournament data to override if specified
+    if t.activeTime then
+        if t.activeTime.start then
+            local ov_sh, ov_sm = t.activeTime.start:match("(%d+):(%d+)")
+            sh = tonumber(ov_sh) or sh
+            sm = tonumber(ov_sm) or sm
+            start_str = t.activeTime.start
+        end
+        if t.activeTime["end"] then
+            local ov_eh, ov_em = t.activeTime["end"]:match("(%d+):(%d+)")
+            eh = tonumber(ov_eh) or eh
+            em = tonumber(ov_em) or em
+            end_str = t.activeTime["end"]
+        end
+    end
 
     local dt = os.date("*t", now)
     local cur_mins = dt.hour * 60 + dt.min
@@ -523,63 +570,72 @@ rebuild = function(self)
 
     -- ── LEFT MARGIN PADDING ──
     local LEFT_MARGIN = 100
+    local LEFT_TEXT_X = EDGE_L + LEFT_MARGIN  -- Consistent left alignment for all text in left column
 
     -- ── TOP LEFT BALANCE ──
     local bal_w, bal_h = 135, 46
-    local bal_shift_x = 30 -- Shift everything a bit to the right
-    local bal_cx = EDGE_L + LEFT_MARGIN + bal_w / 2 + bal_shift_x
+    local bal_cx = LEFT_TEXT_X + bal_w / 2
     local bal_cy = EDGE_T - 40
     
     track(self, ui.box(vmath.vector3(bal_cx, bal_cy, 0), vmath.vector3(bal_w+4, bal_h+4, 0), vmath.vector4(1, 0.84, 0, 0.6)))
     track(self, ui.box(vmath.vector3(bal_cx, bal_cy, 0), vmath.vector3(bal_w, bal_h, 0), vmath.vector4(0.08, 0.08, 0.1, 0.9)))
     
-    -- Shifted text further right to avoid coin overlap
     local bal_lbl = track(self, ui.text(vmath.vector3(bal_cx + 16, bal_cy, 0), commas(balance), "body", ui.GOLD))
     self.top_left_balance_lbl = bal_lbl
     
-    -- Reduced coin icon size (from 56 to 44) and positioned on the left edge
-    self.top_left_coin_node = track(self, ui.image(vmath.vector3(bal_cx - bal_w/2 + 5, bal_cy, 0), vmath.vector3(44, 44, 0), "coin_icon"))
+    -- Coin icon positioned on the left edge of the balance box
+    self.top_left_coin_node = track(self, ui.image(vmath.vector3(bal_cx - bal_w/2 + 22, bal_cy, 0), vmath.vector3(44, 44, 0), "coin_icon"))
 
     -- ── TOP BAR BUTTONS ──
-    local back_cx = bal_cx + bal_w / 2 + 15 + 60
-    local exit_cx = back_cx + 60 + 15 + 60
-
-    local back_btn = track(self, ui.btn9(vmath.vector3(back_cx, EDGE_T - 40, 0), vmath.vector3(120, 46, 0), "default_btn"))
-    track(self, ui.text(vmath.vector3(back_cx, EDGE_T - 40, 0), "BACK", "btn_md", ui.WHITE))
+    local btn_x = LEFT_TEXT_X + bal_w + 20  -- Position buttons after the balance box
+    
+    local back_btn = track(self, ui.btn9(vmath.vector3(btn_x, EDGE_T - 40, 0), vmath.vector3(120, 46, 0), "default_btn"))
+    track(self, ui.text(vmath.vector3(btn_x, EDGE_T - 40, 0), "BACK", "btn_md", ui.WHITE))
     self.buttons[#self.buttons+1] = { node = back_btn, id = "back" }
 
-    local exit_btn = track(self, ui.btn9(vmath.vector3(exit_cx, EDGE_T - 40, 0), vmath.vector3(120, 46, 0), "primary_btn"))
+    local exit_btn = track(self, ui.btn9(vmath.vector3(btn_x + 140, EDGE_T - 40, 0), vmath.vector3(120, 46, 0), "primary_btn"))
     gui.set_color(exit_btn, vmath.vector4(0.85, 0.25, 0.25, 1))
-    track(self, ui.text(vmath.vector3(exit_cx, EDGE_T - 40, 0), "EXIT", "btn_md", ui.WHITE))
+    track(self, ui.text(vmath.vector3(btn_x + 140, EDGE_T - 40, 0), "EXIT", "btn_md", ui.WHITE))
     self.buttons[#self.buttons+1] = { node = exit_btn, id = "exit" }
 
-    -- ── LEFT DOCK ──
+    -- ── LEFT DOCK: Global Championship Title ──
     track(self, ui.box(vmath.vector3(EDGE_L + 22, CY, 0), vmath.vector3(45, VISIBLE_H * 2, 0), vmath.vector4(0, 0, 0, 1)))
 
     local vtitle = track(self, ui.text(vmath.vector3(EDGE_L + 76, CY, 0), (t.name or "Global Championship"):upper(), "title", vmath.vector4(1, 1, 1, 0.9)))
     gui.set_rotation(vtitle, vmath.quat_rotation_z(math.pi / 2))
 
+    -- ── LEFT-ALIGNED TOURNAMENT INFO (Timer, Description, Progress Note) ──
     local timer_col = self.is_dormant and vmath.vector4(0.7, 0.9, 1, 1) or vmath.vector4(1, 0.8, 0.2, 1)
-    local timer_cx = EDGE_L + LEFT_MARGIN + 130
+    local info_y = EDGE_T - 100  -- Starting Y position for info text
     
-    self.timer_node = track(self, ui.text(vmath.vector3(timer_cx, EDGE_T - 100, 0), self.timer_str, "body", timer_col))
-    self.timer_desc_node = track(self, ui.text(vmath.vector3(timer_cx - 30, EDGE_T - 126, 0), self.timer_desc, "small", vmath.vector4(0.85, 0.85, 0.85, 1)))
-    track(self, ui.text(vmath.vector3(timer_cx, EDGE_T - 152, 0), "Progress will be migrated to next season", "small", vmath.vector4(0.7, 0.9, 1, 1)))
+    -- Timer text (left-aligned using PIVOT_W)
+    self.timer_node = track(self, ui.text(vmath.vector3(LEFT_TEXT_X, info_y, 0), self.timer_str, "body", timer_col))
+    gui.set_pivot(self.timer_node, gui.PIVOT_W)
+    
+    -- Timer description (left-aligned using PIVOT_W)
+    self.timer_desc_node = track(self, ui.text(vmath.vector3(LEFT_TEXT_X, info_y - 26, 0), self.timer_desc, "small", vmath.vector4(0.85, 0.85, 0.85, 1)))
+    gui.set_pivot(self.timer_desc_node, gui.PIVOT_W)
+    
+    -- Progress migration note (left-aligned using PIVOT_W)
+    local progress_note = track(self, ui.text(vmath.vector3(LEFT_TEXT_X, info_y - 48, 0), "Progress will be migrated to next season", "small", vmath.vector4(0.7, 0.9, 1, 1)))
+    gui.set_pivot(progress_note, gui.PIVOT_W)
 
+    -- ── PRO TIP BOX ──
     local tip_w = 260
-    local tip_cx = EDGE_L + LEFT_MARGIN + tip_w / 2
+    local tip_cx = LEFT_TEXT_X + tip_w / 2
+    local tip_cy = EDGE_B + 96
     
     -- Godot exact StyleBoxFlat for tips (no image texture, solid box)
-    track(self, ui.box(vmath.vector3(tip_cx, EDGE_B + 96, 0), vmath.vector3(tip_w, 120, 0), vmath.vector4(0.05, 0.05, 0.07, 0.6)))
-    track(self, ui.box(vmath.vector3(tip_cx - tip_w/2 + 2, EDGE_B + 96, 0), vmath.vector3(4, 116, 0), ui.GOLD))
+    track(self, ui.box(vmath.vector3(tip_cx, tip_cy, 0), vmath.vector3(tip_w, 120, 0), vmath.vector4(0.05, 0.05, 0.07, 0.6)))
+    track(self, ui.box(vmath.vector3(tip_cx - tip_w/2 + 2, tip_cy, 0), vmath.vector3(4, 116, 0), ui.GOLD))
     
     -- Left-aligned texts via PIVOT_W
-    local tip_title = track(self, ui.text(vmath.vector3(tip_cx - tip_w/2 + 20, EDGE_B + 138, 0), "PRO TIP", "small", vmath.vector4(1, 0.84, 0, 1)))
+    local tip_title = track(self, ui.text(vmath.vector3(tip_cx - tip_w/2 + 20, tip_cy + 42, 0), "PRO TIP", "small", vmath.vector4(1, 0.84, 0, 1)))
     gui.set_pivot(tip_title, gui.PIVOT_W)
     
     local tips = { "Online Multiplayer", "Exit anytime on Quarter Finals", "Progress saved between seasons" }
     for ti, tip in ipairs(tips) do
-        local tip_node = track(self, ui.text(vmath.vector3(tip_cx - tip_w/2 + 20, EDGE_B + 110 - (ti - 1) * 22, 0), "• " .. tip, "small", vmath.vector4(0.9, 0.9, 0.9, 0.85)))
+        local tip_node = track(self, ui.text(vmath.vector3(tip_cx - tip_w/2 + 20, tip_cy + 14 - (ti - 1) * 22, 0), "• " .. tip, "small", vmath.vector4(0.9, 0.9, 0.9, 0.85)))
         gui.set_pivot(tip_node, gui.PIVOT_W)
     end
 
