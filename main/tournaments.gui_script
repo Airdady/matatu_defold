@@ -1,10 +1,20 @@
 -- tournaments.gui_script - ONLINE TOURNAMENT MAP screen.
 -- Fully synchronized with the updated Godot TournamentMap script and tscn.
 
-local ui        = require("modules.ui")
-local app_state = require("modules.app_state")
-local ws        = require("modules.websocket_manager")
-local screen    = require("modules.screen")
+local ui            = require("modules.ui")
+local app_state     = require("modules.app_state")
+local ws            = require("modules.websocket_manager")
+local screen        = require("modules.screen")
+local dialog_search = require("modules.dialog_search")
+
+-- Palette shared with the search dialog (mirrors online.gui_script's C table).
+local DLG_COLORS = {
+    COL_DIM   = vmath.vector4(0.45, 0.45, 0.45, 1.0),
+    COL_GOLD  = vmath.vector4(1.00, 0.84, 0.20, 1.0),
+    COL_WHITE = vmath.vector4(1.00, 1.00, 1.00, 1.0),
+    COL_RED   = vmath.vector4(0.90, 0.25, 0.25, 1.0),
+    COL_CYAN  = vmath.vector4(0.20, 0.90, 1.00, 1.0),
+}
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- TOURNAMENT TIME CONFIGURATION - Swiftly change these values as needed
@@ -109,104 +119,20 @@ local function clear(self)
 end
 local function track(self, n) self.nodes[#self.nodes+1] = n return n end
 
--- ── Opponent search overlay (lottery reel matching dialog_outgoing) ──────────
+-- ── Opponent search overlay ──────────────────────────────────────────────────
+-- Renders the SHARED random-opponent request dialog (modules/dialog_search) — the
+-- exact same reel overlay battles and knockouts use — so the tournament's
+-- "request a random player" flow is visually and behaviourally identical.
 local AVATAR_MAX = 60
+local function search_ctx(self)
+    return {
+        track = track, ui = ui, C = DLG_COLORS, commas = commas,
+        CX = CX, CY = CY, LOGICAL_W = LOGICAL_W, LOGICAL_H = LOGICAL_H,
+    }
+end
 draw_search_overlay = function(self)
-    local sr = self.search
-    if not sr then return end
-
-    local scrim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(LOGICAL_W*2, LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.78)))
-    self.buttons[#self.buttons+1] = { node = scrim, id = "dlg_block" }
-    
-    -- Safe fallback for gradient
-    pcall(function()
-        local grad = track(self, ui.grad_backdrop(LOGICAL_W, LOGICAL_H))
-        gui.set_color(grad, vmath.vector4(1, 1, 1, 1))
-    end)
-
-    local col_cyan = vmath.vector4(0.2, 0.8, 1.0, 1)
-    track(self, ui.text(vmath.vector3(CX, CY + 168, 0), sr.found and "OPPONENT FOUND!" or "CHALLENGING", "title", col_cyan))
-
-    local col_gap = 165
-    local opp_x, me_x = CX - col_gap, CX + col_gap
-    local av_y, av_size = CY + 40, 92
-
-    local function draw_avatar_ring(x, y)
-        local ring_dia = av_size + 16
-        local ring = track(self, gui.new_pie_node(vmath.vector3(x, y, 0), vmath.vector3(ring_dia, ring_dia, 0)))
-        gui.set_color(ring, vmath.vector4(0, 0, 0, 0.5))
-        gui.set_fill_angle(ring, 360)
-        gui.set_perimeter_vertices(ring, 64)
-    end
-
-    draw_avatar_ring(opp_x, av_y)
-    draw_avatar_ring(me_x, av_y)
-
-    local u = ws.current_user_data or {}
-    
-    -- Opponent (Reel or Found)
-    local opp_av = sr.reel_ix or 1
-    local opp_name = sr.found and (sr.opp_name or "PLAYER") or (sr.failed and "—" or "SEARCHING...")
-    
-    local opp_node = track(self, ui.avatar(vmath.vector3(opp_x, av_y, 0), vmath.vector3(av_size, av_size, 0), opp_av))
-    self.search_reel_node = opp_node 
-    
-    track(self, ui.text(vmath.vector3(opp_x, av_y - av_size/2 - 24, 0), opp_name:upper(), "body", vmath.vector4(1, 1, 1, 1)))
-
-    -- YOU
-    track(self, ui.avatar(vmath.vector3(me_x, av_y, 0), vmath.vector3(av_size, av_size, 0), u.avatar or 1))
-    track(self, ui.text(vmath.vector3(me_x, av_y - av_size/2 - 24, 0), "YOU", "body", vmath.vector4(0.7, 0.7, 0.7, 1)))
-    track(self, ui.text(vmath.vector3(me_x, av_y - av_size/2 - 46, 0), "Bal: "..commas(u.balance or 0), "small", vmath.vector4(1, 0.84, 0, 1)))
-
-    -- Central VS & Pot Elements
-    track(self, ui.text(vmath.vector3(CX, av_y + 54, 0), "VS", "title", vmath.vector4(1, 0.3, 0.3, 1)))
-
-    local amt = tonumber((sr.stake or {}).amount) or 0
-    local pot_amt = amt * 2
-
-    -- Coins bundle (matches the battle / outgoing request dialog), sized by the pot.
-    if amt > 0 then
-        local img = "100"
-        if pot_amt >= 2000 then img = "2000"
-        elseif pot_amt >= 1000 then img = "1000"
-        elseif pot_amt >= 500 then img = "500"
-        elseif pot_amt >= 200 then img = "200"
-        end
-        local bundle = track(self, gui.new_box_node(vmath.vector3(CX, av_y + 4, 0), vmath.vector3(96, 96, 0)))
-        gui.set_color(bundle, vmath.vector4(1, 1, 1, 1))
-        pcall(function() gui.set_texture(bundle, "coins"); gui.play_flipbook(bundle, hash(img)) end)
-    end
-
-    -- Timer
-    if not sr.found and not sr.failed then
-        local secs = math.max(0, 30 - math.floor(sr.t or 0))
-        local timer_col = secs <= 3 and vmath.vector4(1, 0.3, 0.3, 1) or vmath.vector4(1, 0.84, 0, 1)
-        self.search_timer_node = track(self, ui.text(vmath.vector3(CX, av_y - 44, 0), secs .. "s", "body", timer_col))
-    end
-
-    -- Bordered Stake Amount
-    local st_txt = amt == 0 and "PRACTICE" or (commas(pot_amt) .. " POT")
-    local border_w, border_h = 130, 32
-    local border_pos = vmath.vector3(CX, av_y - 34, 0)
-    
-    local border_box = track(self, gui.new_box_node(border_pos, vmath.vector3(border_w + 4, border_h + 4, 0)))
-    gui.set_color(border_box, vmath.vector4(1, 0.84, 0, 1))
-    
-    local inner_box = track(self, gui.new_box_node(border_pos, vmath.vector3(border_w, border_h, 0)))
-    gui.set_color(inner_box, vmath.vector4(0.08, 0.08, 0.1, 1))
-    
-    local stake_node = track(self, ui.text(border_pos, st_txt, "helvetica_bold", vmath.vector4(1, 0.84, 0, 1)))
-    gui.set_scale(stake_node, vmath.vector3(0.85, 0.85, 0.85))
-
-    -- Additional Status Info
-    local stat_msg = sr.found and "Match Starting..." or (sr.failed and (sr.fail_msg or "Failed to find opponent") or "Waiting for player to accept...")
-    track(self, ui.text(vmath.vector3(CX, CY - 88, 0), stat_msg, "small", vmath.vector4(0.7, 0.7, 0.7, 1)))
-
-    if not sr.found and not sr.failed then
-        local cb = track(self, ui.btn9(vmath.vector3(CX, CY - 156, 0), vmath.vector3(170, 48, 0), "secondary_btn"))
-        track(self, ui.text(vmath.vector3(CX, CY - 156, 0), "Cancel", "btn_md", vmath.vector4(1, 1, 1, 1)))
-        self.buttons[#self.buttons + 1] = { node = cb, id = "cancel_search" }
-    end
+    if not self.search then return end
+    dialog_search.draw(self, search_ctx(self), self.search, "search_reel_node")
 end
 
 local function stop_search(self)
@@ -771,24 +697,25 @@ function update(self, dt)
 
     local sr = self.search
     if not (self._active and sr) then return end
-    
+
     sr.t = (sr.t or 0) + dt
 
     if not sr.found and not sr.failed then
-        -- Safely update the timer label without destroying/rebuilding the whole screen
-        local secs = math.max(0, 30 - math.floor(sr.t))
-        if self.search_timer_node then
-            gui.set_text(self.search_timer_node, secs .. "s")
-            if secs <= 3 then
-                gui.set_color(self.search_timer_node, vmath.vector4(1, 0.3, 0.3, 1))
-            end
-        end
-
+        -- Spin the reel avatar in place (cheap, every ~70ms).
         sr.spin_t = (sr.spin_t or 0) + dt
         if sr.spin_t >= 0.07 then
             sr.spin_t = 0
             sr.reel_ix = math.random(AVATAR_MAX)
             if self.search_reel_node then pcall(gui.play_flipbook, self.search_reel_node, "avatar_" .. sr.reel_ix) end
+        end
+
+        -- Redraw the dialog roughly twice a second so the "searching…" dots and the
+        -- numeric countdown tick. The countdown ring itself tweens natively between
+        -- redraws, so this stays light (same cadence the online invite uses).
+        sr.dots_t = (sr.dots_t or 0) + dt
+        if sr.dots_t >= 0.5 then
+            sr.dots_t = 0
+            rebuild(self)
         end
     end
 end
@@ -847,24 +774,35 @@ end
 
 proceed_with_play = function(self, d)
     self._msg = nil
-    
-    -- Turn ON the search overlay UI which is now safely matched to your exact .gui file.
-    -- Release the jump / coin-deduction lock here: on a multi-level map the lock
-    -- otherwise lingered and the search dialog never rendered.
-    self.search = { active = true, t = 0, reel_ix = math.random(AVATAR_MAX), spin_t = 0, stake = d.stake }
+
+    -- The pin has finished hopping to the next level. ONLY NOW do we open the
+    -- shared random-opponent request dialog. Release the jump / coin-deduction
+    -- lock so the overlay renders on top of a settled map.
+    self.search = {
+        active   = true,
+        t        = 0,
+        reel_ix  = math.random(AVATAR_MAX),
+        spin_t   = 0,
+        stake    = d.stake,
+        max_time = 30,
+        modal    = true,                 -- scrim swallows taps to the map behind
+        cancel_id = "cancel_search",
+        subtitle = "finding you an opponent",
+    }
     self.is_moving = false
     self.animating_from = nil
     app_state.searching_tournament = true
     pcall(msg.post, "#snd_suspense", "play_sound")
-    
-    -- Send request to controller so it securely hands it to the backend module
-    msg.post("#controller", "tournament_play", {
-        tournament_id = d.id, 
-        tournament_name = d.name, 
-        stake = d.stake
-    })
-    
+
+    -- Open the dialog first…
     rebuild(self)
+
+    -- …then send the request to the controller so it hands it to the backend.
+    msg.post("#controller", "tournament_play", {
+        tournament_id   = d.id,
+        tournament_name = d.name,
+        stake           = d.stake,
+    })
 end
 
 local function execute_jump_and_play(self, d)
