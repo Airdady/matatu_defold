@@ -30,7 +30,7 @@ function M.draw(self, ctx, d, a)
 
     local col_gap = 165
     local opp_x, me_x = CX - col_gap, CX + col_gap
-    local av_y, av_size = CY + 40, 92
+    local av_y, av_size = CY + 45, 92
 
     -- Simple static ring/border behind each avatar (NO timer, NO progress, NO animation)
     local function draw_avatar_ring(x, y)
@@ -45,31 +45,31 @@ function M.draw(self, ctx, d, a)
     draw_avatar_ring(opp_x, av_y)
     draw_avatar_ring(me_x, av_y)
 
-    -- Avatars
+    -- Opponent column
     dlg_avatar(self, opp_x, av_y, av_size, d.avatar or 1, a)
-    track(self, ui.text(vmath.vector3(opp_x, av_y - av_size/2 - 24, 0), (d.name or "PLAYER"):upper(), "body", with_a(C.COL_WHITE, a)))
-    
     local hv = h2h_view(d.h2h)
     if hv and hv.opp_winrate then
         local wr     = math.floor(hv.opp_winrate + 0.5)
         local wr_col = wr >= 60 and C.COL_GREEN or (wr >= 40 and C.COL_GOLD or C.COL_RED)
-        track(self, ui.text(vmath.vector3(opp_x, av_y - av_size/2 - 46, 0), "WR "..wr.."%", "small", with_a(wr_col, a)))
+        track(self, ui.text(vmath.vector3(opp_x, av_y - 68, 0), "WR "..wr.."%", "small", with_a(wr_col, a)))
     end
+    track(self, ui.text(vmath.vector3(opp_x, av_y - 88, 0), (d.name or "PLAYER"):upper(), "body", with_a(C.COL_WHITE, a)))
 
+    -- Me ("YOU") column - Avatar, Balance, YOU
     local u = ws.current_user_data or {}
     dlg_avatar(self, me_x, av_y, av_size, u.avatar or 1, a)
-    track(self, ui.text(vmath.vector3(me_x, av_y - av_size/2 - 24, 0), "YOU", "body", with_a(ctx.DLG_SEARCH, a)))
-    track(self, ui.text(vmath.vector3(me_x, av_y - av_size/2 - 46, 0), "Bal: "..commas(u.balance or 0), "small", with_a(C.COL_GOLD, a)))
+    track(self, ui.text(vmath.vector3(me_x, av_y - 68, 0), commas(u.balance or 0), "small", with_a(C.COL_GOLD, a)))
+    track(self, ui.text(vmath.vector3(me_x, av_y - 88, 0), "YOU", "body", with_a(ctx.DLG_SEARCH, a)))
 
-    -- Central VS & Pot Elements
-    track(self, ui.text(vmath.vector3(CX, av_y + 54, 0), "VS", "title", with_a(ctx.DLG_RED, a)))
+    -- Central VS & Pot Elements (Re-spaced to prevent overlaps)
+    local bundle_y = av_y + 15
+    local bundle_h = 96
+    track(self, ui.text(vmath.vector3(CX, bundle_y + 55, 0), "VS", "title", with_a(ctx.DLG_RED, a)))
 
     local amt = tonumber((d.stake or {}).amount) or 0
     local pot_amt = amt * 2
 
-    -- Render Dynamic Coin Bundle (bigger, centered between the avatars)
-    local bundle_y = av_y + 4
-    local bundle_h = 96
+    -- Render Dynamic Coin Bundle
     if amt > 0 then
         local img = "100"
         if pot_amt >= 2000 then img = "2000"
@@ -84,17 +84,15 @@ function M.draw(self, ctx, d, a)
     end
 
     -- Simple text countdown timer directly under the coin bundle
-    do
-        local secs      = math.max(0, math.ceil(d.time_left or 0))
-        local timer_col = ((d.time_left or 0) <= 3) and C.COL_RED or C.COL_GOLD
-        local timer_pos = vmath.vector3(CX, bundle_y - bundle_h/2 - 14, 0)
-        track(self, ui.text(timer_pos, secs .. "s", "body", with_a(timer_col, a)))
-    end
+    local secs      = math.max(0, math.ceil(d.time_left or 0))
+    local timer_col = ((d.time_left or 0) <= 3) and C.COL_RED or C.COL_GOLD
+    local timer_pos = vmath.vector3(CX, bundle_y - bundle_h/2 - 12, 0)
+    track(self, ui.text(timer_pos, secs .. "s", "body", with_a(timer_col, a)))
     
-    -- Render Bordered Stake Amount
+    -- Render Bordered Stake Amount strictly below the timer
     local st_txt = amt == 0 and "PRACTICE" or (commas(pot_amt) .. " POT")
     local border_w, border_h = 130, 32
-    local border_pos = vmath.vector3(CX, av_y - 34, 0)
+    local border_pos = vmath.vector3(CX, timer_pos.y - 30, 0)
     
     local border_box = track(self, gui.new_box_node(border_pos, vmath.vector3(border_w + 4, border_h + 4, 0)))
     gui.set_color(border_box, with_a(C.COL_GOLD, a))
@@ -105,12 +103,12 @@ function M.draw(self, ctx, d, a)
     local stake_node = track(self, ui.text(border_pos, st_txt, "helvetica_black", with_a(C.COL_GOLD, a)))
     gui.set_scale(stake_node, vmath.vector3(0.85, 0.85, 0.85))
 
-    -- Additional Status Info
-    track(self, ui.text(vmath.vector3(CX, CY - 88, 0), "Waiting for player to accept...", "small", with_a(C.COL_MID, a)))
+    -- Additional Status Info cleanly separated
+    track(self, ui.text(vmath.vector3(CX, CY - 95, 0), "Waiting for player to accept...", "small", with_a(C.COL_MID, a)))
 
-    if hv then draw_h2h_row(self, CX, CY - 114, hv, a) end
+    if hv then draw_h2h_row(self, CX, CY - 118, hv, a) end
 
-    mkbtn(self, "cancel_wait", vmath.vector3(CX, CY - 156, 0), vmath.vector3(170, 48, 0), "Cancel", "secondary_btn")
+    mkbtn(self, "cancel_wait", vmath.vector3(CX, CY - 162, 0), vmath.vector3(170, 48, 0), "Cancel", "secondary_btn")
 end
 
 return M
