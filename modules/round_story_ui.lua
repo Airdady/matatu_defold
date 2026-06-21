@@ -57,8 +57,10 @@ local function story_phase(self, seq, title, sub, color, hold, next_fn)
 
     gui.cancel_animation(self.story_wrap, "scale")
     gui.cancel_animation(self.story_wrap, "color.w")
+    
     gui.set_scale(self.story_wrap, vmath.vector3(0.45, 0.45, 1))
     local c = gui.get_color(self.story_wrap); c.w = 0; gui.set_color(self.story_wrap, c)
+    
     gui.animate(self.story_wrap, "color.w", 1.0, gui.EASING_OUTSINE, 0.22)
     gui.animate(self.story_wrap, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTBACK, 0.42, 0, function()
         if seq ~= self.story_seq then return end
@@ -93,19 +95,9 @@ function M.show(self, m, opp_display_name)
     elseif o > p then s1 = string.format("%s leads %d - %d", opp, o, p)
     else s1 = string.format("All square at %d - %d", p, o) end
 
-    local t2, c2, s2
-    if m.last_round then
-        t2, c2 = "FINAL ROUND", C_H2H_GOLD
-        s2 = "Next win takes the match!"
-    else
-        t2, c2 = "ROUND " .. tostring(m.next_round or (p + o + 1)), C_STORY_CYAN
-        s2 = won and "Keep the streak alive!" or "Time to bounce back!"
-    end
-
+    -- Only play the single phase, then finish
     story_phase(self, seq, t1, s1, c1, 1.35, function()
-        story_phase(self, seq, t2, s2, c2, 1.15, function()
-            story_finish(self, seq)
-        end)
+        story_finish(self, seq)
     end)
 end
 

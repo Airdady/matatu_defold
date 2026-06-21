@@ -1,15 +1,15 @@
 local GAME = "/controller#game_logic"
 
 local app_state = require("modules.app_state")
+local ws_ok, ws = pcall(require, "modules.websocket_manager")
 
 local LOGICAL_W = 1280
 local LOGICAL_H = 720
 local CX = LOGICAL_W / 2
 local CY = LOGICAL_H / 2
 
-----------------------------------------------------------------------
 -- Palette (mirrors the Godot constants)
-----------------------------------------------------------------------
+
 local C_VICTORY   = vmath.vector4(0.000, 0.722, 0.831, 1.0) -- #00b8d4 cyan
 local C_DEFEAT    = vmath.vector4(0.718, 0.110, 0.110, 1.0) -- #b71c1c red
 local C_CHAMPION  = vmath.vector4(1.000, 0.843, 0.000, 1.0) -- #FFD700 gold
@@ -34,788 +34,822 @@ local GRADIENT_ID = "go_radial_gradient"
 -- Native point sizes of the bundled .font resources. label() scales a node so
 -- its on-screen size matches the requested pixel size regardless of which font
 -- it uses, so big text (title/scores) can use the crisp title font.
-local FONT_BASE = { 
-    body = 26, 
-    title = 44, 
-    small = 18,
-    helvetica_bold = 36,
-    btn_lg = 48,
-    btn_md = 36,
-    btn_sm = 24
+local FONT_BASE = {
+	body           = 26,
+	title          = 44,
+	small          = 18,
+	helvetica_bold = 36,
+	btn_lg         = 48,
+	btn_md         = 36,
+	btn_sm         = 24,
 }
 
-----------------------------------------------------------------------
+local function commas(n)
+	return (tostring(math.floor(tonumber(n) or 0)):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""))
+end
+
 -- Node helpers
-----------------------------------------------------------------------
+
 local function box(pos, size, color, pivot)
-    local n = gui.new_box_node(pos, size)
-    gui.set_color(n, color or vmath.vector4(1, 1, 1, 1))
-    gui.set_pivot(n, pivot or gui.PIVOT_CENTER)
-    return n
+	local n = gui.new_box_node(pos, size)
+	gui.set_color(n, color or vmath.vector4(1, 1, 1, 1))
+	gui.set_pivot(n, pivot or gui.PIVOT_CENTER)
+	return n
 end
 
 local function label(pos, text, size, color, pivot, font)
-    font = font or "body"
-    local n = gui.new_text_node(pos, text or "")
-    pcall(function() gui.set_font(n, font) end)
-    local base = FONT_BASE[font] or 26
-    gui.set_scale(n, vmath.vector3(size / base, size / base, 1.0))
-    gui.set_color(n, color or C_PRIMARY)
-    gui.set_pivot(n, pivot or gui.PIVOT_CENTER)
-    return n
+	font = font or "body"
+	local n = gui.new_text_node(pos, text or "")
+	pcall(function() gui.set_font(n, font) end)
+	local base = FONT_BASE[font] or 26
+	gui.set_scale(n, vmath.vector3(size / base, size / base, 1.0))
+	gui.set_color(n, color or C_PRIMARY)
+	gui.set_pivot(n, pivot or gui.PIVOT_CENTER)
+	return n
 end
 
 local function circle(pos, diameter, color)
-    local n = gui.new_pie_node(pos, vmath.vector3(diameter, diameter, 0))
-    pcall(function() gui.set_perimeter_vertices(n, 40) end)
-    pcall(function() gui.set_fill_angle(n, 360) end)
-    gui.set_color(n, color)
-    gui.set_pivot(n, gui.PIVOT_CENTER)
-    return n
+	local n = gui.new_pie_node(pos, vmath.vector3(diameter, diameter, 0))
+	pcall(function() gui.set_perimeter_vertices(n, 40) end)
+	pcall(function() gui.set_fill_angle(n, 360) end)
+	gui.set_color(n, color)
+	gui.set_pivot(n, gui.PIVOT_CENTER)
+	return n
 end
 
-----------------------------------------------------------------------
--- Radial gradient texture 
-----------------------------------------------------------------------
+-- Radial gradient texture
+
 local function build_gradient_texture()
-    local W, H = 192, 192
-    local stops = {
-        { 0.00, 55 / 255, 37 / 255, 27 / 255, 0.90 },
-        { 0.31,  0 / 255, 36 / 255, 61 / 255, 0.90 },
-        { 0.80,  0 / 255, 36 / 255, 61 / 255, 0.00 },
-        { 1.00,  0.0,      0.0,      0.0,     0.0 },
-    }
-    local n_stops = #stops
+	local W, H = 192, 192
+	local stops = {
+		{ 0.00, 55 / 255, 37 / 255, 27 / 255, 0.90 },
+		{ 0.31,  0 / 255, 36 / 255, 61 / 255, 0.90 },
+		{ 0.80,  0 / 255, 36 / 255, 61 / 255, 0.00 },
+		{ 1.00,  0.0,      0.0,      0.0,     0.0 },
+	}
+	local n_stops = #stops
 
-    local function sample(t)
-        if t <= stops[1][1] then local s = stops[1]; return s[2], s[3], s[4], s[5] end
-        if t >= stops[n_stops][1] then local s = stops[n_stops]; return s[2], s[3], s[4], s[5] end
-        for i = 1, n_stops - 1 do
-            local a, b = stops[i], stops[i + 1]
-            if t >= a[1] and t <= b[1] then
-                local span = b[1] - a[1]
-                local f = (span > 0) and ((t - a[1]) / span) or 0
-                return a[2] + (b[2] - a[2]) * f,
-                       a[3] + (b[3] - a[3]) * f,
-                       a[4] + (b[4] - a[4]) * f,
-                       a[5] + (b[5] - a[5]) * f
-            end
-        end
-        local s = stops[n_stops]; return s[2], s[3], s[4], s[5]
-    end
+	local function sample(t)
+		if t <= stops[1][1] then local s = stops[1]; return s[2], s[3], s[4], s[5] end
+		if t >= stops[n_stops][1] then local s = stops[n_stops]; return s[2], s[3], s[4], s[5] end
+		for i = 1, n_stops - 1 do
+			local a, b = stops[i], stops[i + 1]
+			if t >= a[1] and t <= b[1] then
+				local span = b[1] - a[1]
+				local f = (span > 0) and ((t - a[1]) / span) or 0
+				return a[2] + (b[2] - a[2]) * f,
+				       a[3] + (b[3] - a[3]) * f,
+				       a[4] + (b[4] - a[4]) * f,
+				       a[5] + (b[5] - a[5]) * f
+			end
+		end
+		local s = stops[n_stops]; return s[2], s[3], s[4], s[5]
+	end
 
-    local max_d = math.sqrt(2.0) 
-    local out = {}
-    local k = 1
-    local function b255(x)
-        x = math.floor(x * 255 + 0.5)
-        if x < 0 then x = 0 elseif x > 255 then x = 255 end
-        return x
-    end
+	local max_d = math.sqrt(2.0)
+	local out = {}
+	local k = 1
+	local function b255(x)
+		x = math.floor(x * 255 + 0.5)
+		if x < 0 then x = 0 elseif x > 255 then x = 255 end
+		return x
+	end
 
-    for y = 0, H - 1 do
-        local v = (y + 0.5) / H
-        local dv = v - 0.5
-        for x = 0, W - 1 do
-            local u = (x + 0.5) / W
-            local du = u - 0.5
-            local t = math.sqrt(du * du + dv * dv) / max_d
-            if t > 1.0 then t = 1.0 end
-            local r, g, bl, a = sample(t)
-            out[k] = string.char(b255(r * a), b255(g * a), b255(bl * a), b255(a))
-            k = k + 1
-        end
-    end
+	for y = 0, H - 1 do
+		local v = (y + 0.5) / H
+		local dv = v - 0.5
+		for x = 0, W - 1 do
+			local u = (x + 0.5) / W
+			local du = u - 0.5
+			local t = math.sqrt(du * du + dv * dv) / max_d
+			if t > 1.0 then t = 1.0 end
+			local r, g, bl, a = sample(t)
+			out[k] = string.char(b255(r * a), b255(g * a), b255(bl * a), b255(a))
+			k = k + 1
+		end
+	end
 
-    local pixels = table.concat(out)
-    local ok = pcall(function() gui.new_texture(GRADIENT_ID, W, H, "rgba", pixels) end)
-    return ok
+	local pixels = table.concat(out)
+	local ok = pcall(function() gui.new_texture(GRADIENT_ID, W, H, "rgba", pixels) end)
+	return ok
 end
 
-----------------------------------------------------------------------
 -- Confetti cannon (port of the Godot ConfettiCannon)
-----------------------------------------------------------------------
+
 local CONFETTI_N = 150
 local function chex(h)
-    return vmath.vector4(tonumber(h:sub(1,2),16)/255, tonumber(h:sub(3,4),16)/255, tonumber(h:sub(5,6),16)/255, 1)
+	return vmath.vector4(tonumber(h:sub(1,2),16)/255, tonumber(h:sub(3,4),16)/255, tonumber(h:sub(5,6),16)/255, 1)
 end
 local CONFETTI_COLORS = {
-    chex("e67e22"), chex("2ecc71"), chex("3498db"), chex("84AAC2"), chex("E6D68D"),
-    chex("F67933"), chex("42A858"), chex("4F50A2"), chex("A86BB7"), chex("e74c3c"), chex("1abc9c"),
+	chex("e67e22"), chex("2ecc71"), chex("3498db"), chex("84AAC2"), chex("E6D68D"),
+	chex("F67933"), chex("42A858"), chex("4F50A2"), chex("A86BB7"), chex("e74c3c"), chex("1abc9c"),
 }
 local function rr(a, b) return a + math.random() * (b - a) end
 local function remap(v, a0, b0, a1, b1)
-    if b0 == a0 then return a1 end
-    return a1 + (b1 - a1) * ((v - a0) / (b0 - a0))
+	if b0 == a0 then return a1 end
+	return a1 + (b1 - a1) * ((v - a0) / (b0 - a0))
 end
 
 local function build_confetti(self)
-    self.confetti = {}
-    for i = 1, CONFETTI_N do
-        local n = gui.new_box_node(vmath.vector3(-100, -100, 0), vmath.vector3(10, 7, 0))
-        gui.set_pivot(n, gui.PIVOT_CENTER)
-        gui.set_xanchor(n, gui.ANCHOR_NONE)
-        gui.set_yanchor(n, gui.ANCHOR_NONE)
-        gui.set_enabled(n, false)
-        self.confetti[i] = { node = n, active = false }
-    end
+	self.confetti = {}
+	for i = 1, CONFETTI_N do
+		local n = gui.new_box_node(vmath.vector3(-100, -100, 0), vmath.vector3(10, 7, 0))
+		gui.set_pivot(n, gui.PIVOT_CENTER)
+		gui.set_xanchor(n, gui.ANCHOR_NONE)
+		gui.set_yanchor(n, gui.ANCHOR_NONE)
+		gui.set_enabled(n, false)
+		self.confetti[i] = { node = n, active = false }
+	end
 end
 
 local function confetti_phys(p, val)
-    local settled = val > (1.0 + p.top_delta)
-    local y
-    if val <= 1.0 then
-        y = p.origin_y + (p.peak_y - p.origin_y) * val
-    elseif not settled then
-        local t = math.max(0, math.min(1, (val - 1.0) / p.top_delta))
-        y = p.peak_y + (p.floor_y - p.peak_y) * t
-    else
-        y = p.floor_y
-    end
-    local x = (val <= 1.0) and (p.origin_x + (p.target_x - p.origin_x) * val) or p.target_x
-    local swing, sway = p.swing_delta * 30.0, 0
-    if not settled then
-        if val <= 0.4 then sway = remap(val, 0, 0.4, 0, -swing)
-        elseif val <= 1.2 then sway = remap(val, 0.4, 1.2, -swing, swing)
-        else sway = remap(val, 1.2, 2.0, swing, 0) end
-    end
-    local rot_val = settled and (1.0 + p.top_delta) or val
-    gui.set_position(p.node, vmath.vector3(x + sway, y, 0))
-    gui.set_rotation(p.node, vmath.vector3(0, 0, rot_val * p.spz * 360))
-    gui.set_scale(p.node, vmath.vector3(1, math.cos(math.rad(rot_val * p.spx * 360)), 1))
+	local settled = val > (1.0 + p.top_delta)
+	local y
+	if val <= 1.0 then
+		y = p.origin_y + (p.peak_y - p.origin_y) * val
+	elseif not settled then
+		local t = math.max(0, math.min(1, (val - 1.0) / p.top_delta))
+		y = p.peak_y + (p.floor_y - p.peak_y) * t
+	else
+		y = p.floor_y
+	end
+	local x = (val <= 1.0) and (p.origin_x + (p.target_x - p.origin_x) * val) or p.target_x
+	local swing, sway = p.swing_delta * 30.0, 0
+	if not settled then
+		if val <= 0.4 then sway = remap(val, 0, 0.4, 0, -swing)
+		elseif val <= 1.2 then sway = remap(val, 0.4, 1.2, -swing, swing)
+		else sway = remap(val, 1.2, 2.0, swing, 0) end
+	end
+	local rot_val = settled and (1.0 + p.top_delta) or val
+	gui.set_position(p.node, vmath.vector3(x + sway, y, 0))
+	gui.set_rotation(p.node, vmath.vector3(0, 0, rot_val * p.spz * 360))
+	gui.set_scale(p.node, vmath.vector3(1, math.cos(math.rad(rot_val * p.spx * 360)), 1))
 end
 
 local function explode_confetti(self)
-    if not self.confetti then return end
-    self.confetti_running = true
-    local ox, oy = CX, 0  -- bottom-centre (Defold GUI y is up)
-    for _, p in ipairs(self.confetti) do
-        local col = CONFETTI_COLORS[math.random(#CONFETTI_COLORS)]
-        gui.set_color(p.node, col)
-        gui.set_size(p.node, vmath.vector3(rr(6, 12), rr(4, 10), 0))
-        p.origin_x, p.origin_y = ox, oy
-        local left_delta = rr(0, 1)
-        p.top_delta   = rr(0.40, 0.95)
-        p.swing_delta = rr(0.2, 1.0)
-        p.spx, p.spz  = math.random() * 10, math.random() * 2
-        p.target_x = (left_delta - 0.5) * (LOGICAL_W * 0.9) + ox
-        p.peak_y   = p.top_delta * LOGICAL_H
-        p.floor_y  = rr(6, 36)
-        p.exp_time  = 0.55 * rr(0.8, 1.2)
-        p.fall_time = 3.5 * rr(0.7, 1.3)
-        p.delay = (math.random() ^ 3) * 0.4
-        p.t, p.phase, p.active = 0, 1, true
-        gui.set_enabled(p.node, true)
-        confetti_phys(p, 0)
-    end
+	if not self.confetti then return end
+	self.confetti_running = true
+	local ox, oy = CX, 0  -- bottom-centre (Defold GUI y is up)
+	for _, p in ipairs(self.confetti) do
+		local col = CONFETTI_COLORS[math.random(#CONFETTI_COLORS)]
+		gui.set_color(p.node, col)
+		gui.set_size(p.node, vmath.vector3(rr(6, 12), rr(4, 10), 0))
+		p.origin_x, p.origin_y = ox, oy
+		local left_delta = rr(0, 1)
+		p.top_delta   = rr(0.40, 0.95)
+		p.swing_delta = rr(0.2, 1.0)
+		p.spx, p.spz  = math.random() * 10, math.random() * 2
+		p.target_x = (left_delta - 0.5) * (LOGICAL_W * 0.9) + ox
+		p.peak_y   = p.top_delta * LOGICAL_H
+		p.floor_y  = rr(6, 36)
+		p.exp_time  = 0.55 * rr(0.8, 1.2)
+		p.fall_time = 3.5 * rr(0.7, 1.3)
+		p.delay = (math.random() ^ 3) * 0.4
+		p.t, p.phase, p.active = 0, 1, true
+		gui.set_enabled(p.node, true)
+		confetti_phys(p, 0)
+	end
 end
 
 local function clear_confetti(self)
-    self.confetti_running = false
-    for _, p in ipairs(self.confetti or {}) do
-        p.active = false
-        gui.set_enabled(p.node, false)
-    end
+	self.confetti_running = false
+	for _, p in ipairs(self.confetti or {}) do
+		p.active = false
+		gui.set_enabled(p.node, false)
+	end
 end
 
-----------------------------------------------------------------------
 -- BUILD
-----------------------------------------------------------------------
+
 local function build(self)
-    self.grad_ok = build_gradient_texture()
-    self.n_grad = box(vmath.vector3(CX, CY, 0), vmath.vector3(LOGICAL_W, LOGICAL_H, 0), vmath.vector4(1, 1, 1, 1), gui.PIVOT_CENTER)
-    gui.set_xanchor(self.n_grad, gui.ANCHOR_NONE)
-    gui.set_yanchor(self.n_grad, gui.ANCHOR_NONE)
-    gui.set_adjust_mode(self.n_grad, gui.ADJUST_STRETCH)
-    if self.grad_ok then
-        pcall(function() gui.set_texture(self.n_grad, GRADIENT_ID) end)
-    else
-        gui.set_color(self.n_grad, vmath.vector4(0.0, 0.141, 0.239, 0.85))
-    end
+	self.grad_ok = build_gradient_texture()
+	self.n_grad = box(vmath.vector3(CX, CY, 0), vmath.vector3(LOGICAL_W, LOGICAL_H, 0), vmath.vector4(1, 1, 1, 1), gui.PIVOT_CENTER)
+	gui.set_xanchor(self.n_grad, gui.ANCHOR_NONE)
+	gui.set_yanchor(self.n_grad, gui.ANCHOR_NONE)
+	gui.set_adjust_mode(self.n_grad, gui.ADJUST_STRETCH)
+	if self.grad_ok then
+		pcall(function() gui.set_texture(self.n_grad, GRADIENT_ID) end)
+	else
+		gui.set_color(self.n_grad, vmath.vector4(0.0, 0.141, 0.239, 0.85))
+	end
 
-    self.n_content = gui.new_box_node(vmath.vector3(CX, CY, 0), vmath.vector3(0, 0, 0))
-    gui.set_pivot(self.n_content, gui.PIVOT_CENTER)
-    gui.set_xanchor(self.n_content, gui.ANCHOR_NONE)
-    gui.set_yanchor(self.n_content, gui.ANCHOR_NONE)
+	self.n_content = gui.new_box_node(vmath.vector3(CX, CY, 0), vmath.vector3(0, 0, 0))
+	gui.set_pivot(self.n_content, gui.PIVOT_CENTER)
+	gui.set_xanchor(self.n_content, gui.ANCHOR_NONE)
+	gui.set_yanchor(self.n_content, gui.ANCHOR_NONE)
 
-    local function attach(node, lx, ly)
-        gui.set_parent(node, self.n_content)
-        gui.set_position(node, vmath.vector3(lx, ly, 0))
-        return node
-    end
+	local function attach(node, lx, ly)
+		gui.set_parent(node, self.n_content)
+		gui.set_position(node, vmath.vector3(lx, ly, 0))
+		return node
+	end
 
-    self.n_title = label(vmath.vector3(0, 0, 0), "VICTORY", 58, C_VICTORY, gui.PIVOT_CENTER, "title")
-    pcall(function() gui.set_tracking(self.n_title, 0.12) end)
-    pcall(function() gui.set_outline(self.n_title, vmath.vector4(0, 0, 0, 0.6)) end)
-    pcall(function() gui.set_shadow(self.n_title, vmath.vector4(0, 0, 0, 0.5)) end)
-    attach(self.n_title, 0, 180)
+	self.n_title = label(vmath.vector3(0, 0, 0), "VICTORY", 58, C_VICTORY, gui.PIVOT_CENTER, "title")
+	pcall(function() gui.set_tracking(self.n_title, 0.12) end)
+	pcall(function() gui.set_outline(self.n_title, vmath.vector4(0, 0, 0, 0.6)) end)
+	pcall(function() gui.set_shadow(self.n_title, vmath.vector4(0, 0, 0, 0.5)) end)
+	attach(self.n_title, 0, 180)
 
-    self.n_sub = label(vmath.vector3(0, 0, 0), "", 26, C_SECONDARY, gui.PIVOT_CENTER, "helvetica_bold")
-    attach(self.n_sub, 0, 145)
+	self.n_sub = label(vmath.vector3(0, 0, 0), "", 26, C_SECONDARY, gui.PIVOT_CENTER, "helvetica_bold")
+	attach(self.n_sub, 0, 145)
 
-    self.n_divider = box(vmath.vector3(0, 0, 0), vmath.vector3(220, 2, 0), C_DIVIDER, gui.PIVOT_CENTER)
-    attach(self.n_divider, 0, 145)
+	self.n_divider = box(vmath.vector3(0, 0, 0), vmath.vector3(220, 2, 0), C_DIVIDER, gui.PIVOT_CENTER)
+	attach(self.n_divider, 0, 145)
 
-    self.n_reason = label(vmath.vector3(0, 0, 0), "Game Over", 22, C_PRIMARY, gui.PIVOT_CENTER, "helvetica_bold")
-    attach(self.n_reason, 0, 120)
+	self.n_reason = label(vmath.vector3(0, 0, 0), "Game Over", 22, C_PRIMARY, gui.PIVOT_CENTER, "helvetica_bold")
+	attach(self.n_reason, 0, 120)
 
-    -- Avatars placed in the top center
-    self.n_you_av_bg = circle(vmath.vector3(0, 0, 0), AVATAR_SIZE, C_AVATAR_BG)
-    attach(self.n_you_av_bg, -180, 10)
-    self.n_you_av = box(vmath.vector3(0, 0, 0), vmath.vector3(AVATAR_IMG, AVATAR_IMG, 0), vmath.vector4(1, 1, 1, 1), gui.PIVOT_CENTER)
-    gui.set_parent(self.n_you_av, self.n_you_av_bg)
-    gui.set_position(self.n_you_av, vmath.vector3(0, 0, 0))
+	-- Avatars placed in the top center
+	self.n_you_av_bg = circle(vmath.vector3(0, 0, 0), AVATAR_SIZE, C_AVATAR_BG)
+	attach(self.n_you_av_bg, -180, 10)
+	self.n_you_av = box(vmath.vector3(0, 0, 0), vmath.vector3(AVATAR_IMG, AVATAR_IMG, 0), vmath.vector4(1, 1, 1, 1), gui.PIVOT_CENTER)
+	gui.set_parent(self.n_you_av, self.n_you_av_bg)
+	gui.set_position(self.n_you_av, vmath.vector3(0, 0, 0))
 
-    self.n_opp_av_bg = circle(vmath.vector3(0, 0, 0), AVATAR_SIZE, C_AVATAR_BG)
-    attach(self.n_opp_av_bg, 180, 10)
-    self.n_opp_av = box(vmath.vector3(0, 0, 0), vmath.vector3(AVATAR_IMG, AVATAR_IMG, 0), vmath.vector4(1, 1, 1, 1), gui.PIVOT_CENTER)
-    gui.set_parent(self.n_opp_av, self.n_opp_av_bg)
-    gui.set_position(self.n_opp_av, vmath.vector3(0, 0, 0))
+	self.n_opp_av_bg = circle(vmath.vector3(0, 0, 0), AVATAR_SIZE, C_AVATAR_BG)
+	attach(self.n_opp_av_bg, 180, 10)
+	self.n_opp_av = box(vmath.vector3(0, 0, 0), vmath.vector3(AVATAR_IMG, AVATAR_IMG, 0), vmath.vector4(1, 1, 1, 1), gui.PIVOT_CENTER)
+	gui.set_parent(self.n_opp_av, self.n_opp_av_bg)
+	gui.set_position(self.n_opp_av, vmath.vector3(0, 0, 0))
 
-    -- Names sit cleanly below avatars
-    self.n_you_name = label(vmath.vector3(0, 0, 0), "YOU", 20, C_SECONDARY, gui.PIVOT_CENTER, "helvetica_bold")
-    attach(self.n_you_name, -180, -65)
-    
-    self.n_opp_name = label(vmath.vector3(0, 0, 0), "OPPONENT", 20, C_SECONDARY, gui.PIVOT_CENTER, "helvetica_bold")
-    attach(self.n_opp_name, 180, -65)
+	self.avatars_ok = pcall(function() gui.set_texture(self.n_you_av, "avatars") end)
+	if self.avatars_ok then
+		pcall(function() gui.set_texture(self.n_opp_av, "avatars") end)
+		pcall(function() gui.play_flipbook(self.n_you_av, hash("avatar_1")) end)
+		pcall(function() gui.play_flipbook(self.n_opp_av, hash("avatar_1")) end)
+	else
+		gui.set_enabled(self.n_you_av, false)
+		gui.set_enabled(self.n_opp_av, false)
+	end
 
-    self.avatars_ok = pcall(function() gui.set_texture(self.n_you_av, "avatars") end)
-    if self.avatars_ok then
-        pcall(function() gui.set_texture(self.n_opp_av, "avatars") end)
-        pcall(function() gui.play_flipbook(self.n_you_av, hash("avatar_1")) end)
-        pcall(function() gui.play_flipbook(self.n_opp_av, hash("avatar_1")) end)
-    else
-        gui.set_enabled(self.n_you_av, false)
-        gui.set_enabled(self.n_opp_av, false)
-    end
+	-- User Stats Vertical Stack: Balance sits right below Avatar
+	self.n_you_bal = label(vmath.vector3(0, 0, 0), "", 22, C_CHAMPION, gui.PIVOT_CENTER, "helvetica_bold")
+	attach(self.n_you_bal, -180, -50)
+	self.n_opp_bal = label(vmath.vector3(0, 0, 0), "", 22, C_CHAMPION, gui.PIVOT_CENTER, "helvetica_bold")
+	attach(self.n_opp_bal, 180, -50)
 
-    -- Card sum placed directly below the name
-    self.n_you_sum = label(vmath.vector3(0, 0, 0), "", 16, C_ORANGE, gui.PIVOT_CENTER, "helvetica_bold")
-    attach(self.n_you_sum, -180, -90)
-    self.n_opp_sum = label(vmath.vector3(0, 0, 0), "", 16, C_ORANGE, gui.PIVOT_CENTER, "helvetica_bold")
-    attach(self.n_opp_sum, 180, -90)
+	-- Names sit below the balance
+	self.n_you_name = label(vmath.vector3(0, 0, 0), "YOU", 20, C_SECONDARY, gui.PIVOT_CENTER, "helvetica_bold")
+	attach(self.n_you_name, -180, -75)
+	self.n_opp_name = label(vmath.vector3(0, 0, 0), "OPPONENT", 20, C_SECONDARY, gui.PIVOT_CENTER, "helvetica_bold")
+	attach(self.n_opp_name, 180, -75)
 
-    -- Giant Match Scores sit beautifully in the very center between the avatars
-    self.n_you_score = label(vmath.vector3(0, 0, 0), "0", 64, C_PRIMARY, gui.PIVOT_E, "helvetica_bold")
-    attach(self.n_you_score, -30, 10)
-    self.n_colon = label(vmath.vector3(0, 0, 0), ":", 54, C_COLON, gui.PIVOT_CENTER, "helvetica_bold")
-    attach(self.n_colon, 0, 10)
-    self.n_opp_score = label(vmath.vector3(0, 0, 0), "0", 64, C_PRIMARY, gui.PIVOT_W, "helvetica_bold")
-    attach(self.n_opp_score, 30, 10)
+	-- Card sum placed directly below the name
+	self.n_you_sum = label(vmath.vector3(0, 0, 0), "", 16, C_ORANGE, gui.PIVOT_CENTER, "helvetica_bold")
+	attach(self.n_you_sum, -180, -95)
+	self.n_opp_sum = label(vmath.vector3(0, 0, 0), "", 16, C_ORANGE, gui.PIVOT_CENTER, "helvetica_bold")
+	attach(self.n_opp_sum, 180, -95)
 
-    self.score_nodes = {
-        self.n_you_name, self.n_opp_name,
-        self.n_you_av_bg, self.n_opp_av_bg,
-        self.n_you_sum, self.n_opp_sum,
-        self.n_you_score, self.n_opp_score, self.n_colon,
-    }
+	-- Giant Match Scores sit beautifully in the very center between the avatars
+	self.n_you_score = label(vmath.vector3(0, 0, 0), "0", 64, C_PRIMARY, gui.PIVOT_E, "helvetica_bold")
+	attach(self.n_you_score, -30, 10)
+	self.n_colon = label(vmath.vector3(0, 0, 0), ":", 54, C_COLON, gui.PIVOT_CENTER, "helvetica_bold")
+	attach(self.n_colon, 0, 10)
+	self.n_opp_score = label(vmath.vector3(0, 0, 0), "0", 64, C_PRIMARY, gui.PIVOT_W, "helvetica_bold")
+	attach(self.n_opp_score, 30, 10)
 
-    self.stats = {}
-    for i = 1, 3 do
-        local cap = label(vmath.vector3(0, 0, 0), "", 16, C_SECONDARY, gui.PIVOT_CENTER, "helvetica_bold")
-        attach(cap, 0, -140)
-        local val = label(vmath.vector3(0, 0, 0), "", 32, C_PRIMARY, gui.PIVOT_CENTER, "helvetica_bold")
-        attach(val, 0, -170)
-        gui.set_enabled(cap, false)
-        gui.set_enabled(val, false)
-        self.stats[i] = { cap = cap, val = val }
-    end
-    self.stat_seps = {}
-    for i = 1, 2 do
-        local s = box(vmath.vector3(0, 0, 0), vmath.vector3(1, 36, 0), C_SEP, gui.PIVOT_CENTER)
-        attach(s, 0, -155)
-        gui.set_enabled(s, false)
-        self.stat_seps[i] = s
-    end
-    self.stat_cap_y, self.stat_val_y, self.stat_sep_y = -140, -170, -155
+	-- Small divider just below the center scores, separating them from the prize/stats box
+	self.n_score_divider = box(vmath.vector3(0, 0, 0), vmath.vector3(200, 2, 0), C_SEP, gui.PIVOT_CENTER)
+	attach(self.n_score_divider, 0, -25)
 
-    -- Luckiest Guy styled buttons mapped closely under the top content
-    self.n_again_bg = box(vmath.vector3(0, 0, 0), vmath.vector3(264, 58, 0), C_VICTORY, gui.PIVOT_CENTER)
-    attach(self.n_again_bg, 0, -215)
-    self.n_again_lbl = label(vmath.vector3(0, 0, 0), "PLAY AGAIN", 32, C_BTN_TEXT, gui.PIVOT_CENTER, "btn_lg")
-    gui.set_parent(self.n_again_lbl, self.n_again_bg)
-    gui.set_position(self.n_again_lbl, vmath.vector3(0, 0, 0))
+	self.score_nodes = {
+		self.n_you_bal, self.n_opp_bal,
+		self.n_you_name, self.n_opp_name,
+		self.n_you_av_bg, self.n_opp_av_bg,
+		self.n_you_sum, self.n_opp_sum,
+		self.n_you_score, self.n_opp_score, self.n_colon,
+		self.n_score_divider,
+	}
 
-    -- Exit button gap increased exactly to 80px (previously 50px)
-    self.n_exit_hit = box(vmath.vector3(0, 0, 0), vmath.vector3(264, 42, 0), vmath.vector4(0, 0, 0, 0), gui.PIVOT_CENTER)
-    attach(self.n_exit_hit, 0, -295)
-    self.n_exit_lbl = label(vmath.vector3(0, 0, 0), "BACK TO LOBBY", 24, C_SECONDARY, gui.PIVOT_CENTER, "btn_lg")
-    gui.set_parent(self.n_exit_lbl, self.n_exit_hit)
-    gui.set_position(self.n_exit_lbl, vmath.vector3(0, 0, 0))
+	self.stats = {}
+	for i = 1, 3 do
+		local cap = label(vmath.vector3(0, 0, 0), "", 14, C_SECONDARY, gui.PIVOT_CENTER, "helvetica_bold")
+		attach(cap, 0, 0)
+		local val = label(vmath.vector3(0, 0, 0), "", 28, C_PRIMARY, gui.PIVOT_CENTER, "helvetica_bold")
+		attach(val, 0, 0)
+		gui.set_enabled(cap, false)
+		gui.set_enabled(val, false)
+		self.stats[i] = { cap = cap, val = val }
+	end
+	self.stat_seps = {}
+	for i = 1, 2 do
+		local s = box(vmath.vector3(0, 0, 0), vmath.vector3(1, 30, 0), C_SEP, gui.PIVOT_CENTER)
+		attach(s, 0, 0)
+		gui.set_enabled(s, false)
+		self.stat_seps[i] = s
+	end
+	self.stat_cap_y, self.stat_val_y, self.stat_sep_y = 0, 0, 0
+
+	-- Luckiest Guy styled buttons mapped closely under the top content
+	self.n_again_bg = box(vmath.vector3(0, 0, 0), vmath.vector3(264, 58, 0), C_VICTORY, gui.PIVOT_CENTER)
+	attach(self.n_again_bg, 0, -215)
+	self.n_again_lbl = label(vmath.vector3(0, 0, 0), "PLAY AGAIN", 32, C_BTN_TEXT, gui.PIVOT_CENTER, "btn_lg")
+	gui.set_parent(self.n_again_lbl, self.n_again_bg)
+	gui.set_position(self.n_again_lbl, vmath.vector3(0, 0, 0))
+
+	-- Exit button gap increased exactly to 80px
+	self.n_exit_hit = box(vmath.vector3(0, 0, 0), vmath.vector3(264, 42, 0), vmath.vector4(0, 0, 0, 0), gui.PIVOT_CENTER)
+	attach(self.n_exit_hit, 0, -295)
+	self.n_exit_lbl = label(vmath.vector3(0, 0, 0), "BACK TO LOBBY", 24, C_SECONDARY, gui.PIVOT_CENTER, "btn_lg")
+	gui.set_parent(self.n_exit_lbl, self.n_exit_hit)
+	gui.set_position(self.n_exit_lbl, vmath.vector3(0, 0, 0))
 end
 
-----------------------------------------------------------------------
 -- Layout presets (Dynamically stacking blocks to eliminate gaps)
-----------------------------------------------------------------------
+
 local function apply_layout(self, has_score, has_sub, has_stats)
-    local set = function(node, x, y) gui.set_position(node, vmath.vector3(x, y, 0)) end
+	local set = function(node, x, y) gui.set_position(node, vmath.vector3(x, y, 0)) end
 
-    local y = has_score and 180 or 120
-    set(self.n_title, 0, y)
+	local y = has_score and 180 or 120
+	set(self.n_title, 0, y)
 
-    y = y - 35
-    if has_sub then
-        set(self.n_sub, 0, y)
-        y = y - 30
-    end
+	y = y - 35
+	if has_sub then
+		set(self.n_sub, 0, y)
+		y = y - 30
+	end
 
-    -- Divider exactly bounds the content directly above it
-    set(self.n_divider, 0, y)
-    y = y - 25
-    set(self.n_reason, 0, y)
+	-- Divider exactly bounds the content directly above it
+	set(self.n_divider, 0, y)
+	y = y - 25
+	set(self.n_reason, 0, y)
 
-    -- Base Y for the stats strip + buttons depends on whether the score block
-    -- (avatars + big numeric score) is shown above them.
-    if has_score then
-        self.stat_cap_y, self.stat_val_y, self.stat_sep_y = -140, -170, -155
-    else
-        self.stat_cap_y, self.stat_val_y, self.stat_sep_y = -50, -80, -65
-    end
+	-- Base Y for the stats strip + buttons depends on whether the score block
+	-- (avatars + big numeric score) is shown above them.
+	if has_score then
+		-- Stats move UP into the center between the avatars, just under the score
+		self.stat_cap_y, self.stat_val_y, self.stat_sep_y = -44, -70, -57
+	else
+		self.stat_cap_y, self.stat_val_y, self.stat_sep_y = -50, -80, -65
+	end
 
-    -- Buttons sit just under the stats strip. When the strip renders nothing we
-    -- collapse the ~55px it would occupy and pull the buttons up to remove the
-    -- dead gap. The 80px spacing between the two buttons is preserved.
-    local again_y
-    if has_stats then
-        -- Place buttons below the stat VALUE row (which is the lowest element).
-        again_y = self.stat_val_y - 45
-    else
-        -- No strip: buttons rise to where the strip's caption row would start.
-        again_y = self.stat_cap_y - 20
-    end
-    set(self.n_again_bg, 0, again_y)
-    set(self.n_exit_hit, 0, again_y - 80) -- Wide 80px gap below Play Again
+	-- Buttons sit below the lowest rendered content.
+	local again_y
+	if has_score then
+		-- The avatars, names, and card sums dictate the lowest boundary (~ -95)
+		again_y = -160
+	else
+		if has_stats then
+			again_y = self.stat_val_y - 45
+		else
+			again_y = self.stat_cap_y - 20
+		end
+	end
+	set(self.n_again_bg, 0, again_y)
+	set(self.n_exit_hit, 0, again_y - 80) -- Wide 80px gap below Play Again
 
-    for _, n in ipairs(self.score_nodes) do gui.set_enabled(n, has_score) end
+	for _, n in ipairs(self.score_nodes) do gui.set_enabled(n, has_score) end
+	gui.set_enabled(self.n_score_divider, has_score and has_stats)
 end
 
-----------------------------------------------------------------------
 -- Visibility / entrance
-----------------------------------------------------------------------
+
 local function set_visible(self, v)
-    gui.set_enabled(self.n_grad, v)
-    gui.set_enabled(self.n_content, v)
-    if not v then clear_confetti(self) end
+	gui.set_enabled(self.n_grad, v)
+	gui.set_enabled(self.n_content, v)
+	if not v then clear_confetti(self) end
 end
 
 local function play_entrance(self)
-    if self.grad_ok then
-        gui.set_color(self.n_grad, vmath.vector4(1, 1, 1, 0))
-        gui.animate(self.n_grad, "color.w", 1.0, gui.EASING_OUTSINE, 0.3)
-    else
-        local c = vmath.vector4(0.0, 0.141, 0.239, 0.85); c.w = 0
-        gui.set_color(self.n_grad, c)
-        gui.animate(self.n_grad, "color.w", 0.85, gui.EASING_OUTSINE, 0.3)
-    end
+	if self.grad_ok then
+		gui.set_color(self.n_grad, vmath.vector4(1, 1, 1, 0))
+		gui.animate(self.n_grad, "color.w", 1.0, gui.EASING_OUTSINE, 0.3)
+	else
+		local c = vmath.vector4(0.0, 0.141, 0.239, 0.85); c.w = 0
+		gui.set_color(self.n_grad, c)
+		gui.animate(self.n_grad, "color.w", 0.85, gui.EASING_OUTSINE, 0.3)
+	end
 
-    gui.set_scale(self.n_content, vmath.vector3(0.9, 0.9, 1.0))
-    gui.set_color(self.n_content, vmath.vector4(1, 1, 1, 0))
-    gui.animate(self.n_content, "scale", vmath.vector3(1.0, 1.0, 1.0), gui.EASING_OUTBACK, 0.4)
-    gui.animate(self.n_content, "color.w", 1.0, gui.EASING_OUTSINE, 0.3)
+	gui.set_scale(self.n_content, vmath.vector3(0.9, 0.9, 1.0))
+	gui.set_color(self.n_content, vmath.vector4(1, 1, 1, 0))
+	gui.animate(self.n_content, "scale", vmath.vector3(1.0, 1.0, 1.0), gui.EASING_OUTBACK, 0.4)
+	gui.animate(self.n_content, "color.w", 1.0, gui.EASING_OUTSINE, 0.3)
 end
 
-----------------------------------------------------------------------
 -- Stat strip rendering
-----------------------------------------------------------------------
+
 local function format_number(n)
-    local s = tostring(math.abs(n))
-    local res, count = "", 0
-    for i = #s, 1, -1 do
-        if count > 0 and count % 3 == 0 then res = "," .. res end
-        res = string.sub(s, i, i) .. res
-        count = count + 1
-    end
-    return (n < 0 and "-" or "+") .. res
+	local res = commas(math.abs(n))
+	return (n < 0 and "-" or "+") .. res
 end
 
 local function build_stat_entries(prize, points, win_bonus)
-    local entries = {}
-    if prize ~= 0 then
-        entries[#entries + 1] = { cap = "PRIZES", val = format_number(prize), col = (prize > 0 and C_POSITIVE or C_NEGATIVE) }
-    end
-    if points > 0 then
-        entries[#entries + 1] = { cap = "POINTS", val = "+" .. tostring(points), col = C_CHAMPION }
-    end
-    if win_bonus > 0 then
-        entries[#entries + 1] = { cap = "WIN BONUS", val = "+" .. tostring(win_bonus), col = C_VICTORY }
-    end
-    return entries
+	local entries = {}
+	if prize ~= 0 then
+		entries[#entries + 1] = { cap = "PRIZE", val = format_number(prize), col = (prize > 0 and C_POSITIVE or C_NEGATIVE) }
+	end
+	if points > 0 then
+		entries[#entries + 1] = { cap = "POINTS", val = "+" .. tostring(points), col = C_CHAMPION }
+	end
+	if win_bonus > 0 then
+		entries[#entries + 1] = { cap = "WIN BONUS", val = "+" .. tostring(win_bonus), col = C_VICTORY }
+	end
+	return entries
 end
 
 -- How many stat cells the strip will render for these values (no side effects).
 -- Used by apply_layout to collapse the gap when nothing will show.
 local function stats_count(prize, points, win_bonus)
-    return #build_stat_entries(prize, points, win_bonus)
+	return #build_stat_entries(prize, points, win_bonus)
 end
 
 local function show_stats(self, prize, points, win_bonus)
-    for i = 1, 3 do
-        gui.set_enabled(self.stats[i].cap, false)
-        gui.set_enabled(self.stats[i].val, false)
-    end
-    for i = 1, 2 do gui.set_enabled(self.stat_seps[i], false) end
+	for i = 1, 3 do
+		gui.set_enabled(self.stats[i].cap, false)
+		gui.set_enabled(self.stats[i].val, false)
+	end
+	for i = 1, 2 do gui.set_enabled(self.stat_seps[i], false) end
 
-    local entries = build_stat_entries(prize, points, win_bonus)
+	local entries = build_stat_entries(prize, points, win_bonus)
 
-    local n = #entries
-    if n == 0 then return false end
+	local n = #entries
+	if n == 0 then return false end
 
-    local spacing = 150
-    local startx = -((n - 1) * spacing) / 2.0
-    for i, e in ipairs(entries) do
-        local x = startx + (i - 1) * spacing
-        local slot = self.stats[i]
-        gui.set_text(slot.cap, e.cap)
-        gui.set_color(slot.cap, C_SECONDARY)
-        gui.set_position(slot.cap, vmath.vector3(x, self.stat_cap_y, 0))
-        gui.set_enabled(slot.cap, true)
+	local spacing = 110 -- Tighter spacing to fit cleanly between the avatars
+	local startx = -((n - 1) * spacing) / 2.0
+	for i, e in ipairs(entries) do
+		local x = startx + (i - 1) * spacing
+		local slot = self.stats[i]
+		gui.set_text(slot.cap, e.cap)
+		gui.set_color(slot.cap, C_SECONDARY)
+		gui.set_position(slot.cap, vmath.vector3(x, self.stat_cap_y, 0))
+		gui.set_enabled(slot.cap, true)
 
-        gui.set_text(slot.val, e.val)
-        gui.set_color(slot.val, e.col)
-        gui.set_position(slot.val, vmath.vector3(x, self.stat_val_y, 0))
-        gui.set_enabled(slot.val, true)
+		gui.set_text(slot.val, e.val)
+		gui.set_color(slot.val, e.col)
+		gui.set_position(slot.val, vmath.vector3(x, self.stat_val_y, 0))
+		gui.set_enabled(slot.val, true)
 
-        if i < n then
-            local sep = self.stat_seps[i]
-            gui.set_position(sep, vmath.vector3(x + spacing / 2, self.stat_sep_y, 0))
-            gui.set_enabled(sep, true)
-        end
-    end
-    return true
+		if i < n then
+			local sep = self.stat_seps[i]
+			gui.set_position(sep, vmath.vector3(x + spacing / 2, self.stat_sep_y, 0))
+			gui.set_enabled(sep, true)
+		end
+	end
+	return true
 end
 
-----------------------------------------------------------------------
 -- Reason text
-----------------------------------------------------------------------
+
 local function contextual_reason(reason, is_win)
-    if reason == "TIMEOUT" then
-        return is_win and "Opponent timed out!" or "Time ran out!"
-    elseif reason == "CUTTING_CARD" then
-        return is_win and "Winning move with a Cutting Card!" or "Defeated by a Cutting Card!"
-    elseif reason == "ALL_CARDS_PLAYED" then
-        return is_win and "Hand cleared!" or "Opponent cleared their hand."
-    elseif reason == "OPPONENT_NO_SHOW" then
-        return "Opponent disconnected."
-    elseif reason == "PLAYER_NO_SHOW" then
-        return "Disconnected from match."
-    end
-    return "Game Over"
+	if reason == "TIMEOUT" then
+		return is_win and "Opponent timed out!" or "Time ran out!"
+	elseif reason == "CUTTING_CARD" then
+		return is_win and "Winning move with a Cutting Card!" or "Defeated by a Cutting Card!"
+	elseif reason == "ALL_CARDS_PLAYED" then
+		return is_win and "Hand cleared!" or "Opponent cleared their hand."
+	elseif reason == "OPPONENT_NO_SHOW" then
+		return "Opponent disconnected."
+	elseif reason == "PLAYER_NO_SHOW" then
+		return "Disconnected from match."
+	end
+	return "Game Over"
 end
 
-----------------------------------------------------------------------
 -- INIT
-----------------------------------------------------------------------
+
 function init(self)
-    msg.post(".", "acquire_input_focus")
-    gui.set_render_order(15)
+	msg.post(".", "acquire_input_focus")
+	gui.set_render_order(15)
 
-    self.my_id        = ""
-    self.my_name_str  = "YOU"
-    self.opp_name_str = "OPPONENT"
-    self.my_avatar    = 1
-    self.opp_avatar   = 1
-    self.locked       = false
+	self.my_id        = ""
+	self.my_name_str  = "YOU"
+	self.opp_name_str = "OPPONENT"
+	self.my_avatar    = 1
+	self.opp_avatar   = 1
+	self.locked       = false
 
-    build(self)
-    build_confetti(self)
-    set_visible(self, false)
+	build(self)
+	build_confetti(self)
+	set_visible(self, false)
 end
 
 function update(self, dt)
-    if not self.confetti_running then return end
-    local any = false
-    for _, p in ipairs(self.confetti) do
-        if p.active then
-            any = true
-            if p.delay > 0 then
-                p.delay = p.delay - dt
-            elseif p.phase == 1 then
-                p.t = p.t + dt
-                local x = math.min(1, p.t / p.exp_time)
-                confetti_phys(p, 1 - (1 - x) * (1 - x))   -- ease-out-quad 0..1
-                if x >= 1 then p.phase, p.t = 2, 0 end
-            else
-                p.t = p.t + dt
-                local x = math.min(1, p.t / p.fall_time)
-                confetti_phys(p, 1 + x * x)               -- ease-in-quad 1..2
-                if x >= 1 then p.active = false end        -- settle + freeze (pile up)
-            end
-        end
-    end
-    if not any then self.confetti_running = false end
+	-- Balance Tween synchronised with the flying coins animation
+	if self.you_bal_target then
+		if self.bal_anim_delay > 0 then
+			self.bal_anim_delay = self.bal_anim_delay - dt
+		elseif self.bal_anim_time < self.bal_anim_dur then
+			self.bal_anim_time = self.bal_anim_time + dt
+			local t = math.min(1, self.bal_anim_time / self.bal_anim_dur)
+			local t_ease = 1 - (1 - t) * (1 - t) -- ease-out
+			local cur = math.floor(self.you_bal_start + (self.you_bal_target - self.you_bal_start) * t_ease)
+			gui.set_text(self.n_you_bal, commas(cur))
+			if t >= 1 then
+				gui.set_text(self.n_you_bal, commas(self.you_bal_target))
+				gui.set_scale(self.n_you_bal, vmath.vector3(1.2, 1.2, 1))
+				gui.animate(self.n_you_bal, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTBACK, 0.3)
+				self.you_bal_target = nil
+			end
+		end
+	end
+
+	if not self.confetti_running then return end
+	local any = false
+	for _, p in ipairs(self.confetti) do
+		if p.active then
+			any = true
+			if p.delay > 0 then
+				p.delay = p.delay - dt
+			elseif p.phase == 1 then
+				p.t = p.t + dt
+				local x = math.min(1, p.t / p.exp_time)
+				confetti_phys(p, 1 - (1 - x) * (1 - x))   -- ease-out-quad 0..1
+				if x >= 1 then p.phase, p.t = 2, 0 end
+			else
+				p.t = p.t + dt
+				local x = math.min(1, p.t / p.fall_time)
+				confetti_phys(p, 1 + x * x)               -- ease-in-quad 1..2
+				if x >= 1 then p.active = false end        -- settle + freeze (pile up)
+			end
+		end
+	end
+	if not any then self.confetti_running = false end
 end
 
-----------------------------------------------------------------------
 -- INPUT
-----------------------------------------------------------------------
+
 local function hit(node, action)
-    return node and gui.is_enabled(node) and gui.pick_node(node, action.x, action.y)
+	return node and gui.is_enabled(node) and gui.pick_node(node, action.x, action.y)
 end
 
 function on_input(self, action_id, action)
-    if action_id ~= hash("touch") or not action.pressed then return false end
-    if not gui.is_enabled(self.n_content) then return false end
-    if self.locked then return true end
+	if action_id ~= hash("touch") or not action.pressed then return false end
+	if not gui.is_enabled(self.n_content) then return false end
+	if self.locked then return true end
 
-    if hit(self.n_again_bg, action) then
-        self.locked = true
-        
-        -- UPDATE button to show "waiting" status instead of instantly closing out!
-        gui.set_text(self.n_again_lbl, "WAITING...")
-        gui.set_color(self.n_again_bg, C_SECONDARY)
-        
-        msg.post(GAME, "replay")
-        return true
-    elseif hit(self.n_exit_hit, action) then
-        self.locked = true
-        set_visible(self, false)
-        msg.post(GAME, "exit_to_lobby")
-        return true
-    end
+	if hit(self.n_again_bg, action) then
+		self.locked = true
 
-    return true 
+		-- UPDATE button to show "waiting" status instead of instantly closing out!
+		gui.set_text(self.n_again_lbl, "WAITING...")
+		gui.set_color(self.n_again_bg, C_SECONDARY)
+
+		msg.post(GAME, "replay")
+		return true
+	elseif hit(self.n_exit_hit, action) then
+		self.locked = true
+		set_visible(self, false)
+		msg.post(GAME, "exit_to_lobby")
+		return true
+	end
+
+	return true
 end
 
-----------------------------------------------------------------------
 -- MESSAGES
-----------------------------------------------------------------------
+
 function on_message(self, message_id, message)
-    if message_id == hash("setup_avatars") then
-        local mi = message.my_info or {}
-        local oi = message.op_info or {}
-        self.my_id        = tostring(mi.id or mi._id or "")
-        self.my_name_str  = mi.username or mi.name or "YOU"
-        self.opp_name_str = oi.username or oi.name or "OPPONENT"
-        self.my_avatar    = mi.avatar or 1
-        self.opp_avatar   = oi.avatar or 1
+	if message_id == hash("setup_avatars") then
+		local mi = message.my_info or {}
+		local oi = message.op_info or {}
+		self.my_id        = tostring(mi.id or mi._id or "")
+		self.my_name_str  = mi.username or mi.name or "YOU"
+		self.opp_name_str = oi.username or oi.name or "OPPONENT"
+		self.my_avatar    = mi.avatar or 1
+		self.opp_avatar   = oi.avatar or 1
 
-        if self.avatars_ok then
-            pcall(function() gui.play_flipbook(self.n_you_av, hash("avatar_" .. tostring(self.my_avatar))) end)
-            pcall(function() gui.play_flipbook(self.n_opp_av, hash("avatar_" .. tostring(self.opp_avatar))) end)
-        end
-        gui.set_text(self.n_you_name, string.upper(self.my_name_str))
-        local on = self.opp_name_str
-        if string.len(on) > 12 then on = string.sub(on, 1, 12) .. "..." end
-        gui.set_text(self.n_opp_name, string.upper(on))
+		if self.avatars_ok then
+			pcall(function() gui.play_flipbook(self.n_you_av, hash("avatar_" .. tostring(self.my_avatar))) end)
+			pcall(function() gui.play_flipbook(self.n_opp_av, hash("avatar_" .. tostring(self.opp_avatar))) end)
+		end
+		gui.set_text(self.n_you_name, "YOU")
+		local on = self.opp_name_str
+		if string.len(on) > 12 then on = string.sub(on, 1, 12) .. "..." end
+		gui.set_text(self.n_opp_name, string.upper(on))
 
-    elseif message_id == hash("game_over") then
-        self.locked = false
-        set_visible(self, true)
-        
-        -- Revert visual style of the button every time we appear
-        gui.set_text(self.n_again_lbl, "PLAY AGAIN")
-        gui.set_color(self.n_again_bg, C_VICTORY)
+	elseif message_id == hash("game_over") then
+		self.locked = false
+		set_visible(self, true)
 
-        local res         = message.results or {}
-        local reason      = res.reason or ""
-        local is_no_show  = res.isNoShowScenario or false
-        local is_cut      = message.is_cut or (reason == "CUTTING_CARD")
-        local is_timeout  = (reason == "TIMEOUT")
-        local game_type   = res.gameType or "NORMAL"
-        local is_victory  = message.won and true or false
+		-- Revert visual style of the button every time we appear
+		gui.set_text(self.n_again_lbl, "PLAY AGAIN")
+		gui.set_color(self.n_again_bg, C_VICTORY)
 
-        if message.my_id then self.my_id = tostring(message.my_id) end
+		local res         = message.results or {}
+		local reason      = res.reason or ""
+		local is_no_show  = res.isNoShowScenario or false
+		local is_cut      = message.is_cut or (reason == "CUTTING_CARD")
+		local is_timeout  = (reason == "TIMEOUT")
+		local game_type   = res.gameType or "NORMAL"
+		local is_victory  = message.won and true or false
 
-        -- The board is no longer live once the result modal is up: let the global
-        -- incoming-request overlay surface full dialogs again.
-        app_state.game_active = false
+		if message.my_id then self.my_id = tostring(message.my_id) end
 
-        -- Resolve the stake pot: burst the coins to the winner ONLY at the FINAL
-        -- conclusion of a real staked game. A continuing tournament/battle round
-        -- keeps the pot on the table (it pays out once the whole match/tournament
-        -- completes), and practice / offline games have no pot to settle.
-        local stake_amt = tonumber((res.stake or {}).amount) or 0
-        local round_continues =
-            (game_type == "TOURNAMENT" or game_type == "BATTLE" or game_type == "ELIMINATION")
-            and not (res.isMatchComplete or res.tournamentCompleted or res.tournamentEndedByTimeout or res.isNoShowScenario)
-        if message.series_active and not message.series_over then round_continues = true end
-        if stake_amt > 0 and not round_continues then
-            pcall(msg.post, "#coins", "coin_settle", {
-                to  = is_victory and { x = 460, y = 370 } or { x = 820, y = 370 },
-                win = is_victory,
-            })
-        end
+		-- The board is no longer live once the result modal is up: let the global
+		-- incoming-request overlay surface full dialogs again.
+		app_state.game_active = false
 
-        if self.avatars_ok then
-            pcall(function() gui.play_flipbook(self.n_you_av, hash("avatar_" .. tostring(self.my_avatar))) end)
-            pcall(function() gui.play_flipbook(self.n_opp_av, hash("avatar_" .. tostring(self.opp_avatar))) end)
-        end
-        gui.set_text(self.n_you_name, string.upper(self.my_name_str or "YOU"))
-        gui.set_text(self.n_opp_name, string.upper(self.opp_name_str or "OPPONENT"))
+		-- Resolve the stake pot: burst the coins to the winner ONLY at the FINAL
+		-- conclusion of a real staked game. A continuing tournament/battle round
+		-- keeps the pot on the table (it pays out once the whole match/tournament
+		-- completes), and practice / offline games have no pot to settle.
+		local stake_amt = tonumber((res.stake or {}).amount) or 0
+		local round_continues =
+			(game_type == "TOURNAMENT" or game_type == "BATTLE" or game_type == "ELIMINATION")
+			and not (res.isMatchComplete or res.tournamentCompleted or res.tournamentEndedByTimeout or res.isNoShowScenario)
+		if message.series_active and not message.series_over then round_continues = true end
+		if stake_amt > 0 and not round_continues then
+			pcall(msg.post, "#coins", "coin_settle", {
+				to  = is_victory and { x = 460, y = 370 } or { x = 820, y = 370 },
+				win = is_victory,
+			})
+		end
 
-        local stake  = res.stake or {}
-        local amount = tonumber(stake.amount) or 0
-        local charge = tonumber(stake.charge) or 0
-        local points = tonumber(stake.points) or 0
-        if points == 0 and res.points then points = tonumber(res.points) or 0 end
+		if self.avatars_ok then
+			pcall(function() gui.play_flipbook(self.n_you_av, hash("avatar_" .. tostring(self.my_avatar))) end)
+			pcall(function() gui.play_flipbook(self.n_opp_av, hash("avatar_" .. tostring(self.opp_avatar))) end)
+		end
+		gui.set_text(self.n_you_name, "YOU")
+		gui.set_text(self.n_opp_name, string.upper(self.opp_name_str or "OPPONENT"))
 
-        local balance_change = 0
-        local win_bonus      = 0
-        local is_50_stake    = (amount == 50)
+		local stake  = res.stake or {}
+		local amount = tonumber(stake.amount) or 0
+		local charge = tonumber(stake.charge) or 0
+		local points = tonumber(stake.points) or 0
+		if points == 0 and res.points then points = tonumber(res.points) or 0 end
 
-        local rewards = res.rewards or {}
-        local has_backend_reward = false
-        if type(rewards) == "table" and self.my_id ~= "" and rewards[self.my_id] ~= nil then
-            balance_change = tonumber(rewards[self.my_id]) or 0
-            has_backend_reward = true
-        end
+		local balance_change = 0
+		local win_bonus      = 0
+		local is_50_stake    = (amount == 50)
 
-        local t_data      = res.tournamentData or {}
-        local grand_prize = t_data.grandPrize or {}
-        local is_tournament_end = (game_type == "TOURNAMENT") and (res.tournamentCompleted or res.tournamentEndedByTimeout)
+		local rewards = res.rewards or {}
+		local has_backend_reward = false
+		if type(rewards) == "table" and self.my_id ~= "" and rewards[self.my_id] ~= nil then
+			balance_change = tonumber(rewards[self.my_id]) or 0
+			has_backend_reward = true
+		end
 
-        if is_tournament_end then
-            if grand_prize.points then points = tonumber(grand_prize.points) or 0 end
-            if not has_backend_reward then
-                if message.won then balance_change = tonumber(grand_prize.value) or 0
-                else balance_change = -(amount + charge) end
-            end
-            if not message.won and is_no_show then points = 0 end
-        elseif message.won then
-            if is_no_show and game_type ~= "TOURNAMENT" then
-                if not has_backend_reward then balance_change = 0 end
-                points = 0
-            elseif game_type == "TOURNAMENT" then
-                if not has_backend_reward then balance_change = 0 end
-            elseif is_50_stake then
-                if not has_backend_reward then balance_change = -(amount + charge) end
-                points = 3
-                win_bonus = 3
-            else
-                if not has_backend_reward then balance_change = amount end
-            end
-        else
-            if not has_backend_reward then balance_change = -(amount + charge) end
-            if is_50_stake then points = 3 end
-            if is_no_show then points = 0 end
-        end
+		local t_data      = res.tournamentData or {}
+		local grand_prize = t_data.grandPrize or {}
+		local is_tournament_end = (game_type == "TOURNAMENT") and (res.tournamentCompleted or res.tournamentEndedByTimeout)
 
-        local title_str = is_victory and "VICTORY" or "DEFEAT"
-        local title_col = is_victory and C_VICTORY or C_DEFEAT
-        local subtitle  = ""
-        local again_txt = "PLAY AGAIN"
+		if is_tournament_end then
+			if grand_prize.points then points = tonumber(grand_prize.points) or 0 end
+			if not has_backend_reward then
+				if message.won then balance_change = tonumber(grand_prize.value) or 0
+				else balance_change = -(amount + charge) end
+			end
+			if not message.won and is_no_show then points = 0 end
+		elseif message.won then
+			if is_no_show and game_type ~= "TOURNAMENT" then
+				if not has_backend_reward then balance_change = 0 end
+				points = 0
+			elseif game_type == "TOURNAMENT" then
+				if not has_backend_reward then balance_change = 0 end
+			elseif is_50_stake then
+				if not has_backend_reward then balance_change = -(amount + charge) end
+				points = 3
+				win_bonus = 3
+			else
+				if not has_backend_reward then balance_change = amount end
+			end
+		else
+			if not has_backend_reward then balance_change = -(amount + charge) end
+			if is_50_stake then points = 3 end
+			if is_no_show then points = 0 end
+		end
 
-        if message.series_active and not message.series_over then
-            title_str = is_victory and "ROUND WON" or "ROUND LOST"
-            title_col = is_victory and C_ROUND_OK or C_NEGATIVE
-            again_txt = "NEXT ROUND"
-        elseif game_type == "TOURNAMENT" then
-            if res.tournamentCompleted then
-                if is_victory then title_str = "CHAMPION!"; title_col = C_CHAMPION; subtitle = "Tournament Complete"
-                else title_str = "ELIMINATED"; title_col = C_DEFEAT; subtitle = "Tournament Over" end
-            elseif res.isMatchComplete then
-                if is_victory then title_str = "LEVEL CLEARED"; title_col = C_VICTORY; subtitle = "Advancing..."
-                else title_str = "ELIMINATED"; title_col = C_DEFEAT; subtitle = "Match Lost" end
-            end
-        end
+		-- Start balance animation incrementing (waits for coins to fly)
+		local final_bal = (ws_ok and ws.current_user_data) and ws.current_user_data.balance or 0
+		local start_bal = final_bal - balance_change
+		self.you_bal_start = start_bal
+		self.you_bal_target = final_bal
+		self.bal_anim_delay = 1.0  -- syncs directly with #coins waiting duration
+		self.bal_anim_time = 0
+		self.bal_anim_dur = 1.0
 
-        -- 4-player offline elimination bracket result.
-        if message.t4_champion then
-            if message.t4_is_human then
-                title_str, title_col, subtitle = "CHAMPION!", C_CHAMPION, "You won the bracket"
-            else
-                title_str, title_col, subtitle = "ELIMINATED", C_DEFEAT, string.upper(tostring(message.t4_champion)) .. " won the bracket"
-            end
-            again_txt = "PLAY AGAIN"
-        elseif message.t4_human_out then
-            -- The human left the table mid-bracket: stop the game right here.
-            title_str, title_col, subtitle = "ELIMINATED", C_DEFEAT, "You left the table"
-            again_txt = "PLAY AGAIN"
-        end
+		gui.set_text(self.n_you_bal, commas(start_bal))
+		gui.set_text(self.n_opp_bal, "") -- Leave blank/empty for Opponent
 
-        if is_no_show then
-            title_str = "OPPONENT NO SHOW"
-            title_col = C_NEUTRAL
-            subtitle  = "Match Cancelled"
-        end
+		local title_str = is_victory and "VICTORY" or "DEFEAT"
+		local title_col = is_victory and C_VICTORY or C_DEFEAT
+		local subtitle  = ""
+		local again_txt = "PLAY AGAIN"
 
-        gui.set_text(self.n_title, title_str)
-        gui.set_color(self.n_title, title_col)
-        gui.set_text(self.n_sub, subtitle)
-        gui.set_enabled(self.n_sub, subtitle ~= "")
+		if message.series_active and not message.series_over then
+			title_str = is_victory and "ROUND WON" or "ROUND LOST"
+			title_col = is_victory and C_ROUND_OK or C_NEGATIVE
+			again_txt = "NEXT ROUND"
+		elseif game_type == "TOURNAMENT" then
+			if res.tournamentCompleted then
+				if is_victory then title_str = "CHAMPION!"; title_col = C_CHAMPION; subtitle = "Tournament Complete"
+				else title_str = "ELIMINATED"; title_col = C_DEFEAT; subtitle = "Tournament Over" end
+			elseif res.isMatchComplete then
+				if is_victory then title_str = "LEVEL CLEARED"; title_col = C_VICTORY; subtitle = "Advancing..."
+				else title_str = "ELIMINATED"; title_col = C_DEFEAT; subtitle = "Match Lost" end
+			end
+		end
 
-        gui.set_text(self.n_reason, contextual_reason(reason, is_victory))
-        gui.set_text(self.n_again_lbl, again_txt)
+		-- 4-player offline elimination bracket result.
+		if message.t4_champion then
+			if message.t4_is_human then
+				title_str, title_col, subtitle = "CHAMPION!", C_CHAMPION, "You won the bracket"
+			else
+				title_str, title_col, subtitle = "ELIMINATED", C_DEFEAT, string.upper(tostring(message.t4_champion)) .. " won the bracket"
+			end
+			again_txt = "PLAY AGAIN"
+		elseif message.t4_human_out then
+			-- The human left the table mid-bracket: stop the game right here.
+			title_str, title_col, subtitle = "ELIMINATED", C_DEFEAT, "You left the table"
+			again_txt = "PLAY AGAIN"
+		end
 
-        local my_score  = is_victory and 1 or 0
-        local opp_score = is_victory and 0 or 1
-        local my_cards, opp_cards = 0, 0
+		if is_no_show then
+			title_str = "OPPONENT NO SHOW"
+			title_col = C_NEUTRAL
+			subtitle  = "Match Cancelled"
+		end
 
-        if type(res.currentScores) == "table" then
-            local any = false
-            for pid, sc in pairs(res.currentScores) do
-                any = true
-                if tostring(pid) == self.my_id then my_score = tonumber(sc) or 0
-                else opp_score = tonumber(sc) or 0 end
-            end
-            if not any then
-                my_score = is_victory and 1 or 0
-                opp_score = is_victory and 0 or 1
-            end
-        end
-        if type(res.cardTotals) == "table" then
-            for pid, ct in pairs(res.cardTotals) do
-                if tostring(pid) == self.my_id then my_cards = tonumber(ct) or 0
-                else opp_cards = tonumber(ct) or 0 end
-            end
-        end
+		gui.set_text(self.n_title, title_str)
+		gui.set_color(self.n_title, title_col)
+		gui.set_text(self.n_sub, subtitle)
+		gui.set_enabled(self.n_sub, subtitle ~= "")
 
-        if (is_timeout or is_no_show) and my_score == 0 and opp_score == 0 then
-            my_score = is_victory and 1 or 0
-            opp_score = is_victory and 0 or 1
-        end
+		gui.set_text(self.n_reason, contextual_reason(reason, is_victory))
+		gui.set_text(self.n_again_lbl, again_txt)
 
-        gui.set_text(self.n_you_score, tostring(my_score))
-        gui.set_color(self.n_you_score, my_score > opp_score and C_POSITIVE or (my_score < opp_score and C_NEGATIVE or C_PRIMARY))
-        gui.set_text(self.n_opp_score, tostring(opp_score))
-        gui.set_color(self.n_opp_score, opp_score > my_score and C_POSITIVE or (opp_score < my_score and C_NEGATIVE or C_PRIMARY))
+		local my_score  = is_victory and 1 or 0
+		local opp_score = is_victory and 0 or 1
+		local my_cards, opp_cards = 0, 0
 
-        -- Card-sum sub-lines under each avatar only render when we actually
-        -- have totals (or a cut decided it). They may stay hidden independently
-        -- of the big numeric score.
-        local show_card_sums = is_cut or my_cards > 0 or opp_cards > 0
-        if show_card_sums then
-            gui.set_text(self.n_you_sum, "Card Sum: " .. tostring(my_cards))
-            gui.set_text(self.n_opp_sum, "Card Sum: " .. tostring(opp_cards))
-        else
-            gui.set_text(self.n_you_sum, "")
-            gui.set_text(self.n_opp_sum, "")
-        end
+		if type(res.currentScores) == "table" then
+			local any = false
+			for pid, sc in pairs(res.currentScores) do
+				any = true
+				if tostring(pid) == self.my_id then my_score = tonumber(sc) or 0
+				else opp_score = tonumber(sc) or 0 end
+			end
+			if not any then
+				my_score = is_victory and 1 or 0
+				opp_score = is_victory and 0 or 1
+			end
+		end
+		if type(res.cardTotals) == "table" then
+			for pid, ct in pairs(res.cardTotals) do
+				if tostring(pid) == self.my_id then my_cards = tonumber(ct) or 0
+				else opp_cards = tonumber(ct) or 0 end
+			end
+		end
 
-        -- Always show the avatars + numeric "X : Y" for any 2-player result
-        -- (offline passes player_score/ai_score; online derives my_score/opp_score).
-        -- 4-player bracket results are not a head-to-head score, so skip them.
-        local is_4p_bracket = (message.t4_champion ~= nil) or (message.t4_human_out ~= nil)
-        local has_2p_score  = (not is_4p_bracket)
-            and (message.player_score ~= nil or message.ai_score ~= nil
-                 or type(res.currentScores) == "table")
-        local has_score = has_2p_score or show_card_sums
+		if (is_timeout or is_no_show) and my_score == 0 and opp_score == 0 then
+			my_score = is_victory and 1 or 0
+			opp_score = is_victory and 0 or 1
+		end
 
-        -- Determine up front whether the PRIZES/POINTS/WIN BONUS strip will
-        -- render anything, so the layout can collapse the empty space when it
-        -- won't. (apply_layout sets the stat Y coords that show_stats consumes,
-        -- so the actual render still happens after layout below.)
-        local has_stats = stats_count(balance_change, points, win_bonus) > 0
+		gui.set_text(self.n_you_score, tostring(my_score))
+		gui.set_color(self.n_you_score, my_score > opp_score and C_POSITIVE or (my_score < opp_score and C_NEGATIVE or C_PRIMARY))
+		gui.set_text(self.n_opp_score, tostring(opp_score))
+		gui.set_color(self.n_opp_score, opp_score > my_score and C_POSITIVE or (opp_score < my_score and C_NEGATIVE or C_PRIMARY))
 
-        -- Dynamically structure and position content eliminating awkward gaps
-        apply_layout(self, has_score, subtitle ~= "", has_stats)
+		local is_knockout = (game_type == "ELIMINATION" or message.t4_champion ~= nil or message.t4_human_out ~= nil)
 
-        show_stats(self, balance_change, points, win_bonus)
-        play_entrance(self)
+		-- Card-sum sub-lines under each avatar only render when we actually
+		-- have totals (or a cut decided it). They may stay hidden independently
+		-- of the big numeric score.
+		local show_card_sums = (is_cut or my_cards > 0 or opp_cards > 0) and not is_knockout
+		if show_card_sums then
+			gui.set_text(self.n_you_sum, "Card Sum: " .. tostring(my_cards))
+			gui.set_text(self.n_opp_sum, "Card Sum: " .. tostring(opp_cards))
+		else
+			gui.set_text(self.n_you_sum, "")
+			gui.set_text(self.n_opp_sum, "")
+		end
 
-        -- Tournament championship → confetti splash.
-        if is_victory and game_type == "TOURNAMENT" and res.tournamentCompleted then
-            explode_confetti(self)
-        else
-            clear_confetti(self)
-        end
+		-- Always show the avatars + numeric "X : Y" for any 2-player result
+		-- (offline passes player_score/ai_score; online derives my_score/opp_score).
+		-- 4-player bracket results are not a head-to-head score, so skip them.
+		local is_4p_bracket = (message.t4_champion ~= nil) or (message.t4_human_out ~= nil)
+		local has_2p_score  = (not is_4p_bracket)
+			and (message.player_score ~= nil or message.ai_score ~= nil
+			     or type(res.currentScores) == "table")
+		local has_score = has_2p_score or show_card_sums
 
-    elseif message_id == hash("reset_hud") then
-        self.locked = false
-        clear_confetti(self)
-        set_visible(self, false)
-        
-        gui.set_text(self.n_again_lbl, "PLAY AGAIN")
-        gui.set_color(self.n_again_bg, C_VICTORY)
-    end
+		-- Determine up front whether the PRIZES/POINTS/WIN BONUS strip will
+		-- render anything, so the layout can collapse the empty space when it
+		-- won't. (apply_layout sets the stat Y coords that show_stats consumes,
+		-- so the actual render still happens after layout below.)
+		local has_stats = stats_count(balance_change, points, win_bonus) > 0
+
+		-- Dynamically structure and position content eliminating awkward gaps
+		apply_layout(self, has_score, subtitle ~= "", has_stats)
+
+		show_stats(self, balance_change, points, win_bonus)
+		play_entrance(self)
+
+		-- Tournament championship → confetti splash.
+		if is_victory and game_type == "TOURNAMENT" and res.tournamentCompleted then
+			explode_confetti(self)
+		else
+			clear_confetti(self)
+		end
+
+	elseif message_id == hash("reset_hud") then
+		self.locked = false
+		clear_confetti(self)
+		set_visible(self, false)
+
+		gui.set_text(self.n_again_lbl, "PLAY AGAIN")
+		gui.set_color(self.n_again_bg, C_VICTORY)
+	end
 end
