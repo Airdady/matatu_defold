@@ -1,7 +1,3 @@
--- modules/online_center.lua
--- Center panel: header bar, tabs, stakes selector, and user list.
--- Called from online.gui_script via M.draw(self, ctx).
-
 local ws     = require("modules.websocket_manager")
 local config = require("modules.config")
 
@@ -221,9 +217,16 @@ function M.draw(self, ctx)
             -- "ELIMINATION" battles still count as KNOCKOUT.
             local pu_mt = (type(pu.myBattle) == "table") and tostring(pu.myBattle.matchType or ""):upper() or ""
             if self.tab == TAB_BATTLES and (pu_mt == "KNOCKOUT" or pu_mt == "ELIMINATION") then
-                local bw = 96
-                track(self, ui.box(vmath.vector3(badge_x + bw/2, row_cy, 0), vmath.vector3(bw, 18, 0), vmath.vector4(0.45, 0.14, 0.58, 0.92)))
-                txtL(self, badge_x + 8, row_cy, "KNOCKOUT", "small", vmath.vector4(1.0, 0.88, 1.0, 1.0))
+                local bw = 36
+                local bh = 20
+                local bx = badge_x + bw/2
+                
+                -- Outer border for "real badge" look
+                track(self, ui.box(vmath.vector3(bx, row_cy, 0), vmath.vector3(bw + 2, bh + 2, 0), vmath.vector4(0.8, 0.5, 0.9, 0.9)))
+                -- Inner fill
+                track(self, ui.box(vmath.vector3(bx, row_cy, 0), vmath.vector3(bw, bh, 0), vmath.vector4(0.45, 0.14, 0.58, 1.0)))
+                -- Centered text perfectly aligned in the box
+                track(self, ui.text(vmath.vector3(bx, row_cy, 0), "KO", "small", vmath.vector4(1.0, 0.9, 1.0, 1.0)))
             end
 
             local info_x = content_r - C.INNER_PAD
@@ -250,7 +253,7 @@ function M.draw(self, ctx)
                 local mb_mt = tostring(mb.matchType or ""):upper()
                 local detail
                 if mb_mt == "KNOCKOUT" or mb_mt == "ELIMINATION" then
-                    detail = string.format("SCORE CAP %d  ~  %s", tonumber(mb.scoreCap) or 200, commas(amt))
+                    detail = string.format("CAP %d  ~  %s", tonumber(mb.scoreCap) or 200, commas(amt))
                 else
                     detail = string.format("BEST OF %d ~ %s", fmt, commas(amt))
                 end
