@@ -391,7 +391,7 @@ function M.draw(self, ctx, left_M)
                 detail = string.format("%s PLAYERS  ~  %s", pstr, commas(amt))
             elseif T == "KNOCKOUT" then
                 local cap = tonumber(b.scoreCap) or 200
-                detail = string.format("SCORE CAP %d  ~  %s", cap, commas(amt))
+                detail = string.format("CAP %d  ~  %s", cap, commas(amt))
             else
                 local fmt = tonumber(b.matchFormat) or 3
                 detail = string.format("BEST OF %d  ~  %s", fmt, commas(amt))
