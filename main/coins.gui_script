@@ -24,6 +24,9 @@ local GOLD  = vmath.vector4(1.0, 0.84, 0.30, 1)
 -- Tweaks for the bundle transition and sizing
 local POT_REST_RATIO_X = 0.3 -- 30% of screen width (shifts bundle distinctly to the left)
 local BUNDLE_SCALE = 1.45    -- Make the bundle image bigger
+-- The amount label sits clear BELOW the scaled bundle (118 * BUNDLE_SCALE) so it
+-- never overlays the coins. Half the scaled height + the label height + a margin.
+local POT_LABEL_DY = math.floor(118 * BUNDLE_SCALE / 2) + 17
 
 local function v3(x, y, z) return vmath.vector3(x, y, z or 0) end
 local function rnd(a, b) return a + math.random() * (b - a) end
@@ -86,7 +89,7 @@ local function ensure_pot(self, x, y, amount, frac)
         gui.set_color(bundle, vmath.vector4(1, 1, 1, 0))
         gui.set_scale(bundle, vmath.vector3(BUNDLE_SCALE * 0.3, BUNDLE_SCALE * 0.3, 1))
 
-        local label = loose_node(gui.new_text_node(v3(x, y - 78), tostring(amount or 0)))
+        local label = loose_node(gui.new_text_node(v3(x, y - POT_LABEL_DY), tostring(amount or 0)))
         gui.set_font(label, "helvetica_bold")
         gui.set_color(label, GOLD)
         gui.set_pivot(label, gui.PIVOT_CENTER)
@@ -186,7 +189,7 @@ HANDLERS.coin_pot_to = function(self, d, done)
     if self.pot then
         local x, y = d.x or self.pot.x, d.y or self.pot.y
         gui.animate(self.pot.bundle, "position", v3(x, y), gui.EASING_INOUTSINE, 0.5)
-        gui.animate(self.pot.label, "position", v3(x, y - 78), gui.EASING_INOUTSINE, 0.5)
+        gui.animate(self.pot.label, "position", v3(x, y - POT_LABEL_DY), gui.EASING_INOUTSINE, 0.5)
         self.pot.x, self.pot.y = x, y
     end
     local seq = self._seq
