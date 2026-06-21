@@ -70,20 +70,40 @@ end
 -- Small unobtrusive connection-status pill, top-right. Used on the lobby and in
 -- OFFLINE games, where the full-screen dialog is unwanted. Anchored top-right
 -- but nudged down/left so it stays clear of the in-game exit button corner.
+local BADGE_H = 28
+
+-- The pill widens per state so the longest label ("RECONNECTING…") is never
+-- cramped, while shorter states ("ONLINE"/"OFFLINE") stay compact.
+local function badge_width_for(mode)
+    if mode == "reconnecting" then return 168 end
+    if mode == "offline" then return 110 end
+    return 102 -- online / connected
+end
+
+-- Resize the pill and re-place its dot + label, keeping the right edge anchored.
+local function layout_badge(self, bw)
+    gui.set_size(self.badge, vmath.vector3(bw, BADGE_H, 0))
+    gui.set_position(self.badge, vmath.vector3(LOGICAL_W - bw/2 - 18, LOGICAL_H - BADGE_H/2 - 56, 0))
+    gui.set_position(self.badge_dot, vmath.vector3(-bw/2 + 15, 0, 0))
+    gui.set_position(self.badge_lbl, vmath.vector3(-bw/2 + 30, -1, 0))
+end
+
 local function build_badge(self)
-    local bw, bh = 90, 26
+    local bw = badge_width_for("connected")
     -- Anchor to the top-right corner; offset keeps it clear of the exit button.
-    self.badge = box(vmath.vector3(LOGICAL_W - bw/2 - 18, LOGICAL_H - bh/2 - 56, 0),
-        vmath.vector3(bw, bh, 0), C_PANEL)
+    self.badge = box(vmath.vector3(LOGICAL_W - bw/2 - 18, LOGICAL_H - BADGE_H/2 - 56, 0),
+        vmath.vector3(bw, BADGE_H, 0), C_PANEL)
     gui.set_pivot(self.badge, gui.PIVOT_CENTER)
     gui.set_xanchor(self.badge, gui.ANCHOR_RIGHT)
     gui.set_yanchor(self.badge, gui.ANCHOR_TOP)
     gui.set_adjust_mode(self.badge, gui.ADJUST_FIT)
 
-    self.badge_dot = box(vmath.vector3(-bw/2 + 13, 0, 0), vmath.vector3(8, 8, 0), C_GREEN)
+    self.badge_dot = box(vmath.vector3(-bw/2 + 15, 0, 0), vmath.vector3(8, 8, 0), C_GREEN)
     gui.set_parent(self.badge_dot, self.badge)
 
-    self.badge_lbl = text(vmath.vector3(6, -1, 0), "ONLINE", 12, C_BODY)
+    -- Left-aligned so the dot + label read as one tidy group at any width.
+    self.badge_lbl = text(vmath.vector3(-bw/2 + 30, -1, 0), "ONLINE", 12, C_BODY)
+    gui.set_pivot(self.badge_lbl, gui.PIVOT_W)
     gui.set_parent(self.badge_lbl, self.badge)
 
     gui.set_enabled(self.badge, false)
@@ -105,6 +125,7 @@ local function show_badge(self, mode)
         gui.set_text(self.badge_lbl, "RECONNECTING…")
         gui.set_color(self.badge_lbl, C_BODY)
     end
+    layout_badge(self, badge_width_for(mode))
     self._badge_mode = mode
     gui.set_enabled(self.badge, true)
 end
