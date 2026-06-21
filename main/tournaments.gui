@@ -35,6 +35,10 @@ textures {
   name: "avatars"
   texture: "/assets/avatars/avatars.atlas"
 }
+textures {
+  name: "coins"
+  texture: "/assets/coins.atlas"
+}
 background_color {
   x: 0.0
   y: 0.0

@@ -127,9 +127,17 @@ draw_search_overlay = function(self)
     local amt = tonumber((sr.stake or {}).amount) or 0
     local pot_amt = amt * 2
 
-    -- Uses available coin_icon from 'ui' instead of missing 'coins' atlas
+    -- Coins bundle (matches the battle / outgoing request dialog), sized by the pot.
     if amt > 0 then
-        track(self, ui.image(vmath.vector3(CX, av_y + 4, 0), vmath.vector3(64, 64, 0), "coin_icon"))
+        local img = "100"
+        if pot_amt >= 2000 then img = "2000"
+        elseif pot_amt >= 1000 then img = "1000"
+        elseif pot_amt >= 500 then img = "500"
+        elseif pot_amt >= 200 then img = "200"
+        end
+        local bundle = track(self, gui.new_box_node(vmath.vector3(CX, av_y + 4, 0), vmath.vector3(96, 96, 0)))
+        gui.set_color(bundle, vmath.vector4(1, 1, 1, 1))
+        pcall(function() gui.set_texture(bundle, "coins"); gui.play_flipbook(bundle, hash(img)) end)
     end
 
     -- Timer
@@ -168,6 +176,7 @@ local function stop_search(self)
     self.search = nil
     self.search_reel_node = nil
     self.is_moving = false
+    self.play_disabled = false
     app_state.searching_tournament = false
     if self._active then rebuild(self) end
 end
@@ -783,8 +792,12 @@ end
 proceed_with_play = function(self, d)
     self._msg = nil
     
-    -- Turn ON the search overlay UI which is now safely matched to your exact .gui file
+    -- Turn ON the search overlay UI which is now safely matched to your exact .gui file.
+    -- Release the jump / coin-deduction lock here: on a multi-level map the lock
+    -- otherwise lingered and the search dialog never rendered.
     self.search = { active = true, t = 0, reel_ix = math.random(AVATAR_MAX), spin_t = 0, stake = d.stake }
+    self.is_moving = false
+    self.animating_from = nil
     app_state.searching_tournament = true
     pcall(msg.post, "#snd_suspense", "play_sound")
     
