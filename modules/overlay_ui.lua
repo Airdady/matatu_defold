@@ -23,6 +23,23 @@ local function box(pos, size, color, pivot)
     return n
 end
 
+-- Radial gradient backdrop (the same "dialog_grad" the online challenge / search
+-- dialogs use) so the in-game modals share one consistent look. Parented to the
+-- modal's scrim and created BEFORE the panel so it sits behind the content.
+local function grad_bg(parent)
+    local n = gui.new_box_node(vmath.vector3(0, 0, 0), vmath.vector3(1440, 1440, 0))
+    local ok = pcall(function() gui.set_texture(n, "ui"); gui.play_flipbook(n, hash("dialog_grad")) end)
+    if ok then
+        pcall(function() gui.set_adjust_mode(n, gui.ADJUST_ZOOM) end)
+    else
+        -- Atlas/flipbook missing: keep the node fully transparent so it never
+        -- renders as a stray white square behind the modal.
+        gui.set_color(n, vmath.vector4(0, 0, 0, 0))
+    end
+    if parent then gui.set_parent(n, parent) end
+    return n
+end
+
 local function label(pos, text, size, color, align, font_name)
     local n = gui.new_text_node(pos, text)
     gui.set_font(n, font_name or "body")
@@ -102,6 +119,7 @@ function M.build(self, logical_w, logical_h)
     -- Conn Overlay
     self.conn_scrim = box(vmath.vector3(logical_w/2, logical_h/2, 0), vmath.vector3(5000, 5000, 0), vmath.vector4(0, 0, 0, 0.6), gui.PIVOT_CENTER)
     gui.set_adjust_mode(self.conn_scrim, gui.ADJUST_STRETCH)
+    grad_bg(self.conn_scrim)
     self.conn_panel = box(vmath.vector3(0, 0, 0), vmath.vector3(460, 190, 0), vmath.vector4(0.07, 0.08, 0.11, 0.98), gui.PIVOT_CENTER)
     gui.set_parent(self.conn_panel, self.conn_scrim)
     self.conn_title = label(vmath.vector3(0, 48, 0), "RECONNECTING", 24, vmath.vector4(0.0, 0.722, 0.831, 1.0), gui.PIVOT_CENTER, "subtitle2")
@@ -115,6 +133,7 @@ function M.build(self, logical_w, logical_h)
     -- AI Modals
     self.ai_scrim = box(vmath.vector3(logical_w/2, logical_h/2, 0), vmath.vector3(5000, 5000, 0), vmath.vector4(0, 0, 0, 0.78), gui.PIVOT_CENTER)
     gui.set_adjust_mode(self.ai_scrim, gui.ADJUST_STRETCH)
+    grad_bg(self.ai_scrim)
     local pw, ph = 560, 280
     self.ai_panel = box(vmath.vector3(0, 0, 0), vmath.vector3(pw, ph, 0), AI_C_PANEL, gui.PIVOT_CENTER)
     gui.set_parent(self.ai_panel, self.ai_scrim)

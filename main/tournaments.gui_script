@@ -132,7 +132,11 @@ local function search_ctx(self)
 end
 draw_search_overlay = function(self)
     if not self.search then return end
-    dialog_search.draw(self, search_ctx(self), self.search, "search_reel_node")
+    -- Guard the draw so a render hiccup in the overlay can never abort rebuild()
+    -- (and, crucially, can never swallow the tournament_play request that the
+    -- caller posts right after rebuild).
+    local ok, err = pcall(dialog_search.draw, self, search_ctx(self), self.search, "search_reel_node")
+    if not ok then print("tournament search overlay draw error: " .. tostring(err)) end
 end
 
 local function stop_search(self)
@@ -794,15 +798,18 @@ proceed_with_play = function(self, d)
     app_state.searching_tournament = true
     pcall(msg.post, "#snd_suspense", "play_sound")
 
-    -- Open the dialog first…
-    rebuild(self)
-
-    -- …then send the request to the controller so it hands it to the backend.
+    -- Send the request to the controller FIRST. msg.post is async (the backend
+    -- only sees it next frame), so the dialog still "opens" this same frame — but
+    -- the post can never be stranded behind a dialog rebuild that throws. Posting
+    -- it after rebuild was the regression that stopped the backend request.
     msg.post("#controller", "tournament_play", {
         tournament_id   = d.id,
         tournament_name = d.name,
         stake           = d.stake,
     })
+
+    -- …then open the shared random-opponent request dialog.
+    rebuild(self)
 end
 
 local function execute_jump_and_play(self, d)
