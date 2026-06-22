@@ -157,8 +157,10 @@ function M.layout_hand(self, hand, y, animate)
     local spacing = M.calc_spacing(self, n)
     local start = self.CENTER.x - ((n - 1) * spacing) / 2.0
 
-    -- 4-player tournament: give the human's bottom hand a gentle fan 
-    local arch = self.t4 and self.t4.human_alive and hand == self.player_hand
+    -- Give the human's bottom hand a gentle arch + fan in EVERY mode (offline,
+    -- online and the 4-player tournament) so the look is consistent. In a
+    -- tournament it only applies while the human is still alive.
+    local arch = (hand == self.player_hand) and (not self.t4 or self.t4.human_alive)
     local arc_amt = arch and math.min(34, n * 5.0) or 0
     local fan_amt = arch and math.min(8, n * 1.3) or 0
 
