@@ -528,17 +528,18 @@ end
 function M.start_invite_search(self, app_state, rebuild_cb, battle_type)
     local u  = ws.current_user_data or {}
     local mb = M.battle_of_type(u, battle_type or "NORMAL")
-    if type(mb) ~= "table" or next(mb) == nil then return end
+    if type(mb) ~= "table" or next(mb) == nil then return false end
 
     local stake = (type(mb.stake) == "table") and mb.stake or { amount = tonumber(mb.stakeAmount) or 0, charge = 0 }
 
     -- Can't cover this battle's stake (amount + charge)? Open payments instead of
-    -- starting a matchmaking search the server would reject for low balance.
+    -- starting a matchmaking search the server would reject for low balance. Return
+    -- false so the caller skips the "searching" sound/animation.
     local need = (tonumber(stake.amount) or 0) + (tonumber(stake.charge) or 0)
     local bal  = tonumber((ws.current_user_data or {}).balance) or 0
     if need > 0 and bal < need then
         msg.post("#controller", "goto_payments")
-        return
+        return false
     end
 
     self.invite_search = { active = true, t = 0, reel_ix = math.random(INVITE_AVATAR_MAX), spin_t = 0 }
@@ -560,6 +561,7 @@ function M.start_invite_search(self, app_state, rebuild_cb, battle_type)
     end)
 
     rebuild_cb()
+    return true
 end
 
 -- Transition the invite overlay into the "no opponent found" state: render the
