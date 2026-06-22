@@ -404,6 +404,7 @@ function M.process_opponent_actions(self, actions, chosen_suit, new_game_state, 
             msg.post(GUI_SUIT, "suit_select", { mode = "preview", suit = chosen_suit })
             msg.post(GUI_HUD, "suit_badge", { suit = chosen_suit })
         end
+        pcall(function() require("modules.tutorial").on_opponent_played() end)
         if done then done() end
     end
 
@@ -920,6 +921,7 @@ function M.start_game(self, state)
             msg.post(GUI_SUIT, "suit_badge", { suit = self.chosen_suit })
 
             self.is_animating = false
+            pcall(function() require("modules.tutorial").on_dealing_completed() end)
 
             local st_final = tostring(state.status or "")
             local is_res_final = (st_final == "STARTED" or st_final == "PLAYING" or st_final == "RESHUFFLING")
