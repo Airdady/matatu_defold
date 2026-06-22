@@ -2,6 +2,7 @@
 
 -- FIXED: Target mapped precisely to the /controller object to guarantee routing.
 local GAME = "/controller#game_logic"
+local Tut  = require("modules.tutorial")
 
 local LOGICAL_W = 1280
 local LOGICAL_H = 720
@@ -63,6 +64,7 @@ local function build_suit_select(self)
     -- of the coin bundle rather than dodging it. Offset is relative to the
     -- screen-centred overlay: (340-640, +nudge up) = (-300, 50).
     local panel_offset = vmath.vector3(-300, 50, 0)
+    self.panel_offset = panel_offset   -- remembered so the tutorial can locate the Clubs button
     self.ss_panel = box(vmath.vector3(0, 0, 0), vmath.vector3(SS_SIZE, SS_SIZE, 0), vmath.vector4(0.14, 0.15, 0.18, 1.0))
     gui.set_parent(self.ss_panel, self.ss_overlay)
     setup_centered_overlay(self.ss_overlay, self.ss_panel, panel_offset)
@@ -102,6 +104,22 @@ function init(self)
     -- wheel is never covered by the stake bundle or other components.
     gui.set_render_order(17)
     build_suit_select(self)
+end
+
+function update(self, dt)
+    -- During the SUIT_CLUBS tutorial step, point the spotlight at the Clubs
+    -- button. The wheel is static, so a fixed logical rect derived from the
+    -- panel offset + the button's local position is exact.
+    if not (self.ss_overlay and gui.is_enabled(self.ss_overlay)) then return end
+    pcall(function()
+        if not Tut.is_active() then return end
+        local hl = Tut.current()
+        if not (hl and hl.screen == "suit") then return end
+        local btn = self.ss_buttons and self.ss_buttons["C"]
+        if not btn then return end
+        local po = self.panel_offset or vmath.vector3(0, 0, 0)
+        Tut.show_rect(640 + po.x + btn.start_pos.x, 360 + po.y + btn.start_pos.y, 76, 76)
+    end)
 end
 
 local function hit(node, action)

@@ -16,6 +16,13 @@ local GS    = require "modules.game_state"
 local GF    = require "modules.game_flow"
 
 local OnlineHandler = require "modules.online_handler"
+local Tut   = require "modules.tutorial"
+
+-- Tutorial hooks are always pcall-guarded so a walkthrough bug can never break play.
+local function tut(name, ...)
+    local f = Tut[name]
+    if f then pcall(f, ...) end
+end
 
 local notify_gui = util.notify_gui
 local log        = util.log
@@ -250,6 +257,22 @@ end
 -- Watchdogs (online only): release stale locks the moment it's our turn
 ----------------------------------------------------------------------
 function update(self, dt)
+    -- Tutorial: while a "play this card" step is active, follow the scripted
+    -- card's live position and feed its rect to the spotlight overlay. World and
+    -- GUI both use the 1280x720 logical space, so the card position maps directly.
+    pcall(function()
+        if not Tut.is_active() then return end
+        local hl = Tut.current()
+        if not (hl and hl.screen == "game" and hl.target == "card" and hl.v) then return end
+        for _, c in ipairs(self.player_hand or {}) do
+            if c.id and tonumber(c.v) == tonumber(hl.v) and tostring(c.s) == tostring(hl.s) then
+                local p = go.get_position(c.id)
+                Tut.show_rect(p.x, p.y, BL.TARGET_W * 1.15, BL.TARGET_H * 1.15)
+                return
+            end
+        end
+    end)
+
     -- BUG FIX: Round story watchdog shouldn't default to 0 for deadline
     if self.round_story_active then
         if not self.round_story_deadline then
@@ -455,9 +478,62 @@ local function safe_shake_card(self, card)
     play_sound(self, "SoundInvalid")
 end
 
+----------------------------------------------------------------------
+-- Two-finger spread → fan out the played-card history; release restores it.
+-- Mirrors the Godot InputManager pinch gesture (spread past a threshold from
+-- the initial finger gap triggers the view).
+----------------------------------------------------------------------
+local PINCH_SPREAD_THRESHOLD = 40   -- screen px of extra spread to trigger
+
+local function touch_dist(a, b)
+    local dx, dy = (a.x or 0) - (b.x or 0), (a.y or 0) - (b.y or 0)
+    return math.sqrt(dx * dx + dy * dy)
+end
+
+local function handle_history_pinch(self, action)
+    local pts = {}
+    for _, t in ipairs(action.touch or {}) do
+        if not t.released then pts[#pts + 1] = t end
+    end
+
+    local can_view = (#pts >= 2) and not self.game_over
+        and self.played_cards and #self.played_cards > 0
+        and not self.is_animating and not self.is_suit_selection_active
+
+    if can_view then
+        if self._pinch_active then
+            return true
+        end
+        local d = touch_dist(pts[1], pts[2])
+        if not self._pinch_start_dist then
+            self._pinch_start_dist = d
+        elseif d > self._pinch_start_dist + PINCH_SPREAD_THRESHOLD then
+            self._pinch_active = true
+            CV.start_history_view(self)
+            tut("on_history_viewed")   -- completes the PLAY_HISTORY_PINCH step
+        end
+        return true   -- swallow taps while two fingers are down
+    end
+
+    -- Fewer than two fingers (or blocked): close the fan if it was open.
+    self._pinch_start_dist = nil
+    if self._pinch_active then
+        self._pinch_active = false
+        CV.end_history_view(self)
+    end
+    return false
+end
+
 function on_input(self, action_id, action)
     if not self.active then return end
     if action_id ~= hash("touch") then return end
+
+    -- Multi-touch arrives on the "touch" action; handle the pinch before the
+    -- single-tap path (it must see drags, not just the initial press).
+    if action.touch and handle_history_pinch(self, action) then
+        return true
+    end
+
     if not action.pressed then return end
 
     reconcile_input_locks(self)
@@ -484,6 +560,14 @@ function on_input(self, action_id, action)
 
     if hit_card then
         if not self.is_player_turn() or self.waiting or self.is_local_action_locked or self.is_suit_selection_active then
+            safe_shake_card(self, hit_card)
+            return true
+        end
+
+        -- Tutorial: gate taps to the one scripted card for the current step.
+        local blocked = false
+        pcall(function() blocked = Tut.is_active() and not Tut.is_card_allowed(hit_card.v, hit_card.s) end)
+        if blocked then
             safe_shake_card(self, hit_card)
             return true
         end
@@ -727,6 +811,7 @@ function on_message(self, message_id, message, sender)
         self.chosen_suit = message.suit
         self.play_sound("SoundRequestSuit")
         self.is_suit_selection_active = false
+        tut("on_suit_selected")
         notify_gui(self.gui_hud, "suit_badge", { suit = message.suit })
         RE.pre_validate_hand(self)
 

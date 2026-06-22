@@ -1,0 +1,207 @@
+-- main/tutorial.gui_script
+-- First-time-player walkthrough overlay. A faithful Defold port of the Godot
+-- TutorialOverlay: a four-rect "spotlight" dimmer that cuts a hole around the
+-- highlighted element, a bobbing pointer, a text bubble and an optional NEXT
+-- button. Also hosts the pinch-to-view-history hint (animated finger spread).
+--
+-- Driven entirely by messages from modules/tutorial.lua (the shared state
+-- machine). The owning screen measures the target rect in 1280x720 logical
+-- space and the manager forwards it here via "tut_show".
+
+local T = require("modules.tutorial")
+
+local LOGICAL_W, LOGICAL_H = 1280, 720
+local DIM   = vmath.vector4(0, 0, 0, 0.85)
+local GOLD  = vmath.vector4(1.0, 0.85, 0.10, 1.0)
+local WHITE = vmath.vector4(1, 1, 1, 1)
+local DARK  = vmath.vector4(0, 0, 0, 0.80)
+
+local function box(pos, size, color)
+    local n = gui.new_box_node(pos, size)
+    gui.set_color(n, color)
+    return n
+end
+
+local function label(pos, str, font, color, pivot)
+    local n = gui.new_text_node(pos, str or "")
+    gui.set_font(n, font or "body")
+    gui.set_color(n, color or WHITE)
+    gui.set_pivot(n, pivot or gui.PIVOT_CENTER)
+    pcall(gui.set_outline, n, vmath.vector4(0, 0, 0, 0.85))
+    return n
+end
+
+local function set_enabled(self, on)
+    for _, n in ipairs(self.spot_nodes) do gui.set_enabled(n, on) end
+    gui.set_enabled(self.bubble, on)
+    gui.set_enabled(self.arrow, on)
+    gui.set_enabled(self.next_bg, on and self._show_next or false)
+    gui.set_enabled(self.next_txt, on and self._show_next or false)
+end
+
+function init(self)
+    msg.post(".", "acquire_input_focus")
+    -- Topmost so the spotlight sits above every screen (incl. the suit wheel
+    -- during the SUIT_CLUBS step). Tunable if the engine clamps render order.
+    pcall(gui.set_render_order, 18)
+
+    -- Four dimmer rects (top / bottom / left / right of the cut-out hole).
+    self.dim_top    = box(vmath.vector3(640, 360, 0), vmath.vector3(0, 0, 0), DIM)
+    self.dim_bottom = box(vmath.vector3(640, 360, 0), vmath.vector3(0, 0, 0), DIM)
+    self.dim_left   = box(vmath.vector3(640, 360, 0), vmath.vector3(0, 0, 0), DIM)
+    self.dim_right  = box(vmath.vector3(640, 360, 0), vmath.vector3(0, 0, 0), DIM)
+    self.spot_nodes = { self.dim_top, self.dim_bottom, self.dim_left, self.dim_right }
+
+    self.arrow  = box(vmath.vector3(640, 360, 0), vmath.vector3(26, 26, 0), GOLD) -- bobbing diamond pointer
+    gui.set_rotation(self.arrow, vmath.vector3(0, 0, 45))
+
+    self.bubble = label(vmath.vector3(640, 200, 0), "", "subtitle2", WHITE, gui.PIVOT_CENTER)
+    pcall(gui.set_line_break, self.bubble, true)
+    gui.set_size(self.bubble, vmath.vector3(560, 120, 0))
+
+    self.next_bg  = box(vmath.vector3(640, 120, 0), vmath.vector3(160, 52, 0), GOLD)
+    self.next_txt = label(vmath.vector3(640, 120, 0), "NEXT", "btn_md", vmath.vector4(0.05, 0.07, 0.09, 1))
+
+    -- History pinch hint (dark bg + top-right copy + animated finger spread).
+    self.hint_bg    = box(vmath.vector3(640, 360, 0), vmath.vector3(5000, 5000, 0), DARK)
+    pcall(gui.set_adjust_mode, self.hint_bg, gui.ADJUST_STRETCH)
+    self.hint_title = label(vmath.vector3(LOGICAL_W - 30, LOGICAL_H - 40, 0), "View History", "title", WHITE, gui.PIVOT_E)
+    self.hint_desc  = label(vmath.vector3(LOGICAL_W - 30, LOGICAL_H - 78, 0), "Pinch out to see played cards", "body", vmath.vector4(0.9, 0.9, 0.9, 0.9), gui.PIVOT_E)
+    self.hint_dot_l = box(vmath.vector3(610, 360, 0), vmath.vector3(26, 26, 0), WHITE)
+    self.hint_dot_r = box(vmath.vector3(670, 360, 0), vmath.vector3(26, 26, 0), WHITE)
+    self.hint_nodes = { self.hint_bg, self.hint_title, self.hint_desc, self.hint_dot_l, self.hint_dot_r }
+
+    self._show_next = false
+    self._block = false
+    self._click_anywhere = false
+    self.rect = nil
+    self.hint_on = false
+    self._bob = 0
+
+    set_enabled(self, false)
+    for _, n in ipairs(self.hint_nodes) do gui.set_enabled(n, false) end
+end
+
+-- Lay the four dimmer rects around the hole [cx±w/2, cy±h/2] (logical, y up).
+local function layout_spot(self, cx, cy, w, h)
+    local left, right = cx - w/2, cx + w/2
+    local bottom, top = cy - h/2, cy + h/2
+
+    local function place(n, x0, y0, x1, y1)
+        local bw, bh = math.max(0, x1 - x0), math.max(0, y1 - y0)
+        gui.set_size(n, vmath.vector3(bw, bh, 0))
+        gui.set_position(n, vmath.vector3((x0 + x1)/2, (y0 + y1)/2, 0))
+    end
+    place(self.dim_top,    0,     top,    LOGICAL_W, LOGICAL_H)
+    place(self.dim_bottom, 0,     0,      LOGICAL_W, bottom)
+    place(self.dim_left,   0,     bottom, left,      top)
+    place(self.dim_right,  right, bottom, LOGICAL_W, top)
+end
+
+local function position_bubble(self, cx, cy, w, h, force_center)
+    local top_half = cy > LOGICAL_H/2
+    -- Bubble + pointer go on the side away from the target so they never cover it.
+    local bubble_y, arrow_y, arrow_dir
+    if force_center then
+        bubble_y = LOGICAL_H/2
+        arrow_dir = top_half and 1 or -1
+        arrow_y = cy + (top_half and -(h/2 + 24) or (h/2 + 24))
+    elseif top_half then
+        arrow_y  = cy - h/2 - 24
+        bubble_y = arrow_y - 70
+        arrow_dir = 1
+    else
+        arrow_y  = cy + h/2 + 24
+        bubble_y = arrow_y + 70
+        arrow_dir = -1
+    end
+
+    gui.set_position(self.bubble, vmath.vector3(640, bubble_y, 0))
+    self._arrow_base = vmath.vector3(math.max(60, math.min(LOGICAL_W-60, cx)), arrow_y, 0)
+    self._arrow_dir = arrow_dir
+    gui.set_position(self.arrow, self._arrow_base)
+
+    if self._show_next then
+        gui.set_position(self.next_bg,  vmath.vector3(640, bubble_y - 80, 0))
+        gui.set_position(self.next_txt, vmath.vector3(640, bubble_y - 80, 0))
+    end
+end
+
+function update(self, dt)
+    self._bob = self._bob + dt * 3.0
+    if self.rect and gui.is_enabled(self.arrow) and self._arrow_base then
+        local off = math.sin(self._bob) * 6 * (self._arrow_dir or 1)
+        gui.set_position(self.arrow, vmath.vector3(self._arrow_base.x, self._arrow_base.y + off, 0))
+    end
+    if self.hint_on then
+        -- Fingers spread apart and back to suggest the pinch-out gesture.
+        local s = (math.sin(self._bob) + 1) * 0.5         -- 0..1
+        local gap = 30 + s * 70
+        gui.set_position(self.hint_dot_l, vmath.vector3(640 - gap, 360, 0))
+        gui.set_position(self.hint_dot_r, vmath.vector3(640 + gap, 360, 0))
+    end
+end
+
+local function show(self, m)
+    self.rect = { x = m.x, y = m.y, w = m.w, h = m.h }
+    self._show_next = m.show_next == true
+    self._block = m.block == true
+    self._click_anywhere = m.click_anywhere == true
+    gui.set_text(self.bubble, m.text or "")
+    layout_spot(self, m.x, m.y, m.w, m.h)
+    position_bubble(self, m.x, m.y, m.w, m.h, m.force_center == true)
+    set_enabled(self, true)
+    gui.set_enabled(self.arrow, m.arrow ~= false)
+end
+
+local function hide(self)
+    self.rect = nil
+    set_enabled(self, false)
+end
+
+function on_message(self, message_id, message)
+    if message_id == hash("tut_show") then
+        show(self, message)
+    elseif message_id == hash("tut_hide") then
+        hide(self)
+    elseif message_id == hash("tut_history") then
+        gui.set_text(self.hint_title, message.title or "View History")
+        gui.set_text(self.hint_desc, message.desc or "Pinch out to see played cards")
+        self.hint_on = true
+        for _, n in ipairs(self.hint_nodes) do gui.set_enabled(n, true) end
+    elseif message_id == hash("tut_history_hide") then
+        self.hint_on = false
+        for _, n in ipairs(self.hint_nodes) do gui.set_enabled(n, false) end
+    end
+end
+
+local function inside(rect, x, y)
+    if not rect then return false end
+    return math.abs(x - rect.x) <= rect.w/2 and math.abs(y - rect.y) <= rect.h/2
+end
+
+function on_input(self, action_id, action)
+    -- The pinch hint never eats input — the gesture must reach game.script.
+    if self.hint_on then return false end
+    if action_id ~= hash("touch") or not action.pressed then return false end
+    if not self.rect then return false end
+
+    local x, y = action.x, action.y
+
+    -- NEXT button.
+    if self._show_next and gui.is_enabled(self.next_bg) and gui.pick_node(self.next_bg, x, y) then
+        T.on_next()
+        return true
+    end
+
+    -- A tap inside the highlighted hole falls through to the element below
+    -- (the card / lobby button) UNLESS this step blocks the target.
+    if inside(self.rect, x, y) and not self._block then
+        if self._click_anywhere then T.on_next(); return true end
+        return false
+    end
+
+    -- Tap anywhere on the dimmer: advance if the step allows it, else swallow.
+    if self._click_anywhere then T.on_next() end
+    return true
+end
