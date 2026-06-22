@@ -508,6 +508,9 @@ function M.end_game(self, player_won, is_cut, backend_results)
     self.queued_start_game = false
     
     notify_gui(self.gui_hud, "stop_timers")
+    -- The suit wheel must never linger into the game-over screen: if the round
+    -- ends while it is still open (e.g. a timeout mid-selection) close it now.
+    notify_gui(self.gui_suit, "suit_select", { mode = "close" })
 
     local round_continues = false
     local story = nil
