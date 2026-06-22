@@ -31,6 +31,16 @@ local function stop_snd(name)
     pcall(msg.post, "#" .. name, "stop_sound")
 end
 
+-- A staked game costs the stake plus its service charge (mirrors Godot's
+-- total_stake = amount + charge). If the wallet can't cover it, callers route the
+-- player to the payments dialog instead of firing a request the server rejects.
+local function can_afford(stake)
+    local s    = stake or {}
+    local need = (tonumber(s.amount) or 0) + (tonumber(s.charge) or 0)
+    local bal  = tonumber((ws.current_user_data or {}).balance) or 0
+    return bal >= need
+end
+
 -- ── Colors & Spacing ──────────────────────────────────────────────────────────
 local SIDE_RATIO  = 0.30
 local SIDE_MARGIN = 20
@@ -366,7 +376,11 @@ function on_input(self, action_id, action)
                     else
                         sd = type(u.stake) == "table" and u.stake or { amount = tonumber((u.stake or {}).amount) or 0 }
                     end
-                    ws.send_game_request({ _id=u._id, username=u.username, isAI=u.isAI, avatar=u.avatar }, sd, ex); open_dialog(self, "challenging", u.username or "opponent", sd, nil, u.avatar, u._id, nil); ws.request_head_to_head(u._id)
+                    if not can_afford(sd) then
+                        msg.post("#controller", "goto_payments")
+                    else
+                        ws.send_game_request({ _id=u._id, username=u.username, isAI=u.isAI, avatar=u.avatar }, sd, ex); open_dialog(self, "challenging", u.username or "opponent", sd, nil, u.avatar, u._id, nil); ws.request_head_to_head(u._id)
+                    end
                 elseif id == "accept" then if self.dialog and self.dialog.request_id then ws.accept_game_request(self.dialog.request_id) end; self.dialog, self.list_scroll = nil, 0; rebuild(self)
                 elseif id == "decline" or id == "cancel_wait" then if self.dialog and self.dialog.request_id then ws.decline_game_request(self.dialog.request_id) end; self.dialog, self.list_scroll = nil, 0; rebuild(self)
                 elseif id == "banner_accept" or id == "banner_decline" then if b.data and b.data ~= "" then if id == "banner_accept" then ws.accept_game_request(b.data) else ws.decline_game_request(b.data) end end; for j = #self.banners, 1, -1 do if self.banners[j].request_id == b.data then table.remove(self.banners, j) end end; if #self.banners == 0 then self.banners = nil end; self.list_scroll = 0; rebuild(self)

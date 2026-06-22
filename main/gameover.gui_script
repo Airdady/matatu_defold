@@ -579,6 +579,17 @@ function on_input(self, action_id, action)
 	if self.locked then return true end
 
 	if hit(self.n_again_bg, action) then
+		-- Online staked rematch only: if the wallet can't cover another round at
+		-- this stake, open payments and leave PLAY AGAIN for after a top-up.
+		-- Offline games replay locally for free, so my_id == "" skips this.
+		local need = (self.my_id ~= "") and (tonumber(self._again_need) or 0) or 0
+		local bal  = (ws_ok and ws.current_user_data) and tonumber(ws.current_user_data.balance) or 0
+		if need > 0 and bal < need then
+			set_visible(self, false)
+			msg.post("#controller", "goto_payments")
+			return true
+		end
+
 		self.locked = true
 
 		-- UPDATE button to show "waiting" status instead of instantly closing out!
@@ -667,6 +678,9 @@ function on_message(self, message_id, message)
 		local amount = tonumber(stake.amount) or 0
 		local charge = tonumber(stake.charge) or 0
 		local points = tonumber(stake.points) or 0
+		-- Cost to enter another round (stake + service charge). PLAY AGAIN routes
+		-- to payments instead of requesting if the wallet can't cover it.
+		self._again_need = amount + charge
 		if points == 0 and res.points then points = tonumber(res.points) or 0 end
 
 		local balance_change = 0
