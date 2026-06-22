@@ -532,6 +532,15 @@ function M.start_invite_search(self, app_state, rebuild_cb, battle_type)
 
     local stake = (type(mb.stake) == "table") and mb.stake or { amount = tonumber(mb.stakeAmount) or 0, charge = 0 }
 
+    -- Can't cover this battle's stake (amount + charge)? Open payments instead of
+    -- starting a matchmaking search the server would reject for low balance.
+    local need = (tonumber(stake.amount) or 0) + (tonumber(stake.charge) or 0)
+    local bal  = tonumber((ws.current_user_data or {}).balance) or 0
+    if need > 0 and bal < need then
+        msg.post("#controller", "goto_payments")
+        return
+    end
+
     self.invite_search = { active = true, t = 0, reel_ix = math.random(INVITE_AVATAR_MAX), spin_t = 0 }
     app_state.searching_invite = true
 
