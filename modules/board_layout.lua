@@ -157,24 +157,29 @@ function M.layout_hand(self, hand, y, animate)
     local spacing = M.calc_spacing(self, n)
     local start = self.CENTER.x - ((n - 1) * spacing) / 2.0
 
-    -- Give the human's bottom hand a gentle arch + fan in EVERY mode (offline,
-    -- online and the 4-player tournament) so the look is consistent. In a
-    -- tournament it only applies while the human is still alive.
-    local arch = (hand == self.player_hand) and (not self.t4 or self.t4.human_alive)
+    -- Gentle arch + fan in EVERY mode (offline, online and the 4-player
+    -- tournament) so the look is consistent. The human's bottom hand arches up;
+    -- the opponent's top hand mirrors it (bulges down toward the centre). In a
+    -- 4-player tournament only the live human's hand is arched.
+    local is_player_hand = (hand == self.player_hand)
+    local is_ai_hand     = (hand == self.ai_hand)
+    local arch = (is_player_hand and (not self.t4 or self.t4.human_alive))
+              or (is_ai_hand and not self.t4)
     local arc_amt = arch and math.min(34, n * 5.0) or 0
     local fan_amt = arch and math.min(8, n * 1.3) or 0
+    local dir     = is_ai_hand and -1 or 1   -- mirror the curve for the top hand
 
     for i, c in ipairs(hand) do
         local z = Z_HAND + i * 0.001
         local t = (n > 1) and ((i - 1) / (n - 1) - 0.5) or 0
-        local by = (0.25 - t * t) * arc_amt
+        local by = dir * (0.25 - t * t) * arc_amt
         local target = vmath.vector3(start + (i - 1) * spacing, y + by, z)
         if animate then
             go.animate(c.id, "position", go.PLAYBACK_ONCE_FORWARD, target, go.EASING_OUTSINE, 0.42)
         else
             go.set_position(target, c.id)
         end
-        go.set(c.id, "euler.z", -t * fan_amt)
+        go.set(c.id, "euler.z", -t * fan_amt * dir)
     end
 end
 

@@ -390,7 +390,7 @@ function on_input(self, action_id, action)
                 elseif id == "nav_tournaments" then msg.post("#controller", "goto_tournaments")
                 elseif id == "nav_support" then msg.post("#controller", "goto_support")
                 elseif id == "nav_account" then msg.post("#controller", "goto_profile")
-                elseif id == "nav_invite" then right_panel.start_invite_search(self, app_state, function() rebuild(self) end, b.data); play_snd("snd_suspense")
+                elseif id == "nav_invite" then if right_panel.start_invite_search(self, app_state, function() rebuild(self) end, b.data) then play_snd("snd_suspense") end
                 elseif id == "cancel_invite" then right_panel.stop_invite_search(self, app_state, function() rebuild(self) end); stop_snd("snd_suspense")
                 elseif id == "create_battle" then
                     local ct = (b.data or "NORMAL")

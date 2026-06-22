@@ -921,6 +921,9 @@ function M.start_game(self, state)
             msg.post(GUI_SUIT, "suit_badge", { suit = self.chosen_suit })
 
             self.is_animating = false
+            -- Settle both hands into their arched / fanned layout so the curve is
+            -- present from the first frame (the deal above lays the cards flat).
+            self.position_hands(true)
             pcall(function() require("modules.tutorial").on_dealing_completed() end)
 
             local st_final = tostring(state.status or "")
