@@ -957,6 +957,12 @@ function M.start_game(self)
     notify_gui(self.gui_suit, "reset_hud")
     notify_gui(self.gui_over, "reset_hud")
 
+    -- Every game start clears any leftover walkthrough state; only the online
+    -- scripted tutorial game below re-arms it. Without this a half-finished
+    -- tutorial would keep is_active() true and gate card taps (locking the hand)
+    -- in the next offline / tournament game.
+    tut("start_game", false)
+
     if app.mode == "online" then
         local state = ws.get_active_game()
         if state and next(state) ~= nil then

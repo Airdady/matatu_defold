@@ -81,6 +81,8 @@ local OVERLAY = "/controller#tutorial"
 local function clear_highlight()
     M._highlight = nil
     pcall(msg.post, OVERLAY, "tut_hide", {})
+    -- Also drop the pinch-history hint so a reset never leaves it on screen.
+    pcall(msg.post, OVERLAY, "tut_history_hide", {})
 end
 
 -- A screen calls this once it has measured the target rect (in 1280x720 logical
