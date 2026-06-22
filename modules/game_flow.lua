@@ -12,6 +12,14 @@ local app            = require "modules.app_state"
 local util           = require "modules.game_util"
 local BL             = require "modules.board_layout"
 local RE             = require "modules.rules_eval"
+local Tut            = require "modules.tutorial"
+
+-- Tutorial hooks must never be able to break live play: route every call
+-- through pcall so a walkthrough bug can only ever no-op.
+local function tut(name, ...)
+    local f = Tut[name]
+    if f then pcall(f, ...) end
+end
 local GS             = require "modules.game_state"
 local OnlineHandler  = require "modules.online_handler"
 local OfflineHandler = require "modules.offline_handler"
@@ -53,6 +61,7 @@ function M.play_card(self, rec, is_player, result)
 
     if is_player then
         table.insert(self.current_turn_actions, { type = "PLAY", v = tonumber(rec.v), s = tostring(rec.s) })
+        tut("on_card_played", tonumber(rec.v), tostring(rec.s))
     end
 
     self.animate_to_pile(rec, is_player, function()
@@ -100,7 +109,8 @@ function M.after_play_settled(self, rec, is_player, result, ticket)
                     local cx = self.CENTER and self.CENTER.x or 640
                     local dx = self.DECK_POS and self.DECK_POS.x or 1150
                     local mid_x = cx + (dx - cx) / 2
-                    notify_gui(self.gui_suit, "suit_select", { mode = "open", x = mid_x }) 
+                    notify_gui(self.gui_suit, "suit_select", { mode = "open", x = mid_x })
+                    tut("on_suit_opened")
                 end)
             end
             return
@@ -511,6 +521,7 @@ function M.end_game(self, player_won, is_cut, backend_results)
     -- The suit wheel must never linger into the game-over screen: if the round
     -- ends while it is still open (e.g. a timeout mid-selection) close it now.
     notify_gui(self.gui_suit, "suit_select", { mode = "close" })
+    tut("on_game_over")
 
     local round_continues = false
     local story = nil
