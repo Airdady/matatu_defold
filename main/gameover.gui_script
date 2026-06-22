@@ -245,7 +245,7 @@ local function build(self)
 	end
 
 	self.n_title = label(vmath.vector3(0, 0, 0), "VICTORY", 58, C_VICTORY, gui.PIVOT_CENTER, "title")
-	pcall(function() gui.set_tracking(self.n_title, 0.12) end)
+	-- Natural letter spacing (no artificial tracking) to match the other dialogs.
 	pcall(function() gui.set_outline(self.n_title, vmath.vector4(0, 0, 0, 0.6)) end)
 	pcall(function() gui.set_shadow(self.n_title, vmath.vector4(0, 0, 0, 0.5)) end)
 	attach(self.n_title, 0, 180)
