@@ -183,6 +183,89 @@ function M.animate_shuffle(self, visual_cards, done)
 end
 
 ----------------------------------------------------------------------
+-- Pinch-to-view-history: fan the played pile out into a ring, release to
+-- snap them home. Ported 1:1 from the Godot CardManager._start/_end_history_view
+-- (radial spread, QUART ease-out over 0.4s; restore over 0.2s).
+----------------------------------------------------------------------
+local MIN_HISTORY_OFFSET = 82      -- target arc spacing (logical px) per card
+local HISTORY_VIEW_SCALE = 0.85    -- cards shrink to this fraction while fanned
+
+function M.is_viewing_history(self) return self.is_viewing_history == true end
+
+function M.start_history_view(self)
+    if self.is_viewing_history then return end
+    local cards = self.played_cards or {}
+    local count = #cards
+    if count == 0 then return end
+
+    self.is_viewing_history = true
+    self.history_restore = {}
+
+    local cx, cy = self.CENTER.x, self.CENTER.y
+
+    -- Radius sized so the cards are evenly spaced around the ring, clamped so the
+    -- ring always fits on screen (mirrors the Godot spacing maths).
+    local min_screen_dim   = math.min(BL.LOGICAL_W, BL.LOGICAL_H)
+    local max_radius       = (min_screen_dim / 2.0) - 110.0
+    local radius_spacing   = (count * MIN_HISTORY_OFFSET) / (2 * math.pi)
+    local min_hole         = 40.0
+    local start_radius     = math.max(radius_spacing, min_hole)
+    if start_radius > max_radius then start_radius = max_radius end
+    if start_radius < min_hole  then start_radius = min_hole  end
+
+    local angle_step    = (2 * math.pi) / count
+    local start_angle   = -math.pi / 2
+    local spiral_growth = (start_radius >= max_radius) and 10.0 or 30.0
+
+    local view_scale = BL.CARD_SCALE_F * HISTORY_VIEW_SCALE
+
+    for i = 1, count do
+        local rec = cards[i]
+        if rec and rec.id then
+            -- Snapshot the exact pose so the release animation restores it 1:1.
+            self.history_restore[#self.history_restore + 1] = {
+                id    = rec.id,
+                pos   = go.get_position(rec.id),
+                rot   = go.get(rec.id, "euler.z"),
+                scale = go.get(rec.id, "scale"),
+            }
+
+            local progress = (i - 1) / count
+            local radius   = start_radius + progress * spiral_growth
+            local angle    = start_angle + (i - 1) * angle_step
+            local tx       = cx + math.cos(angle) * radius
+            local ty       = cy + math.sin(angle) * radius
+            local trot     = math.deg(angle + math.pi / 2)
+            local tz       = Z_FLY + 0.1 + i * 0.001  -- ride above the rest of the board
+
+            go.cancel_animations(rec.id, "position")
+            go.cancel_animations(rec.id, "euler.z")
+            go.cancel_animations(rec.id, "scale")
+            go.animate(rec.id, "position", go.PLAYBACK_ONCE_FORWARD, vmath.vector3(tx, ty, tz), go.EASING_OUTQUART, 0.4)
+            go.animate(rec.id, "euler.z",  go.PLAYBACK_ONCE_FORWARD, trot, go.EASING_OUTQUART, 0.4)
+            go.animate(rec.id, "scale",    go.PLAYBACK_ONCE_FORWARD, vmath.vector3(view_scale, view_scale, 1), go.EASING_OUTQUART, 0.4)
+        end
+    end
+end
+
+function M.end_history_view(self)
+    if not self.is_viewing_history then return end
+    self.is_viewing_history = false
+
+    for _, data in ipairs(self.history_restore or {}) do
+        if data.id then
+            go.cancel_animations(data.id, "position")
+            go.cancel_animations(data.id, "euler.z")
+            go.cancel_animations(data.id, "scale")
+            go.animate(data.id, "position", go.PLAYBACK_ONCE_FORWARD, data.pos,   go.EASING_OUTQUAD, 0.2)
+            go.animate(data.id, "euler.z",  go.PLAYBACK_ONCE_FORWARD, data.rot,   go.EASING_OUTQUAD, 0.2)
+            go.animate(data.id, "scale",    go.PLAYBACK_ONCE_FORWARD, data.scale, go.EASING_OUTQUAD, 0.2)
+        end
+    end
+    self.history_restore = {}
+end
+
+----------------------------------------------------------------------
 -- Invalid-play shake: horizontal jolt only.
 ----------------------------------------------------------------------
 function M.shake_card(self, rec)
