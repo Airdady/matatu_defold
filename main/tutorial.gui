@@ -1,0 +1,26 @@
+script: "/main/tutorial.gui_script"
+fonts {
+  name: "body"
+  font: "/fonts/body.font"
+}
+fonts {
+  name: "subtitle2"
+  font: "/fonts/subtitle2.font"
+}
+fonts {
+  name: "title"
+  font: "/fonts/title.font"
+}
+fonts {
+  name: "btn_md"
+  font: "/fonts/btn_md.font"
+}
+background_color {
+  x: 0.0
+  y: 0.0
+  z: 0.0
+  w: 0.0
+}
+material: "/builtins/materials/gui.material"
+adjust_reference: ADJUST_REFERENCE_PARENT
+max_nodes: 512

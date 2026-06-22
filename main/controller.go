@@ -62,6 +62,10 @@ components {
   id: "suit_select"
   component: "/main/suit_select.gui"
 }
+components {
+  id: "tutorial"
+  component: "/main/tutorial.gui"
+}
 embedded_components {
   id: "background"
   type: "sprite"
