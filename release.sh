@@ -10,7 +10,7 @@ BOB_JAR="bob.jar"
 OUTPUT_DIR="./bundles/android_release"
 TMP_SETTINGS="override.ini"
 
-KEYSTORE_PATH="./upload-keystore.jks"
+KEYSTORE_PATH="./champion-keystore.jks"
 KEYSTORE_PASS="./keystore.pass.txt"
 KEYSTORE_ALIAS="upload"
 
@@ -67,7 +67,7 @@ print_status "Preparing Defold Release Build: v$VERSION_NAME (Code: $VERSION_COD
 # ═══════════════════════════════════════════════════════════
 # PRE-BUILD CONFIGURATION
 # ═══════════════════════════════════════════════════════════
-print_status "Generating temporary configurations with com.matatu.nap injection..."
+print_status "Generating temporary configurations with com.matatu.champ injection..."
 
 # bob.jar requires an actual config file for settings overrides
 echo "[project]" > $TMP_SETTINGS
@@ -75,7 +75,7 @@ echo "version = $VERSION_NAME" >> $TMP_SETTINGS
 echo "" >> $TMP_SETTINGS
 echo "[android]" >> $TMP_SETTINGS
 echo "version_code = $VERSION_CODE" >> $TMP_SETTINGS
-echo "package = com.matatu.nap" >> $TMP_SETTINGS
+echo "package = com.matatu.champ" >> $TMP_SETTINGS
 
 print_status "Configurations updated successfully."
 
