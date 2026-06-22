@@ -185,6 +185,10 @@ function M.build_and_deal(self)
         timer.delay(delay, false, function()
             if seq ~= self._seq then return end
             self.is_animating = false
+            -- Settle both hands into their arched / fanned layout right away so the
+            -- curve is there from the first frame of play (the deal above lays the
+            -- cards out flat).
+            self.position_hands(true)
             local duration = PLAY_TIMEOUT_DURATION_S
             local local_expires_at = (socket.gettime() * 1000) + (duration * 1000)
             msg.post(GUI_HUD, "turn", { who = self.current_turn, duration = duration, expires_at = local_expires_at })

@@ -103,8 +103,10 @@ function M.draw(self, ctx)
             local is_active = (self.stake_index == actual_idx)
             local affordable = (my_balance >= st)
 
+            -- Every stake tile uses the same background — no separate *_active
+            -- variant for the selected one (selection still shows via text colour).
             track(self, ui.btn9(vmath.vector3(sx, cy - stake_card_h/2, 0), vmath.vector3(st_w, stake_card_h, 0),
-                is_active and "container_bg_active" or "container_bg"))
+                "container_bg"))
 
             local btn = track(self, ui.box(vmath.vector3(sx, cy - stake_card_h/2, 0), vmath.vector3(st_w, stake_card_h, 0),
                 vmath.vector4(0, 0, 0, 0)))
