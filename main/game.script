@@ -573,8 +573,10 @@ function on_input(self, action_id, action)
         end
 
         -- Tutorial: gate taps to the one scripted card for the current step.
+        -- Scoped to online_mode — the walkthrough is always an online scripted
+        -- game, so this can never lock cards in an offline / vs-AI game.
         local blocked = false
-        pcall(function() blocked = Tut.is_active() and not Tut.is_card_allowed(hit_card.v, hit_card.s) end)
+        pcall(function() blocked = self.online_mode and Tut.is_active() and not Tut.is_card_allowed(hit_card.v, hit_card.s) end)
         if blocked then
             safe_shake_card(self, hit_card)
             return true
