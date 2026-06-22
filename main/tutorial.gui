@@ -1,4 +1,8 @@
 script: "/main/tutorial.gui_script"
+textures {
+  name: "pinch_zoom"
+  texture: "/assets/pinch_zoom.atlas"
+}
 fonts {
   name: "body"
   font: "/fonts/body.font"
