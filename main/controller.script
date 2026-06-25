@@ -309,56 +309,52 @@ function on_message(self, message_id, message, sender)
             end
             return
         end
-        api.device_login(function(result)
+        -- No silent device login any more — Google sign-in is explicit.
+        show(self, "auth")
+
+    -- ── Google (Firebase) sign-in ──────────────────────────────────────────
+    -- The auth screen runs the native Google sign-in and hands us the Firebase
+    -- ID token; we exchange it for the app session.
+    elseif message_id == hash("auth_google_token") then
+        app_state.auth_state = "verifying"
+        msg.post("#auth", "auth_state_changed")
+        api.auth_firebase(message.token, function(result)
             if result.success and type(result.data) == "table" then
                 local user = result.data.user or result.data
-                if type(user) == "table" and (user._id or user.localId) then
-                    identify_and_connect(user)
-                    route_after_auth(self)
-                    return
-                end
-            end
-            show(self, "auth")
-        end)
-
-    elseif message_id == hash("auth_send_otp") then
-        app_state.auth_state = "sending"
-        msg.post("#auth", "auth_state_changed")
-        api.send_otp(message.phone, false, function(result)
-            if result.success then
-                local d = result.data or {}
-                if (d.status == "DEVICE_BOUND" and d.user) or d.autoLogin then
-                    identify_and_connect(d.user or d)
+                identify_and_connect(user)
+                if not (user.phoneNumber and tostring(user.phoneNumber) ~= "") then
+                    -- New (or phone-less) account: require a phone number next.
+                    app_state.auth_state = "phone"
+                    msg.post("#auth", "auth_require_phone")
+                else
                     app_state.auth_state = "done"
                     msg.post("#auth", "auth_state_changed")
                     route_after_auth(self)
-                else
-                    app_state.auth_state = "otp"
-                    msg.post("#auth", "auth_state_changed")
                 end
             else
                 app_state.auth_state = "error"
-                app_state.auth_error = result.message or "Failed to send OTP"
+                app_state.auth_error = result.message or "Google sign-in failed"
                 msg.post("#auth", "auth_state_changed")
             end
         end)
 
-    elseif message_id == hash("auth_verify_otp") then
+    -- Free-form phone number (no OTP, changeable any time).
+    elseif message_id == hash("auth_set_phone") then
         app_state.auth_state = "verifying"
         msg.post("#auth", "auth_state_changed")
-        api.verify_otp(message.phone, message.code, function(result)
+        api.update_phone(message.phone, function(result)
             if result.success then
-                local user = result.data
+                local user = result.data and (result.data.user or result.data)
                 if type(user) == "table" then
-                    if user.user then user = user.user end
-                    identify_and_connect(user)
+                    ws.current_user_data = user
+                    api.save_session(user)
                 end
                 app_state.auth_state = "done"
                 msg.post("#auth", "auth_state_changed")
                 route_after_auth(self)
             else
                 app_state.auth_state = "error"
-                app_state.auth_error = result.message or "Invalid code"
+                app_state.auth_error = result.message or "Could not save phone number"
                 msg.post("#auth", "auth_state_changed")
             end
         end)
