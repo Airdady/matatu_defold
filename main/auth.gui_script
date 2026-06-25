@@ -1,8 +1,8 @@
--- auth.gui_script — Google (Firebase) sign-in.
+-- auth.gui_script — Google sign-in.
 --
 -- On entry the Google account chooser pops automatically (the native
--- gameservices.firebase_google_sign_in flow); we poll the result and hand the
--- Firebase ID token to the controller (auth_google_token). A "Sign in with
+-- gameservices.google_sign_in flow); we poll the result and hand the
+-- Google ID token to the controller (auth_google_token). A "Sign in with
 -- Google" button stays on screen for manual retry. Username, avatar and phone
 -- are then collected together on the profile form (not here).
 
@@ -137,7 +137,7 @@ local function build_google(self)
 	ktext(self, vmath.vector3(CX, CY - 86, 0), st, 18, sc)
 
 	-- Desktop / editor builds have no native Google sign-in.
-	if not (_G.gameservices and _G.gameservices.firebase_google_sign_in) then
+	if not (_G.gameservices and _G.gameservices.google_sign_in) then
 		ktext(self, vmath.vector3(CX, CY - 120, 0),
 			"Google sign-in requires the Android build", 16, C_ERROR)
 	end
@@ -194,9 +194,9 @@ function on_message(self, message_id, message, sender)
 		self.signing = false
 		rebuild(self)
 		-- Pop the Google account chooser automatically on entry.
-		if _G.gameservices and _G.gameservices.firebase_google_sign_in then
+		if _G.gameservices and _G.gameservices.google_sign_in then
 			self.signing = true
-			_G.gameservices.firebase_google_sign_in(config.GOOGLE_WEB_CLIENT_ID)
+			_G.gameservices.google_sign_in(config.GOOGLE_WEB_CLIENT_ID)
 			rebuild(self)
 		end
 	elseif message_id == hash("auth_state_changed") then
@@ -224,11 +224,11 @@ local function handle(self, b)
 	elseif id == "legal_privacy" then
 		pcall(sys.open_url, "https://matatu.app/privacy")
 	elseif id == "google_signin" then
-		if _G.gameservices and _G.gameservices.firebase_google_sign_in then
+		if _G.gameservices and _G.gameservices.google_sign_in then
 			app_state.auth_state = "idle"
 			app_state.auth_error = ""
 			self.signing = true
-			_G.gameservices.firebase_google_sign_in(config.GOOGLE_WEB_CLIENT_ID)
+			_G.gameservices.google_sign_in(config.GOOGLE_WEB_CLIENT_ID)
 			rebuild(self)
 		else
 			app_state.auth_state = "error"

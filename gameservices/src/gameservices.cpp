@@ -10,8 +10,8 @@ static jobject g_InAppUpdateObj = NULL;
 static jclass g_InAppUpdateClass = NULL;
 static jobject g_OneSignalObj = NULL;
 static jclass g_OneSignalClass = NULL;
-static jobject g_FirebaseAuthObj = NULL;
-static jclass  g_FirebaseAuthClass = NULL;
+static jobject g_GoogleSignInObj = NULL;
+static jclass  g_GoogleSignInClass = NULL;
 
 // Google/Firebase sign-in result: written from a Firebase Task thread, read by
 // polling from Lua on the main thread — guarded by a mutex (no Lua cross-thread).
@@ -39,13 +39,13 @@ extern "C" JNIEXPORT void JNICALL Java_com_defold_android_gameservices_InAppUpda
 }
 
 // ── FIREBASE AUTH JNI BRIDGE ───────────────────────────────────────────────
-extern "C" JNIEXPORT void JNICALL Java_com_defold_android_gameservices_FirebaseAuthDefold_nativeLog(JNIEnv* env, jclass clazz, jint level, jstring message) {
+extern "C" JNIEXPORT void JNICALL Java_com_defold_android_gameservices_GoogleSignInDefold_nativeLog(JNIEnv* env, jclass clazz, jint level, jstring message) {
     Java_com_defold_android_gameservices_OneSignalDefold_nativeLog(env, clazz, level, message);
 }
 
 // Sign-in result delivered from the Firebase Task (background thread). Stored
 // under the mutex; Lua polls get_sign_in_status() to pick it up.
-extern "C" JNIEXPORT void JNICALL Java_com_defold_android_gameservices_FirebaseAuthDefold_onFirebaseToken(JNIEnv* env, jclass clazz, jstring token, jstring error) {
+extern "C" JNIEXPORT void JNICALL Java_com_defold_android_gameservices_GoogleSignInDefold_onGoogleToken(JNIEnv* env, jclass clazz, jstring token, jstring error) {
     dmMutex::ScopedLock lk(g_SignInMutex);
     if (token != NULL) {
         const char* t = env->GetStringUTFChars(token, 0);
@@ -94,9 +94,9 @@ static void OnActivityResult(JNIEnv* env, jobject activity, int32_t requestCode,
         jmethodID method = env->GetMethodID(g_InAppUpdateClass, "onActivityResult", "(I)V");
         env->CallVoidMethod(g_InAppUpdateObj, method, resultCode);
     }
-    if (requestCode == RC_SIGN_IN && g_FirebaseAuthObj != NULL) {
-        jmethodID method = env->GetMethodID(g_FirebaseAuthClass, "handleActivityResult", "(IILandroid/content/Intent;)V");
-        env->CallVoidMethod(g_FirebaseAuthObj, method, (jint)requestCode, (jint)resultCode, (jobject)data);
+    if (requestCode == RC_SIGN_IN && g_GoogleSignInObj != NULL) {
+        jmethodID method = env->GetMethodID(g_GoogleSignInClass, "handleActivityResult", "(IILandroid/content/Intent;)V");
+        env->CallVoidMethod(g_GoogleSignInObj, method, (jint)requestCode, (jint)resultCode, (jobject)data);
     }
 }
 
@@ -142,10 +142,10 @@ static int OneSignalLogout(lua_State* L) {
     return 0;
 }
 
-// gameservices.firebase_google_sign_in(web_client_id) — launches the Google
+// gameservices.google_sign_in(web_client_id) — launches the Google
 // account chooser; the Firebase ID token is delivered asynchronously and read
 // back via get_sign_in_status().
-static int FirebaseSignIn(lua_State* L) {
+static int GoogleSignIn(lua_State* L) {
     const char* webClientId = luaL_checkstring(L, 1);
     {
         dmMutex::ScopedLock lk(g_SignInMutex);
@@ -153,25 +153,25 @@ static int FirebaseSignIn(lua_State* L) {
         g_SignInToken[0] = 0;
         g_SignInError[0] = 0;
     }
-    if (g_FirebaseAuthObj == NULL) {
+    if (g_GoogleSignInObj == NULL) {
         dmMutex::ScopedLock lk(g_SignInMutex);
-        strncpy(g_SignInError, "Firebase auth not available", sizeof(g_SignInError) - 1);
+        strncpy(g_SignInError, "Google sign-in not available", sizeof(g_SignInError) - 1);
         g_SignInStatus = 3;
         return 0;
     }
     dmAndroid::ThreadAttacher attacher;
     JNIEnv* env = attacher.GetEnv();
     jstring jId = env->NewStringUTF(webClientId);
-    env->CallVoidMethod(g_FirebaseAuthObj, env->GetMethodID(g_FirebaseAuthClass, "signIn", "(Ljava/lang/String;)V"), jId);
+    env->CallVoidMethod(g_GoogleSignInObj, env->GetMethodID(g_GoogleSignInClass, "signIn", "(Ljava/lang/String;)V"), jId);
     env->DeleteLocalRef(jId);
     return 0;
 }
 
-static int FirebaseSignOut(lua_State* L) {
-    if (g_FirebaseAuthObj != NULL) {
+static int GoogleSignOut(lua_State* L) {
+    if (g_GoogleSignInObj != NULL) {
         dmAndroid::ThreadAttacher attacher;
         JNIEnv* env = attacher.GetEnv();
-        env->CallVoidMethod(g_FirebaseAuthObj, env->GetMethodID(g_FirebaseAuthClass, "signOut", "()V"));
+        env->CallVoidMethod(g_GoogleSignInObj, env->GetMethodID(g_GoogleSignInClass, "signOut", "()V"));
     }
     dmMutex::ScopedLock lk(g_SignInMutex);
     g_SignInStatus = 0;
@@ -208,8 +208,8 @@ static const luaL_reg Module_methods[] = {
     {"complete_update", CompleteUpdate},
     {"onesignal_login", OneSignalLogin},
     {"onesignal_logout", OneSignalLogout},
-    {"firebase_google_sign_in", FirebaseSignIn},
-    {"firebase_sign_out", FirebaseSignOut},
+    {"google_sign_in", GoogleSignIn},
+    {"google_sign_out", GoogleSignOut},
     {"get_sign_in_status", GetSignInStatus},
     {NULL, NULL}
 };
@@ -234,11 +234,11 @@ static dmExtension::Result InitializeGameServices(dmExtension::Params* params) {
     g_OneSignalObj = env->NewGlobalRef(env->NewObject(g_OneSignalClass, env->GetMethodID(g_OneSignalClass, "<init>", "(Landroid/app/Activity;)V"), activity));
     env->CallVoidMethod(g_OneSignalObj, env->GetMethodID(g_OneSignalClass, "init", "()V"));
 
-    // 3. Instantiating Firebase Auth (Google sign-in)
+    // 3. Instantiating Google Sign-In (Play Services)
     g_SignInMutex = dmMutex::New();
-    jclass faCls = dmAndroid::LoadClass(env, "com/defold/android/gameservices/FirebaseAuthDefold");
-    g_FirebaseAuthClass = (jclass)env->NewGlobalRef(faCls);
-    g_FirebaseAuthObj = env->NewGlobalRef(env->NewObject(g_FirebaseAuthClass, env->GetMethodID(g_FirebaseAuthClass, "<init>", "(Landroid/app/Activity;)V"), activity));
+    jclass faCls = dmAndroid::LoadClass(env, "com/defold/android/gameservices/GoogleSignInDefold");
+    g_GoogleSignInClass = (jclass)env->NewGlobalRef(faCls);
+    g_GoogleSignInObj = env->NewGlobalRef(env->NewObject(g_GoogleSignInClass, env->GetMethodID(g_GoogleSignInClass, "<init>", "(Landroid/app/Activity;)V"), activity));
 
     // Register modern Activity Result Hook
     dmAndroid::RegisterOnActivityResultListener(OnActivityResult);
@@ -260,8 +260,8 @@ static dmExtension::Result FinalizeGameServices(dmExtension::Params* params) {
     if(g_InAppUpdateClass) { env->DeleteGlobalRef(g_InAppUpdateClass); g_InAppUpdateClass = NULL; }
     if(g_OneSignalObj) { env->DeleteGlobalRef(g_OneSignalObj); g_OneSignalObj = NULL; }
     if(g_OneSignalClass) { env->DeleteGlobalRef(g_OneSignalClass); g_OneSignalClass = NULL; }
-    if(g_FirebaseAuthObj) { env->DeleteGlobalRef(g_FirebaseAuthObj); g_FirebaseAuthObj = NULL; }
-    if(g_FirebaseAuthClass) { env->DeleteGlobalRef(g_FirebaseAuthClass); g_FirebaseAuthClass = NULL; }
+    if(g_GoogleSignInObj) { env->DeleteGlobalRef(g_GoogleSignInObj); g_GoogleSignInObj = NULL; }
+    if(g_GoogleSignInClass) { env->DeleteGlobalRef(g_GoogleSignInClass); g_GoogleSignInClass = NULL; }
     if(g_SignInMutex) { dmMutex::Delete(g_SignInMutex); g_SignInMutex = 0; }
     return dmExtension::RESULT_OK;
 }
