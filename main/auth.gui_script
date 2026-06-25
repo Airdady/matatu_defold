@@ -1,12 +1,10 @@
--- auth.gui_script — Google (Firebase) sign-in + phone-number entry.
+-- auth.gui_script — Google (Firebase) sign-in.
 --
--- Phase 1 ("google"): a single "Sign in with Google" button. Tapping it runs
--- the native gameservices.firebase_google_sign_in flow; we poll the result and
--- hand the Firebase ID token to the controller (auth_google_token).
--- Phase 2 ("phone"): after sign-in, a free-form phone number is required once
--- (no OTP, no verification). Submitting posts auth_set_phone.
---
--- The keypad / chrome helpers are reused from the previous phone screen.
+-- On entry the Google account chooser pops automatically (the native
+-- gameservices.firebase_google_sign_in flow); we poll the result and hand the
+-- Firebase ID token to the controller (auth_google_token). A "Sign in with
+-- Google" button stays on screen for manual retry. Username, avatar and phone
+-- are then collected together on the profile form (not here).
 
 local ui        = require("modules.ui")
 local app_state = require("modules.app_state")
@@ -152,57 +150,13 @@ local function build_google(self)
 end
 
 ----------------------------------------------------------------------
--- Phase 2: ADD PHONE NUMBER (free-form, no OTP)
-----------------------------------------------------------------------
-local function build_phone(self)
-	bg_and_header(self)
-
-	local content_b = EDGE_B + KB_H + SEP_H
-	local ccy = content_b + (EDGE_T - content_b) / 2
-
-	track(self, ui.box(vmath.vector3(CX, EDGE_B + KB_H + SEP_H/2, 0),
-		vmath.vector3(VISIBLE_W + 80, SEP_H, 0), vmath.vector4(0.02, 0.02, 0.02, 1)))
-
-	ktext(self, vmath.vector3(CX, ccy + 116, 0), "ADD YOUR PHONE NUMBER", 28, C_STATE)
-
-	local has = self.phone ~= ""
-	local disp = has and fmt_phone(self.phone) or ""
-	local dn = ktext(self, vmath.vector3(CX, ccy + 36, 0), disp, 60, ui.WHITE)
-	local tw = 0
-	if has then
-		local tm = gui.get_text_metrics_from_node(dn)
-		tw = tm.width * (60 / 26)
-	end
-	add_cursor(self, CX + tw/2 + 10, ccy + 36, 45)
-
-	local ul_w = math.max(420, tw + 60)
-	track(self, ui.box(vmath.vector3(CX, ccy - 6, 0), vmath.vector3(ul_w, 4, 0), C_ACCENT))
-
-	local hc, ht = C_STATE, "Enter your number — you can change it anytime"
-	if has and not valid_phone(self.phone) then
-		hc, ht = C_ERROR, "A few more digits..."
-	elseif has then
-		hc, ht = C_OK, "Tap SAVE to continue"
-	end
-	if app_state.auth_state == "verifying" then
-		hc, ht = C_ACCENT, "Saving..."
-	elseif app_state.auth_state == "error" then
-		hc, ht = vmath.vector4(1, 0.4, 0.4, 1), tostring(app_state.auth_error or "Failed"):upper()
-	end
-	ktext(self, vmath.vector3(CX, ccy - 44, 0), ht, 18, hc)
-
-	keypad(self, "key_")
-end
-
 local function rebuild(self)
 	clear(self)
-	if self.phase == "phone" then build_phone(self) else build_google(self) end
+	build_google(self)
 end
 
 function init(self)
 	self.nodes, self.buttons = {}, {}
-	self.phone = ""
-	self.phase = "google"
 	self.signing = false
 	refresh_wh()
 end
@@ -237,15 +191,14 @@ function on_message(self, message_id, message, sender)
 		self._active = true
 		msg.post(".", "acquire_input_focus")
 		app_state.auth_state = "idle"
-		self.phase = "google"
-		self.phone, self.signing = "", false
+		self.signing = false
 		rebuild(self)
-	elseif message_id == hash("auth_require_phone") then
-		-- Controller: signed in, but no phone on file yet.
-		self.phase = "phone"
-		self.phone = ""
-		app_state.auth_state = "idle"
-		if self._active then rebuild(self) end
+		-- Pop the Google account chooser automatically on entry.
+		if _G.gameservices and _G.gameservices.firebase_google_sign_in then
+			self.signing = true
+			_G.gameservices.firebase_google_sign_in(config.GOOGLE_WEB_CLIENT_ID)
+			rebuild(self)
+		end
 	elseif message_id == hash("auth_state_changed") then
 		local s = app_state.auth_state
 		if s == "done" then
@@ -280,18 +233,6 @@ local function handle(self, b)
 		else
 			app_state.auth_state = "error"
 			app_state.auth_error = "Google sign-in requires the Android build"
-			rebuild(self)
-		end
-	elseif id:sub(1,4) == "key_" then
-		local k = b.data
-		if k == "<" then
-			self.phone = self.phone:sub(1,-2); rebuild(self)
-		elseif k == "OK" then
-			if valid_phone(self.phone) then
-				msg.post("#controller", "auth_set_phone", { phone = self.phone })
-			end
-		else
-			if #self.phone < 15 then self.phone = self.phone..k end
 			rebuild(self)
 		end
 	end

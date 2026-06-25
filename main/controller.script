@@ -119,10 +119,13 @@ function init(self)
         end
         
         self._restore_pending = true
+        msg.post("#lobby", "enable")
+        msg.post("#lobby", "screen_enter")
+    else
+        -- No saved session: go straight to Google sign-in. The auth screen pops
+        -- the account chooser automatically when it enters.
+        show(self, "auth")
     end
-
-    msg.post("#lobby", "enable")
-    msg.post("#lobby", "screen_enter")
 
     local function forward(evt, target, notification)
         table.insert(self.tokens, ws.on(evt, function()
@@ -322,39 +325,14 @@ function on_message(self, message_id, message, sender)
             if result.success and type(result.data) == "table" then
                 local user = result.data.user or result.data
                 identify_and_connect(user)
-                if not (user.phoneNumber and tostring(user.phoneNumber) ~= "") then
-                    -- New (or phone-less) account: require a phone number next.
-                    app_state.auth_state = "phone"
-                    msg.post("#auth", "auth_require_phone")
-                else
-                    app_state.auth_state = "done"
-                    msg.post("#auth", "auth_state_changed")
-                    route_after_auth(self)
-                end
-            else
-                app_state.auth_state = "error"
-                app_state.auth_error = result.message or "Google sign-in failed"
-                msg.post("#auth", "auth_state_changed")
-            end
-        end)
-
-    -- Free-form phone number (no OTP, changeable any time).
-    elseif message_id == hash("auth_set_phone") then
-        app_state.auth_state = "verifying"
-        msg.post("#auth", "auth_state_changed")
-        api.update_phone(message.phone, function(result)
-            if result.success then
-                local user = result.data and (result.data.user or result.data)
-                if type(user) == "table" then
-                    ws.current_user_data = user
-                    api.save_session(user)
-                end
+                -- New accounts land on the profile form (username + avatar +
+                -- phone). route_after_auth sends them there when incomplete.
                 app_state.auth_state = "done"
                 msg.post("#auth", "auth_state_changed")
                 route_after_auth(self)
             else
                 app_state.auth_state = "error"
-                app_state.auth_error = result.message or "Could not save phone number"
+                app_state.auth_error = result.message or "Google sign-in failed"
                 msg.post("#auth", "auth_state_changed")
             end
         end)
@@ -374,7 +352,7 @@ function on_message(self, message_id, message, sender)
         local payload = {
             username    = message.username,
             avatar      = message.avatar,
-            phoneNumber = user.phoneNumber or user.phone or "",
+            phoneNumber = message.phoneNumber or user.phoneNumber or user.phone or "",
         }
         local uid = user._id or user.localId or ""
         api.update_profile(uid, payload, function(result)
@@ -385,6 +363,7 @@ function on_message(self, message_id, message, sender)
                 for k, v in pairs(merged) do user[k] = v end
                 user.username    = message.username
                 user.avatar      = message.avatar
+                user.phoneNumber = payload.phoneNumber
                 ws.current_user_data = user
                 api.save_session(user)
 

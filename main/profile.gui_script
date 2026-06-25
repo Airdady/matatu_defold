@@ -118,7 +118,8 @@ local function rebuild(self)
     track(self, ui.box(vmath.vector3(CX, d_y,     0), vmath.vector3(VISIBLE_W, 10, 0), STRIPE_MID))
     track(self, ui.box(vmath.vector3(CX, d_y - 7, 0), vmath.vector3(VISIBLE_W, 4, 0), STRIPE_INNER))
 
-    local ok, msg_txt = validate(self.username)
+    local ok_user, msg_txt = validate(self.username)
+    local ok = ok_user and (#self.phone >= 7)   -- needs a valid name AND a phone
 
     -- Top bar — gold title, flat gold SAVE, bordered BACK. (Title text made gold color)
     track(self, ui.text(vmath.vector3(CX, EDGE_T - 40, 0), "COMPLETE YOUR PROFILE", "subtitle1", P_GOLD))
@@ -158,28 +159,34 @@ local function rebuild(self)
     -- Avatar preview comfortably anchored between the header and input field
     gold_avatar_frame(self, lx, EDGE_T - 180, self.avatar, 140)
 
-    -- Material Design style inline input
-    local input_y = kb_r1 + 100 -- excellent gap from keyboard
+    -- Two inline inputs — USERNAME and PHONE — sharing the keyboard. Tap a row
+    -- to focus it; the focused row shows a gold underline and receives keys.
     local line_w  = 440
     local start_x = lx - line_w / 2
+    self.focus = self.focus or "username"
+    local ok_phone = #self.phone >= 7
 
-    -- Prefix label (inline left)
-    local prefix = txtL(self, start_x + 10, input_y, "USERNAME:", "subtitle2", P_MUTED)
-    gui.set_scale(prefix, vmath.vector3(0.55, 0.55, 1))
+    local function input_row(field, label, value, placeholder, valid, hint)
+        local iy = (field == "username") and (kb_r1 + 152) or (kb_r1 + 74)
+        local focused = (self.focus == field)
+        local prefix = txtL(self, start_x + 10, iy, label, "subtitle2", P_MUTED)
+        gui.set_scale(prefix, vmath.vector3(0.55, 0.55, 1))
+        local shown = (value ~= "") and value or placeholder
+        local vcol = (value ~= "") and P_CREAM or P_MUTED
+        local val = txtL(self, start_x + 150, iy, shown, "body", vcol)
+        gui.set_scale(val, vmath.vector3(0.85, 0.85, 1))
+        local lcol = focused and P_GOLD or (valid and P_SUCCESS or P_BORDER)
+        track(self, ui.box(vmath.vector3(lx, iy - 18, 0), vmath.vector3(line_w, focused and 3 or 2, 0), lcol))
+        local hl = txtL(self, start_x + 10, iy - 34, hint, "body", valid and P_SUCCESS or P_MUTED)
+        gui.set_scale(hl, vmath.vector3(0.40, 0.40, 1))
+        local hit = track(self, ui.box(vmath.vector3(lx, iy, 0), vmath.vector3(line_w, 50, 0), vmath.vector4(0, 0, 0, 0.001)))
+        self.buttons[#self.buttons+1] = { node = hit, id = "focus_"..field }
+    end
 
-    -- Main input value (increased horizontal gap from prefix to avoid congestion)
-    local shown = (self.username ~= "") and self.username or "Type here..."
-    local val_color = (self.username ~= "") and P_CREAM or P_MUTED
-    local val = txtL(self, start_x + 150, input_y, shown, "body", val_color)
-    gui.set_scale(val, vmath.vector3(0.85, 0.85, 1))
-
-    -- Material bottom border line
-    local line_color = ok and P_GOLD or P_BORDER
-    track(self, ui.box(vmath.vector3(lx, input_y - 18, 0), vmath.vector3(line_w, 2, 0), line_color))
-
-    -- Tiny Status Text perfectly tucked below the bottom line
-    local status_lbl = txtL(self, start_x + 10, input_y - 34, ok and "Looks good!" or msg_txt, "body", ok and P_SUCCESS or P_ERROR)
-    gui.set_scale(status_lbl, vmath.vector3(0.40, 0.40, 1))
+    input_row("username", "USERNAME:", self.username, "Type here...",
+        ok_user, ok_user and "Looks good!" or msg_txt)
+    input_row("phone", "PHONE:", self.phone, "Your mobile number...",
+        ok_phone, ok_phone and "Looks good!" or "Add your mobile number")
 
     -- Draw the keyboard
     local function key(px, py, w, ch, label)
@@ -250,6 +257,7 @@ end
 function init(self)
     self.nodes, self.buttons = {}, {}
     self.username, self.avatar = "", 1
+    self.phone, self.focus = "", "username"
     refresh_wh()
 end
 
@@ -267,6 +275,8 @@ function on_message(self, message_id, message, sender)
         
         self.avatar = tonumber(u.avatar) or 1
         if self.avatar < 1 then self.avatar = 1 end
+        self.phone = tostring(u.phoneNumber or u.phone or "")
+        self.focus = "username"
         self._active = true
         self._saving = false
         self._error = nil
@@ -289,30 +299,41 @@ function on_message(self, message_id, message, sender)
 end
 
 local function handle(self, b)
+    local complete = validate(self.username) and (#self.phone >= 7)
     if b.id == "save" then
-        if validate(self.username) and not self._saving then
+        if complete and not self._saving then
             self._saving = true
             self._error = nil
-            msg.post("#controller", "profile_save", { username = self.username, avatar = self.avatar })
+            msg.post("#controller", "profile_save",
+                { username = self.username, avatar = self.avatar, phoneNumber = self.phone })
             rebuild(self)
         end
     elseif b.id == "back" then
-        if validate(self.username) then msg.post("#controller", "goto_online") end
+        if complete then msg.post("#controller", "goto_online") end
     elseif b.id == "avatar" then
         self.avatar = b.data
         rebuild(self)
+    elseif b.id == "focus_username" then
+        self.focus = "username"; rebuild(self)
+    elseif b.id == "focus_phone" then
+        self.focus = "phone"; rebuild(self)
     elseif b.id:sub(1,2) == "k_" then
-        if b.id == "k_back" then
-            self.username = self.username:sub(1,-2)
-        elseif #self.username < 12 then
-            -- Enforce Capitalization First Letter rule during typing
-            local ch = b.data
-            if #self.username == 0 then
-                ch = ch:upper()
-            else
-                ch = ch:lower()
+        if self.focus == "phone" then
+            -- Phone: digits only, up to 15.
+            if b.id == "k_back" then
+                self.phone = self.phone:sub(1,-2)
+            elseif b.data and b.data:match("%d") and #self.phone < 15 then
+                self.phone = self.phone .. b.data
             end
-            self.username = self.username .. ch
+        else
+            -- Username: capitalise first letter, up to 12 chars.
+            if b.id == "k_back" then
+                self.username = self.username:sub(1,-2)
+            elseif #self.username < 12 then
+                local ch = b.data
+                ch = (#self.username == 0) and ch:upper() or ch:lower()
+                self.username = self.username .. ch
+            end
         end
         rebuild(self)
     end
