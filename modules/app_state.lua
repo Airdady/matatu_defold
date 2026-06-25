@@ -75,11 +75,14 @@ function M.username_complete(name)
 	return true
 end
 
--- Account is "complete" when an avatar is chosen AND the username is valid.
+-- Account is "complete" when an avatar is chosen, the username is valid AND a
+-- phone number has been added (all collected on the one profile form).
 function M.profile_complete(user)
 	if type(user) ~= "table" then return false end
 	local avatar = tonumber(user.avatar) or 0
 	if avatar <= 0 then return false end
+	local phone = user.phoneNumber or user.phone or ""
+	if tostring(phone) == "" then return false end
 	return M.username_complete(user.username)
 end
 

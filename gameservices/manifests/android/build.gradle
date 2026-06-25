@@ -5,4 +5,11 @@ dependencies {
 
     // OneSignal Push Notification Dependency
     implementation 'com.onesignal:OneSignal:5.4.2'
+
+    // Google sign-in via Firebase Auth (replaces phone + OTP login).
+    // NOTE: also requires google-services.json in the project so FirebaseApp
+    // auto-initialises, plus the OAuth web client id set in config.lua.
+    implementation platform('com.google.firebase:firebase-bom:33.5.1')
+    implementation 'com.google.firebase:firebase-auth'
+    implementation 'com.google.android.gms:play-services-auth:21.2.0'
 }

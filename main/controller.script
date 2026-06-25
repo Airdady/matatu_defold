@@ -119,10 +119,13 @@ function init(self)
         end
         
         self._restore_pending = true
+        msg.post("#lobby", "enable")
+        msg.post("#lobby", "screen_enter")
+    else
+        -- No saved session: go straight to Google sign-in. The auth screen pops
+        -- the account chooser automatically when it enters.
+        show(self, "auth")
     end
-
-    msg.post("#lobby", "enable")
-    msg.post("#lobby", "screen_enter")
 
     local function forward(evt, target, notification)
         table.insert(self.tokens, ws.on(evt, function()
@@ -309,56 +312,27 @@ function on_message(self, message_id, message, sender)
             end
             return
         end
-        api.device_login(function(result)
-            if result.success and type(result.data) == "table" then
-                local user = result.data.user or result.data
-                if type(user) == "table" and (user._id or user.localId) then
-                    identify_and_connect(user)
-                    route_after_auth(self)
-                    return
-                end
-            end
-            show(self, "auth")
-        end)
+        -- No silent device login any more — Google sign-in is explicit.
+        show(self, "auth")
 
-    elseif message_id == hash("auth_send_otp") then
-        app_state.auth_state = "sending"
-        msg.post("#auth", "auth_state_changed")
-        api.send_otp(message.phone, false, function(result)
-            if result.success then
-                local d = result.data or {}
-                if (d.status == "DEVICE_BOUND" and d.user) or d.autoLogin then
-                    identify_and_connect(d.user or d)
-                    app_state.auth_state = "done"
-                    msg.post("#auth", "auth_state_changed")
-                    route_after_auth(self)
-                else
-                    app_state.auth_state = "otp"
-                    msg.post("#auth", "auth_state_changed")
-                end
-            else
-                app_state.auth_state = "error"
-                app_state.auth_error = result.message or "Failed to send OTP"
-                msg.post("#auth", "auth_state_changed")
-            end
-        end)
-
-    elseif message_id == hash("auth_verify_otp") then
+    -- ── Google (Firebase) sign-in ──────────────────────────────────────────
+    -- The auth screen runs the native Google sign-in and hands us the Firebase
+    -- ID token; we exchange it for the app session.
+    elseif message_id == hash("auth_google_token") then
         app_state.auth_state = "verifying"
         msg.post("#auth", "auth_state_changed")
-        api.verify_otp(message.phone, message.code, function(result)
-            if result.success then
-                local user = result.data
-                if type(user) == "table" then
-                    if user.user then user = user.user end
-                    identify_and_connect(user)
-                end
+        api.auth_firebase(message.token, function(result)
+            if result.success and type(result.data) == "table" then
+                local user = result.data.user or result.data
+                identify_and_connect(user)
+                -- New accounts land on the profile form (username + avatar +
+                -- phone). route_after_auth sends them there when incomplete.
                 app_state.auth_state = "done"
                 msg.post("#auth", "auth_state_changed")
                 route_after_auth(self)
             else
                 app_state.auth_state = "error"
-                app_state.auth_error = result.message or "Invalid code"
+                app_state.auth_error = result.message or "Google sign-in failed"
                 msg.post("#auth", "auth_state_changed")
             end
         end)
@@ -378,7 +352,7 @@ function on_message(self, message_id, message, sender)
         local payload = {
             username    = message.username,
             avatar      = message.avatar,
-            phoneNumber = user.phoneNumber or user.phone or "",
+            phoneNumber = message.phoneNumber or user.phoneNumber or user.phone or "",
         }
         local uid = user._id or user.localId or ""
         api.update_profile(uid, payload, function(result)
@@ -389,6 +363,7 @@ function on_message(self, message_id, message, sender)
                 for k, v in pairs(merged) do user[k] = v end
                 user.username    = message.username
                 user.avatar      = message.avatar
+                user.phoneNumber = payload.phoneNumber
                 ws.current_user_data = user
                 api.save_session(user)
 

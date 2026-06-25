@@ -36,11 +36,28 @@ local C_MUTED   = vmath.vector4(0.600, 0.600, 0.600, 1.00)
 local C_COPPER  = C_GOLD
 local C_TAN     = C_GOLD
 
--- Utility tile accent colours (bottom ticks)
-local C_U_RULES = vmath.vector4(1.000, 1.000, 1.000, 1.00)
-local C_U_SHARE = vmath.vector4(0.500, 0.400, 0.300, 1.00)
-local C_U_HELP  = vmath.vector4(0.300, 0.300, 0.300, 1.00)
-local C_U_THEME = vmath.vector4(0.800, 0.600, 0.200, 1.00)
+-- ---------------------------------------------------------------------------
+-- Redesign palette — a quiet, premium type-led set that rides on the dark
+-- carbon "texture_bg". Panels are translucent so the texture breathes through;
+-- colour is rationed (one red CTA, one warm gold for everything else).
+-- ---------------------------------------------------------------------------
+local C_INK      = vmath.vector4(0.000, 0.000, 0.000, 1.00)
+local C_PAPER    = vmath.vector4(0.957, 0.937, 0.898, 1.00)  -- #F4EFE5  primary text
+local C_DIM      = vmath.vector4(0.957, 0.937, 0.898, 0.50)  -- secondary text
+local C_GHOST    = vmath.vector4(0.957, 0.937, 0.898, 0.22)  -- hints / overlines
+local C_EMBER    = vmath.vector4(0.906, 0.275, 0.243, 1.00)  -- #E7463E  sole CTA pop
+local C_BRASS    = vmath.vector4(0.847, 0.651, 0.310, 1.00)  -- #D8A64F  warm accent
+local C_GLASS    = vmath.vector4(0.027, 0.024, 0.020, 0.50)  -- panel fill (translucent)
+local C_GLASS_HI = vmath.vector4(0.043, 0.039, 0.033, 0.64)  -- featured panel fill
+local C_HAIR     = vmath.vector4(1.000, 0.976, 0.941, 0.10)  -- hairline border
+local C_HAIR_LO  = vmath.vector4(1.000, 0.976, 0.941, 0.05)
+local C_SHADE    = vmath.vector4(0.000, 0.000, 0.000, 0.45)  -- header/footer vignette
+
+-- Utility tile accent colours (top-edge bars)
+local C_U_RULES = C_CREAM
+local C_U_SHARE = C_GOLD
+local C_U_HELP  = C_RED
+local C_U_THEME = C_TAN
 
 -- Akira / consent palette
 local CONSENT_PANEL   = vmath.vector4(0.110, 0.071, 0.051, 1.0)
@@ -109,76 +126,136 @@ local function text_sh(self, pos, str, font, color, ox, oy)
     return track(self, ui.text(pos, str, font, color))
 end
 
+-- Thin 3-px accent bar at the top edge of a tile
+local function accent_bar(self, cx, top_y, w, col)
+    track(self, ui.box(
+        vmath.vector3(cx, top_y - 1, 0),
+        vmath.vector3(w - 2, 3, 0),
+        col))
+end
+
+-- Subtle colour tint (ambient glow for each tile)
+local function tint_rect(self, x, y, w, h, col, alpha)
+    track(self, ui.box(vmath.vector3(x, y, 0),
+        vmath.vector3(w, h, 0),
+        vmath.vector4(col.x, col.y, col.z, alpha)))
+end
+
+-- Badge pill — placed top-left inside a tile
+local function badge_pill(self, cx, cy, label, bg_col)
+    local bw = math.max(40, #label * 7 + 16)
+    local bh = 20
+    track(self, ui.box(vmath.vector3(cx, cy, 0), vmath.vector3(bw, bh, 0), bg_col))
+    track(self, ui.text(vmath.vector3(cx, cy - 1, 0), label, "small", C_DARK))
+end
+
+-- ── Redesign helpers ────────────────────────────────────────────────────────
+local function clamp(v, lo, hi) return math.max(lo, math.min(hi, v)) end
+local function v3(x, y) return vmath.vector3(x, y, 0) end
+local function rgba(c, a) return vmath.vector4(c.x, c.y, c.z, a) end
+
+-- Left-aligned text (anchor at x). Returns the node.
+local function textL(self, x, y, str, font, color, scale)
+    local n = ui.text(v3(x, y), str, font, color, scale)
+    gui.set_pivot(n, gui.PIVOT_W)
+    return track(self, n)
+end
+
+-- Right-aligned text (anchor at x).
+local function textR(self, x, y, str, font, color, scale)
+    local n = ui.text(v3(x, y), str, font, color, scale)
+    gui.set_pivot(n, gui.PIVOT_E)
+    return track(self, n)
+end
+
+-- Hairline rectangle frame (four 1.5px edges) — the "etched glass" border.
+local function frame(self, x, y, w, h, col)
+    track(self, ui.box(v3(x, y + h / 2), v3(w, 1.5), col))
+    track(self, ui.box(v3(x, y - h / 2), v3(w, 1.5), col))
+    track(self, ui.box(v3(x - w / 2, y), v3(1.5, h), col))
+    track(self, ui.box(v3(x + w / 2, y), v3(1.5, h), col))
+end
+
+-- Translucent glass panel: fill + hairline frame (texture shows through).
+local function glass_panel(self, x, y, w, h, fill)
+    track(self, ui.box(v3(x, y), v3(w, h), fill or C_GLASS))
+    frame(self, x, y, w, h, C_HAIR)
+end
+
+-- Letter-spaced overline (small uppercase label drawn char-by-char).
+local function overline(self, x, y, str, color, gap)
+    gap = gap or 11
+    local cx = x
+    for i = 1, #str do
+        local ch = str:sub(i, i)
+        if ch ~= " " then textL(self, cx, y, ch, "small", color, 0.74) end
+        cx = cx + gap
+    end
+    return cx
+end
+
 -- ---------------------------------------------------------------------------
 -- Main mode-tile builder
 -- ---------------------------------------------------------------------------
+-- Shadowed left-aligned text (subtle depth for headings on the dark texture).
+local function textLs(self, x, y, str, font, color)
+    textL(self, x + 1.5, y - 2, str, font, rgba(C_INK, 0.45))
+    return textL(self, x, y, str, font, color)
+end
+
+-- A mode is a translucent "glass" card: hairline frame, a left accent rail, a
+-- ghosted index numeral, a letter-spaced overline, the name in tall Teko and a
+-- one-line description. The hero (PLAY ONLINE) adds a display title + CTA pill.
 local function mode_tile(self, cfg)
     local x, y, w, h = cfg.x, cfg.y, cfg.w, cfg.h
+    local acc = cfg.accent or C_EMBER
+    local pad = cfg.featured and 26 or 18
+    local lx  = x - w / 2 + pad
 
-    -- 1px Border simulation via layered boxes
-    track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), C_BORDER))
-    track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w - 2, h - 2, 0), C_TILE))
+    glass_panel(self, x, y, w, h, cfg.featured and C_GLASS_HI or C_GLASS)
 
-    -- Left Accent Line
-    local acc_w = 3
-    local acc_h = h - 24
-    local acc_x = x - w/2 + 8
-    local n_acc = track(self, ui.box(vmath.vector3(acc_x, y, 0), vmath.vector3(acc_w, acc_h, 0), cfg.accent))
-    set_pivot(n_acc, gui.PIVOT_W)
+    -- Left accent rail
+    track(self, ui.box(v3(x - w / 2 + 2, y), v3(3, h - 10, 0), acc))
 
-    -- Top Left Text
-    local tl_y = y + h/2 - 28
-    local n_tl = track(self, ui.text(vmath.vector3(acc_x + 16, tl_y, 0), cfg.top_left, "small", cfg.accent))
-    set_pivot(n_tl, gui.PIVOT_W)
-
-    -- Camera recording blink effect for the LIVE tag
-    if cfg.blink_tl then
-        gui.animate(n_tl, "color.w", 0.1, gui.EASING_LINEAR, 0.8, 0, nil, gui.PLAYBACK_LOOP_PINGPONG)
+    -- Editorial index numeral, ghosted, top-right (type only)
+    if cfg.index then
+        textR(self, x + w / 2 - pad, y + h / 2 - (cfg.featured and 30 or 24),
+            cfg.index, "title", rgba(C_PAPER, 0.07))
     end
 
-    if cfg.top_left_2 then
-        local n_tl2 = track(self, ui.text(vmath.vector3(acc_x + 16 + 55, tl_y, 0), cfg.top_left_2, "small", C_DARKRED))
-        set_pivot(n_tl2, gui.PIVOT_W)
+    -- Overline (letter-spaced, accent colour)
+    if cfg.over then
+        overline(self, lx, y + h / 2 - (cfg.featured and 30 or 24), cfg.over, rgba(acc, 0.95))
     end
 
-    -- Top Right Numeral (Scaled large)
-    local n_num = track(self, ui.text(vmath.vector3(x + w/2 - 20, tl_y + 4, 0), cfg.numeral, "title", C_GOLD))
-    set_pivot(n_num, gui.PIVOT_E)
-    pcall(gui.set_scale, n_num, vmath.vector3(1.4, 1.4, 1))
-
-    -- Center Text (Anchored slightly below center or dynamic based on CTA)
-    local title_y = (cfg.cta_label or cfg.badge_label) and (y + 15) or (y + 8)
-    
-    local n_title = track(self, ui.text(vmath.vector3(acc_x + 16, title_y, 0), cfg.title, "title", C_CREAM))
-    set_pivot(n_title, gui.PIVOT_W)
-    pcall(gui.set_scale, n_title, vmath.vector3(1.15, 1.15, 1))
-
-    if cfg.sub then
-        local n_sub = track(self, ui.text(vmath.vector3(acc_x + 16, title_y - 32, 0), cfg.sub, "small", C_MUTED))
-        set_pivot(n_sub, gui.PIVOT_W)
+    if cfg.featured then
+        textLs(self, lx, y + h * 0.20, cfg.title, "title", C_PAPER)
+        if cfg.sub then textL(self, lx, y + h * 0.20 - 34, cfg.sub, "small", C_DIM) end
+        -- Feature bullets — a brass tick + a muted line apiece.
+        if cfg.bullets then
+            local by = y + h * 0.20 - 70
+            for _, line in ipairs(cfg.bullets) do
+                track(self, ui.box(v3(lx + 3, by, 0), v3(6, 6, 0), C_BRASS))
+                textL(self, lx + 16, by, line, "small", rgba(C_PAPER, 0.60))
+                by = by - 27
+            end
+        end
+        -- CTA pill, grounded by a hairline divider just above it.
+        local cw, ch = 196, 50
+        local cx2, cy2 = lx + cw / 2, y - h / 2 + pad + ch / 2
+        track(self, ui.box(v3(x, cy2 + ch / 2 + 16, 0), v3(w - pad * 2, 1.5, 0), C_HAIR))
+        track(self, ui.box(v3(cx2, cy2), v3(cw, ch), acc))
+        track(self, ui.box(v3(cx2, cy2 - ch / 2 + 1.5), v3(cw, 3, 0), rgba(C_INK, 0.18)))
+        track(self, ui.text(v3(cx2, cy2 - 1), cfg.cta_label or "PLAY", "btn_lg", C_INK))
+    else
+        local ny = cfg.sub and (y + 5) or y
+        textLs(self, lx, ny, cfg.title, "subtitle1", C_PAPER)
+        if cfg.sub then textL(self, lx, ny - 25, cfg.sub, "small", C_DIM) end
     end
 
-    -- CTA Button (PLAY NOW) or Badge (COMING SOON)
-    if cfg.cta_label then
-        local cta_w, cta_h = 160, 46
-        local cta_x = acc_x + 16 + cta_w/2
-        local cta_y = y - h/2 + 50
-        track(self, ui.box(vmath.vector3(cta_x, cta_y, 0), vmath.vector3(cta_w, cta_h, 0), C_RED))
-        track(self, ui.text(vmath.vector3(cta_x, cta_y, 0), cfg.cta_label, "body", vmath.vector4(0.05, 0.05, 0.05, 1)))
-    elseif cfg.badge_label then
-        local badge_w, badge_h = 160, 46
-        local badge_x = acc_x + 16 + badge_w/2
-        local badge_y = y - h/2 + 50
-        -- Muted/darker styling for a non-clickable badge look
-        track(self, ui.box(vmath.vector3(badge_x, badge_y, 0), vmath.vector3(badge_w, badge_h, 0), C_DARKRED))
-        track(self, ui.text(vmath.vector3(badge_x, badge_y, 0), cfg.badge_label, "body", C_CREAM))
-    end
-
-    -- Invisible hit node (only if tile is clickable)
-    if cfg.btn_id then
-        local hit = track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), C_TRANSP))
-        self.buttons[#self.buttons + 1] = { node = hit, id = cfg.btn_id, data = cfg.btn_data }
-    end
+    -- Invisible hit node
+    local hit = track(self, ui.box(v3(x, y), v3(w, h), C_TRANSP))
+    self.buttons[#self.buttons + 1] = { node = hit, id = cfg.btn_id, data = cfg.btn_data }
 end
 
 -- ---------------------------------------------------------------------------
@@ -186,17 +263,14 @@ end
 -- ---------------------------------------------------------------------------
 local function util_tile(self, cfg)
     local x, y, w, h = cfg.x, cfg.y, cfg.w, cfg.h
+    local acc = cfg.accent_col or C_BRASS
 
-    track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), C_BORDER))
-    track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w - 2, h - 2, 0), C_TILE))
+    -- Quiet glass cell with a short accent tick centred above the label.
+    glass_panel(self, x, y, w, h, C_GLASS)
+    track(self, ui.box(v3(x, y + h / 2 - 3), v3(22, 2, 0), rgba(acc, 0.9)))
+    track(self, ui.text(v3(x, y - 2), cfg.label, "btn_md", rgba(C_PAPER, 0.82)))
 
-    -- Centered Label
-    track(self, ui.text(vmath.vector3(x, y + 2, 0), cfg.label, "body", C_CREAM))
-
-    -- Bottom indicator tick
-    track(self, ui.box(vmath.vector3(x, y - h/2 + 3, 0), vmath.vector3(20, 4, 0), cfg.accent_col))
-
-    local hit = track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), C_TRANSP))
+    local hit = track(self, ui.box(v3(x, y), v3(w, h), C_TRANSP))
     self.buttons[#self.buttons + 1] = { node = hit, id = cfg.btn_id }
 end
 
@@ -454,158 +528,100 @@ end
 local function rebuild(self)
     clear(self)
 
-    -- Textured Background Layer (Landscape, no over-scaling)
-    track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 1)))
-    track(self, ui.cover_image(LOGICAL_W, LOGICAL_H, "texture_bg"))
-    
-    -- Subtle dark wash to ensure text pops and matches the screenshot perfectly
-    track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0.04, 0.03, 0.02, 0.70)))
+    -- ── Background: the dark carbon "texture_bg", aspect-filled, with a base
+    --    fill behind it (no gap on any aspect) and a whisper-thin scrim so the
+    --    translucent cards and type gain a touch more contrast.
+    track(self, ui.cover(VW, VH, C_DARK))
+    track(self, ui.cover_image(VW, VH, "texture_bg"))
+    track(self, ui.cover(VW, VH, rgba(C_INK, 0.18)))
 
-    -- Geometry Setup
-    local grid_l = EDGE_L + PADDING
-    local grid_r = EDGE_R - PADDING
-    
-    local util_h = 56
-    local grid_b = EDGE_B + PADDING + util_h + GUTTER
-    local grid_t = EDGE_T - PADDING - HEADER_H
-    
-    local grid_w = grid_r - grid_l
-    local grid_h = grid_t - grid_b
+    -- ── Geometry (all derived from the live metrics) ───────────────────────
+    local M  = clamp(VW * 0.035, 22, 46)        -- outer margin
+    local L  = EDGE_L + M
+    local R  = EDGE_R - M
+    local W  = R - L
+    local G  = clamp(VW * 0.011, 10, 16)        -- gap between cards
 
-    -- Split 50/50 exactly
-    local left_w  = math.floor((grid_w - GUTTER) * 0.5)
-    local right_w = grid_w - left_w - GUTTER
+    local brand_y = EDGE_T - clamp(VH * 0.078, 42, 60)
+    local util_h  = clamp(VH * 0.100, 50, 70)
+    local util_cy = EDGE_B + clamp(VH * 0.028, 14, 26) + util_h / 2
+    local band_t  = brand_y - clamp(VH * 0.085, 44, 64)
+    local band_b  = util_cy + util_h / 2 + G + 6
+    local band_h  = band_t - band_b
+    local band_cy = (band_t + band_b) / 2
 
-    local left_cx = grid_l + left_w / 2
-    local left_cy = grid_b + grid_h / 2
+    -- ── Header: wordmark (left) + status (right) ───────────────────────────
+    track(self, ui.box(v3(L + 1, brand_y - 3, 0), v3(4, 38, 0), C_EMBER))   -- brand bar
+    textLs(self, L + 14, brand_y + 3, "MATATU", "title", C_PAPER)
+    overline(self, L + 16, brand_y - 25, "ONLINE CARD GAME", C_GHOST, 11)
 
-    local right_l  = grid_l + left_w + GUTTER
-    local right_cx = right_l + right_w / 2
+    local uname = ws.current_user_data and ws.current_user_data.username
+    if uname then
+        textR(self, R, brand_y + 4, string.upper(tostring(uname)), "subtitle1", rgba(C_PAPER, 0.92))
+        textR(self, R, brand_y - 22, "SIGNED IN", "small", rgba(C_BRASS, 0.85))
+    else
+        textR(self, R, brand_y + 4, "GUEST", "subtitle1", rgba(C_PAPER, 0.70))
+        textR(self, R, brand_y - 22, "TAP PLAY ONLINE TO SIGN IN", "small", C_GHOST)
+    end
+    track(self, ui.box(v3((L + R) / 2, band_t + 12, 0), v3(W, 1.5, 0), C_HAIR_LO))
 
-    local top_h  = math.floor((grid_h - GUTTER) * 0.5)
-    local bot_h  = grid_h - top_h - GUTTER
-    local top_cy = grid_b + bot_h + GUTTER + top_h / 2
-    local bot_cy = grid_b + bot_h / 2
+    -- ── Mode cards: hero (left) + three on the right ───────────────────────
+    local hero_w  = math.floor(W * 0.50) - G / 2
+    local right_w = W - hero_w - G
+    local hero_cx = L + hero_w / 2
+    local rl      = L + hero_w + G
 
-    local tr_w    = math.floor((right_w - GUTTER) / 2)
-    local tr_2_w  = right_w - tr_w - GUTTER
-    local tr_1_cx = right_l + tr_w / 2
-    local tr_2_cx = right_l + tr_w + GUTTER + tr_2_w / 2
+    local top_h  = math.floor(band_h * 0.50) - G / 2
+    local bot_h  = band_h - top_h - G
+    local top_cy = band_b + bot_h + G + top_h / 2
+    local bot_cy = band_b + bot_h / 2
+    local cw     = math.floor(right_w / 2) - G / 2
+    local c1x    = rl + cw / 2
+    local c2x    = rl + cw + G + cw / 2
 
-    -- -----------------------------------------------------------------------
-    -- Top Header
-    -- -----------------------------------------------------------------------
-    local h_y = EDGE_T - PADDING - 20
-
-    -- Left Red Marker + Brand
-    local n_red = track(self, ui.box(vmath.vector3(grid_l + 2, h_y - 6, 0), vmath.vector3(4, 30, 0), C_RED))
-    set_pivot(n_red, gui.PIVOT_W)
-    
-    local n_m = track(self, ui.text(vmath.vector3(grid_l + 16, h_y, 0), "MATATU", "title", C_CREAM))
-    set_pivot(n_m, gui.PIVOT_W)
-    pcall(gui.set_scale, n_m, vmath.vector3(1.1, 1.1, 1))
-
-    local n_ocg = track(self, ui.text(vmath.vector3(grid_l + 16, h_y - 32, 0), "ONLINE CARD GAME", "small", C_MUTED))
-    set_pivot(n_ocg, gui.PIVOT_W)
-
-    -- Right Guest Status
-    local user_txt = (ws.current_user_data and ws.current_user_data.username) or "GUEST"
-    local sub_txt  = (ws.current_user_data and ws.current_user_data.username) and "RANKED ACCOUNT" or "TAP 'PLAY ONLINE' TO SIGN IN"
-
-    local n_guest = track(self, ui.text(vmath.vector3(grid_r, h_y, 0), user_txt, "title", C_CREAM))
-    set_pivot(n_guest, gui.PIVOT_E)
-
-    local n_sign = track(self, ui.text(vmath.vector3(grid_r, h_y - 32, 0), sub_txt, "small", vmath.vector4(0.4, 0.4, 0.4, 1)))
-    set_pivot(n_sign, gui.PIVOT_E)
-
-    -- -----------------------------------------------------------------------
-    -- Tile 1: PLAY ONLINE
-    -- -----------------------------------------------------------------------
     mode_tile(self, {
-        x = left_cx, y = left_cy, w = left_w, h = grid_h,
-        accent      = C_RED,
-        top_left    = "LIVE",
-        blink_tl    = true,
-        top_left_2  = "MULTI PLAYER",
-        numeral     = "01",
-        title       = "PLAY ONLINE",
-        sub         = "Real players • Live coin stakes",
-        badge_label = "COMING SOON",
+        x = hero_cx, y = band_cy, w = hero_w, h = band_h,
+        featured = true, accent = C_EMBER, index = "01",
+        over = "LIVE  ·  MULTIPLAYER", title = "PLAY ONLINE",
+        sub = "Real players · live coin stakes",
+        bullets = {
+            "Instant coin payouts on every win",
+            "Climb the weekly rankings for prizes",
+            "Quick match or challenge a friend",
+        },
+        cta_label = "PLAY NOW", btn_id = "play_online",
+    })
+    mode_tile(self, {
+        x = c1x, y = top_cy, w = cw, h = top_h, accent = C_BRASS, index = "02",
+        over = "OFFLINE", title = "QUICK PLAY", sub = "One deal vs the bot",
+        btn_id = "quick_play",
+    })
+    mode_tile(self, {
+        x = c2x, y = top_cy, w = cw, h = top_h, accent = C_BRASS, index = "03",
+        over = "BEST OF", title = "BATTLE AI", sub = "Play a series",
+        btn_id = "battle_ai",
+    })
+    mode_tile(self, {
+        x = rl + right_w / 2, y = bot_cy, w = right_w, h = bot_h, accent = C_BRASS,
+        index = "04", over = "4-PLAYER TABLE", title = "TOURNAMENT",
+        sub = "One human · three AI · bracket", btn_id = "quick_tournament",
     })
 
-    -- -----------------------------------------------------------------------
-    -- Tile 2: QUICK PLAY
-    -- -----------------------------------------------------------------------
-    mode_tile(self, {
-        x = tr_1_cx, y = top_cy, w = tr_w, h = top_h,
-        accent   = C_GOLD,
-        top_left = "OFFLINE",
-        numeral  = "02",
-        title    = "QUICK PLAY",
-        sub      = "One deal vs the bot",
-        btn_id   = "quick_play",
-    })
-
-    -- -----------------------------------------------------------------------
-    -- Tile 3: BATTLE AI
-    -- -----------------------------------------------------------------------
-    mode_tile(self, {
-        x = tr_2_cx, y = top_cy, w = tr_2_w, h = top_h,
-        accent   = C_GOLD,
-        top_left = "BEST OF",
-        numeral  = "03",
-        title    = "BATTLE AI",
-        sub      = "Play a series",
-        btn_id   = "battle_ai",
-    })
-
-    -- -----------------------------------------------------------------------
-    -- Tile 4: TOURNAMENT
-    -- -----------------------------------------------------------------------
-    mode_tile(self, {
-        x = right_cx, y = bot_cy, w = right_w, h = bot_h,
-        accent   = C_GOLD,
-        top_left = "4-PLAYER TABLE",
-        numeral  = "04",
-        title    = "TOURNAMENT",
-        sub      = "One human • three AI • bracket",
-        btn_id   = "quick_tournament",
-    })
-
-    -- -----------------------------------------------------------------------
-    -- Utility strip
-    -- -----------------------------------------------------------------------
-    local util_cy  = EDGE_B + PADDING + util_h / 2
-    local util_tw  = math.floor((grid_w - GUTTER * 3) / 4)
+    -- ── Utility strip ──────────────────────────────────────────────────────
     local util_defs = {
-        { id = "rules_open",  label = "RULES",  acc = C_U_RULES },
-        { id = "share",       label = "SHARE",  acc = C_U_SHARE },
-        { id = "help_open",   label = "HELP",   acc = C_U_HELP  },
-        { id = "theme_cycle", label = "THEME",  acc = C_U_THEME },
+        { id = "rules_open",  label = "RULES", acc = C_PAPER },
+        { id = "share",       label = "SHARE", acc = C_BRASS },
+        { id = "help_open",   label = "HELP",  acc = C_EMBER },
+        { id = "theme_cycle", label = "THEME", acc = C_BRASS },
     }
-
+    local utw = math.floor(W / 4) - G * 3 / 4
     for i, u in ipairs(util_defs) do
-        local ux = grid_l + (i - 1) * (util_tw + GUTTER) + util_tw / 2
-        util_tile(self, {
-            x = ux, y = util_cy, w = util_tw, h = util_h,
-            label = u.label, accent_col = u.acc, btn_id = u.id,
-        })
+        local ux = L + (i - 1) * (utw + G) + utw / 2
+        util_tile(self, { x = ux, y = util_cy, w = utw, h = util_h,
+            label = u.label, accent_col = u.acc, btn_id = u.id })
     end
 
-    -- Bottom Right Deco Star (Matches the 4-point shape in corner)
-    local deco = track(self, gui.new_box_node(vmath.vector3(grid_r + 4, util_cy, 0), vmath.vector3(44, 44, 0)))
-    pcall(gui.play_flipbook, deco, hash("diamonds"))
-    gui.set_color(deco, vmath.vector4(0.5, 0.5, 0.5, 1))
-
-    -- -----------------------------------------------------------------------
-    -- Draw Active Overlays on top of the main Lobby UI
-    -- -----------------------------------------------------------------------
-    if self.state == STATE_AI_SELECT then
-        draw_ai_select(self)
-    elseif self.state == STATE_TOURNEY then
-        draw_tournament(self)
-    end
-
+    -- Overlays
     draw_tutorial(self)
     draw_consent(self)
 end

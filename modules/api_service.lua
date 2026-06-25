@@ -119,11 +119,25 @@ local function request(method, endpoint, payload, cb)
 	end, headers, body, options)
 end
 
--- ── endpoints ───────────────────────────────────────────────────────────────
-function M.device_login(cb)
-	request("GET", "/users/device_login", nil, cb)
+-- ── auth (Google / Firebase) ─────────────────────────────────────────────────
+-- POST /auth/firebase { idToken }. The Firebase ID token comes from the native
+-- Google sign-in. On success the backend returns { user, token }; stash the app
+-- JWT so every later request is authenticated.
+function M.auth_firebase(id_token, cb)
+	request("POST", "/auth/firebase", { idToken = id_token }, function(result)
+		if result.success and result.data and result.data.token then
+			M.set_auth_token(result.data.token)
+		end
+		if cb then cb(result) end
+	end)
 end
 
+-- PATCH /auth/phone { phoneNumber } — free-form, no OTP, changeable any time.
+function M.update_phone(phone, cb)
+	request("PATCH", "/auth/phone", { phoneNumber = phone or "" }, cb)
+end
+
+-- ── endpoints ───────────────────────────────────────────────────────────────
 function M.get_user(user_id, cb)
 	if not user_id or user_id == "" then
 		return cb({ success = false, status_code = 0, data = {}, message = "User ID required" })
@@ -133,26 +147,6 @@ end
 
 function M.update_profile(user_id, update_data, cb)
 	request("PUT", "/users/" .. user_id, update_data, cb)
-end
-
-function M.send_otp(phone_number, is_update, cb)
-	local payload = { phoneNumber = phone_number, channel = "sms", deviceId = M.get_device_id() }
-	if is_update then
-		payload.isUpdate = true
-	end
-	request("POST", "/otp/send", payload, cb)
-end
-
-function M.verify_otp(phone_number, code, cb)
-	local payload = { phoneNumber = phone_number, code = code, deviceId = M.get_device_id() }
-	request("POST", "/otp/verify", payload, function(result)
-		if result.success and result.data and result.data.idToken then
-			M.set_auth_token(result.data.idToken)
-		end
-		if cb then
-			cb(result)
-		end
-	end)
 end
 
 function M.send_transaction(payload, cb)

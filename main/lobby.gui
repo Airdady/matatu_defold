@@ -4,6 +4,14 @@ fonts {
   font: "/fonts/title.font"
 }
 fonts {
+  name: "subtitle1"
+  font: "/fonts/subtitle1.font"
+}
+fonts {
+  name: "btn_lg"
+  font: "/fonts/btn_lg.font"
+}
+fonts {
   name: "body"
   font: "/fonts/body.font"
 }
