@@ -5,8 +5,4 @@ dependencies {
 
     // OneSignal Push Notification Dependency
     implementation 'com.onesignal:OneSignal:5.4.2'
-
-    // Google sign-in (account chooser + ID token). play-services-auth only — no
-    // Firebase SDK, so no google-services.json and no minSdk-23 manifest clash.
-    implementation 'com.google.android.gms:play-services-auth:20.7.0'
 }
