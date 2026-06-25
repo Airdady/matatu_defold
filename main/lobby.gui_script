@@ -1,25 +1,7 @@
 -- =============================================================================
 --  lobby.gui_script  —  Matatu "Fight Lobby" Full-Screen Tile Grid
 --
---  Layout (3 rows, driven entirely by screen.metrics()):
---
---    ROW 1+2 (main grid):
---      [ PLAY ONLINE  full-height  ~52% w ] [ QUICK PLAY   top ~48% w ]
---      [                                  ] [ BATTLE AI    top ~48% w ]  <- split
---      [                                  ] [ TOURNAMENT   bot ~48% w ]
---
---    ROW 3 (utility strip — fixed height UTIL_H):
---      [ RULES ][ SHARE ][ HELP ][ THEME ]   full width, 4 equal square tiles
---
---  Palette (single brown/earth family — no hue-hopping accents):
---    C_CREAM   #FFF9F0  — text / light
---    C_RED     #ED1C24  — PLAY ONLINE / CTA  (the one deliberate pop colour)
---    C_DARK    #37251B  — background / gutters
---    C_GOLD    #C8943C  — Quick Play / Share / Live badge
---    C_COPPER  #B55C2E  — Battle AI / New badge
---    C_TAN     #9C7B53  — Tournament / Hot badge / Theme
---
---  All geometry is derived from screen.metrics() — no hard-coded pixel sizes.
+--  Redesigned to match the dark, textured, bordered aesthetic.
 -- =============================================================================
 
 local ui         = require("modules.ui")
@@ -32,24 +14,27 @@ local akira      = require("modules.akira")
 -- ---------------------------------------------------------------------------
 -- Canvas — refreshed from screen.metrics() before every rebuild
 -- ---------------------------------------------------------------------------
+local LOGICAL_W, LOGICAL_H = 1280, 720
 local VW, VH = 1280, 720
 local EDGE_L, EDGE_R, EDGE_B, EDGE_T = 0, 1280, 0, 720
 local CX, CY = 640, 360
 
 -- ---------------------------------------------------------------------------
--- Palette — one warm brown/earth family throughout. No green / orange / purple.
+-- Palette (Matching Screenshot)
 -- ---------------------------------------------------------------------------
-local C_CREAM   = vmath.vector4(1.000, 0.976, 0.941, 1.00)  -- #FFF9F0
-local C_RED     = vmath.vector4(0.929, 0.110, 0.141, 1.00)  -- #ED1C24  (sole accent pop)
-local C_DARK    = vmath.vector4(0.216, 0.145, 0.106, 1.00)  -- #37251B
-local C_TILE    = vmath.vector4(0.063, 0.031, 0.016, 1.00)  -- near-black tile base
+local C_CREAM   = vmath.vector4(1.000, 0.980, 0.950, 1.00)
+local C_RED     = vmath.vector4(0.929, 0.110, 0.141, 1.00)
+local C_DARKRED = vmath.vector4(0.600, 0.100, 0.100, 1.00)
+local C_GOLD    = vmath.vector4(0.784, 0.580, 0.235, 1.00)
+local C_BORDER  = vmath.vector4(0.350, 0.290, 0.200, 1.00) -- Thin gold border
+local C_TILE    = vmath.vector4(0.060, 0.050, 0.040, 0.95) -- Almost black tile fill
+local C_DARK    = vmath.vector4(0.050, 0.040, 0.030, 0.95)
 local C_TRANSP  = vmath.vector4(0, 0, 0, 0)
-local C_MUTED   = vmath.vector4(1.000, 0.976, 0.941, 0.48)
+local C_MUTED   = vmath.vector4(0.600, 0.600, 0.600, 1.00)
 
--- Mode accent colours — tonal variants within the brown family
-local C_GOLD    = vmath.vector4(0.784, 0.580, 0.235, 1.00)  -- #C8943C  quick play
-local C_COPPER  = vmath.vector4(0.710, 0.361, 0.180, 1.00)  -- #B55C2E  battle ai
-local C_TAN     = vmath.vector4(0.612, 0.482, 0.325, 1.00)  -- #9C7B53  tournament
+-- Mode accent colours
+local C_COPPER  = C_GOLD
+local C_TAN     = C_GOLD
 
 -- ---------------------------------------------------------------------------
 -- Redesign palette — a quiet, premium type-led set that rides on the dark
@@ -74,13 +59,13 @@ local C_U_SHARE = C_GOLD
 local C_U_HELP  = C_RED
 local C_U_THEME = C_TAN
 
--- Akira / consent palette — same warm brown family, no blue-grey or green
+-- Akira / consent palette
 local CONSENT_PANEL   = vmath.vector4(0.110, 0.071, 0.051, 1.0)
-local CONSENT_ACCENT  = vmath.vector4(0.949, 0.702, 0.180, 1.0)  -- warm gold
-local CONSENT_BODY_C  = vmath.vector4(0.850, 0.800, 0.750, 1.0)  -- warm cream-grey
+local CONSENT_ACCENT  = vmath.vector4(0.949, 0.702, 0.180, 1.0)
+local CONSENT_BODY_C  = vmath.vector4(0.850, 0.800, 0.750, 1.0)
 local CONSENT_DARK    = vmath.vector4(0.082, 0.055, 0.040, 1.0)
 local CONSENT_NEUTRAL = vmath.vector4(0.180, 0.140, 0.110, 1.0)
-local CONSENT_DONE    = vmath.vector4(0.612, 0.482, 0.325, 1.0)  -- tan, "installed" state
+local CONSENT_DONE    = vmath.vector4(0.612, 0.482, 0.325, 1.0)
 
 local INSTALL_DURATION = 2.8
 local INSTALL_STEPS = {
@@ -90,44 +75,26 @@ local INSTALL_STEPS = {
 }
 
 -- ---------------------------------------------------------------------------
--- Layout constants
+-- Layout & State constants
 -- ---------------------------------------------------------------------------
-local GUTTER = 3   -- gap between every tile (shows the dark bg)
-local UTIL_H = 52  -- height of the utility strip row (scales with VH below)
+local GUTTER = 10
+local PADDING = 32
+local HEADER_H = 65
+
+local STATE_LOBBY     = "lobby"
+local STATE_AI_SELECT = "ai_select"
+local STATE_TOURNEY   = "tournament"
 
 -- ---------------------------------------------------------------------------
 -- Tutorial data
 -- ---------------------------------------------------------------------------
 local TUTORIAL_PAGES = {
-    { t = "WELCOME TO MATATU", lines = {
-        "East Africa's favourite card game.",
-        "Match, attack, and be the first to",
-        "empty your hand to win!" } },
-    { t = "GAME MODES", lines = {
-        "PLAY ONLINE  —  live coin matches",
-        "QUICK PLAY  —  practice vs the AI",
-        "BATTLE AI  —  best-of series",
-        "TOURNAMENT  —  bracket of players" } },
-    { t = "HOW TO PLAY", lines = {
-        "On your turn, play a card matching the",
-        "top card's SUIT or NUMBER.",
-        "No match?  Tap the deck to DRAW." } },
-    { t = "SPECIAL CARDS", lines = {
-        "8 / J    skip the opponent (play again)",
-        "2 / 3    opponent draws a penalty",
-        "Ace      choose the next suit",
-        "Joker    pass on a 5-card penalty",
-        "Ace of Spades  cancels any penalty",
-        "7    the cutting card can end a round" } },
-    { t = "WIN & CLIMB", lines = {
-        "Empty your hand to win the round.",
-        "Earn POINTS to climb the weekly rank.",
-        "Prizes are paid every Wednesday midday",
-        "and Saturday midnight (EAT)." } },
-    { t = "YOU'RE READY!", lines = {
-        "Tap PLAY ONLINE to challenge real",
-        "players, or QUICK PLAY to practice.",
-        "Good luck — and have fun!" } },
+    { t = "WELCOME TO MATATU", lines = { "East Africa's favourite card game.", "Match, attack, and be the first to", "empty your hand to win!" } },
+    { t = "GAME MODES", lines = { "PLAY ONLINE  —  live coin matches", "QUICK PLAY  —  practice vs the AI", "BATTLE AI  —  best-of series", "TOURNAMENT  —  bracket of players" } },
+    { t = "HOW TO PLAY", lines = { "On your turn, play a card matching the", "top card's SUIT or NUMBER.", "No match?  Tap the deck to DRAW." } },
+    { t = "SPECIAL CARDS", lines = { "8 / J    skip the opponent (play again)", "2 / 3    opponent draws a penalty", "Ace      choose the next suit", "Joker    pass on a 5-card penalty", "Ace of Spades  cancels any penalty", "7    the cutting card can end a round" } },
+    { t = "WIN & CLIMB", lines = { "Empty your hand to win the round.", "Earn POINTS to climb the weekly rank.", "Prizes are paid every Wednesday midday", "and Saturday midnight (EAT)." } },
+    { t = "YOU'RE READY!", lines = { "Tap PLAY ONLINE to challenge real", "players, or QUICK PLAY to practice.", "Good luck — and have fun!" } },
 }
 
 -- ---------------------------------------------------------------------------
@@ -148,10 +115,14 @@ end
 
 local function track(self, n) self.nodes[#self.nodes + 1] = n; return n end
 
+local function set_pivot(node, pivot)
+    pcall(gui.set_pivot, node, pivot)
+    return node
+end
+
 local function text_sh(self, pos, str, font, color, ox, oy)
     ox = ox or 1; oy = oy or -2
-    track(self, ui.text(vmath.vector3(pos.x + ox, pos.y + oy, 0),
-        str, font, vmath.vector4(0, 0, 0, 0.55)))
+    track(self, ui.text(vmath.vector3(pos.x + ox, pos.y + oy, 0), str, font, vmath.vector4(0, 0, 0, 0.8)))
     return track(self, ui.text(pos, str, font, color))
 end
 
@@ -225,8 +196,6 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Main mode-tile builder
--- cfg: x,y,w,h, accent, title, sub, badge_label, badge_col,
---      cta_label, featured(bool), watermark(str), btn_id, btn_data
 -- ---------------------------------------------------------------------------
 -- Shadowed left-aligned text (subtle depth for headings on the dark texture).
 local function textLs(self, x, y, str, font, color)
@@ -291,9 +260,6 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Utility square-tile builder
--- Each tile matches the same square aesthetic as mode tiles:
---   dark fill, 3-px accent bar on top, icon glyph + label centred.
--- cfg: x, y, w, h, label, icon_text, accent_col, btn_id
 -- ---------------------------------------------------------------------------
 local function util_tile(self, cfg)
     local x, y, w, h = cfg.x, cfg.y, cfg.w, cfg.h
@@ -309,12 +275,13 @@ local function util_tile(self, cfg)
 end
 
 -- ---------------------------------------------------------------------------
--- Tutorial overlay
+-- Overlays (Tutorial, Consent, AI, Tournament)
 -- ---------------------------------------------------------------------------
 local function tutorial_seen()
     local ok, data = pcall(sys.load, sys.get_save_file("matatu_defold", "tutorial"))
     return ok and type(data) == "table" and data.seen == true
 end
+
 local function mark_tutorial_seen()
     pcall(sys.save, sys.get_save_file("matatu_defold", "tutorial"), { seen = true })
 end
@@ -326,20 +293,18 @@ local function draw_tutorial(self)
     if not data then return end
     local total = #TUTORIAL_PAGES
 
-    local scrim = track(self, ui.box(vmath.vector3(CX, CY, 0),
-        vmath.vector3(VW * 2, VH * 2, 0), vmath.vector4(0, 0, 0, 0.72)))
+    local scrim = track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.85)))
     self.buttons[#self.buttons + 1] = { node = scrim, id = "tut_block" }
 
     local pw, ph = 600, 400
     track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), C_DARK))
-    track(self, ui.box(vmath.vector3(CX, CY + ph / 2 - 2, 0),
-        vmath.vector3(pw, 4, 0), C_RED))
+    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), C_BORDER))
+    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw - 2, ph - 2, 0), C_TILE))
+    
+    track(self, ui.box(vmath.vector3(CX, CY + ph / 2 - 2, 0), vmath.vector3(pw, 4, 0), C_RED))
 
-    track(self, ui.text(vmath.vector3(CX, CY + ph / 2 - 22, 0),
-        string.format("STEP %d OF %d", page, total), "small",
-        vmath.vector4(1, 1, 1, 0.38)))
-    text_sh(self, vmath.vector3(CX, CY + ph / 2 - 56, 0),
-        data.t, "title", C_CREAM, 2, -2)
+    track(self, ui.text(vmath.vector3(CX, CY + ph / 2 - 22, 0), string.format("STEP %d OF %d", page, total), "small", vmath.vector4(1, 1, 1, 0.38)))
+    text_sh(self, vmath.vector3(CX, CY + ph / 2 - 56, 0), data.t, "title", C_CREAM, 2, -2)
 
     local ly = CY + 70
     for _, line in ipairs(data.lines) do
@@ -347,130 +312,218 @@ local function draw_tutorial(self)
         ly = ly - 28
     end
 
-    -- Progress dots
     local dgap = 22
     local dx0  = CX - ((total - 1) * dgap) / 2
     local dy   = CY - ph / 2 + 62
     for i = 1, total do
         local sz = (i == page) and 12 or 7
-        track(self, ui.box(vmath.vector3(dx0 + (i - 1) * dgap, dy, 0),
-            vmath.vector3(sz, sz, 0),
-            (i == page) and C_RED or vmath.vector4(1, 1, 1, 0.24)))
+        track(self, ui.box(vmath.vector3(dx0 + (i - 1) * dgap, dy, 0), vmath.vector3(sz, sz, 0), (i == page) and C_RED or vmath.vector4(1, 1, 1, 0.24)))
     end
 
-    local skb = track(self, ui.btn9(
-        vmath.vector3(CX - pw / 2 + 52, CY + ph / 2 - 22, 0),
-        vmath.vector3(88, 32, 0), "secondary_btn"))
-    track(self, ui.text(vmath.vector3(CX - pw / 2 + 52, CY + ph / 2 - 24, 0),
-        "SKIP", "small", C_MUTED))
+    local skb = track(self, ui.btn9(vmath.vector3(CX - pw / 2 + 52, CY + ph / 2 - 22, 0), vmath.vector3(88, 32, 0), "secondary_btn"))
+    track(self, ui.text(vmath.vector3(CX - pw / 2 + 52, CY + ph / 2 - 24, 0), "SKIP", "small", C_MUTED))
     self.buttons[#self.buttons + 1] = { node = skb, id = "tut_skip" }
 
     local by = CY - ph / 2 + 30
     if page > 1 then
-        local bkb = track(self, ui.btn9(
-            vmath.vector3(CX - 88, by, 0), vmath.vector3(148, 44, 0), "secondary_btn"))
+        local bkb = track(self, ui.btn9(vmath.vector3(CX - 88, by, 0), vmath.vector3(148, 44, 0), "secondary_btn"))
         text_sh(self, vmath.vector3(CX - 88, by - 1, 0), "BACK", "body", C_CREAM, 1, -1)
         self.buttons[#self.buttons + 1] = { node = bkb, id = "tut_back" }
     end
-    local nxb = track(self, ui.btn9(
-        vmath.vector3(CX + 88, by, 0), vmath.vector3(148, 44, 0), "primary_btn"))
-    text_sh(self, vmath.vector3(CX + 88, by - 1, 0),
-        (page == total) and "START" or "NEXT", "body", C_CREAM, 1, -1)
+    local nxb = track(self, ui.btn9(vmath.vector3(CX + 88, by, 0), vmath.vector3(148, 44, 0), "primary_btn"))
+    text_sh(self, vmath.vector3(CX + 88, by - 1, 0), (page == total) and "START" or "NEXT", "body", C_CREAM, 1, -1)
     self.buttons[#self.buttons + 1] = { node = nxb, id = "tut_next" }
 end
 
--- ---------------------------------------------------------------------------
--- Akira consent overlay
--- ---------------------------------------------------------------------------
 local function draw_consent(self)
     if not self.consent_active then return end
     local phase = self.consent_phase or "ask"
 
-    local scrim = track(self, ui.box(vmath.vector3(CX, CY, 0),
-        vmath.vector3(VW * 2, VH * 2, 0), vmath.vector4(0, 0, 0, 0.82)))
+    local scrim = track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.85)))
     self.buttons[#self.buttons + 1] = { node = scrim, id = "consent_block" }
 
     local pw, ph = 680, 470
-    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), CONSENT_PANEL))
+    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), C_BORDER))
+    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw - 2, ph - 2, 0), C_TILE))
+    
     local strip_col = (phase == "done") and CONSENT_DONE or CONSENT_ACCENT
-    track(self, ui.box(vmath.vector3(CX, CY + ph / 2 - 3, 0),
-        vmath.vector3(pw, 6, 0), strip_col))
+    track(self, ui.box(vmath.vector3(CX, CY + ph / 2 - 3, 0), vmath.vector3(pw, 6, 0), strip_col))
 
     local av_y = CY + ph / 2 - 84
     local frame_col = (phase == "done") and CONSENT_DONE or CONSENT_ACCENT
     track(self, ui.box(vmath.vector3(CX, av_y, 0), vmath.vector3(104, 104, 0), frame_col))
     track(self, ui.box(vmath.vector3(CX, av_y, 0), vmath.vector3(100, 100, 0), CONSENT_DARK))
-    local av = track(self, ui.avatar(vmath.vector3(CX, av_y, 0),
-        vmath.vector3(92, 92, 0), akira.avatar()))
+    local av = track(self, ui.avatar(vmath.vector3(CX, av_y, 0), vmath.vector3(92, 92, 0), akira.avatar()))
+    
     if phase == "installing" then
-        gui.animate(av, "scale", vmath.vector3(1.07, 1.07, 1),
-            gui.EASING_INOUTSINE, 0.45, 0, nil, gui.PLAYBACK_LOOP_PINGPONG)
+        gui.animate(av, "scale", vmath.vector3(1.07, 1.07, 1), gui.EASING_INOUTSINE, 0.45, 0, nil, gui.PLAYBACK_LOOP_PINGPONG)
     elseif phase == "done" then
         gui.set_scale(av, vmath.vector3(0.85, 0.85, 1))
         gui.animate(av, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTBACK, 0.4)
     end
 
     if phase == "ask" then
-        track(self, ui.text(vmath.vector3(CX, av_y - 78, 0),
-            "MEET AKIRA - YOUR AI HELPER", "subtitle2", C_CREAM, 26 / 34))
-        local lines = {
-            "Akira plays your turns whenever you go offline",
-            "or run out of time, so you never lose your",
-            "entry tokens. Install Akira to protect your games.",
-        }
+        track(self, ui.text(vmath.vector3(CX, av_y - 78, 0), "MEET AKIRA - YOUR AI HELPER", "subtitle2", C_CREAM, 26 / 34))
+        local lines = { "Akira plays your turns whenever you go offline", "or run out of time, so you never lose your", "entry tokens. Install Akira to protect your games." }
         local ly = av_y - 122
         for _, line in ipairs(lines) do
             track(self, ui.text(vmath.vector3(CX, ly, 0), line, "body", CONSENT_BODY_C, 19 / 28))
             ly = ly - 32
         end
         local by = CY - ph / 2 + 60
-        local inst = track(self, ui.box(vmath.vector3(CX + 140, by, 0),
-            vmath.vector3(248, 58, 0), CONSENT_ACCENT))
-        track(self, ui.text(vmath.vector3(CX + 140, by - 2, 0),
-            "INSTALL AKIRA", "subtitle2", CONSENT_DARK, 20 / 34))
+        local inst = track(self, ui.box(vmath.vector3(CX + 140, by, 0), vmath.vector3(248, 58, 0), CONSENT_ACCENT))
+        track(self, ui.text(vmath.vector3(CX + 140, by - 2, 0), "INSTALL AKIRA", "subtitle2", CONSENT_DARK, 20 / 34))
         self.buttons[#self.buttons + 1] = { node = inst, id = "consent_install" }
-        local later = track(self, ui.box(vmath.vector3(CX - 140, by, 0),
-            vmath.vector3(248, 58, 0), CONSENT_NEUTRAL))
-        track(self, ui.text(vmath.vector3(CX - 140, by - 2, 0),
-            "NOT NOW", "subtitle2", CONSENT_BODY_C, 20 / 34))
+        local later = track(self, ui.box(vmath.vector3(CX - 140, by, 0), vmath.vector3(248, 58, 0), CONSENT_NEUTRAL))
+        track(self, ui.text(vmath.vector3(CX - 140, by - 2, 0), "NOT NOW", "subtitle2", CONSENT_BODY_C, 20 / 34))
         self.buttons[#self.buttons + 1] = { node = later, id = "consent_later" }
 
     elseif phase == "installing" then
-        track(self, ui.text(vmath.vector3(CX, av_y - 78, 0),
-            "INSTALLING AKIRA", "subtitle2", C_CREAM, 26 / 34))
+        track(self, ui.text(vmath.vector3(CX, av_y - 78, 0), "INSTALLING AKIRA", "subtitle2", C_CREAM, 26 / 34))
         local bar_w = 480
         local bar_y = av_y - 130
-        track(self, ui.box(vmath.vector3(CX, bar_y, 0),
-            vmath.vector3(bar_w, 10, 0), CONSENT_NEUTRAL))
-        local fill = ui.box(vmath.vector3(CX - bar_w / 2, bar_y, 0),
-            vmath.vector3(1, 10, 0), CONSENT_ACCENT)
+        track(self, ui.box(vmath.vector3(CX, bar_y, 0), vmath.vector3(bar_w, 10, 0), CONSENT_NEUTRAL))
+        local fill = ui.box(vmath.vector3(CX - bar_w / 2, bar_y, 0), vmath.vector3(1, 10, 0), CONSENT_ACCENT)
         gui.set_pivot(fill, gui.PIVOT_W)
         track(self, fill)
         self._install_fill   = fill
         self._install_bar_w  = bar_w
-        self._install_pct    = track(self, ui.text(vmath.vector3(CX, bar_y - 34, 0),
-            "0%", "subtitle2", CONSENT_ACCENT, 20 / 34))
-        self._install_status = track(self, ui.text(vmath.vector3(CX, bar_y - 68, 0),
-            INSTALL_STEPS[1].label, "body", CONSENT_BODY_C, 17 / 28))
+        self._install_pct    = track(self, ui.text(vmath.vector3(CX, bar_y - 34, 0), "0%", "subtitle2", CONSENT_ACCENT, 20 / 34))
+        self._install_status = track(self, ui.text(vmath.vector3(CX, bar_y - 68, 0), INSTALL_STEPS[1].label, "body", CONSENT_BODY_C, 17 / 28))
 
     else -- done
-        track(self, ui.text(vmath.vector3(CX, av_y - 78, 0),
-            "AKIRA INSTALLED", "subtitle2", CONSENT_DONE, 26 / 34))
-        track(self, ui.text(vmath.vector3(CX, av_y - 118, 0),
-            "Akira now guards your seat whenever you", "body", CONSENT_BODY_C, 19 / 28))
-        track(self, ui.text(vmath.vector3(CX, av_y - 150, 0),
-            "drop or time out. Good luck out there!", "body", CONSENT_BODY_C, 19 / 28))
+        track(self, ui.text(vmath.vector3(CX, av_y - 78, 0), "AKIRA INSTALLED", "subtitle2", CONSENT_DONE, 26 / 34))
+        track(self, ui.text(vmath.vector3(CX, av_y - 118, 0), "Akira now guards your seat whenever you", "body", CONSENT_BODY_C, 19 / 28))
+        track(self, ui.text(vmath.vector3(CX, av_y - 150, 0), "drop or time out. Good luck out there!", "body", CONSENT_BODY_C, 19 / 28))
         local by = CY - ph / 2 + 60
-        local done_btn = track(self, ui.box(vmath.vector3(CX, by, 0),
-            vmath.vector3(248, 58, 0), CONSENT_DONE))
-        track(self, ui.text(vmath.vector3(CX, by - 2, 0),
-            "DONE", "subtitle2", CONSENT_DARK, 20 / 34))
+        local done_btn = track(self, ui.box(vmath.vector3(CX, by, 0), vmath.vector3(248, 58, 0), CONSENT_DONE))
+        track(self, ui.text(vmath.vector3(CX, by - 2, 0), "DONE", "subtitle2", CONSENT_DARK, 20 / 34))
         self.buttons[#self.buttons + 1] = { node = done_btn, id = "consent_done" }
     end
 end
 
+local function draw_ai_select(self)
+    local scrim = track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.85)))
+    self.buttons[#self.buttons + 1] = { node = scrim, id = "dialog_block" }
+
+    local pw, ph = 720, 420
+    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), C_BORDER))
+    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw-2, ph-2, 0), C_TILE))
+    
+    track(self, ui.box(vmath.vector3(CX, CY + ph / 2 - 2, 0), vmath.vector3(pw, 4, 0), C_COPPER))
+
+    text_sh(self, vmath.vector3(CX, CY + ph / 2 - 44, 0), "BATTLE AI", "title", C_CREAM, 2, -2)
+    track(self, ui.text(vmath.vector3(CX, CY + ph / 2 - 76, 0), "Choose your series length", "small", C_MUTED))
+
+    local opts = {
+        { label = "Best of 3", desc = "First to 2 wins" },
+        { label = "Best of 5", desc = "First to 3 wins" },
+        { label = "Best of 7", desc = "First to 4 wins" },
+        { label = "Best of 9", desc = "First to 5 wins" },
+    }
+    local opt_w, opt_h = 138, 96
+    local opt_y, opt_x0 = CY + 20, CX - (opt_w * 1.5 + 20 * 1.5)
+    local cur = app_state.ai_series or 3
+
+    for i, o in ipairs(opts) do
+        local ox = opt_x0 + (i - 1) * (opt_w + 20)
+        local active = (cur == (i * 2 + 1))
+        
+        track(self, ui.box(vmath.vector3(ox, opt_y, 0), vmath.vector3(opt_w, opt_h, 0), C_BORDER))
+        track(self, ui.box(vmath.vector3(ox, opt_y, 0), vmath.vector3(opt_w-2, opt_h-2, 0), active and vmath.vector4(0.20, 0.10, 0.06, 1) or C_TILE))
+        
+        if active then track(self, ui.box(vmath.vector3(ox, opt_y + opt_h / 2 - 2, 0), vmath.vector3(opt_w - 6, 3, 0), C_COPPER)) end
+        
+        text_sh(self, vmath.vector3(ox, opt_y + 14, 0), o.label, "body", active and C_COPPER or C_CREAM, 1, -1)
+        track(self, ui.text(vmath.vector3(ox, opt_y - 16, 0), o.desc, "small", C_MUTED))
+        
+        local hit = track(self, ui.box(vmath.vector3(ox, opt_y, 0), vmath.vector3(opt_w, opt_h, 0), C_TRANSP))
+        self.buttons[#self.buttons + 1] = { node = hit, id = "ai_series", data = i * 2 + 1 }
+    end
+
+    local sb_y = CY - 128
+    local sb = track(self, ui.btn9(vmath.vector3(CX, sb_y, 0), vmath.vector3(296, 60, 0), "primary_btn"))
+    text_sh(self, vmath.vector3(CX, sb_y + 3, 0), "START BATTLE", "body", C_CREAM, 2, -2)
+    track(self, ui.text(vmath.vector3(CX, sb_y - 20, 0), "vs Matatu Bot", "small", C_MUTED))
+    self.buttons[#self.buttons + 1] = { node = sb, id = "start_ai" }
+
+    local bkb = track(self, ui.btn9(vmath.vector3(CX - pw / 2 + 50, CY + ph / 2 - 24, 0), vmath.vector3(78, 32, 0), "secondary_btn"))
+    track(self, ui.text(vmath.vector3(CX - pw / 2 + 50, CY + ph / 2 - 26, 0), "< BACK", "small", C_CREAM))
+    self.buttons[#self.buttons + 1] = { node = bkb, id = "back_to_lobby" }
+end
+
+local function draw_tournament(self)
+    local scrim = track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.85)))
+    self.buttons[#self.buttons + 1] = { node = scrim, id = "dialog_block" }
+
+    local pw, ph = 720, 470
+    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), C_BORDER))
+    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw-2, ph-2, 0), C_TILE))
+    
+    track(self, ui.box(vmath.vector3(CX, CY + ph / 2 - 2, 0), vmath.vector3(pw, 4, 0), C_TAN))
+
+    text_sh(self, vmath.vector3(CX, CY + ph / 2 - 44, 0), "4-PLAYER TABLE", "title", C_CREAM, 2, -2)
+    track(self, ui.text(vmath.vector3(CX, CY + ph / 2 - 76, 0), "1 human + 3 AI  ·  choose a mode", "small", C_MUTED))
+
+    local modes = {
+        { id = "bracket", label = "QUICK BRACKET",      desc = "Most cards out each deal"      },
+        { id = "chamber", label = "ELIMINATION CHAMBER", desc = "Hit the score cap, you're out" },
+    }
+    local m_w, m_h, m_y = 298, 102, CY + 66
+    local cur_mode = app_state.t4_mode or "bracket"
+    
+    for i, m in ipairs(modes) do
+        local mx = CX - (m_w + 22) / 2 + (i - 1) * (m_w + 22)
+        local active = (cur_mode == m.id)
+        
+        track(self, ui.box(vmath.vector3(mx, m_y, 0), vmath.vector3(m_w, m_h, 0), C_BORDER))
+        track(self, ui.box(vmath.vector3(mx, m_y, 0), vmath.vector3(m_w-2, m_h-2, 0), active and vmath.vector4(0.20, 0.10, 0.06, 1) or C_TILE))
+        
+        if active then track(self, ui.box(vmath.vector3(mx, m_y + m_h / 2 - 2, 0), vmath.vector3(m_w - 6, 3, 0), C_TAN)) end
+        
+        text_sh(self, vmath.vector3(mx, m_y + 16, 0), m.label, "body", active and C_TAN or C_CREAM, 1, -1)
+        track(self, ui.text(vmath.vector3(mx, m_y - 16, 0), m.desc, "small", C_MUTED))
+        
+        local hit = track(self, ui.box(vmath.vector3(mx, m_y, 0), vmath.vector3(m_w, m_h, 0), C_TRANSP))
+        self.buttons[#self.buttons + 1] = { node = hit, id = "t4_mode", data = m.id }
+    end
+
+    local is_chamber = (cur_mode == "chamber")
+    local thr_y = CY - 64
+    track(self, ui.text(vmath.vector3(CX, thr_y + 38, 0), is_chamber and "SCORE CAP  —  reach it and you're eliminated" or "Score cap (Elimination Chamber only)", "small", is_chamber and C_CREAM or C_MUTED))
+    
+    local caps = { 200, 300, 500 }
+    local cap_w = 118
+    local cur_cap = app_state.chamber_threshold or 200
+    
+    for i, cap in ipairs(caps) do
+        local cx_ = CX - (cap_w + 14) + (i - 1) * (cap_w + 14)
+        local active = is_chamber and (cur_cap == cap)
+        
+        track(self, ui.btn9(vmath.vector3(cx_, thr_y, 0), vmath.vector3(cap_w, 48, 0), "secondary_btn"))
+        if active then track(self, ui.box(vmath.vector3(cx_, thr_y + 21, 0), vmath.vector3(cap_w - 6, 3, 0), C_TAN)) end
+        
+        text_sh(self, vmath.vector3(cx_, thr_y - 2, 0), tostring(cap), "body", active and C_TAN or (is_chamber and C_CREAM or C_MUTED), 1, -1)
+        
+        if is_chamber then
+            local hit = track(self, ui.box(vmath.vector3(cx_, thr_y, 0), vmath.vector3(cap_w, 48, 0), C_TRANSP))
+            self.buttons[#self.buttons + 1] = { node = hit, id = "chamber_threshold", data = cap }
+        end
+    end
+
+    local fb_y = CY - 166
+    local fb = track(self, ui.btn9(vmath.vector3(CX, fb_y, 0), vmath.vector3(318, 60, 0), "primary_btn"))
+    text_sh(self, vmath.vector3(CX, fb_y + 3, 0), "START", "body", C_CREAM, 2, -2)
+    track(self, ui.text(vmath.vector3(CX, fb_y - 20, 0), is_chamber and ("First to " .. tostring(cur_cap) .. " leaves the table") or "Last player standing wins", "small", C_MUTED))
+    self.buttons[#self.buttons + 1] = { node = fb, id = "start_tournament" }
+
+    local bkb = track(self, ui.btn9(vmath.vector3(CX - pw / 2 + 50, CY + ph / 2 - 24, 0), vmath.vector3(78, 32, 0), "secondary_btn"))
+    track(self, ui.text(vmath.vector3(CX - pw / 2 + 50, CY + ph / 2 - 26, 0), "< BACK", "small", C_CREAM))
+    self.buttons[#self.buttons + 1] = { node = bkb, id = "back_to_lobby" }
+end
+
 -- ---------------------------------------------------------------------------
--- MAIN REBUILD — full-screen grid + utility strip
+-- Main Rebuild
 -- ---------------------------------------------------------------------------
 local function rebuild(self)
     clear(self)
@@ -574,297 +627,64 @@ local function rebuild(self)
 end
 
 -- ---------------------------------------------------------------------------
--- Battle-AI series selector
+-- State machine & Input Handlers
 -- ---------------------------------------------------------------------------
-local function rebuild_ai_select(self)
-    clear(self)
-    track(self, ui.cover(VW, VH, C_DARK))
-    track(self, ui.cover(VW, VH, vmath.vector4(0, 0, 0, 0.45)))
-
-    local pw, ph = 720, 420
-    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0),
-        vmath.vector4(0.12, 0.07, 0.04, 1)))
-    track(self, ui.box(vmath.vector3(CX, CY + ph / 2 - 2, 0),
-        vmath.vector3(pw, 4, 0), C_COPPER))
-
-    text_sh(self, vmath.vector3(CX, CY + ph / 2 - 44, 0),
-        "BATTLE AI", "title", C_CREAM, 2, -2)
-    track(self, ui.text(vmath.vector3(CX, CY + ph / 2 - 76, 0),
-        "Choose your series length", "small", C_MUTED))
-
-    local opts = {
-        { label = "Best of 3", desc = "First to 2 wins" },
-        { label = "Best of 5", desc = "First to 3 wins" },
-        { label = "Best of 7", desc = "First to 4 wins" },
-        { label = "Best of 9", desc = "First to 5 wins" },
-    }
-    local opt_w  = 138
-    local opt_h  = 96
-    local opt_y  = CY + 20
-    local opt_x0 = CX - (opt_w * 1.5 + 20 * 1.5)
-    local cur    = app_state.ai_series or 3
-
-    for i, o in ipairs(opts) do
-        local ox     = opt_x0 + (i - 1) * (opt_w + 20)
-        local active = (cur == (i * 2 + 1))
-        track(self, ui.box(vmath.vector3(ox, opt_y, 0),
-            vmath.vector3(opt_w, opt_h, 0),
-            active and vmath.vector4(0.20, 0.10, 0.06, 1)
-                    or vmath.vector4(0.14, 0.08, 0.05, 1)))
-        if active then
-            track(self, ui.box(vmath.vector3(ox, opt_y + opt_h / 2 - 2, 0),
-                vmath.vector3(opt_w - 6, 3, 0), C_COPPER))
-        end
-        text_sh(self, vmath.vector3(ox, opt_y + 14, 0),
-            o.label, "body", active and C_COPPER or C_CREAM, 1, -1)
-        track(self, ui.text(vmath.vector3(ox, opt_y - 16, 0),
-            o.desc, "small", C_MUTED))
-        local hit = track(self, ui.box(vmath.vector3(ox, opt_y, 0),
-            vmath.vector3(opt_w, opt_h, 0), C_TRANSP))
-        self.buttons[#self.buttons + 1] = { node = hit, id = "ai_series", data = i * 2 + 1 }
-    end
-
-    local sb_y = CY - 128
-    local sb = track(self, ui.btn9(vmath.vector3(CX, sb_y, 0),
-        vmath.vector3(296, 60, 0), "primary_btn"))
-    text_sh(self, vmath.vector3(CX, sb_y + 3, 0), "START BATTLE", "body", C_CREAM, 2, -2)
-    track(self, ui.text(vmath.vector3(CX, sb_y - 20, 0),
-        "vs Matatu Bot", "small", C_MUTED))
-    self.buttons[#self.buttons + 1] = { node = sb, id = "start_ai" }
-
-    local bkb = track(self, ui.btn9(
-        vmath.vector3(CX - pw / 2 + 50, CY + ph / 2 - 24, 0),
-        vmath.vector3(78, 32, 0), "secondary_btn"))
-    track(self, ui.text(vmath.vector3(CX - pw / 2 + 50, CY + ph / 2 - 26, 0),
-        "< BACK", "small", C_CREAM))
-    self.buttons[#self.buttons + 1] = { node = bkb, id = "back_to_lobby" }
-end
-
--- ---------------------------------------------------------------------------
--- Tournament selector
--- ---------------------------------------------------------------------------
-local function rebuild_tournament(self)
-    clear(self)
-    track(self, ui.cover(VW, VH, C_DARK))
-    track(self, ui.cover(VW, VH, vmath.vector4(0, 0, 0, 0.45)))
-
-    local pw, ph = 720, 470
-    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0),
-        vmath.vector4(0.12, 0.07, 0.04, 1)))
-    track(self, ui.box(vmath.vector3(CX, CY + ph / 2 - 2, 0),
-        vmath.vector3(pw, 4, 0), C_TAN))
-
-    text_sh(self, vmath.vector3(CX, CY + ph / 2 - 44, 0),
-        "4-PLAYER TABLE", "title", C_CREAM, 2, -2)
-    track(self, ui.text(vmath.vector3(CX, CY + ph / 2 - 76, 0),
-        "1 human + 3 AI  ·  choose a mode", "small", C_MUTED))
-
-    local modes = {
-        { id = "bracket", label = "QUICK BRACKET",       desc = "Most cards out each deal"      },
-        { id = "chamber", label = "ELIMINATION CHAMBER", desc = "Hit the score cap, you're out" },
-    }
-    local m_w, m_h = 298, 102
-    local m_y      = CY + 66
-    local cur_mode = app_state.t4_mode or "bracket"
-    for i, m in ipairs(modes) do
-        local mx     = CX - (m_w + 22) / 2 + (i - 1) * (m_w + 22)
-        local active = (cur_mode == m.id)
-        track(self, ui.box(vmath.vector3(mx, m_y, 0), vmath.vector3(m_w, m_h, 0),
-            active and vmath.vector4(0.20, 0.10, 0.06, 1)
-                    or vmath.vector4(0.14, 0.08, 0.05, 1)))
-        if active then
-            track(self, ui.box(vmath.vector3(mx, m_y + m_h / 2 - 2, 0),
-                vmath.vector3(m_w - 6, 3, 0), C_TAN))
-        end
-        text_sh(self, vmath.vector3(mx, m_y + 16, 0),
-            m.label, "body", active and C_TAN or C_CREAM, 1, -1)
-        track(self, ui.text(vmath.vector3(mx, m_y - 16, 0),
-            m.desc, "small", C_MUTED))
-        local hit = track(self, ui.box(vmath.vector3(mx, m_y, 0),
-            vmath.vector3(m_w, m_h, 0), C_TRANSP))
-        self.buttons[#self.buttons + 1] = { node = hit, id = "t4_mode", data = m.id }
-    end
-
-    local is_chamber = (cur_mode == "chamber")
-    local thr_y      = CY - 64
-    track(self, ui.text(vmath.vector3(CX, thr_y + 38, 0),
-        is_chamber and "SCORE CAP  —  reach it and you're eliminated"
-                    or "Score cap (Elimination Chamber only)",
-        "small", is_chamber and C_CREAM or C_MUTED))
-    local caps    = { 200, 300, 500 }
-    local cap_w   = 118
-    local cur_cap = app_state.chamber_threshold or 200
-    for i, cap in ipairs(caps) do
-        local cx_ = CX - (cap_w + 14) + (i - 1) * (cap_w + 14)
-        local active = is_chamber and (cur_cap == cap)
-        track(self, ui.btn9(vmath.vector3(cx_, thr_y, 0),
-            vmath.vector3(cap_w, 48, 0), "secondary_btn"))
-        if active then
-            track(self, ui.box(vmath.vector3(cx_, thr_y + 21, 0),
-                vmath.vector3(cap_w - 6, 3, 0), C_TAN))
-        end
-        text_sh(self, vmath.vector3(cx_, thr_y - 2, 0),
-            tostring(cap), "body",
-            active and C_TAN or (is_chamber and C_CREAM or C_MUTED), 1, -1)
-        if is_chamber then
-            local hit = track(self, ui.box(vmath.vector3(cx_, thr_y, 0),
-                vmath.vector3(cap_w, 48, 0), C_TRANSP))
-            self.buttons[#self.buttons + 1] = { node = hit, id = "chamber_threshold", data = cap }
-        end
-    end
-
-    local fb_y = CY - 166
-    local fb = track(self, ui.btn9(vmath.vector3(CX, fb_y, 0),
-        vmath.vector3(318, 60, 0), "primary_btn"))
-    text_sh(self, vmath.vector3(CX, fb_y + 3, 0), "START", "body", C_CREAM, 2, -2)
-    track(self, ui.text(vmath.vector3(CX, fb_y - 20, 0),
-        is_chamber
-            and ("First to " .. tostring(cur_cap) .. " leaves the table")
-            or "Last player standing wins",
-        "small", C_MUTED))
-    self.buttons[#self.buttons + 1] = { node = fb, id = "start_tournament" }
-
-    local bkb = track(self, ui.btn9(
-        vmath.vector3(CX - pw / 2 + 50, CY + ph / 2 - 24, 0),
-        vmath.vector3(78, 32, 0), "secondary_btn"))
-    track(self, ui.text(vmath.vector3(CX - pw / 2 + 50, CY + ph / 2 - 26, 0),
-        "< BACK", "small", C_CREAM))
-    self.buttons[#self.buttons + 1] = { node = bkb, id = "back_to_lobby" }
-
-    local onb = track(self, ui.btn9(
-        vmath.vector3(CX + pw / 2 - 88, CY + ph / 2 - 24, 0),
-        vmath.vector3(148, 32, 0), "secondary_btn"))
-    track(self, ui.text(vmath.vector3(CX + pw / 2 - 88, CY + ph / 2 - 26, 0),
-        "ONLINE CUP >", "small", C_TAN))
-    self.buttons[#self.buttons + 1] = { node = onb, id = "online_tournament" }
-end
-
--- ---------------------------------------------------------------------------
--- State machine
--- ---------------------------------------------------------------------------
-local STATE_LOBBY     = "lobby"
-local STATE_AI_SELECT = "ai_select"
-local STATE_TOURNEY   = "tournament"
-
 local function set_state(self, new_state)
     self.state = new_state
-    if     new_state == STATE_LOBBY     then rebuild(self)
-    elseif new_state == STATE_AI_SELECT then rebuild_ai_select(self)
-    elseif new_state == STATE_TOURNEY   then rebuild_tournament(self)
-    end
+    rebuild(self)
 end
 
--- ---------------------------------------------------------------------------
--- Input handler
--- ---------------------------------------------------------------------------
 local function handle(self, b)
+    -- Prevent clicks from falling through the overlays
+    if b.id == "consent_block" or b.id == "tut_block" or b.id == "dialog_block" then return end
 
-    -- Akira consent
-    if     b.id == "consent_block"   then return
-    elseif b.id == "consent_install" then
-        self.consent_phase = "installing"; self._install_t = 0
-        rebuild(self); return
-    elseif b.id == "consent_done"    then
-        self.consent_active = false; rebuild(self); return
-    elseif b.id == "consent_later"   then
-        self.consent_active = false; rebuild(self); return
+    if     b.id == "consent_install" then self.consent_phase = "installing"; self._install_t = 0; rebuild(self); return
+    elseif b.id == "consent_done"    then self.consent_active = false; rebuild(self); return
+    elseif b.id == "consent_later"   then self.consent_active = false; rebuild(self); return
     end
 
-    -- Tutorial
-    if     b.id == "tut_block"  then return
-    elseif b.id == "tut_skip"   then
-        self.tutorial_active = false; mark_tutorial_seen(); rebuild(self); return
-    elseif b.id == "tut_back"   then
-        self.tut_page = math.max(1, (self.tut_page or 1) - 1); rebuild(self); return
+    if     b.id == "tut_skip"   then self.tutorial_active = false; mark_tutorial_seen(); rebuild(self); return
+    elseif b.id == "tut_back"   then self.tut_page = math.max(1, (self.tut_page or 1) - 1); rebuild(self); return
     elseif b.id == "tut_next"   then
-        if (self.tut_page or 1) >= #TUTORIAL_PAGES then
-            self.tutorial_active = false; mark_tutorial_seen()
-        else
-            self.tut_page = (self.tut_page or 1) + 1
-        end
+        if (self.tut_page or 1) >= #TUTORIAL_PAGES then self.tutorial_active = false; mark_tutorial_seen()
+        else self.tut_page = (self.tut_page or 1) + 1 end
         rebuild(self); return
     end
 
-    -- Utility strip
-    if b.id == "help_open" then
-        self.state = STATE_LOBBY
-        self.tut_page, self.tutorial_active = 1, true
-        rebuild(self); return
-    elseif b.id == "rules_open" then
-        self.state = STATE_LOBBY
-        self.tut_page, self.tutorial_active = 3, true
-        rebuild(self); return
-    elseif b.id == "support" then
-        pcall(function()
-            local config = require("modules.config")
-            sys.open_url(config.BASE_URL .. "/support")
-        end)
-        return
-    elseif b.id == "share" then
-        pcall(function()
-            local config = require("modules.config")
-            sys.open_url("https://wa.me/?text=Play%20Matatu%20with%20me!%20https%3A%2F%2F" .. config.DOMAIN)
-        end)
-        return
-    elseif b.id == "theme_cycle" then
-        -- Cycle to next theme and rebuild
-        app_state.cycle_theme()
-        set_state(self, self.state or STATE_LOBBY)
-        return
-    end
+    if b.id == "help_open" then self.state = STATE_LOBBY; self.tut_page, self.tutorial_active = 1, true; rebuild(self); return
+    elseif b.id == "rules_open" then self.state = STATE_LOBBY; self.tut_page, self.tutorial_active = 3, true; rebuild(self); return
+    elseif b.id == "support" then pcall(function() local config = require("modules.config"); sys.open_url(config.BASE_URL .. "/support") end); return
+    elseif b.id == "share" then pcall(function() local config = require("modules.config"); sys.open_url("https://wa.me/?text=Play%20Matatu%20with%20me!%20https%3A%2F%2F" .. config.DOMAIN) end); return
+    elseif b.id == "theme_cycle" then app_state.cycle_theme(); set_state(self, self.state or STATE_LOBBY); return end
 
-    -- Lobby mode tiles
-    if b.id == "play_online" then
-        msg.post("#controller", "play_online")
-
-    elseif b.id == "quick_play" then
+    if b.id == "quick_play" then
         app_state.mode = "offline"
         local me = ws.current_user_data or {}
         app_state.offline_game = game_logic.new({
-            human_id     = "you",    ai_id       = "ai",
-            human_name   = me.username or "You",  human_avatar = me.avatar or 1,
-            ai_name      = "Matatu Bot",           ai_avatar    = 2,
-            rules        = "JOKERS",
-            series       = 1,    p_wins = 0,    ai_wins = 0
+            human_id = "you", ai_id = "ai", human_name = me.username or "You", human_avatar = me.avatar or 1,
+            ai_name = "Matatu Bot", ai_avatar = 2, rules = "JOKERS", series = 1, p_wins = 0, ai_wins = 0
         })
         msg.post("#controller", "goto_game")
-
     elseif b.id == "battle_ai"        then set_state(self, STATE_AI_SELECT)
     elseif b.id == "quick_tournament" then set_state(self, STATE_TOURNEY)
     elseif b.id == "back_to_lobby"    then set_state(self, STATE_LOBBY)
 
-    -- AI select
-    elseif b.id == "ai_series" then
-        app_state.ai_series = b.data; set_state(self, STATE_AI_SELECT)
-
+    elseif b.id == "ai_series" then app_state.ai_series = b.data; set_state(self, STATE_AI_SELECT)
     elseif b.id == "start_ai" then
         app_state.mode = "offline"
         local me = ws.current_user_data or {}
         app_state.offline_game = game_logic.new({
-            human_id     = "you",    ai_id       = "ai",
-            human_name   = me.username or "You",  human_avatar = me.avatar or 1,
-            ai_name      = "Matatu Bot",           ai_avatar    = 2,
-            rules        = "JOKERS",
-            series       = app_state.ai_series or 3,
-            p_wins       = 0,    ai_wins = 0
+            human_id = "you", ai_id = "ai", human_name = me.username or "You", human_avatar = me.avatar or 1,
+            ai_name = "Matatu Bot", ai_avatar = 2, rules = "JOKERS", series = app_state.ai_series or 3, p_wins = 0, ai_wins = 0
         })
         msg.post("#controller", "goto_game")
 
-    -- Tournament
-    elseif b.id == "t4_mode" then
-        app_state.t4_mode = b.data; set_state(self, STATE_TOURNEY)
-
-    elseif b.id == "chamber_threshold" then
-        app_state.chamber_threshold = b.data; set_state(self, STATE_TOURNEY)
-
+    elseif b.id == "t4_mode" then app_state.t4_mode = b.data; set_state(self, STATE_TOURNEY)
+    elseif b.id == "chamber_threshold" then app_state.chamber_threshold = b.data; set_state(self, STATE_TOURNEY)
     elseif b.id == "start_tournament" then
         app_state.tournament_size = 4
-        app_state.mode = ((app_state.t4_mode or "bracket") == "chamber")
-            and "chamber4" or "tournament4"
+        app_state.mode = ((app_state.t4_mode or "bracket") == "chamber") and "chamber4" or "tournament4"
         msg.post("#controller", "goto_game")
-
-    elseif b.id == "online_tournament" then
-        msg.post("#controller", "goto_tournaments")
     end
 end
 
@@ -894,12 +714,8 @@ function update(self, dt)
     if self.consent_active and self.consent_phase == "installing" then
         self._install_t = (self._install_t or 0) + dt
         local p = math.min(1, self._install_t / INSTALL_DURATION)
-        if self._install_fill then
-            gui.set_size(self._install_fill, vmath.vector3(math.max(1, 480 * p), 10, 0))
-        end
-        if self._install_pct then
-            gui.set_text(self._install_pct, string.format("%d%%", math.floor(p * 100)))
-        end
+        if self._install_fill then gui.set_size(self._install_fill, vmath.vector3(math.max(1, 480 * p), 10, 0)) end
+        if self._install_pct then gui.set_text(self._install_pct, string.format("%d%%", math.floor(p * 100))) end
         if self._install_status then
             local label = INSTALL_STEPS[1].label
             if     p >= 0.75 then label = INSTALL_STEPS[3].label
@@ -918,8 +734,8 @@ function update(self, dt)
 end
 
 function on_message(self, message_id, message, sender)
-    if message_id == hash("screen_enter")   or
-       message_id == hash("enable")         or
+    if message_id == hash("screen_enter")  or
+       message_id == hash("enable")        or
        message_id == hash("layout_changed") then
         refresh_wh()
         set_state(self, self.state or STATE_LOBBY)
