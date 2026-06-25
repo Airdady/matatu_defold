@@ -321,7 +321,7 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("auth_google_token") then
         app_state.auth_state = "verifying"
         msg.post("#auth", "auth_state_changed")
-        api.auth_google(message.token, function(result)
+        api.auth_google(message.code, message.name, function(result)
             if result.success and type(result.data) == "table" then
                 local user = result.data.user or result.data
                 identify_and_connect(user)
