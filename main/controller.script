@@ -1,9 +1,4 @@
 -- controller.script
--- Central router + singleton owner.  Manages all screens (lobby, auth, profile,
--- online, themes, payments, tournaments, game), drives the OTP auth flow, and
--- redirects to the avatar/profile screen when the account is incomplete —
--- mirroring the Godot splashscreen._decide_next_scene logic.
-
 local ws        = require("modules.websocket_manager")
 local api       = require("modules.api_service")
 local app_state = require("modules.app_state")
@@ -11,12 +6,6 @@ local app_state = require("modules.app_state")
 local SCREENS = { "lobby", "auth", "profile", "online", "themes", "payments", "tournaments", "game" }
 
 local function show(self, screen)
-    -- Leaving the table clears any live stake pot / coin animations, and resets
-    -- the game mode. Otherwise a stale "tournament4" / "chamber4" / "online"
-    -- mode makes the NEXT game re-enter the wrong branch in game_flow.start_game
-    -- — which left the deck stuck at the 4-player position and re-created the
-    -- chamber standings container. The lobby / online flow sets the correct mode
-    -- again right before the next game starts.
     if screen ~= "game" then
         pcall(msg.post, "#coins", "coin_clear")
         app_state.mode = "offline"
@@ -26,8 +15,6 @@ local function show(self, screen)
             msg.post("#" .. s, "enable")
             msg.post("#" .. s, "screen_enter")
         elseif (screen == "payments" or screen == "themes") and s == "online" then
-            -- Payments and Themes are DIALOGS, not screens: the online lobby
-            -- stays alive (and visible) underneath the modal dim.
         else
             msg.post("#" .. s, "disable")
         end
@@ -54,13 +41,10 @@ local function route_after_auth(self)
         self._explicit_online = false
         show(self, "online")
     elseif self.screen == "auth" then
-        -- Successful (auto-)login with a complete profile and no pending game:
-        -- never leave the user stranded on the auth screen.
         show(self, "online")
     end
 end
 
--- Identify + connect using a user object.
 local function identify_and_connect(user)
     if type(user) ~= "table" then return end
     ws.current_user_data = user
@@ -68,8 +52,6 @@ local function identify_and_connect(user)
     if token ~= "" then api.set_auth_token(token) end
     api.save_session(user)
 
-    -- ── ONESIGNAL REGISTRATION LINK (EXACT GODOT PARITY) ──
-    -- Tracks the unique data storage hash index string to handle backend targeted requests
     if gameservices then
         local external_id = user._id or user.localId or ""
         if external_id ~= "" then
@@ -85,6 +67,50 @@ local function identify_and_connect(user)
     ws.connect()
 end
 
+local function gpgs_callback(self, message_id, message)
+    if message_id == gpgs.MSG_SIGN_IN or message_id == gpgs.MSG_SILENT_SIGN_IN then
+        if message.status == gpgs.STATUS_SUCCESS then
+            local auth_code = gpgs.get_server_auth_code()
+            if auth_code then
+                app_state.auth_state = "verifying"
+                msg.post("#auth", "auth_state_changed")
+                api.gpgs_login(auth_code, function(result)
+                    if result.success and type(result.data) == "table" then
+                        local user = result.data.user or result.data
+                        -- Map the backend JWT token so identify_and_connect can save it
+                        if result.data.token then user.token = result.data.token end
+                        
+                        if type(user) == "table" and (user._id or user.localId) then
+                            identify_and_connect(user)
+                            app_state.auth_state = "done"
+                            msg.post("#auth", "auth_state_changed")
+                            route_after_auth(self)
+                            return
+                        end
+                    end
+                    app_state.auth_state = "error"
+                    app_state.auth_error = result.message or "Backend auth failed"
+                    msg.post("#auth", "auth_state_changed")
+                end)
+            else
+                app_state.auth_state = "error"
+                app_state.auth_error = "Missing auth code"
+                msg.post("#auth", "auth_state_changed")
+            end
+        else
+            if message_id == gpgs.MSG_SIGN_IN then
+                app_state.auth_state = "error"
+                app_state.auth_error = message.error or "Sign in failed"
+                msg.post("#auth", "auth_state_changed")
+            elseif message_id == gpgs.MSG_SILENT_SIGN_IN then
+                -- Silent login failed, gracefully remain on the Auth UI to allow manual input
+                app_state.auth_state = "idle"
+                msg.post("#auth", "auth_state_changed")
+            end
+        end
+    end
+end
+
 function init(self)
     self.screen = "lobby"
     self.tokens = {}
@@ -93,31 +119,25 @@ function init(self)
         msg.post("#" .. s, "disable")
     end
 
-    -- ── GOOGLE IN-APP UPDATE SYSTEM CHECK ──
-    -- Triggers an async query thread to look for version updates on Google Play
-    if gameservices then
-        gameservices.check_update()
+    if gameservices then gameservices.check_update() end
+    
+    if gpgs then
+        gpgs.set_callback(function(self_, mid, m) gpgs_callback(self, mid, m) end)
     end
 
-    -- Restore a previously saved session so the user doesn't log in again.
     local cached = api.load_session()
     if cached and (cached._id or "") ~= "" then
-        local token = cached.idToken or ""
+        local token = cached.idToken or cached.token or ""
         if token ~= "" then api.set_auth_token(token) end
         ws.current_user_data = cached
         
-        ws.identify(cached._id, cached.username or "Player",
-            { amount = cached.balance or 0, charge = 0 }, "UG")
+        ws.identify(cached._id, cached.username or "Player", { amount = cached.balance or 0, charge = 0 }, "UG")
         ws.connect()
         
-        -- Sync tracking reference immediately for restored session profiles
         if gameservices then
             local external_id = cached._id or cached.localId or ""
-            if external_id ~= "" then
-                gameservices.onesignal_login(external_id)
-            end
+            if external_id ~= "" then gameservices.onesignal_login(external_id) end
         end
-        
         self._restore_pending = true
     end
 
@@ -160,48 +180,25 @@ function init(self)
     end
 
     table.insert(self.tokens, ws.on("game_start", function(gs)
-        if type(gs) == "table" and next(gs) ~= nil then
-            ws.active_game_state = gs
-        end
+        if type(gs) == "table" and next(gs) ~= nil then ws.active_game_state = gs end
         app_state.mode = "online"
         if intercept_for_search(self) then return end
-        if self.screen ~= "game" then
-            show(self, "game")
-        else
-            msg.post("#game_logic", "ws_new_game_start")
-        end
+        if self.screen ~= "game" then show(self, "game") else msg.post("#game_logic", "ws_new_game_start") end
     end))
 
     table.insert(self.tokens, ws.on("game_request_accepted", function(gs)
-        if type(gs) == "table" and next(gs) ~= nil then
-            ws.active_game_state = gs
-        end
+        if type(gs) == "table" and next(gs) ~= nil then ws.active_game_state = gs end
         app_state.mode = "online"
         if intercept_for_search(self) then return end
-        -- A genuine NEW match either arrives from a menu (screen ~= "game") or
-        -- from the game-over modal (board no longer active). A round transition
-        -- inside an ongoing series arrives while the board is still live — in
-        -- that case the pot stays on the table and we must NOT replay the coin
-        -- collection animation (coins only fly on game start / game over).
         local is_round_continuation = (self.screen == "game") and app_state.game_active
-        if self.screen ~= "game" then
-            show(self, "game")
-        else
-            msg.post("#game_logic", "ws_new_game_start")
-        end
+        if self.screen ~= "game" then show(self, "game") else msg.post("#game_logic", "ws_new_game_start") end
         if not is_round_continuation then
-            -- Stake pot: drain both players' coins into a glowing pot at the table
-            -- centre while the lobby->game transition plays underneath (#coins is a
-            -- global overlay, so the animation is never interrupted).
             local stake = (type(gs) == "table" and type(gs.stake) == "table" and tonumber(gs.stake.amount)) or 500
             pcall(msg.post, "#coins", "coin_collect_pot", {
                 amount  = stake * 2,
                 sources = { { x = 150, y = 64 }, { x = 150, y = 656 } },
                 center  = { x = 640, y = 360 },
             })
-            -- then settle the pot just above the discard pile so it stays visible
-            -- on the table without covering play. The live coin bundle IS the stake
-            -- display now (the old static stake chip has been removed entirely).
             pcall(msg.post, "#coins", "coin_pot_to", { x = 340, y = 360 })
         end
     end))
@@ -220,18 +217,10 @@ function init(self)
         pcall(msg.post, "#snd_suspense", "stop_sound")
         pcall(msg.post, "#snd_fail", "play_sound")
         local reason = (type(d) == "table" and d.message) or "No opponents available right now"
-        -- A battle-invite search runs on the online screen; the tournament reel
-        -- runs on the tournaments screen. Route the failure to whichever is open.
-        if app_state.searching_invite then
-            msg.post("#online", "ws_search_failed", { reason = reason })
-        else
-            msg.post("#tournaments", "ws_search_failed", { reason = reason })
-        end
+        if app_state.searching_invite then msg.post("#online", "ws_search_failed", { reason = reason }) else msg.post("#tournaments", "ws_search_failed", { reason = reason }) end
     end))
 
-    table.insert(self.tokens, ws.on("head_to_head", function()
-        msg.post("#online", "ws_head_to_head")
-    end))
+    table.insert(self.tokens, ws.on("head_to_head", function() msg.post("#online", "ws_head_to_head") end))
 
     forward("online_users",           "#online", "ws_online_users")
     forward("connected",              "#online", "ws_connected")
@@ -281,11 +270,7 @@ function init(self)
             pcall(msg.post, "#snd_suspense", "stop_sound")
             pcall(msg.post, "#snd_fail", "play_sound")
         end
-        if app_state.searching_invite then
-            msg.post("#online", "ws_search_failed", { reason = tostring(reason or "Declined") })
-        else
-            msg.post("#tournaments", "ws_search_failed", { reason = tostring(reason or "Declined") })
-        end
+        if app_state.searching_invite then msg.post("#online", "ws_search_failed", { reason = tostring(reason or "Declined") }) else msg.post("#tournaments", "ws_search_failed", { reason = tostring(reason or "Declined") }) end
     end))
 end
 
@@ -302,72 +287,26 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("play_online") then
         self._explicit_online = true
         if ws.current_user_data and (ws.current_user_data._id or "") ~= "" then
-            if ws.socket_connected then
-                route_after_auth(self)
-            else
-                self._restore_pending = true
-            end
+            if ws.socket_connected then route_after_auth(self) else self._restore_pending = true end
             return
         end
-        api.device_login(function(result)
-            if result.success and type(result.data) == "table" then
-                local user = result.data.user or result.data
-                if type(user) == "table" and (user._id or user.localId) then
-                    identify_and_connect(user)
-                    route_after_auth(self)
-                    return
-                end
-            end
-            show(self, "auth")
-        end)
+        show(self, "auth")
+        if gpgs then
+            app_state.auth_state = "sending"
+            msg.post("#auth", "auth_state_changed")
+            gpgs.silent_login()
+        end
 
-    elseif message_id == hash("auth_send_otp") then
-        app_state.auth_state = "sending"
-        msg.post("#auth", "auth_state_changed")
-        api.send_otp(message.phone, false, function(result)
-            if result.success then
-                local d = result.data or {}
-                if (d.status == "DEVICE_BOUND" and d.user) or d.autoLogin then
-                    identify_and_connect(d.user or d)
-                    app_state.auth_state = "done"
-                    msg.post("#auth", "auth_state_changed")
-                    route_after_auth(self)
-                else
-                    app_state.auth_state = "otp"
-                    msg.post("#auth", "auth_state_changed")
-                end
-            else
-                app_state.auth_state = "error"
-                app_state.auth_error = result.message or "Failed to send OTP"
-                msg.post("#auth", "auth_state_changed")
-            end
-        end)
-
-    elseif message_id == hash("auth_verify_otp") then
-        app_state.auth_state = "verifying"
-        msg.post("#auth", "auth_state_changed")
-        api.verify_otp(message.phone, message.code, function(result)
-            if result.success then
-                local user = result.data
-                if type(user) == "table" then
-                    if user.user then user = user.user end
-                    identify_and_connect(user)
-                end
-                app_state.auth_state = "done"
-                msg.post("#auth", "auth_state_changed")
-                route_after_auth(self)
-            else
-                app_state.auth_state = "error"
-                app_state.auth_error = result.message or "Invalid code"
-                msg.post("#auth", "auth_state_changed")
-            end
-        end)
-
-    elseif message_id == hash("auth_reset") then
-        app_state.auth_state = "idle"
-        app_state.auth_phone = ""
-        app_state.auth_error = ""
-        msg.post("#auth", "auth_state_changed")
+    elseif message_id == hash("auth_gpgs_login") then
+        if gpgs then
+            app_state.auth_state = "sending"
+            msg.post("#auth", "auth_state_changed")
+            gpgs.login()
+        else
+            app_state.auth_error = "GPGS not supported on this device"
+            app_state.auth_state = "error"
+            msg.post("#auth", "auth_state_changed")
+        end
 
     elseif message_id == hash("auth_cancel") then
         app_state.auth_state = "idle"
@@ -392,12 +331,9 @@ function on_message(self, message_id, message, sender)
                 ws.current_user_data = user
                 api.save_session(user)
 
-                -- ── PROFILE CHANGE RE-SYNC ONESIGNAL ──
                 if gameservices then
                     local external_id = user._id or user.localId or ""
-                    if external_id ~= "" then
-                        gameservices.onesignal_login(external_id)
-                    end
+                    if external_id ~= "" then gameservices.onesignal_login(external_id) end
                 end
 
                 for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile", "lobby" }) do
@@ -425,9 +361,7 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("submit_payment") then
         local user = ws.current_user_data or {}
         local payload = { phoneNumber = message.phone, amount = message.amount, type = message.ptype, _id = user._id or "" }
-        api.send_transaction(payload, function(result)
-            msg.post("#payments", "payment_result", { ok = result.success, message = result.message })
-        end)
+        api.send_transaction(payload, function(result) msg.post("#payments", "payment_result", { ok = result.success, message = result.message }) end)
 
     elseif message_id == hash("tournament_play") then
         pcall(msg.post, "#snd_suspense", "play_sound")

@@ -530,7 +530,8 @@ local function rebuild(self)
         numeral     = "01",
         title       = "PLAY ONLINE",
         sub         = "Real players • Live coin stakes",
-        badge_label = "COMING SOON",
+        cta_label   = "PLAY NOW",      -- Changed from badge_label = "COMING SOON"
+        btn_id      = "play_online",   -- Added hit node ID to make it clickable
     })
 
     -- -----------------------------------------------------------------------
@@ -641,7 +642,9 @@ local function handle(self, b)
     elseif b.id == "share" then pcall(function() local config = require("modules.config"); sys.open_url("https://wa.me/?text=Play%20Matatu%20with%20me!%20https%3A%2F%2F" .. config.DOMAIN) end); return
     elseif b.id == "theme_cycle" then app_state.cycle_theme(); set_state(self, self.state or STATE_LOBBY); return end
 
-    if b.id == "quick_play" then
+    if b.id == "play_online" then
+        msg.post("#controller", "play_online")
+    elseif b.id == "quick_play" then
         app_state.mode = "offline"
         local me = ws.current_user_data or {}
         app_state.offline_game = game_logic.new({

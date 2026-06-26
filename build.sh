@@ -9,7 +9,7 @@
 set -e
 
 # ---------------- CONFIG ----------------
-PACKAGE_NAME="com.matatu.app"
+PACKAGE_NAME="com.matatu.champ"
 BUNDLE_DIR="./bundles/android_debug"
 
 # Optional manual activity
