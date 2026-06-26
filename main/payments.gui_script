@@ -123,6 +123,9 @@ end
 
 local NUM = {"1","2","3","4","5","6","7","8","9","<","0","PAY"}
 
+-- Max saved numbers per account (kept in sync with the backend cap).
+local MAX_NUMBERS = 3
+
 -- ── Phone helpers ───────────────────────────────────────────────────────────
 local function digits(s) return (tostring(s or ""):gsub("%D", "")) end
 
@@ -258,35 +261,43 @@ rebuild = function(self)
 		self.buttons[#self.buttons+1] = { node = hit, id = "method", data = i }
 	end
 
-	-- Saved-number tags: tap to pay with a number already mapped to the account,
-	-- or "+ NEW" to type a fresh one (validated in realtime below).
+	-- Saved-number tags: ALL saved numbers are shown (cap is MAX_NUMBERS), tap to
+	-- pay with one, tap its ✕ to remove it, or "+ NEW" to type a fresh one
+	-- (validated in realtime below). "+ NEW" hides once the cap is reached.
 	local saved = saved_numbers()
-	local chips_cy = tabs_cy - 78
-	ktext(self, vmath.vector3(lx_left, chips_cy + 36, 0), "PAY WITH", 16, M_LABEL, gui.PIVOT_W)
+	local chips_cy = tabs_cy - 72
+	local CHIP_H = 44
+	ktext(self, vmath.vector3(lx_left, chips_cy + CHIP_H/2 + 12, 0), "PAY WITH", 16, M_LABEL, gui.PIVOT_W)
 
 	local chips = {}
 	for _, p in ipairs(saved) do
-		if #chips >= 3 then break end
 		chips[#chips+1] = { number = p.number }
 	end
-	chips[#chips+1] = { is_new = true }
+	local at_cap = #chips >= MAX_NUMBERS
+	if not at_cap then chips[#chips+1] = { is_new = true } end
 
-	local cgap = 8
-	local cw = (left_w - cgap * (#chips - 1)) / #chips
+	local cgap = 10
+	local cw = (left_w - cgap * (#chips - 1)) / math.max(1, #chips)
 	local ccx0 = lx_left + cw/2
 	for i, c in ipairs(chips) do
 		local x = ccx0 + (i-1) * (cw + cgap)
 		if c.is_new then
-			framed(self, x, chips_cy, cw, 48, M_PAY_BD, 1, M_TAB_BG)
-			ktext(self, vmath.vector3(x, chips_cy, 0), "+ NEW", 16, M_PAY_TXT)
-			local hit = track(self, ui.box(vmath.vector3(x, chips_cy, 0), vmath.vector3(cw, 48, 0), vmath.vector4(0,0,0,0)))
+			framed(self, x, chips_cy, cw, CHIP_H, M_PAY_BD, 1, M_TAB_BG)
+			ktext(self, vmath.vector3(x, chips_cy, 0), "+ NEW", 18, M_PAY_TXT)
+			local hit = track(self, ui.box(vmath.vector3(x, chips_cy, 0), vmath.vector3(cw, CHIP_H, 0), vmath.vector4(0,0,0,0)))
 			self.buttons[#self.buttons+1] = { node = hit, id = "chip_new" }
 		else
 			local sel = phone_key(c.number) == phone_key(self.phone)
-			framed(self, x, chips_cy, cw, 48, sel and M_FOCUS or M_TAB_BD, 1, sel and M_IN_BG_F or M_TAB_BG)
-			ktext(self, vmath.vector3(x, chips_cy, 0), to_local(c.number), 16, sel and ui.WHITE or M_TAB_TXT)
-			local hit = track(self, ui.box(vmath.vector3(x, chips_cy, 0), vmath.vector3(cw, 48, 0), vmath.vector4(0,0,0,0)))
-			self.buttons[#self.buttons+1] = { node = hit, id = "chip_pick", data = c.number }
+			framed(self, x, chips_cy, cw, CHIP_H, sel and M_FOCUS or M_TAB_BD, 1, sel and M_IN_BG_F or M_TAB_BG)
+			-- Big number text, left-aligned with little padding; ✕ on the right.
+			ktext(self, vmath.vector3(x - cw/2 + 12, chips_cy, 0), to_local(c.number), 19, sel and ui.WHITE or M_TAB_TXT, gui.PIVOT_W)
+			ktext(self, vmath.vector3(x + cw/2 - 15, chips_cy, 0), "x", 20, M_DEL_TXT)
+			-- Pick hit (whole tag) first, then the remove hit on top of the ✕ so a
+			-- tap on the ✕ is matched before the pick (on_input scans newest-first).
+			local pick = track(self, ui.box(vmath.vector3(x, chips_cy, 0), vmath.vector3(cw, CHIP_H, 0), vmath.vector4(0,0,0,0)))
+			self.buttons[#self.buttons+1] = { node = pick, id = "chip_pick", data = c.number }
+			local rm = track(self, ui.box(vmath.vector3(x + cw/2 - 14, chips_cy, 0), vmath.vector3(32, CHIP_H, 0), vmath.vector4(0,0,0,0)))
+			self.buttons[#self.buttons+1] = { node = rm, id = "chip_remove", data = c.number }
 		end
 	end
 
@@ -409,7 +420,7 @@ function on_message(self, message_id, message, sender)
 						p.names = message.names; found = true; break
 					end
 				end
-				if not found then
+				if not found and #u.phoneNumbers < MAX_NUMBERS then
 					u.phoneNumbers[#u.phoneNumbers+1] = { number = message.phone, names = message.names }
 				end
 			else
@@ -449,6 +460,26 @@ local function handle(self, b)
 		self.field = "phone"
 		self.phone_name, self.phone_status, self.phone_msg = "", "", nil
 		if self._val_timer then timer.cancel(self._val_timer); self._val_timer = nil end
+		rebuild(self)
+	elseif id == "chip_remove" then
+		-- Remove this saved number completely (locally + on the backend).
+		local removed = b.data
+		local u = ws.current_user_data or {}
+		if type(u.phoneNumbers) == "table" then
+			for i = #u.phoneNumbers, 1, -1 do
+				if phone_key(u.phoneNumbers[i].number) == phone_key(removed) then
+					table.remove(u.phoneNumbers, i)
+				end
+			end
+		end
+		-- If the removed number was the one in the field, clear it.
+		if phone_key(removed) == phone_key(self.phone) then
+			self.phone = ""
+			self.field = "phone"
+			self.phone_name, self.phone_status, self.phone_msg = "", "", nil
+			if self._val_timer then timer.cancel(self._val_timer); self._val_timer = nil end
+		end
+		msg.post("#controller", "remove_phone", { phone = removed })
 		rebuild(self)
 	elseif id:sub(1,4) == "num_" then
 		local k = b.data

@@ -378,6 +378,19 @@ function on_message(self, message_id, message, sender)
             })
         end)
 
+    elseif message_id == hash("remove_phone") then
+        -- Delete a saved number from the account; refresh local cache from the
+        -- server's authoritative list.
+        local user = ws.current_user_data or {}
+        api.delete_phone({ _id = user._id or "", phoneNumber = message.phone }, function(result)
+            local d = result.data or {}
+            if result.success and type(d.phoneNumbers) == "table" then
+                ws.current_user_data.phoneNumbers = d.phoneNumbers
+                ws.current_user_data.phoneNumber = d.phoneNumber
+            end
+            msg.post("#payments", "user_data_updated")
+        end)
+
     elseif message_id == hash("tournament_play") then
         pcall(msg.post, "#snd_suspense", "play_sound")
         ws.send_game_request({}, message.stake, { gameType = "TOURNAMENT", tournamentId = message.tournament_id, tournamentName = message.tournament_name, rules = "JOKERS" })
