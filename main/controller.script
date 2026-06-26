@@ -363,6 +363,21 @@ function on_message(self, message_id, message, sender)
         local payload = { phoneNumber = message.phone, amount = message.amount, type = message.ptype, _id = user._id or "" }
         api.send_transaction(payload, function(result) msg.post("#payments", "payment_result", { ok = result.success, message = result.message }) end)
 
+    elseif message_id == hash("validate_phone") then
+        -- Realtime name-enquiry for the payments dialog: ask the backend who owns
+        -- this number so we can show the name before any money moves.
+        local user = ws.current_user_data or {}
+        local phone = message.phone
+        api.validate_phone({ phoneNumber = phone, _id = user._id or "" }, function(result)
+            local d = result.data or {}
+            msg.post("#payments", "phone_validated", {
+                phone   = phone,
+                valid   = d.valid == true,
+                names   = d.names or "",
+                message = d.message or result.message or "",
+            })
+        end)
+
     elseif message_id == hash("tournament_play") then
         pcall(msg.post, "#snd_suspense", "play_sound")
         ws.send_game_request({}, message.stake, { gameType = "TOURNAMENT", tournamentId = message.tournament_id, tournamentName = message.tournament_name, rules = "JOKERS" })

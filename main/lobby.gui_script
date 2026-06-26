@@ -41,6 +41,8 @@ local C_U_RULES = vmath.vector4(1.000, 1.000, 1.000, 1.00)
 local C_U_SHARE = vmath.vector4(0.500, 0.400, 0.300, 1.00)
 local C_U_HELP  = vmath.vector4(0.300, 0.300, 0.300, 1.00)
 local C_U_THEME = vmath.vector4(0.800, 0.600, 0.200, 1.00)
+local C_U_CONTACT = vmath.vector4(0.300, 0.700, 0.500, 1.00)
+local C_DISABLED  = vmath.vector4(0.380, 0.380, 0.380, 1.00)
 
 -- Akira / consent palette
 local CONSENT_PANEL   = vmath.vector4(0.110, 0.071, 0.051, 1.0)
@@ -186,18 +188,27 @@ end
 -- ---------------------------------------------------------------------------
 local function util_tile(self, cfg)
     local x, y, w, h = cfg.x, cfg.y, cfg.w, cfg.h
+    local disabled = cfg.disabled
 
     track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), C_BORDER))
-    track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w - 2, h - 2, 0), C_TILE))
+    track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w - 2, h - 2, 0), disabled and C_DARK or C_TILE))
 
-    -- Centered Label
-    track(self, ui.text(vmath.vector3(x, y + 2, 0), cfg.label, "body", C_CREAM))
+    -- Centered Label (greyed when disabled)
+    track(self, ui.text(vmath.vector3(x, y + 2, 0), cfg.label, "body", disabled and C_DISABLED or C_CREAM))
+
+    -- Sub-label (e.g. lock hint) when disabled
+    if disabled and cfg.locked_hint then
+        local n = track(self, ui.text(vmath.vector3(x, y - 16, 0), cfg.locked_hint, "small", C_DISABLED))
+        set_pivot(n, gui.PIVOT_CENTER)
+    end
 
     -- Bottom indicator tick
-    track(self, ui.box(vmath.vector3(x, y - h/2 + 3, 0), vmath.vector3(20, 4, 0), cfg.accent_col))
+    track(self, ui.box(vmath.vector3(x, y - h/2 + 3, 0), vmath.vector3(20, 4, 0), disabled and C_DISABLED or cfg.accent_col))
 
+    -- A disabled tile still absorbs the tap (id flagged) so it never falls
+    -- through to a tile behind it, but the handler treats it as a no-op.
     local hit = track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), C_TRANSP))
-    self.buttons[#self.buttons + 1] = { node = hit, id = cfg.btn_id }
+    self.buttons[#self.buttons + 1] = { node = hit, id = disabled and (cfg.disabled_id or "noop") or cfg.btn_id }
 end
 
 -- ---------------------------------------------------------------------------
@@ -577,19 +588,28 @@ local function rebuild(self)
     -- Utility strip
     -- -----------------------------------------------------------------------
     local util_cy  = EDGE_B + PADDING + util_h / 2
-    local util_tw  = math.floor((grid_w - GUTTER * 3) / 4)
+    -- THEME opens the Themes screen (moved here from the online lobby) and is
+    -- locked until the player has a real account. CONTACT is new.
+    local has_account = ws.current_user_data
+        and ws.current_user_data.username
+        and ws.current_user_data.username ~= ""
     local util_defs = {
-        { id = "rules_open",  label = "RULES",  acc = C_U_RULES },
-        { id = "share",       label = "SHARE",  acc = C_U_SHARE },
-        { id = "help_open",   label = "HELP",   acc = C_U_HELP  },
-        { id = "theme_cycle", label = "THEME",  acc = C_U_THEME },
+        { id = "rules_open",   label = "RULES",   acc = C_U_RULES   },
+        { id = "share",        label = "SHARE",   acc = C_U_SHARE   },
+        { id = "help_open",    label = "HELP",    acc = C_U_HELP    },
+        { id = "theme_open",   label = "THEME",   acc = C_U_THEME,
+          disabled = not has_account, locked_hint = "SIGN IN", disabled_id = "theme_locked" },
+        { id = "contact_open", label = "CONTACT", acc = C_U_CONTACT },
     }
+    local n_util  = #util_defs
+    local util_tw = math.floor((grid_w - GUTTER * (n_util - 1)) / n_util)
 
     for i, u in ipairs(util_defs) do
         local ux = grid_l + (i - 1) * (util_tw + GUTTER) + util_tw / 2
         util_tile(self, {
             x = ux, y = util_cy, w = util_tw, h = util_h,
             label = u.label, accent_col = u.acc, btn_id = u.id,
+            disabled = u.disabled, locked_hint = u.locked_hint, disabled_id = u.disabled_id,
         })
     end
 
@@ -636,11 +656,14 @@ local function handle(self, b)
         rebuild(self); return
     end
 
+    if b.id == "noop" or b.id == "theme_locked" then return end
+
     if b.id == "help_open" then self.state = STATE_LOBBY; self.tut_page, self.tutorial_active = 1, true; rebuild(self); return
     elseif b.id == "rules_open" then self.state = STATE_LOBBY; self.tut_page, self.tutorial_active = 3, true; rebuild(self); return
     elseif b.id == "support" then pcall(function() local config = require("modules.config"); sys.open_url(config.BASE_URL .. "/support") end); return
     elseif b.id == "share" then pcall(function() local config = require("modules.config"); sys.open_url("https://wa.me/?text=Play%20Matatu%20with%20me!%20https%3A%2F%2F" .. config.DOMAIN) end); return
-    elseif b.id == "theme_cycle" then app_state.cycle_theme(); set_state(self, self.state or STATE_LOBBY); return end
+    elseif b.id == "contact_open" then pcall(function() sys.open_url("mailto:matatu.league@gmail.com?subject=Matatu%20Support") end); return
+    elseif b.id == "theme_open" then msg.post("#controller", "goto_themes"); return end
 
     if b.id == "play_online" then
         msg.post("#controller", "play_online")

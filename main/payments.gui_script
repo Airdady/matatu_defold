@@ -69,13 +69,37 @@ local function calc_fee(method, amount)
 	return 0
 end
 
+local function is_withdraw(m)
+	local t = tostring((type(m) == "table" and m.type) or ""):upper()
+	return t:find("SELL") ~= nil or t:find("WITHDRAW") ~= nil
+end
+
 local function methods()
 	local u = ws.current_user_data or {}
-	if type(u.payments) == "table" and #u.payments > 0 then return u.payments end
-	return {
-		{ type = "DEPOSIT",  min = 500,  charges = { { min = 0, fee = 0 } } },
-		{ type = "WITHDRAW", min = 1000, charges = { { min = 0, fee = 200 } } },
-	}
+	local list
+	if type(u.payments) == "table" and #u.payments > 0 then
+		list = u.payments
+	else
+		list = {
+			{ type = "DEPOSIT",  min = 500,  charges = { { min = 0, fee = 0 } } },
+			{ type = "WITHDRAW", min = 1000, charges = { { min = 0, fee = 200 } } },
+		}
+	end
+
+	-- A blocked account can never withdraw/sell — strip those tabs entirely so
+	-- the option is never even shown (the backend also enforces this).
+	if u.isBlocked then
+		local filtered = {}
+		for _, m in ipairs(list) do
+			if not is_withdraw(m) then filtered[#filtered+1] = m end
+		end
+		-- Always leave at least a deposit option so the dialog stays usable.
+		if #filtered == 0 then
+			filtered = { { type = "DEPOSIT", min = 500, charges = { { min = 0, fee = 0 } } } }
+		end
+		return filtered
+	end
+	return list
 end
 
 local function clear(self)
@@ -99,7 +123,65 @@ end
 
 local NUM = {"1","2","3","4","5","6","7","8","9","<","0","PAY"}
 
-local function rebuild(self)
+-- ── Phone helpers ───────────────────────────────────────────────────────────
+local function digits(s) return (tostring(s or ""):gsub("%D", "")) end
+
+-- Canonical compare key: last 9 significant digits (drops 0 / 256 / +256).
+local function phone_key(s)
+	local d = digits(s)
+	if #d > 9 then d = d:sub(-9) end
+	return d
+end
+
+-- Display as a local 07XXXXXXXX number.
+local function to_local(s)
+	local d = digits(s)
+	if #d > 9 then d = d:sub(-9) end
+	return (#d > 0) and ("0" .. d) or ""
+end
+
+local function saved_numbers()
+	local u = ws.current_user_data or {}
+	if type(u.phoneNumbers) == "table" then return u.phoneNumbers end
+	return {}
+end
+
+-- The cached validated name for a number among the user's saved numbers, or nil.
+local function cached_name(phone)
+	for _, p in ipairs(saved_numbers()) do
+		if phone_key(p.number) == phone_key(phone) then return p.names or "" end
+	end
+	return nil
+end
+
+local rebuild  -- forward declaration
+
+-- Debounced realtime name enquiry. A saved number resolves instantly from the
+-- cached name; a freshly typed number is sent to the backend after a short
+-- pause so we don't fire a request on every keystroke.
+local function schedule_validation(self)
+	if self._val_timer then timer.cancel(self._val_timer); self._val_timer = nil end
+
+	local phone = self.phone
+	local cached = cached_name(phone)
+	if cached and cached ~= "" then
+		self.phone_name, self.phone_status, self.phone_msg = cached, "ok", nil
+		return
+	end
+
+	if #phone_key(phone) < 9 then
+		self.phone_name, self.phone_status, self.phone_msg = "", "", nil
+		return
+	end
+
+	self.phone_name, self.phone_status, self.phone_msg = "", "verifying", nil
+	self._val_timer = timer.delay(0.6, false, function()
+		self._val_timer = nil
+		msg.post("#controller", "validate_phone", { phone = phone })
+	end)
+end
+
+rebuild = function(self)
 	clear(self)
 
 	-- 75% dim over the live lobby; absorbs every outside tap (closes dialog).
@@ -108,7 +190,7 @@ local function rebuild(self)
 	self.buttons[#self.buttons+1] = { node = dim, id = "dim" }
 
 	-- Modal panel: 600 wide, #1F1F21 with a 2px #595961 border.
-	local pw, ph = 600, 596
+	local pw, ph = 600, 660
 	local px0, py0 = CX, CY
 	framed(self, px0, py0, pw, ph, M_PANEL_BD, 2, M_PANEL)
 	local top = py0 + ph/2
@@ -142,8 +224,40 @@ local function rebuild(self)
 		self.buttons[#self.buttons+1] = { node = hit, id = "method", data = i }
 	end
 
+	-- Saved-number chips: tap to pay with a number already mapped to the
+	-- account, or "+ NEW" to type a fresh one (validated in realtime below).
+	local saved = saved_numbers()
+	local chip_y = tabs_y - 54
+	ktext(self, vmath.vector3(px0 - (pw-64)/2, chip_y + 26, 0), "PAY WITH", 14, M_LABEL, gui.PIVOT_W)
+
+	local chips = {}
+	for _, p in ipairs(saved) do
+		if #chips >= 3 then break end
+		chips[#chips+1] = { number = p.number }
+	end
+	chips[#chips+1] = { is_new = true }
+
+	local cgap = 8
+	local cw = ((pw - 64) - cgap * (#chips - 1)) / #chips
+	local ccx0 = px0 - (pw - 64)/2 + cw/2
+	for i, c in ipairs(chips) do
+		local x = ccx0 + (i-1) * (cw + cgap)
+		if c.is_new then
+			framed(self, x, chip_y, cw, 40, M_PAY_BD, 1, M_TAB_BG)
+			ktext(self, vmath.vector3(x, chip_y, 0), "+ NEW", 14, M_PAY_TXT)
+			local hit = track(self, ui.box(vmath.vector3(x, chip_y, 0), vmath.vector3(cw, 40, 0), vmath.vector4(0,0,0,0)))
+			self.buttons[#self.buttons+1] = { node = hit, id = "chip_new" }
+		else
+			local sel = phone_key(c.number) == phone_key(self.phone)
+			framed(self, x, chip_y, cw, 40, sel and M_FOCUS or M_TAB_BD, 1, sel and M_IN_BG_F or M_TAB_BG)
+			ktext(self, vmath.vector3(x, chip_y, 0), to_local(c.number), 13, sel and ui.WHITE or M_TAB_TXT)
+			local hit = track(self, ui.box(vmath.vector3(x, chip_y, 0), vmath.vector3(cw, 40, 0), vmath.vector4(0,0,0,0)))
+			self.buttons[#self.buttons+1] = { node = hit, id = "chip_pick", data = c.number }
+		end
+	end
+
 	-- Inputs: phone 1.3x amount, 64px tall, focus = blue 2px border.
-	local in_y = tabs_y - 80
+	local in_y = chip_y - 72
 	local gapx = 12
 	local in_w_total = pw - 64
 	local ph_w = in_w_total * 0.565 - gapx/2
@@ -170,8 +284,19 @@ local function rebuild(self)
 	input_field(ph_x, ph_w, "PHONE NUMBER", self.phone, "07XX XXX XXX", self.field == "phone", "focus_phone")
 	input_field(am_x, am_w, "AMOUNT (UGX)", (self.amount ~= "") and commas(self.amount) or "", "0", self.field == "amount", "focus_amount")
 
+	-- Validated account-holder name, shown right under the phone field so the
+	-- player can confirm WHO they are paying before any money moves.
+	local name_y = in_y - 44
+	if self.phone_status == "verifying" then
+		ktext(self, vmath.vector3(ph_x - ph_w/2, name_y, 0), "Checking name...", 13, M_PROC, gui.PIVOT_W)
+	elseif self.phone_status == "ok" and self.phone_name ~= "" then
+		ktext(self, vmath.vector3(ph_x - ph_w/2, name_y, 0), self.phone_name, 14, M_OKC, gui.PIVOT_W)
+	elseif self.phone_status == "error" then
+		ktext(self, vmath.vector3(ph_x - ph_w/2, name_y, 0), self.phone_msg or "Number not verified", 12, M_ERR, gui.PIVOT_W)
+	end
+
 	-- Min / Fee / Total inline row.
-	local info_y = in_y - 52
+	local info_y = name_y - 30
 	ktext(self, vmath.vector3(px0 - in_w_total/2, info_y, 0), "Min: " .. commas(minv) .. " UGX", 15,
 		(amount > 0 and amount < minv) and M_MIN_WARN or M_FEE, gui.PIVOT_W)
 	ktext(self, vmath.vector3(px0, info_y, 0), "Fee: " .. commas(fee) .. " UGX", 15, M_FEE)
@@ -187,7 +312,9 @@ local function rebuild(self)
 	local np_top = info_y - 48
 	local kw = (pw - 64) / 3
 	local kh = 60
-	local ready = amount >= minv and amount > 0 and self.phone ~= ""
+	-- PAY stays locked until the number has been verified (name resolved), so a
+	-- player can never send credit to an unconfirmed / wrong number.
+	local ready = amount >= minv and amount > 0 and self.phone ~= "" and self.phone_status == "ok"
 	for i, k in ipairs(NUM) do
 		local ci = (i-1) % 3
 		local ri = math.floor((i-1) / 3)
@@ -215,6 +342,7 @@ function init(self)
 	self.nodes, self.buttons = {}, {}
 	self.method_index = 1
 	self.phone, self.amount = "", ""
+	self.phone_name, self.phone_status, self.phone_msg = "", "", nil
 	self.field = "amount"
 	-- The dialog floats above the online lobby gui.
 	gui.set_render_order(14)
@@ -227,22 +355,55 @@ function on_message(self, message_id, message, sender)
 		msg.post(".", "acquire_input_focus")
 		self._active = true
 		self._msg = nil
+		self.method_index = 1
 		local u = ws.current_user_data or {}
-		self.phone = u.phoneNumber or u.phone or ""
-		if self.phone:sub(1,4) == "+256" then self.phone = "0"..self.phone:sub(5) end
+		-- Default to the user's default saved number (falls back to legacy field).
+		local default_num = u.phoneNumber or u.phone or ""
+		for _, p in ipairs(saved_numbers()) do
+			if p.isDefault then default_num = p.number break end
+		end
+		self.phone = to_local(default_num)
+		if self.phone == "" and (default_num or "") ~= "" then self.phone = default_num end
 		self.amount = ""
-		self.field = "amount"
+		self.field = (self.phone == "") and "phone" or "amount"
+		self.phone_name, self.phone_status, self.phone_msg = "", "", nil
+		schedule_validation(self)
 		rebuild(self)
 	elseif message_id == hash("enable") then
 		self._active = true
 	elseif message_id == hash("disable") then
 		self._active = false
+		if self._val_timer then timer.cancel(self._val_timer); self._val_timer = nil end
 		clear(self)
 	elseif message_id == hash("layout_changed") then
 		refresh_wh()
 		if self._active then rebuild(self) end
 	elseif message_id == hash("user_data_updated") then
 		if self._active then rebuild(self) end
+	elseif message_id == hash("phone_validated") then
+		-- Ignore stale replies for a number the user has since changed.
+		if phone_key(message.phone) == phone_key(self.phone) then
+			if message.valid and (message.names or "") ~= "" then
+				self.phone_name, self.phone_status, self.phone_msg = message.names, "ok", nil
+				-- Optimistically surface the freshly verified number as a chip
+				-- (the backend has also mapped it to the account).
+				local u = ws.current_user_data or {}
+				if type(u.phoneNumbers) ~= "table" then u.phoneNumbers = {} end
+				local found = false
+				for _, p in ipairs(u.phoneNumbers) do
+					if phone_key(p.number) == phone_key(message.phone) then
+						p.names = message.names; found = true; break
+					end
+				end
+				if not found then
+					u.phoneNumbers[#u.phoneNumbers+1] = { number = message.phone, names = message.names }
+				end
+			else
+				self.phone_name, self.phone_status = "", "error"
+				self.phone_msg = message.message ~= "" and message.message or "Could not verify this number"
+			end
+			if self._active then rebuild(self) end
+		end
 	elseif message_id == hash("payment_result") then
 		self._msg = message.ok and "Request sent - check your phone." or (message.message or "Failed")
 		self._msg_ok = message.ok
@@ -262,10 +423,25 @@ local function handle(self, b)
 		self.field = "phone"; rebuild(self)
 	elseif id == "focus_amount" then
 		self.field = "amount"; rebuild(self)
+	elseif id == "chip_pick" then
+		-- Re-use a saved number (validated name comes from cache, instantly).
+		self.phone = to_local(b.data)
+		self.field = "amount"
+		schedule_validation(self)
+		rebuild(self)
+	elseif id == "chip_new" then
+		-- Clear for a brand-new number; focus the phone field to type it in.
+		self.phone = ""
+		self.field = "phone"
+		self.phone_name, self.phone_status, self.phone_msg = "", "", nil
+		if self._val_timer then timer.cancel(self._val_timer); self._val_timer = nil end
+		rebuild(self)
 	elseif id:sub(1,4) == "num_" then
 		local k = b.data
 		if k == "<" then
-			if self.field == "phone" then self.phone = self.phone:sub(1,-2)
+			if self.field == "phone" then
+				self.phone = self.phone:sub(1,-2)
+				schedule_validation(self)
 			else self.amount = self.amount:sub(1,-2) end
 			rebuild(self)
 		elseif k == "PAY" then
@@ -273,16 +449,25 @@ local function handle(self, b)
 			local method = ms[self.method_index] or ms[1]
 			local amount = tonumber(self.amount) or 0
 			local fee = calc_fee(method, amount)
-			if amount >= (tonumber(method.min) or 0) and amount > 0 and self.phone ~= "" then
+			if amount >= (tonumber(method.min) or 0) and amount > 0 and self.phone ~= "" and self.phone_status == "ok" then
 				self._msg = "Processing..."; self._msg_ok = true; self._msg_proc = true
 				msg.post("#controller", "submit_payment", {
 					phone = self.phone, amount = amount + fee, ptype = method.type or "",
 				})
 				rebuild(self)
+			elseif self.phone_status ~= "ok" and self.phone ~= "" then
+				-- Nudge the user to wait for / fix verification.
+				self._msg = (self.phone_status == "verifying") and "Verifying number..." or "Please enter a valid number first."
+				self._msg_ok = false; self._msg_proc = false
+				if self.phone_status ~= "verifying" then schedule_validation(self) end
+				rebuild(self)
 			end
 		else
 			if self.field == "phone" then
-				if #self.phone < 13 then self.phone = self.phone..k end
+				if #self.phone < 13 then
+					self.phone = self.phone..k
+					schedule_validation(self)
+				end
 			else
 				if #self.amount < 9 then self.amount = self.amount..k end
 			end
