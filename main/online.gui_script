@@ -336,6 +336,13 @@ function on_message(self, message_id, message, sender)
 end
 
 function on_input(self, action_id, action)
+    -- All screens are components of ONE game object, so Defold dispatches input
+    -- to them in component order — and `online` comes before `payments`/`themes`.
+    -- When one of those is layered on top (it stays enabled only to render the
+    -- backdrop), the online lobby must NOT eat the tap, or buttons "behind" the
+    -- modal fire. Bail unless online is actually the active screen.
+    if app_state.current_screen ~= "online" then return false end
+
     -- Handle natural scrolling (Touch Dragging + Mouse Wheel Support)
     if not self.dialog and not self.battle_modal and not self.invite_search and not self.banners and self.list_region and action.x and action.y then
         local reg = self.list_region
