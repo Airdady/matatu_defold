@@ -119,13 +119,12 @@ local function request(method, endpoint, payload, cb)
 	end, headers, body, options)
 end
 
--- ── auth (Google Play Game Services sign-in) ──────────────────────────────────
--- POST /auth/google { serverAuthCode, name }. The one-time server auth code
--- comes from gpgs.get_server_auth_code(); the backend exchanges it for the
--- Google identity. On success it returns { user, token }; stash the app JWT so
--- every later request is authenticated.
-function M.auth_google(server_auth_code, name, cb)
-	request("POST", "/auth/google", { serverAuthCode = server_auth_code, name = name or "" }, function(result)
+-- ── auth (Google sign-in) ────────────────────────────────────────────────────
+-- POST /auth/google { idToken }. The Google ID token comes from the native
+-- Play Services sign-in. On success the backend returns { user, token }; stash
+-- the app JWT so every later request is authenticated.
+function M.auth_google(id_token, cb)
+	request("POST", "/auth/google", { idToken = id_token }, function(result)
 		if result.success and result.data and result.data.token then
 			M.set_auth_token(result.data.token)
 		end

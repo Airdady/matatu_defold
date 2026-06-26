@@ -17,9 +17,11 @@ M.WS_URL = "ws://" .. M.DOMAIN .. "/matatu/ws"
 M.APP_VERSION = "18.5.9"
 M.GAME_STATE_SECRET = "a27a120adfbc9f727c187748fff44547e1ee72f09481c8a965d62ed1c02e6ea3"
 
--- NOTE: Google sign-in is handled by extension-gpgs. The OAuth web client id is
--- configured in game.project under [gpgs] client_token (not here), and the same
--- value must be set as GOOGLE_CLIENT_ID on the backend (with GOOGLE_CLIENT_SECRET).
+-- OAuth *web* client id (Google Cloud Console → Credentials → OAuth 2.0 client
+-- of type "Web application"). Required by the native Google sign-in
+-- (gameservices.google_sign_in) for requestIdToken, and must match the backend
+-- GOOGLE_WEB_CLIENT_ID env used to verify the token. Replace with your value.
+M.GOOGLE_WEB_CLIENT_ID = "YOUR_WEB_CLIENT_ID.apps.googleusercontent.com"
 
 M.INITIAL_RECONNECT_DELAY = 1.0
 M.MAX_RECONNECT_DELAY = 30.0

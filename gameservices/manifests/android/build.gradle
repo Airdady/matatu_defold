@@ -5,4 +5,13 @@ dependencies {
 
     // OneSignal Push Notification Dependency
     implementation 'com.onesignal:OneSignal:5.4.2'
+
+    // Google sign-in through Firebase Auth. play-services-auth supplies the
+    // account chooser + Google credential; firebase-auth exchanges it for a
+    // Firebase ID token. firebase-auth requires minSdkVersion 23 (set in the
+    // partial AndroidManifest.xml in this extension), and FirebaseApp must be
+    // initialised by extension-firebase + google-services.json.
+    implementation 'com.google.android.gms:play-services-auth:20.7.0'
+    implementation platform('com.google.firebase:firebase-bom:33.5.1')
+    implementation 'com.google.firebase:firebase-auth'
 }

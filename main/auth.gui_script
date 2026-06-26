@@ -1,15 +1,15 @@
--- auth.gui_script — Google sign-in via Google Play Game Services (extension-gpgs).
+-- auth.gui_script — Google sign-in.
 --
--- On entry we call gpgs.silent_login(); Play Games shows the account picker
--- automatically when a sign-in is needed (and we fall back to gpgs.login() if
--- the silent attempt fails). On success we read the one-time server auth code
--- (gpgs.get_server_auth_code) and hand it to the controller (auth_google_token),
--- which the backend exchanges for the Google identity. Username, avatar and
--- phone are then collected together on the profile form (not here).
+-- On entry the Google account chooser pops automatically (the native
+-- gameservices.google_sign_in flow); we poll the result and hand the
+-- Google ID token to the controller (auth_google_token). A "Sign in with
+-- Google" button stays on screen for manual retry. Username, avatar and phone
+-- are then collected together on the profile form (not here).
 
 local ui        = require("modules.ui")
 local app_state = require("modules.app_state")
 local screen    = require("modules.screen")
+local config    = require("modules.config")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local VISIBLE_W, VISIBLE_H = 1280, 720
@@ -17,12 +17,21 @@ local EDGE_L, EDGE_R = 0, 1280
 local EDGE_B, EDGE_T = 0, 720
 local CX, CY = 640, 360
 
-local C_ACCENT    = vmath.vector4(0.502, 0.255, 0.118, 1)
-local C_STATE     = vmath.vector4(0.6, 0.6, 0.6, 1)
-local C_CREAM     = vmath.vector4(0.973, 0.925, 0.859, 1)
-local C_ERROR     = vmath.vector4(0.95, 0.45, 0.25, 1)
-local C_GOOGLE    = vmath.vector4(0.984, 0.984, 0.984, 1)  -- white pill
-local C_GOOGLE_TX = vmath.vector4(0.13, 0.14, 0.16, 1)     -- dark text
+local C_ACCENT     = vmath.vector4(0.502, 0.255, 0.118, 1)
+local C_STATE      = vmath.vector4(0.6, 0.6, 0.6, 1)
+local C_CREAM      = vmath.vector4(0.973, 0.925, 0.859, 1)
+local C_KEY_BG     = vmath.vector4(0.157, 0.122, 0.094, 1)
+local C_KEY_DEL_BG = vmath.vector4(0.267, 0.039, 0.039, 1)
+local C_DEL_TEXT   = vmath.vector4(1, 0.267, 0.267, 1)
+local C_KB_BG      = vmath.vector4(0.039, 0.039, 0.039, 1)
+local C_CURSOR     = vmath.vector4(0.3, 0.6, 1.0, 1)
+local C_ERROR      = vmath.vector4(0.95, 0.45, 0.25, 1)
+local C_OK         = vmath.vector4(0.3, 0.9, 0.5, 1)
+local C_GOOGLE     = vmath.vector4(0.984, 0.984, 0.984, 1)  -- white pill
+local C_GOOGLE_TX  = vmath.vector4(0.13, 0.14, 0.16, 1)     -- dark text
+
+local KB_H   = 244
+local SEP_H  = 12
 
 local function refresh_wh()
 	local m = screen.metrics()
@@ -32,9 +41,21 @@ local function refresh_wh()
 	CX, CY = m.CX, m.CY
 end
 
+local function fmt_phone(d)
+	local out = ""
+	for i = 1, #d do
+		out = out .. d:sub(i, i)
+		if i == 4 or i == 7 then out = out .. " " end
+	end
+	return out
+end
+-- Free-form: any 7–15 digit number. No country/format restriction.
+local function valid_phone(d) return #d >= 7 end
+
 local function clear(self)
 	for _, n in ipairs(self.nodes) do pcall(gui.delete_node, n) end
 	self.nodes, self.buttons = {}, {}
+	self._cursor = nil
 end
 local function track(self, n) self.nodes[#self.nodes+1] = n return n end
 
@@ -42,15 +63,33 @@ local function ktext(self, pos, str, px, color)
 	return track(self, ui.text(pos, str, "body", color, px / 26))
 end
 
--- Guarded gpgs call — never let a Play Games misconfig hard-crash the screen.
-local function gp_call(method, ...)
-	if not (_G.gpgs and gpgs[method]) then return nil end
-	local ok, res = pcall(gpgs[method], ...)
-	if not ok then
-		print("[auth] gpgs." .. method .. " failed: " .. tostring(res))
-		return nil
+local KEYS = {"1","2","3","4","5","6","7","8","9","0","<","OK"}
+
+local function keypad(self, prefix)
+	local kb_top = EDGE_B + KB_H
+	track(self, ui.box(vmath.vector3(CX, EDGE_B + KB_H/2, 0), vmath.vector3(VISIBLE_W + 80, KB_H, 0), C_KB_BG))
+	local cols, rows = 6, 2
+	local gap = 1
+	local kw = (VISIBLE_W - (cols - 1) * gap) / cols
+	local kh = (KB_H - gap) / rows
+	for i, k in ipairs(KEYS) do
+		local ci = (i - 1) % cols
+		local ri = math.floor((i - 1) / cols)
+		local px = EDGE_L + kw/2 + ci * (kw + gap)
+		local py = kb_top - kh/2 - ri * (kh + gap)
+		local bg_col = C_KEY_BG
+		if k == "<" then bg_col = C_KEY_DEL_BG end
+		if k == "OK" then bg_col = C_ACCENT end
+		local key = track(self, ui.box(vmath.vector3(px, py, 0), vmath.vector3(kw, kh, 0), bg_col))
+		if k == "<" then
+			ktext(self, vmath.vector3(px, py, 0), "DEL", 36, C_DEL_TEXT)
+		elseif k == "OK" then
+			ktext(self, vmath.vector3(px, py, 0), "SAVE", 32, C_CREAM)
+		else
+			ktext(self, vmath.vector3(px, py, 0), k, 48, C_CREAM)
+		end
+		self.buttons[#self.buttons+1] = { node = key, id = prefix..k, data = k }
 	end
-	return res
 end
 
 local function bg_and_header(self)
@@ -64,6 +103,15 @@ local function bg_and_header(self)
 	self.buttons[#self.buttons+1] = { node = cb, id = "cancel" }
 end
 
+local function add_cursor(self, x, y, h)
+	local c = track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(4, h, 0), C_CURSOR))
+	self._cursor = c
+	gui.animate(c, "color.w", 0, gui.EASING_INOUTSINE, 0.53, 0, nil, gui.PLAYBACK_LOOP_PINGPONG)
+end
+
+----------------------------------------------------------------------
+-- Phase 1: SIGN IN WITH GOOGLE
+----------------------------------------------------------------------
 local function build_google(self)
 	bg_and_header(self)
 
@@ -72,12 +120,13 @@ local function build_google(self)
 	ktext(self, vmath.vector3(CX, CY + 104, 0), "ONLINE CARD GAME", 20, C_STATE)
 
 	-- Google sign-in pill
-	local pill = track(self, ui.box(vmath.vector3(CX, CY - 4, 0), vmath.vector3(460, 76, 0), C_GOOGLE))
+	local bw, bh = 460, 76
+	local pill = track(self, ui.box(vmath.vector3(CX, CY - 4, 0), vmath.vector3(bw, bh, 0), C_GOOGLE))
 	ktext(self, vmath.vector3(CX, CY - 6, 0), "Sign in with Google", 30, C_GOOGLE_TX)
 	self.buttons[#self.buttons+1] = { node = pill, id = "google_signin" }
 
 	-- Status / error line
-	local sc, st = C_STATE, "Sign in with your Google account to play"
+	local sc, st = C_STATE, "We only use your Google name to set up your account"
 	if self.signing then
 		sc, st = C_ACCENT, "Opening Google sign-in..."
 	elseif app_state.auth_state == "verifying" then
@@ -87,7 +136,8 @@ local function build_google(self)
 	end
 	ktext(self, vmath.vector3(CX, CY - 86, 0), st, 18, sc)
 
-	if not _G.gpgs then
+	-- Desktop / editor builds have no native Google sign-in.
+	if not (_G.gameservices and _G.gameservices.google_sign_in) then
 		ktext(self, vmath.vector3(CX, CY - 120, 0),
 			"Google sign-in requires the Android build", 16, C_ERROR)
 	end
@@ -99,67 +149,32 @@ local function build_google(self)
 	self.buttons[#self.buttons+1] = { node = priv, id = "legal_privacy" }
 end
 
+----------------------------------------------------------------------
 local function rebuild(self)
 	clear(self)
 	build_google(self)
-end
-
--- Successful Play Games sign-in → grab the one-time server auth code for the
--- backend (and the display name as a username seed).
-local function finish_sign_in(self)
-	local code = gp_call("get_server_auth_code")
-	local name = gp_call("get_display_name") or ""
-	if code and code ~= "" then
-		msg.post("#controller", "auth_google_token", { code = code, name = name or "" })
-	else
-		self.signing = false
-		app_state.auth_state = "error"
-		app_state.auth_error = "No server auth code — check [gpgs] request_server_auth_code / client_token"
-		if self._active then rebuild(self) end
-	end
-end
-
--- gpgs callback: (self, message_id, message). Routed via gpgs.set_callback.
-local function on_gpgs(self, message_id, message)
-	if not _G.gpgs then return end
-	local ok = message and message.status == gpgs.STATUS_SUCCESS
-	if message_id == gpgs.MSG_SILENT_SIGN_IN then
-		if ok then
-			finish_sign_in(self)
-		else
-			gp_call("login")   -- silent attempt failed → show the interactive picker
-		end
-	elseif message_id == gpgs.MSG_SIGN_IN then
-		if ok then
-			finish_sign_in(self)
-		else
-			self.signing = false
-			app_state.auth_state = "error"
-			app_state.auth_error = "Google sign-in was cancelled"
-			if self._active then rebuild(self) end
-		end
-	end
-end
-
-local function start_sign_in(self)
-	if not _G.gpgs then
-		app_state.auth_state = "error"
-		app_state.auth_error = "Google sign-in requires the Android build"
-		rebuild(self)
-		return
-	end
-	app_state.auth_state = "idle"
-	app_state.auth_error = ""
-	self.signing = true
-	gp_call("set_callback", on_gpgs)
-	gp_call("silent_login")
-	rebuild(self)
 end
 
 function init(self)
 	self.nodes, self.buttons = {}, {}
 	self.signing = false
 	refresh_wh()
+end
+
+function update(self, dt)
+	-- Poll the native Google sign-in result while a sign-in is in flight.
+	if self.signing and _G.gameservices and _G.gameservices.get_sign_in_status then
+		local status, value = _G.gameservices.get_sign_in_status()
+		if status == "ok" then
+			self.signing = false
+			msg.post("#controller", "auth_google_token", { token = value })
+		elseif status == "error" then
+			self.signing = false
+			app_state.auth_state = "error"
+			app_state.auth_error = (value ~= "" and value) or "Google sign-in failed"
+			if self._active then rebuild(self) end
+		end
+	end
 end
 
 function on_message(self, message_id, message, sender)
@@ -175,10 +190,18 @@ function on_message(self, message_id, message, sender)
 		refresh_wh()
 		self._active = true
 		msg.post(".", "acquire_input_focus")
+		app_state.auth_state = "idle"
+		self.signing = false
 		rebuild(self)
-		start_sign_in(self)   -- auto-pop the Google account picker on entry
+		-- Pop the Google account chooser automatically on entry.
+		if _G.gameservices and _G.gameservices.google_sign_in then
+			self.signing = true
+			_G.gameservices.google_sign_in(config.GOOGLE_WEB_CLIENT_ID)
+			rebuild(self)
+		end
 	elseif message_id == hash("auth_state_changed") then
-		if app_state.auth_state == "done" then
+		local s = app_state.auth_state
+		if s == "done" then
 			app_state.auth_state = "idle"
 			if self._active then
 				clear(self)
@@ -193,19 +216,19 @@ function on_message(self, message_id, message, sender)
 end
 
 local function handle(self, b)
-	if b.id == "cancel" then
+	local id = b.id
+	if id == "cancel" then
 		msg.post("#controller", "auth_cancel")
-	elseif b.id == "legal_tos" then
+	elseif id == "legal_tos" then
 		pcall(sys.open_url, "https://matatu.app/terms")
-	elseif b.id == "legal_privacy" then
+	elseif id == "legal_privacy" then
 		pcall(sys.open_url, "https://matatu.app/privacy")
-	elseif b.id == "google_signin" then
-		if _G.gpgs then
-			self.signing = true
+	elseif id == "google_signin" then
+		if _G.gameservices and _G.gameservices.google_sign_in then
 			app_state.auth_state = "idle"
 			app_state.auth_error = ""
-			gp_call("set_callback", on_gpgs)
-			gp_call("login")   -- explicit interactive sign-in
+			self.signing = true
+			_G.gameservices.google_sign_in(config.GOOGLE_WEB_CLIENT_ID)
 			rebuild(self)
 		else
 			app_state.auth_state = "error"

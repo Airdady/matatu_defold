@@ -2,7 +2,7 @@
 title = Matatu
 version = 18.5.9
 dependencies#0 = https://github.com/defold/extension-websocket/archive/refs/tags/4.2.3.zip
-dependencies#1 = https://github.com/defold/extension-gpgs/archive/master.zip
+dependencies#1 = https://github.com/defold/extension-firebase/archive/master.zip
 
 [bootstrap]
 main_collection = /main/main.collectionc
@@ -35,12 +35,6 @@ default_texture_mag_filter = linear
 [android]
 package = com.matatu.champ
 input_method = INPUT_METHOD_HIDDEN
-
-[gpgs]
-app_id = YOUR_GPGS_PROJECT_ID
-use_saved_games = 0
-request_server_auth_code = 1
-client_id = YOUR_WEB_CLIENT_ID.apps.googleusercontent.com
 
 [websocket]
 debug = 0

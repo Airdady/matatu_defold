@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Partial manifest merged into the app manifest by Defold.
+  firebase-auth requires minSdkVersion 23, so raise the app's minimum here.
+  If the build still reports "minSdkVersion X cannot be smaller than 23",
+  set android:minSdkVersion="23" in the project's main AndroidManifest.xml
+  (Defold editor: Project -> Add Android Manifest) as well.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-sdk android:minSdkVersion="23" />
+</manifest>
