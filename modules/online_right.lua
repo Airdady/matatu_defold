@@ -436,11 +436,7 @@ function M.draw(self, ctx, left_M)
     track(self, ui.text(vmath.vector3(nx, ny, 0), "NEW", "btn_sm", C.COL_WHITE))
     cy = cy - t_h - C.BLOCK_GAP
 
-    -- ── Footer links ──────────────────────────────────────────────────────
-    local fx1 = cx - pw/4
-    local fx2 = cx + pw/4
-    -- Support moved to the main lobby; Themes spans the footer here.
-    mkbtn(self, "nav_themes", vmath.vector3(cx, cy - 22, 0), vmath.vector3(pw - 16, 42, 0), "THEMES", "secondary_btn")
+    -- Themes moved to the main lobby (THEME utility tile). No footer link here.
 
     -- ── Draw Extracted Modals on Top ──────────────────────────────────────
     draw_battle_modal(self, ctx)

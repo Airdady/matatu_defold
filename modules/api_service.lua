@@ -177,6 +177,21 @@ function M.send_transaction(payload, cb)
     request("POST", "/payments", payload, cb)
 end
 
+-- Realtime mobile-money name enquiry. payload = { phoneNumber, _id?, save? }
+function M.validate_phone(payload, cb)
+    request("POST", "/payments/validate-phone", payload, cb)
+end
+
+-- Persist which saved number is the user's default. payload = { _id, phoneNumber }
+function M.set_default_phone(payload, cb)
+    request("POST", "/payments/phone/default", payload, cb)
+end
+
+-- Remove a saved number. payload = { _id, phoneNumber }
+function M.delete_phone(payload, cb)
+    request("POST", "/payments/phone/delete", payload, cb)
+end
+
 -- STREAMING_CHUNK: Adding theme and tournament endpoints...
 function M.purchase_theme(user_id, theme_id, cb)
     request("POST", "/themes/purchase", { _id = user_id, themeId = theme_id }, cb)
