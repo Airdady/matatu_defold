@@ -69,13 +69,37 @@ local function calc_fee(method, amount)
 	return 0
 end
 
+local function is_withdraw(m)
+	local t = tostring((type(m) == "table" and m.type) or ""):upper()
+	return t:find("SELL") ~= nil or t:find("WITHDRAW") ~= nil
+end
+
 local function methods()
 	local u = ws.current_user_data or {}
-	if type(u.payments) == "table" and #u.payments > 0 then return u.payments end
-	return {
-		{ type = "DEPOSIT",  min = 500,  charges = { { min = 0, fee = 0 } } },
-		{ type = "WITHDRAW", min = 1000, charges = { { min = 0, fee = 200 } } },
-	}
+	local list
+	if type(u.payments) == "table" and #u.payments > 0 then
+		list = u.payments
+	else
+		list = {
+			{ type = "DEPOSIT",  min = 500,  charges = { { min = 0, fee = 0 } } },
+			{ type = "WITHDRAW", min = 1000, charges = { { min = 0, fee = 200 } } },
+		}
+	end
+
+	-- A blocked account can never withdraw/sell — strip those tabs entirely so
+	-- the option is never even shown (the backend also enforces this).
+	if u.isBlocked then
+		local filtered = {}
+		for _, m in ipairs(list) do
+			if not is_withdraw(m) then filtered[#filtered+1] = m end
+		end
+		-- Always leave at least a deposit option so the dialog stays usable.
+		if #filtered == 0 then
+			filtered = { { type = "DEPOSIT", min = 500, charges = { { min = 0, fee = 0 } } } }
+		end
+		return filtered
+	end
+	return list
 end
 
 local function clear(self)
@@ -331,6 +355,7 @@ function on_message(self, message_id, message, sender)
 		msg.post(".", "acquire_input_focus")
 		self._active = true
 		self._msg = nil
+		self.method_index = 1
 		local u = ws.current_user_data or {}
 		-- Default to the user's default saved number (falls back to legacy field).
 		local default_num = u.phoneNumber or u.phone or ""
