@@ -42,6 +42,17 @@ local function ktext(self, pos, str, px, color)
 	return track(self, ui.text(pos, str, "body", color, px / 26))
 end
 
+-- Guarded gpgs call — never let a Play Games misconfig hard-crash the screen.
+local function gp_call(method, ...)
+	if not (_G.gpgs and gpgs[method]) then return nil end
+	local ok, res = pcall(gpgs[method], ...)
+	if not ok then
+		print("[auth] gpgs." .. method .. " failed: " .. tostring(res))
+		return nil
+	end
+	return res
+end
+
 local function bg_and_header(self)
 	track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 1)))
 	local b = track(self, ui.cover_image(LOGICAL_W, LOGICAL_H, "texture_bg"))
@@ -96,8 +107,8 @@ end
 -- Successful Play Games sign-in → grab the one-time server auth code for the
 -- backend (and the display name as a username seed).
 local function finish_sign_in(self)
-	local code = (_G.gpgs and gpgs.get_server_auth_code) and gpgs.get_server_auth_code() or nil
-	local name = (_G.gpgs and gpgs.get_display_name) and gpgs.get_display_name() or ""
+	local code = gp_call("get_server_auth_code")
+	local name = gp_call("get_display_name") or ""
 	if code and code ~= "" then
 		msg.post("#controller", "auth_google_token", { code = code, name = name or "" })
 	else
@@ -116,7 +127,7 @@ local function on_gpgs(self, message_id, message)
 		if ok then
 			finish_sign_in(self)
 		else
-			gpgs.login()   -- silent attempt failed → show the interactive picker
+			gp_call("login")   -- silent attempt failed → show the interactive picker
 		end
 	elseif message_id == gpgs.MSG_SIGN_IN then
 		if ok then
@@ -140,8 +151,8 @@ local function start_sign_in(self)
 	app_state.auth_state = "idle"
 	app_state.auth_error = ""
 	self.signing = true
-	gpgs.set_callback(on_gpgs)
-	gpgs.silent_login()
+	gp_call("set_callback", on_gpgs)
+	gp_call("silent_login")
 	rebuild(self)
 end
 
@@ -193,8 +204,8 @@ local function handle(self, b)
 			self.signing = true
 			app_state.auth_state = "idle"
 			app_state.auth_error = ""
-			gpgs.set_callback(on_gpgs)
-			gpgs.login()   -- explicit interactive sign-in
+			gp_call("set_callback", on_gpgs)
+			gp_call("login")   -- explicit interactive sign-in
 			rebuild(self)
 		else
 			app_state.auth_state = "error"

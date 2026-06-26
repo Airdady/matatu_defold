@@ -40,7 +40,7 @@ input_method = INPUT_METHOD_HIDDEN
 app_id = YOUR_GPGS_PROJECT_ID
 use_saved_games = 0
 request_server_auth_code = 1
-client_token = YOUR_WEB_CLIENT_ID.apps.googleusercontent.com
+client_id = YOUR_WEB_CLIENT_ID.apps.googleusercontent.com
 
 [websocket]
 debug = 0
