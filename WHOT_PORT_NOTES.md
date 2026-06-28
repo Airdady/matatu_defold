@@ -38,6 +38,11 @@ Pure-logic foundation (runs and was simulated headlessly — see below):
   (1)** (actor plays again) and **General Market (14)** (opponent draws 1, then
   the actor plays again) for the animated board, in addition to choose-shape /
   suspension / penalties.
+- No cutting card: the offline deal (`offline_handler.build_and_deal`) no
+  longer flips a side "cutting card". Instead it places a **normal** starter
+  card (never 1/2/5/8/14/20) face-up in the **centre** discard pile, so the
+  first player must match it by shape or number. (`game_logic.lua`'s standalone
+  engine already did this via `is_plain_starter`.)
 - Quick Play is now a true single game: `game_logic.new` persists `series`, so
   Quick Play (series 1) no longer falls through to `app.ai_series` (default 3)
   and therefore shows **no scoreboard**; Battle-AI best-of still does.
