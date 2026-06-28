@@ -1,24 +1,24 @@
---- deck.lua
--- Builds and shuffles the 54-card Matatu deck.
--- Card = { v = value, s = suit }.  Ace=15, Jack=11, Queen=12, King=13.
+--- deck.lua  (WHOT build)
+-- Builds and shuffles the standard Whot deck.
+-- Card = { v = value, s = shape }.  Shapes: C/T/X/S/R + W (Whot wildcard).
+-- Mirrors the composition in whot_defold card_defs.build_deck / Game.gd.
 
 local M = {}
 
-local SUITS = { "H", "D", "S", "C" }
--- Ace(15) first, then 2..13
-local VALUES = { 15, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13 }
-
---- Returns a fresh, ordered 54-card deck (52 standard + 2 jokers).
+--- Returns a fresh, ordered Whot deck.
 function M.build()
 	local cards = {}
-	for _, s in ipairs(SUITS) do
-		for _, v in ipairs(VALUES) do
-			cards[#cards + 1] = { v = v, s = s }
+	local function add(values, shape)
+		for _, v in ipairs(values) do
+			cards[#cards + 1] = { v = v, s = shape }
 		end
 	end
-	-- Jokers
-	cards[#cards + 1] = { v = 50, s = "R" }
-	cards[#cards + 1] = { v = 50, s = "B" }
+	add({ 1, 2, 3, 4, 5, 7, 8, 10, 11, 12, 13, 14 }, "C") -- Circles
+	add({ 1, 2, 3, 4, 5, 7, 8, 10, 11, 12, 13, 14 }, "T") -- Triangles
+	add({ 1, 2, 3, 5, 7, 10, 11, 13, 14 },           "S") -- Squares
+	add({ 1, 2, 3, 5, 7, 10, 11, 13, 14 },           "X") -- Crosses
+	add({ 1, 2, 3, 4, 5, 7, 8 },                     "R") -- Stars
+	for _ = 1, 5 do cards[#cards + 1] = { v = 20, s = "W" } end -- Whots
 	return cards
 end
 

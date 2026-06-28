@@ -11,8 +11,11 @@ else
     M.DOMAIN = "192.168.1.128:3000"
 end
 
-M.BASE_URL = "http://" .. M.DOMAIN .. "/matatu"
-M.WS_URL = "ws://" .. M.DOMAIN .. "/matatu/ws"
+-- Whot build: the backend keys game logic off the URL path (/whot) and host.
+-- Using the /whot endpoints makes the server route moves through its Whot
+-- rule engine (src/whot/* in be_matatu) instead of the Matatu one.
+M.BASE_URL = "http://" .. M.DOMAIN .. "/whot"
+M.WS_URL = "ws://" .. M.DOMAIN .. "/whot/ws"
 
 M.APP_VERSION = "18.5.9"
 M.GAME_STATE_SECRET = "a27a120adfbc9f727c187748fff44547e1ee72f09481c8a965d62ed1c02e6ea3"
