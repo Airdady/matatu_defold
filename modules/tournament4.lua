@@ -406,6 +406,47 @@ function M.apply_skip(self, rec)
     end
 end
 
+-- Card 1 (Hold On): the seat that just played takes another turn. Unlike
+-- advance(), the turn index is NOT stepped, so the same seat plays again.
+function M.apply_hold_on(self)
+    if self.game_over or self.t4.revealing then return end
+    self.current_turn_actions = {}
+    if not self.chosen_suit or self.chosen_suit == "" then
+        notify(GUI_HUD, "suit_badge", { suit = "" })
+        notify(GUI_SUIT, "suit_select", { mode = "close" })
+    end
+    notify(GUI_HUD, "t4_flash", { text = "HOLD ON!" })
+    M.begin_turn(self) -- self.t4.turn_seat is still the actor
+end
+
+-- Card 14 (General Market): every OTHER alive seat draws one card, then the
+-- seat that played it goes again (like Hold On). Works for any opponent —
+-- AI seats draw into seat.hand, the human seat draws into player_hand.
+function M.apply_general_market(self, actor_seat)
+    if self.game_over or self.t4.revealing then return end
+    self.active_penalty = 0
+    self.chosen_suit = ""
+    notify(GUI_SUIT, "suit_select", { mode = "close" })
+    notify(GUI_HUD, "t4_flash", { text = "GENERAL MARKET!" })
+
+    actor_seat = actor_seat or self.t4.turn_seat
+    for _, s in ipairs(alive_seats(self)) do
+        if s ~= actor_seat then
+            if s.is_human and self.t4.human_alive then
+                self.draw_to_hand(self.player_hand, true, 1, nil)
+            else
+                ai_draw(self, s, 1, nil)
+            end
+        end
+    end
+
+    -- Give the draws a moment to animate, then the actor plays again.
+    local seq = self._seq
+    timer.delay(0.7, false, function()
+        if seq == self._seq and not self.game_over then M.apply_hold_on(self) end
+    end)
+end
+
 -- ── AI seat turn ─────────────────────────────────────────────────────────────
 function M.ai_seat_turn(self, seat)
     if self.game_over or self.t4.revealing then return end
@@ -484,6 +525,13 @@ function M.ai_seat_turn(self, seat)
         notify(GUI_SUIT, "suit_select", { mode = "preview", suit = self.chosen_suit })
         notify(GUI_HUD, "suit_badge", { suit = self.chosen_suit })
         M.advance(self)
+    elseif result.type == NA.HOLD_ON then
+        -- Card 1: this seat plays again.
+        self.chosen_suit = ""
+        M.apply_hold_on(self)
+    elseif result.type == NA.GENERAL_MARKET then
+        -- Card 14: every other seat draws 1, then this seat plays again.
+        M.apply_general_market(self, seat)
     elseif result.type == NA.SKIP_TURN then
         M.apply_skip(self, rec)
     elseif result.type == NA.REDUCE_PENALTY then
@@ -930,21 +978,25 @@ function M.deal_round(self)
         local dp = self.DECK_POS
         delay = delay + 0.42
         
+        -- WHOT: no cutting card. Flip a NORMAL starter card face-up into the
+        -- CENTRE pile so the first player must match it by shape or number.
+        -- A normal card is never 1/2/5/8/14/20 (power/wild cards).
+        self.cutting_card = nil
         if #pool > 0 then
-            local cut_idx = 1
-            for i, c in ipairs(pool) do
-                if tostring(c.v) ~= "7" then
-                    cut_idx = i
-                    break
-                end
+            local function is_special_start(c)
+                local v = tonumber(c.v)
+                return v == 1 or v == 2 or v == 5 or v == 8 or v == 14 or v == 20 or c.s == "W"
             end
-            
-            self.cutting_card = table.remove(pool, cut_idx)
-            
-            go.set(self.cutting_card.id, "position.z", BL.Z_CUT)
-            go.animate(self.cutting_card.id, "position", go.PLAYBACK_ONCE_FORWARD, vmath.vector3(dp.x + BL.CUTTING_CARD_OFFSET_X, dp.y, BL.Z_CUT), go.EASING_OUTCUBIC, 0.5, delay)
-            go.animate(self.cutting_card.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, 90, go.EASING_OUTCUBIC, 0.5, delay)
-            timer.delay(delay + 0.15, false, function() if seq == self._seq then self.set_face(self.cutting_card) end end)
+            local sidx = 1
+            for i, c in ipairs(pool) do
+                if not is_special_start(c) then sidx = i; break end
+            end
+            local starter = table.remove(pool, sidx)
+            -- animate_to_pile faces it up, inserts it as the first played card
+            -- and lands it in the centre.
+            timer.delay(delay + 0.15, false, function()
+                if seq == self._seq then self.animate_to_pile(starter, false, nil) end
+            end)
         end
 
         for i, c in ipairs(pool) do

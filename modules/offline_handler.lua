@@ -102,7 +102,7 @@ function M.do_suit_choice(self)
     local chosen = AI.best_suit_for_hand(self.ai_hand)
     if not chosen or chosen == "" then chosen = "H" end
     self.chosen_suit = chosen
-    print("Matatu Game: Opponent calls " .. Defs.suit_name(chosen))
+    print("Whot Game: Opponent calls " .. Defs.suit_name(chosen))
     self.play_sound("SoundRequestSuit")
     msg.post(GUI_SUIT, "suit_select", { mode = "preview", suit = chosen })
     self.next_turn()
@@ -227,7 +227,7 @@ function M.start_game(self)
         msg.post(GUI_HUD, "update_scoreboard", { show = false })
     end
 
-    print("Matatu Game: Game started — Matatu (Offline).")
+    print("Whot Game: Game started — Whot (Offline).")
     M.build_and_deal(self)
 end
 
@@ -243,7 +243,7 @@ function M.next_turn(self)
 
     self.turn_count = (self.turn_count or 0) + 1
     if self.turn_count > 600 then
-        print("Matatu Game: Game length limit — lowest score wins.")
+        print("Whot Game: Game length limit — lowest score wins.")
         self.end_game(nil, true)
         return
     end
@@ -255,11 +255,11 @@ function M.next_turn(self)
     if not can_act then
         self.stuck_count = (self.stuck_count or 0) + 1
         if self.stuck_count >= 2 then
-            print("Matatu Game: Stalemate — lowest score wins.")
+            print("Whot Game: Stalemate — lowest score wins.")
             self.end_game(nil, true)
             return
         end
-        print("Matatu Game: " .. (self.current_turn == "player" and "You have" or "Opponent has") .. " no move — pass.")
+        print("Whot Game: " .. (self.current_turn == "player" and "You have" or "Opponent has") .. " no move — pass.")
         local seq = self._seq
         timer.delay(0.6, false, function() if seq == self._seq then self.next_turn() end end)
         return

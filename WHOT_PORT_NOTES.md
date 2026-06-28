@@ -64,10 +64,20 @@ The shared online/offline board controller is still Matatu-shaped in places:
   Online presentation of Whot effects + chosen-shape badge still needs a pass.
   (The backend already validates Whot moves — see below — so this is
   presentation only.)
-- `modules/tournament4.lua` / `t4_ui.lua`: tournament currently routes Hold-On
-  and General Market through `apply_skip` as a placeholder (keeps the actor on
-  turn); General Market's "all opponents draw" isn't yet implemented for the
-  N-player chamber/bracket.
+- `modules/tournament4.lua` (4-player chamber / score-cap / bracket / 4-player
+  battles) now implements the Whot rules too:
+  - No cutting card — a NORMAL starter is flipped into the centre pile; the
+    first player must match it by shape or number.
+  - Hold-On (1): the same seat plays again (`apply_hold_on`).
+  - General Market (14): every other alive seat draws 1 (AI seats via
+    `ai_draw`, the human seat via the standard draw), then the actor plays
+    again (`apply_general_market`). Wired into both the AI seat handler and the
+    human path (`game_flow.after_play_settled`).
+- Branding: all on-screen "Matatu" labels are now "Whot" (app title, lobby
+  title + welcome, "vs Whot Bot", bot name, share text, shape-selector). Opaque
+  internals are intentionally left: save-file keys (`matatu_defold*`), Android
+  package id (`com.matatu.champ`, tied to signing/store), the real contact
+  email, and source comments that explain the port's Matatu origin.
 - Theming: `themes.*` still references the Matatu drago/batman sheets (left
   intact so the project still builds); Whot ships a single deck art set.
 

@@ -74,7 +74,7 @@ local STATE_TOURNEY   = "tournament"
 -- Tutorial data
 -- ---------------------------------------------------------------------------
 local TUTORIAL_PAGES = {
-    { t = "WELCOME TO MATATU", lines = { "East Africa's favourite card game.", "Match, attack, and be the first to", "empty your hand to win!" } },
+    { t = "WELCOME TO WHOT", lines = { "Africa's favourite shapes card game.", "Match by shape or number and be the", "first to empty your hand to win!" } },
     { t = "GAME MODES", lines = { "PLAY ONLINE  —  live coin matches", "QUICK PLAY  —  practice vs the AI", "BATTLE AI  —  best-of series", "TOURNAMENT  —  bracket of players" } },
     { t = "HOW TO PLAY", lines = { "On your turn, play a card matching the", "top card's SUIT or NUMBER.", "No match?  Tap the deck to DRAW." } },
     { t = "SPECIAL CARDS", lines = { "8 / J    skip the opponent (play again)", "2 / 3    opponent draws a penalty", "Ace      choose the next suit", "Joker    pass on a 5-card penalty", "Ace of Spades  cancels any penalty", "7    the cutting card can end a round" } },
@@ -381,7 +381,7 @@ local function draw_ai_select(self)
     local sb_y = CY - 128
     local sb = track(self, ui.btn9(vmath.vector3(CX, sb_y, 0), vmath.vector3(296, 60, 0), "primary_btn"))
     text_sh(self, vmath.vector3(CX, sb_y + 3, 0), "START BATTLE", "body", C_CREAM, 2, -2)
-    track(self, ui.text(vmath.vector3(CX, sb_y - 20, 0), "vs Matatu Bot", "small", C_MUTED))
+    track(self, ui.text(vmath.vector3(CX, sb_y - 20, 0), "vs Whot Bot", "small", C_MUTED))
     self.buttons[#self.buttons + 1] = { node = sb, id = "start_ai" }
 
     local bkb = track(self, ui.btn9(vmath.vector3(CX - pw / 2 + 50, CY + ph / 2 - 24, 0), vmath.vector3(78, 32, 0), "secondary_btn"))
@@ -512,7 +512,7 @@ local function rebuild(self)
     local n_red = track(self, ui.box(vmath.vector3(grid_l + 2, h_y - 6, 0), vmath.vector3(4, 30, 0), C_RED))
     set_pivot(n_red, gui.PIVOT_W)
     
-    local n_m = track(self, ui.text(vmath.vector3(grid_l + 16, h_y, 0), "MATATU", "title", C_CREAM))
+    local n_m = track(self, ui.text(vmath.vector3(grid_l + 16, h_y, 0), "WHOT", "title", C_CREAM))
     set_pivot(n_m, gui.PIVOT_W)
     pcall(gui.set_scale, n_m, vmath.vector3(1.1, 1.1, 1))
 
@@ -661,8 +661,8 @@ local function handle(self, b)
     if b.id == "help_open" then self.state = STATE_LOBBY; self.tut_page, self.tutorial_active = 1, true; rebuild(self); return
     elseif b.id == "rules_open" then self.state = STATE_LOBBY; self.tut_page, self.tutorial_active = 3, true; rebuild(self); return
     elseif b.id == "support" then pcall(function() local config = require("modules.config"); sys.open_url(config.BASE_URL .. "/support") end); return
-    elseif b.id == "share" then pcall(function() local config = require("modules.config"); sys.open_url("https://wa.me/?text=Play%20Matatu%20with%20me!%20https%3A%2F%2F" .. config.DOMAIN) end); return
-    elseif b.id == "contact_open" then pcall(function() sys.open_url("mailto:matatu.league@gmail.com?subject=Matatu%20Support") end); return
+    elseif b.id == "share" then pcall(function() local config = require("modules.config"); sys.open_url("https://wa.me/?text=Play%20Whot%20with%20me!%20https%3A%2F%2F" .. config.DOMAIN) end); return
+    elseif b.id == "contact_open" then pcall(function() sys.open_url("mailto:matatu.league@gmail.com?subject=Whot%20Support") end); return
     elseif b.id == "theme_open" then msg.post("#controller", "goto_themes"); return end
 
     if b.id == "play_online" then
@@ -672,7 +672,7 @@ local function handle(self, b)
         local me = ws.current_user_data or {}
         app_state.offline_game = game_logic.new({
             human_id = "you", ai_id = "ai", human_name = me.username or "You", human_avatar = me.avatar or 1,
-            ai_name = "Matatu Bot", ai_avatar = 2, rules = "JOKERS", series = 1, p_wins = 0, ai_wins = 0
+            ai_name = "Whot Bot", ai_avatar = 2, rules = "JOKERS", series = 1, p_wins = 0, ai_wins = 0
         })
         msg.post("#controller", "goto_game")
     elseif b.id == "battle_ai"        then set_state(self, STATE_AI_SELECT)
@@ -685,7 +685,7 @@ local function handle(self, b)
         local me = ws.current_user_data or {}
         app_state.offline_game = game_logic.new({
             human_id = "you", ai_id = "ai", human_name = me.username or "You", human_avatar = me.avatar or 1,
-            ai_name = "Matatu Bot", ai_avatar = 2, rules = "JOKERS", series = app_state.ai_series or 3, p_wins = 0, ai_wins = 0
+            ai_name = "Whot Bot", ai_avatar = 2, rules = "JOKERS", series = app_state.ai_series or 3, p_wins = 0, ai_wins = 0
         })
         msg.post("#controller", "goto_game")
 

@@ -182,7 +182,7 @@ function M.after_play_settled(self, rec, is_player, result, ticket)
         notify_gui(self.gui_suit, "suit_select", { mode = "close" })
         log(actor .. " plays Hold On — plays again!")
         if self.t4 then
-            require("modules.tournament4").apply_skip(self, rec)
+            require("modules.tournament4").apply_hold_on(self)
             return
         end
         if is_player then
@@ -204,7 +204,7 @@ function M.after_play_settled(self, rec, is_player, result, ticket)
         notify_gui(self.gui_suit, "suit_select", { mode = "close" })
         log(actor .. " plays General Market — opponent draws 1!")
         if self.t4 then
-            require("modules.tournament4").apply_skip(self, rec)
+            require("modules.tournament4").apply_general_market(self, self.t4.turn_seat)
             return
         end
         local function continue_actor()

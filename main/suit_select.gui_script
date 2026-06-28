@@ -1,4 +1,4 @@
--- suit_select.gui_script — Matatu Suit Selector Overlay (Defold)
+-- suit_select.gui_script — Whot Shape Selector Overlay (Defold)
 
 -- FIXED: Target mapped precisely to the /controller object to guarantee routing.
 local GAME = "/controller#game_logic"
