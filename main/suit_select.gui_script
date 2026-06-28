@@ -10,11 +10,11 @@ local LOGICAL_H = 720
 local C_WHITE = vmath.vector4(1.0, 1.0, 1.0, 1.0)
 
 -- WHOT build: the selector picks one of the five Whot shapes, not card suits.
--- Shapes are shown as their letter codes (C/T/X/S/R) since the shared "ui"
--- atlas has no shape art; the chosen code is what the rule engine matches on.
+-- Shape art lives in the shared "ui" atlas (circle/triangle/cross/square/star);
+-- the chosen shape CODE is what the rule engine matches on.
 local SUIT_ORDER  = { "C", "T", "X", "S", "R" }
-local SUIT_IMG    = {} -- no flipbook art for shapes -> fall back to the letter
-local SUIT_SYMBOL = { C = "C", T = "T", X = "X", S = "S", R = "R" }
+local SUIT_IMG    = { C = "circle", T = "triangle", X = "cross", S = "square", R = "star" }
+local SUIT_SYMBOL = { C = "C", T = "T", X = "X", S = "S", R = "R" } -- fallback if art missing
 local SUIT_COLOR  = {
     C = vmath.vector4(0.85, 0.15, 0.15, 1.0), -- Circle
     T = vmath.vector4(0.15, 0.55, 0.85, 1.0), -- Triangle
@@ -89,8 +89,8 @@ local function build_suit_select(self)
         local b_txt = label(vmath.vector3(0, 0, 0), SUIT_SYMBOL[s], 32, SUIT_COLOR[s], gui.PIVOT_CENTER)
         gui.set_parent(b_txt, b_bg)
 
-        -- Whot shapes have no atlas art, so keep the letter label and hide the
-        -- image node (transparent) instead of playing a flipbook.
+        -- Show the shape art from the "ui" atlas; if it can't be loaded the
+        -- node stays transparent and the letter label remains as a fallback.
         gui.set_color(b_img, vmath.vector4(1, 1, 1, 0))
         if SUIT_IMG[s] then
             pcall(function()

@@ -31,7 +31,16 @@ Pure-logic foundation (runs and was simulated headlessly — see below):
 - Card art: Whot PNGs copied to `assets/cards/whot/`, `assets/cards/cards.atlas`
   regenerated to reference them, `card.go` default frame → `BACK_DEFAULT`,
   `card.script` no longer swaps per-theme sheets.
-- `main/suit_select.gui_script` — now a 5-shape (C/T/X/S/R) selector.
+- `main/suit_select.gui_script` — now a 5-shape (C/T/X/S/R) selector using the
+  real shape art (`circle/triangle/cross/square/star`, copied into the `ui`
+  atlas).
+- `modules/game_flow.lua` — the shared play handler now branches on **Hold-On
+  (1)** (actor plays again) and **General Market (14)** (opponent draws 1, then
+  the actor plays again) for the animated board, in addition to choose-shape /
+  suspension / penalties.
+- Quick Play is now a true single game: `game_logic.new` persists `series`, so
+  Quick Play (series 1) no longer falls through to `app.ai_series` (default 3)
+  and therefore shows **no scoreboard**; Battle-AI best-of still does.
 
 ### Verification
 
@@ -45,14 +54,15 @@ pass. All touched `.lua` files pass `luac -p`.
 
 The shared online/offline board controller is still Matatu-shaped in places:
 
-- `main/game.script` + `modules/offline_handler.lua`: the `result.type`
-  handling renders CHOOSE_SHAPE (via the alias) but does **not** yet branch on
-  `HOLD_ON` / `GENERAL_MARKET` for the animated board, and the offline AI's
-  chosen shape from `AI.decide(...).suit` isn't threaded into `play_card`.
-- `modules/online_handler.lua` / `modules/game_flow.lua`: online rendering of
-  Whot effects + chosen-shape badge needs the same treatment. (The backend
-  already validates Whot moves — see below — so this is presentation only.)
-- `modules/tournament4.lua` / `t4_ui.lua`: tournament board reuse of the above.
+- Online mode: General Market currently keeps the actor's turn but relies on
+  the server to apply the opponents' draw (no local opponent draw online).
+  Online presentation of Whot effects + chosen-shape badge still needs a pass.
+  (The backend already validates Whot moves — see below — so this is
+  presentation only.)
+- `modules/tournament4.lua` / `t4_ui.lua`: tournament currently routes Hold-On
+  and General Market through `apply_skip` as a placeholder (keeps the actor on
+  turn); General Market's "all opponents draw" isn't yet implemented for the
+  N-player chamber/bracket.
 - Theming: `themes.*` still references the Matatu drago/batman sheets (left
   intact so the project still builds); Whot ships a single deck art set.
 
