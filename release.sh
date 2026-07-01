@@ -10,9 +10,9 @@ BOB_JAR="bob.jar"
 OUTPUT_DIR="./bundles/android_release"
 TMP_SETTINGS="override.ini"
 
-KEYSTORE_PATH="./champion-keystore.jks"
+KEYSTORE_PATH="./whot.keystore"
 KEYSTORE_PASS="./keystore.pass.txt"
-KEYSTORE_ALIAS="upload"
+KEYSTORE_ALIAS="matatu_alias"
 
 # Default Variables (Overwritten by terminal command flags)
 VERSION_NAME=""
@@ -67,7 +67,7 @@ print_status "Preparing Defold Release Build: v$VERSION_NAME (Code: $VERSION_COD
 # ═══════════════════════════════════════════════════════════
 # PRE-BUILD CONFIGURATION
 # ═══════════════════════════════════════════════════════════
-print_status "Generating temporary configurations with com.matatu.champ injection..."
+print_status "Generating temporary configurations with com.matatu.pro injection..."
 
 # bob.jar requires an actual config file for settings overrides
 echo "[project]" > $TMP_SETTINGS
@@ -75,7 +75,7 @@ echo "version = $VERSION_NAME" >> $TMP_SETTINGS
 echo "" >> $TMP_SETTINGS
 echo "[android]" >> $TMP_SETTINGS
 echo "version_code = $VERSION_CODE" >> $TMP_SETTINGS
-echo "package = com.matatu.champ" >> $TMP_SETTINGS
+echo "package = com.matatu.pro" >> $TMP_SETTINGS
 
 print_status "Configurations updated successfully."
 

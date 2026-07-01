@@ -541,7 +541,7 @@ local function rebuild(self)
         numeral     = "01",
         title       = "PLAY ONLINE",
         sub         = "Real players • Live coin stakes",
-        cta_label   = "PLAY NOW",      -- Changed from badge_label = "COMING SOON"
+        cta_label   = "COMING SOON",      -- Changed from badge_label = "COMING SOON"
         btn_id      = "play_online",   -- Added hit node ID to make it clickable
     })
 
