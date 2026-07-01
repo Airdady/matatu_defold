@@ -1,6 +1,7 @@
 [project]
 title = Whot
 version = 18.5.9
+bundle_resources = /bundle
 dependencies#0 = https://github.com/defold/extension-websocket/archive/refs/tags/4.2.3.zip
 dependencies#1 = https://github.com/defold/extension-gpgs/archive/master.zip
 
