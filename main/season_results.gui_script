@@ -1,0 +1,274 @@
+-- season_results.gui_script
+-- GLOBAL "Half-Week Season Complete" results modal. Lives on the controller
+-- object above every screen (render order 17 — above incoming=15 and
+-- coins=16, since Season Complete must have the highest priority and sit on
+-- top of everything, per the retention-feature product spec).
+--
+-- Follows the proven global-overlay pattern of main/incoming.gui_script:
+-- acquire input focus, capture our own URL (ME), register WS listeners that
+-- post back to ME (never touching gui.* from the socket owner's context),
+-- and swallow ALL input while the modal is visible — this is a fully
+-- blocking modal: the results stay up until the player explicitly closes it,
+-- at which point we ack the view to the backend (SEASON_RESULTS_VIEWED).
+
+local ui = require("modules.ui")
+local ws = require("modules.websocket_manager")
+local screen = require("modules.screen")
+
+local LOGICAL_W, LOGICAL_H = 1280, 720
+local CX, CY = 640, 360
+
+-- ── Palette ────────────────────────────────────────────────────────────────
+local COL_DIM     = vmath.vector4(0.65, 0.65, 0.65, 1.0)
+local COL_WHITE   = vmath.vector4(1.00, 1.00, 1.00, 1.0)
+local COL_GOLD    = vmath.vector4(1.00, 0.84, 0.20, 1.0)
+local COL_SILVER  = vmath.vector4(0.80, 0.82, 0.85, 1.0)
+local COL_BRONZE  = vmath.vector4(0.80, 0.55, 0.30, 1.0)
+local COL_GREEN   = vmath.vector4(0.15, 0.70, 0.25, 1.0)
+local COL_CYAN    = vmath.vector4(0.20, 0.90, 1.00, 1.0)
+local COL_SCRIM   = vmath.vector4(0.0, 0.0, 0.0, 0.72)
+local COL_PANEL   = vmath.vector4(0.10, 0.11, 0.16, 0.96)
+local COL_ROW_A   = vmath.vector4(1.0, 1.0, 1.0, 0.04)
+local COL_ROW_B   = vmath.vector4(1.0, 1.0, 1.0, 0.00)
+local COL_AV_BG   = vmath.vector4(0.20, 0.20, 0.20, 0.50)
+
+local function refresh_wh()
+    local m = screen.metrics()
+    CX, CY = m.CX, m.CY
+end
+
+-- ── Node bookkeeping ──────────────────────────────────────────────────────
+local function clear(self)
+    for _, n in ipairs(self.nodes) do pcall(gui.delete_node, n) end
+    self.nodes, self.buttons = {}, {}
+end
+local function track(self, n) self.nodes[#self.nodes + 1] = n; return n end
+
+local function commas(n)
+    return (tostring(math.floor(tonumber(n) or 0)):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""))
+end
+
+local function with_a(c, a) return vmath.vector4(c.x, c.y, c.z, c.w * (a or 1)) end
+
+local function mkbtn(self, id, pos, size, label, style, data, font, text_color)
+    local bg
+    if type(style) == "string" then bg = track(self, ui.btn9(pos, size, style)) else bg = track(self, ui.box(pos, size, style)) end
+    if label then
+        local btn_font = font or (size.y >= 44 and "btn_md" or "btn_sm")
+        track(self, ui.text(vmath.vector3(pos.x, pos.y - 3, pos.z), label, btn_font, text_color or COL_WHITE))
+    end
+    self.buttons[#self.buttons + 1] = { node = bg, id = id, data = data }
+    return bg
+end
+
+-- ── Row rendering (leaderboard) ────────────────────────────────────────────
+local ROW_H = 30
+local RANK_TINT = { COL_GOLD, COL_SILVER, COL_BRONZE }
+
+local function draw_row(self, x_left, x_right, y, entry, a, my_id)
+    local rank = tonumber(entry.rank) or 0
+    local tint = RANK_TINT[rank] or COL_WHITE
+    local is_me = my_id ~= "" and tostring(entry.userId) == my_id
+
+    if is_me then
+        track(self, ui.box(vmath.vector3((x_left + x_right) / 2, y, 0), vmath.vector3(x_right - x_left, ROW_H - 2, 0), with_a(vmath.vector4(0.20, 0.90, 1.00, 0.14), a)))
+    end
+
+    -- Rank
+    local t_rank = track(self, ui.text(vmath.vector3(x_left + 6, y, 0), "#" .. tostring(rank), "small", with_a(tint, a)))
+    gui.set_pivot(t_rank, gui.PIVOT_W)
+
+    -- Avatar
+    local av_x = x_left + 54
+    track(self, ui.pie(vmath.vector3(av_x, y, 0), 13, with_a(COL_AV_BG, a)))
+    gui.set_color(track(self, ui.avatar(vmath.vector3(av_x, y, 0), vmath.vector3(22, 22, 0), entry.avatar)), with_a(COL_WHITE, a))
+
+    -- Username
+    local name = tostring(entry.username or "Player")
+    if #name > 16 then name = name:sub(1, 15) .. "…" end
+    local t_name = track(self, ui.text(vmath.vector3(av_x + 20, y, 0), name, "small", with_a(is_me and COL_CYAN or COL_WHITE, a)))
+    gui.set_pivot(t_name, gui.PIVOT_W)
+
+    -- Points
+    local t_pts = track(self, ui.text(vmath.vector3(x_right - 120, y, 0), commas(entry.points) .. " pts", "small", with_a(COL_GOLD, a)))
+    gui.set_pivot(t_pts, gui.PIVOT_E)
+
+    -- Coins
+    local t_coins = track(self, ui.text(vmath.vector3(x_right - 6, y, 0), "+" .. commas(entry.coinsEarned), "small", with_a(COL_GREEN, a)))
+    gui.set_pivot(t_coins, gui.PIVOT_E)
+end
+
+-- ── Rendering ──────────────────────────────────────────────────────────────
+local function rebuild(self)
+    clear(self)
+    if not self.visible or not self.season_data then return end
+
+    local ok, err = pcall(function()
+        local a = self.alpha or 1
+        local d = self.season_data
+
+        -- Full-screen dim scrim: blocks the view of whatever is underneath.
+        track(self, ui.cover(LOGICAL_W, LOGICAL_H, with_a(COL_SCRIM, a)))
+
+        local panel_w, panel_h = 760, 560
+        local px, py = CX, CY
+        track(self, ui.panel9(vmath.vector3(px, py, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
+
+        local top = py + panel_h / 2
+
+        -- Title
+        local title = track(self, ui.text(vmath.vector3(px, top - 34, 0), "Half-Week Season Complete!", "title", with_a(COL_GOLD, a)))
+        gui.set_scale(title, vmath.vector3(0.72, 0.72, 1))
+        local sub = track(self, ui.text(vmath.vector3(px, top - 60, 0), "Season #" .. tostring(d.seasonNumber or "?"), "small", with_a(COL_DIM, a)))
+
+        -- ── Player result block ────────────────────────────────────────────
+        local ry = top - 92
+        local lx, rx = px - panel_w / 2 + 24, px + panel_w / 2 - 24
+
+        local rank_txt = track(self, ui.text(vmath.vector3(lx, ry, 0), "Your Rank: #" .. tostring(d.playerRank or "-"), "body", with_a(COL_CYAN, a)))
+        gui.set_pivot(rank_txt, gui.PIVOT_W)
+        local pts_txt = track(self, ui.text(vmath.vector3(rx, ry, 0), commas(d.playerPointsEarned) .. " pts", "body", with_a(COL_WHITE, a)))
+        gui.set_pivot(pts_txt, gui.PIVOT_E)
+
+        ry = ry - 26
+        local rewards_str = string.format("+%s coins   +%s savings   +%s reward pts",
+            commas(d.coinsEarned), commas(d.savingCoinsEarned), commas(d.rewardPointsEarned))
+        local rewards_txt = track(self, ui.text(vmath.vector3(px, ry, 0), rewards_str, "small", with_a(COL_GREEN, a)))
+        gui.set_scale(rewards_txt, vmath.vector3(0.85, 0.85, 1))
+
+        ry = ry - 24
+        local badges = d.badgesEarned or {}
+        if type(badges) == "table" and #badges > 0 then
+            local names = {}
+            for i = 1, math.min(#badges, 6) do
+                names[#names + 1] = tostring((type(badges[i]) == "table" and badges[i].name) or badges[i])
+            end
+            local b_txt = track(self, ui.text(vmath.vector3(px, ry, 0), "Badges: " .. table.concat(names, ", "), "small", with_a(COL_GOLD, a)))
+            gui.set_scale(b_txt, vmath.vector3(0.8, 0.8, 1))
+            ry = ry - 20
+        end
+
+        local missions = d.missionsCompleted or {}
+        if type(missions) == "table" and #missions > 0 then
+            local titles = {}
+            for i = 1, math.min(#missions, 4) do
+                titles[#titles + 1] = tostring((type(missions[i]) == "table" and missions[i].title) or missions[i])
+            end
+            local m_txt = track(self, ui.text(vmath.vector3(px, ry, 0), "Missions: " .. table.concat(titles, ", "), "small", with_a(COL_DIM, a)))
+            gui.set_scale(m_txt, vmath.vector3(0.8, 0.8, 1))
+            ry = ry - 20
+        end
+
+        -- ── Divider ─────────────────────────────────────────────────────────
+        ry = ry - 8
+        track(self, ui.box(vmath.vector3(px, ry, 0), vmath.vector3(panel_w - 48, 2, 0), with_a(COL_DIM, 0.3 * a)))
+        ry = ry - 18
+
+        local lb_title = track(self, ui.text(vmath.vector3(px, ry, 0), "Final Leaderboard (Top Winners highlighted)", "small", with_a(COL_WHITE, a)))
+        gui.set_scale(lb_title, vmath.vector3(0.8, 0.8, 1))
+        ry = ry - 18
+
+        -- ── Leaderboard list (top 20, static, no scroll) ────────────────────
+        local my_id = tostring(ws.get_current_user_id() or "")
+        local board = d.finalLeaderboard or {}
+        local n = math.min(20, #board)
+        local list_top = ry
+        for i = 1, n do
+            local row_y = list_top - (i - 1) * ROW_H
+            if row_y < (py - panel_h / 2 + 70) then break end
+            if i % 2 == 0 then
+                track(self, ui.box(vmath.vector3(px, row_y, 0), vmath.vector3(panel_w - 48, ROW_H - 2, 0), with_a(COL_ROW_A, a)))
+            end
+            draw_row(self, lx, rx, row_y, board[i], a, my_id)
+        end
+
+        -- ── Close button ────────────────────────────────────────────────────
+        local bw, bh = 260, 52
+        local by = py - panel_h / 2 + 34
+        mkbtn(self, "close", vmath.vector3(px, by, 0), vmath.vector3(bw, bh, 0), "CLAIM / CONTINUE", "primary_btn", nil, "btn_md", COL_WHITE)
+    end)
+
+    if not ok then
+        print("[SEASON_RESULTS] draw error: " .. tostring(err))
+        clear(self)
+    end
+end
+
+-- ── Standard Defold hooks ───────────────────────────────────────────────────
+function init(self)
+    msg.post(".", "acquire_input_focus")
+    gui.set_render_order(17)
+    self.nodes, self.buttons = {}, {}
+    self.visible = false
+    self.season_data = nil
+    self.alpha = 0
+    refresh_wh()
+
+    -- WS callbacks run in the socket owner's (controller) context — post back
+    -- to THIS component through a URL captured here, in our own context. We
+    -- never call gui.* from inside a listener.
+    --
+    -- Large payloads (finalLeaderboard/topWinners arrays, up to 20 entries)
+    -- cannot travel through msg.post: Defold serializes message tables into a
+    -- small fixed buffer and overflows on nested arrays (see the M.move_inbox
+    -- comment in websocket_manager.lua for the same constraint on MOVE). So we
+    -- read the payload back from ws.last_season_complete (parked in the shared
+    -- Lua VM by the SEASON_COMPLETE handler) and only post a lightweight wake
+    -- signal here.
+    local ME = msg.url("#")
+    self._tokens = {
+        ws.on("season_complete", function()
+            msg.post(ME, "show_season_results")
+        end),
+    }
+end
+
+function final(self)
+    for _, t in ipairs(self._tokens or {}) do ws.off(t) end
+end
+
+function update(self, dt)
+    if self.visible then
+        self.alpha = math.min(1, (self.alpha or 0) + dt * 4)
+        rebuild(self)
+    end
+end
+
+function on_message(self, message_id, message)
+    if message_id == hash("show_season_results") then
+        self.season_data = ws.last_season_complete or {}
+        self.visible = true
+        self.alpha = 0
+        refresh_wh()
+        rebuild(self)
+    elseif message_id == hash("season_results_close") then
+        if self.season_data and self.season_data.seasonId then
+            ws.send_season_results_viewed(self.season_data.seasonId)
+        end
+        self.visible = false
+        self.season_data = nil
+        rebuild(self)
+    end
+end
+
+function on_input(self, action_id, action)
+    if not self.visible then return false end
+
+    if action_id == hash("touch") and action.pressed then
+        local ME = msg.url("#")
+        for i = #self.buttons, 1, -1 do
+            local b = self.buttons[i]
+            if gui.pick_node(b.node, action.x, action.y) then
+                if b.id == "close" then
+                    msg.post(ME, "season_results_close")
+                end
+                return true
+            end
+        end
+        -- Fully blocking modal: swallow taps anywhere while visible.
+        return true
+    end
+
+    -- Blocks all other input (drags, releases, keys) while visible.
+    return true
+end

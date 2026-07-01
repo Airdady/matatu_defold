@@ -205,8 +205,66 @@ rebuild = function(self)
     draw_dialog(self, ctx)
 end
 
+-- ── ISO-8601 UTC date parsing ──────────────────────────────────────────────────
+-- No shared date-parsing utility exists yet in modules/ (checked modules/util.lua),
+-- so this small local parser converts "YYYY-MM-DDTHH:MM:SS(.sss)(Z)" into a UTC
+-- epoch-seconds integer using a manual days-since-epoch calculation (does NOT rely
+-- on os.time's local-timezone interpretation of the table, which would be wrong
+-- on any device not set to UTC).
+local function days_from_civil(y, m, d)
+    -- Howard Hinnant's civil_from_days algorithm, inverted (UTC, proleptic Gregorian).
+    y = (m <= 2) and (y - 1) or y
+    local era = math.floor((y >= 0 and y or y - 399) / 400)
+    local yoe = y - era * 400
+    local mp = (m + 9) % 12
+    local doy = math.floor((153 * mp + 2) / 5) + d - 1
+    local doe = yoe * 365 + math.floor(yoe / 4) - math.floor(yoe / 100) + doy
+    return era * 146097 + doe - 719468
+end
+
+local function parse_iso_utc(str)
+    if type(str) ~= "string" then return nil end
+    local y, mo, d, h, mi, s = str:match("(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
+    if not y then return nil end
+    local days = days_from_civil(tonumber(y), tonumber(mo), tonumber(d))
+    return days * 86400 + tonumber(h) * 3600 + tonumber(mi) * 60 + tonumber(s)
+end
+
+-- Wall-clock "now" as UTC epoch seconds, matching parse_iso_utc's epoch base
+-- (os.time() already returns a UTC-based Unix epoch across platforms; only the
+-- *table→time* direction is locale-sensitive, which is why we avoid it above).
+local function now_utc()
+    return os.time()
+end
+
 -- ── Season Logic ──────────────────────────────────────────────────────────────
+-- Server-driven countdown: when ws.current_season_status has been received
+-- (pushed right after IDENTIFY), drive the countdown off its real endDate.
+-- Falls back to the legacy hardcoded Mon/Wed-noon/Sat cadence (Africa/Nairobi
+-- UTC+3) so nothing regresses before the first SEASON_STATUS round-trip.
 local function update_season(self)
+    local status = ws.current_season_status
+    local end_epoch = status and parse_iso_utc(status.endDate)
+
+    if end_epoch then
+        local now = now_utc()
+        local diff = math.max(0, end_epoch - now)
+        self.season_text = diff >= 86400
+            and string.format("%dD %02dH %02dM %02dS", math.floor(diff / 86400), math.floor((diff % 86400) / 3600), math.floor((diff % 3600) / 60), diff % 60)
+            or string.format("%02dH %02dM %02dS", math.floor(diff / 3600), math.floor((diff % 3600) / 60), diff % 60)
+        self.season_target_text = "Season #" .. tostring(status.seasonNumber or "?")
+
+        self.deadline, self.deadline_clock, self.deadline_urgency = "", nil, nil
+        if diff <= 86400 then
+            self.deadline = "SEASON END"
+            local dh = math.floor(diff / 3600)
+            self.deadline_clock = string.format("%02d:%02d:%02d", dh, math.floor((diff % 3600) / 60), diff % 60)
+            self.deadline_urgency = dh < 1 and "FINAL HOUR!" or (dh < 3 and "Time running out!" or (dh < 6 and "Last chance!" or "Ends soon"))
+        end
+        return
+    end
+
+    -- ── Fallback: hardcoded Mon/Wed-noon/Sat cadence (Africa/Nairobi UTC+3) ──
     local t, now_eat = os.date("!*t", os.time() + 3 * 3600), os.time() + 3 * 3600
     local seconds_today = t.hour * 3600 + t.min * 60 + t.sec
     local midnight_today_eat = now_eat - seconds_today

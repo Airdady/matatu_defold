@@ -26,6 +26,8 @@ M.active_game_state = {}
 -- payloads here in the shared Lua VM and only post a lightweight wake signal.
 M.move_inbox = {}
 M.last_game_over = {}
+M.last_season_complete = nil
+M.current_season_status = nil
 
 local connection = nil
 local is_connecting = false
@@ -163,6 +165,12 @@ end
 
 function M.decline_game_request(request_id)
   M.send_message("GAME_REQUEST_DECLINED", { requestId = request_id })
+end
+
+-- Ack that the player has viewed the Season Results screen (sent when they
+-- close the Half-Week Season Complete modal).
+function M.send_season_results_viewed(season_id)
+  M.send_message("SEASON_RESULTS_VIEWED", { seasonId = season_id })
 end
 
 function M.send_emoji(name, sound, to)
@@ -384,6 +392,17 @@ local function parse_message(json_string)
     -- ride through msg.post — and read back by the online lobby.
     M.last_head_to_head = d or {}
     emit("head_to_head", d or {})
+  elseif t == "SEASON_COMPLETE" then
+    -- Half-Week Season wrap-up: final rank, rewards, badges/missions, and the
+    -- full leaderboard. Parked here (too big to ride through msg.post) and
+    -- read back by the global season_results overlay.
+    M.last_season_complete = d
+    emit("season_complete", d)
+  elseif t == "SEASON_STATUS" then
+    -- Pushed right after IDENTIFY so the client can drive an accurate
+    -- countdown instead of guessing the Mon/Wed-noon/Sat boundary locally.
+    M.current_season_status = d
+    emit("season_status", d)
   elseif t == "TRANSACTION_COMPLETED" then
     emit("transaction_completed", d)
   elseif t == "TRANSACTION_FAILED" then

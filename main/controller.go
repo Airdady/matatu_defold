@@ -59,6 +59,10 @@ components {
   component: "/main/coins.gui"
 }
 components {
+  id: "season_results"
+  component: "/main/season_results.gui"
+}
+components {
   id: "suit_select"
   component: "/main/suit_select.gui"
 }
