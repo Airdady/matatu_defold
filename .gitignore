@@ -3,4 +3,4 @@
 /bundles
 /.internal/
 .editor_settings
-bob.jar
+bob.jar__pycache__/
