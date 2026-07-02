@@ -29,6 +29,7 @@ function M.draw(self, ctx)
     local commas     = ctx.commas
     local get_layout = ctx.get_layout
     local ui         = ctx.ui
+    local mkbtn      = ctx.mkbtn
 
     local _, _, div_lx, div_rx = get_layout()
     local center_cx = (div_lx + div_rx) / 2
@@ -44,10 +45,17 @@ function M.draw(self, ctx)
     local hcy   = top - hdr_h/2
     track(self, ui.box(vmath.vector3(center_cx, hcy, 0), vmath.vector3(list_w, hdr_h, 0), C.COL_HEADER_BG))
     track(self, ui.box(vmath.vector3(center_cx, hcy - hdr_h/2 + 1, 0), vmath.vector3(list_w, 1, 0), C.COL_BORDER))
-    
-    txtL(self, content_l + 6, hcy + 16,  "AVAILABLE PLAYERS", "body", C.COL_BRIGHT)
-    
-    local helper = txtL(self, content_l + 6, hcy - 12, "Tap a player to request a game. If they decline, try another!", "small", C.COL_GOLD)
+
+    -- Back-to-lobby button at the left edge of the header, vertically centered on hcy.
+    local back_btn_size = 48
+    local back_btn_gap  = 12
+    local back_btn_x    = content_l + back_btn_size/2
+    mkbtn(self, "nav_lobby", vmath.vector3(back_btn_x, hcy, 0), vmath.vector3(back_btn_size, back_btn_size, 0), "<", "secondary_btn", nil, "btn_md")
+
+    local title_l = back_btn_x + back_btn_size/2 + back_btn_gap
+    txtL(self, title_l, hcy + 16,  "AVAILABLE PLAYERS", "body", C.COL_BRIGHT)
+
+    local helper = txtL(self, title_l, hcy - 12, "Tap a player to request a game. If they decline, try another!", "small", C.COL_GOLD)
     gui.set_scale(helper, vmath.vector3(1.1, 1.1, 1))
 
     local cy = top - hdr_h

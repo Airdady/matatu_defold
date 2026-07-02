@@ -112,6 +112,47 @@ local function text_sh(self, pos, str, font, color, ox, oy)
 end
 
 -- ---------------------------------------------------------------------------
+-- Season countdown (header, middle) — mirrors main/online.gui_script's
+-- ISO-8601 UTC parsing. That parser is a `local function` scoped to
+-- online.gui_script only (not requirable), so it's duplicated here rather
+-- than shared, matching this codebase's per-file-helper convention (e.g.
+-- commas() is duplicated per-file elsewhere).
+-- ---------------------------------------------------------------------------
+local function days_from_civil(y, m, d)
+    y = (m <= 2) and (y - 1) or y
+    local era = math.floor((y >= 0 and y or y - 399) / 400)
+    local yoe = y - era * 400
+    local mp = (m + 9) % 12
+    local doy = math.floor((153 * mp + 2) / 5) + d - 1
+    local doe = yoe * 365 + math.floor(yoe / 4) - math.floor(yoe / 100) + doy
+    return era * 146097 + doe - 719468
+end
+
+local function parse_iso_utc(str)
+    if type(str) ~= "string" then return nil end
+    local y, mo, d, h, mi, s = str:match("(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
+    if not y then return nil end
+    local days = days_from_civil(tonumber(y), tonumber(mo), tonumber(d))
+    return days * 86400 + tonumber(h) * 3600 + tonumber(mi) * 60 + tonumber(s)
+end
+
+-- Server-driven countdown only (no hardcoded fallback cadence): if the
+-- SEASON_STATUS payload hasn't arrived yet, self.season_text stays nil and
+-- the header widget is simply skipped rather than showing a fake "00:00:00".
+local function update_lobby_season(self)
+    local status = ws.current_season_status
+    local end_epoch = status and parse_iso_utc(status.endDate)
+    if not end_epoch then
+        self.season_text = nil
+        return
+    end
+    local diff = math.max(0, end_epoch - os.time())
+    self.season_text = diff >= 86400
+        and string.format("%dD %02dH %02dM %02dS", math.floor(diff / 86400), math.floor((diff % 86400) / 3600), math.floor((diff % 3600) / 60), diff % 60)
+        or string.format("%02dH %02dM %02dS", math.floor(diff / 3600), math.floor((diff % 3600) / 60), diff % 60)
+end
+
+-- ---------------------------------------------------------------------------
 -- Main mode-tile builder
 -- ---------------------------------------------------------------------------
 local function mode_tile(self, cfg)
@@ -529,6 +570,15 @@ local function rebuild(self)
     local n_sign = track(self, ui.text(vmath.vector3(grid_r, h_y - 32, 0), sub_txt, "small", vmath.vector4(0.4, 0.4, 0.4, 1)))
     set_pivot(n_sign, gui.PIVOT_E)
 
+    -- Center: compact "SEASON ENDS IN" countdown, filling the empty middle
+    -- of the header between the brand block and the user-status block.
+    -- Skipped gracefully if SEASON_STATUS hasn't arrived yet (self.season_text nil).
+    if self.season_text then
+        local mid_x = (grid_l + grid_r) / 2
+        track(self, ui.text(vmath.vector3(mid_x, h_y + 14, 0), "SEASON ENDS IN", "small", C_MUTED))
+        track(self, ui.text(vmath.vector3(mid_x, h_y - 12, 0), self.season_text, "body", C_GOLD))
+    end
+
     -- -----------------------------------------------------------------------
     -- Tile 1: PLAY ONLINE
     -- -----------------------------------------------------------------------
@@ -708,8 +758,10 @@ function init(self)
     self.tutorial_active     = not tutorial_seen()
     self.consent_active      = not akira.installed()
     self.consent_phase       = "ask"
+    self._season_tick        = 0
 
     refresh_wh()
+    update_lobby_season(self)
 
     if not app_state.ai_series          then app_state.ai_series          = 3        end
     if not app_state.tournament_size    then app_state.tournament_size    = 4        end
@@ -721,6 +773,16 @@ function init(self)
 end
 
 function update(self, dt)
+    -- Tick the header's season countdown once a second (mirrors
+    -- online.gui_script's self._tick accumulator pattern).
+    self._season_tick = (self._season_tick or 0) + dt
+    if self._season_tick >= 1 then
+        self._season_tick = 0
+        local prev = self.season_text
+        update_lobby_season(self)
+        if self.season_text ~= prev then rebuild(self) end
+    end
+
     if self.consent_active and self.consent_phase == "installing" then
         self._install_t = (self._install_t or 0) + dt
         local p = math.min(1, self._install_t / INSTALL_DURATION)
@@ -748,6 +810,7 @@ function on_message(self, message_id, message, sender)
        message_id == hash("enable")        or
        message_id == hash("layout_changed") then
         refresh_wh()
+        update_lobby_season(self)
         set_state(self, self.state or STATE_LOBBY)
     elseif message_id == hash("disable") then
         clear(self)
