@@ -749,6 +749,7 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("screen_enter") then
         self.active = true
         app.game_active = true
+        pcall(window.set_dim_mode, window.DIMMING_OFF)
         self.awaiting_replay = false
         msg.post(".", "acquire_input_focus")
         GF.start_game(self)
@@ -791,6 +792,7 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("disable") then
         self.active = false
         app.game_active = false
+        pcall(window.set_dim_mode, window.DIMMING_ON)
         self._knockout_scores = nil
         self._knockout_history = nil
         self._knockout_round = 0

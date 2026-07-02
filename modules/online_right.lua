@@ -25,10 +25,9 @@ M.PARTY_TIERS = { 100, 200, 500 }
 M.BATTLE_TYPES = { "NORMAL", "KNOCKOUT", "PARTY" }
 M.BATTLE_TYPE_LABELS = { NORMAL = "BATTLE", KNOCKOUT = "KNOCKOUT", PARTY = "PARTY" }
 
--- Battle types the UI is allowed to SHOW. PARTY is intentionally kept out of
--- view for now while ALL of its code — tiers, is_party branches, resolution and
--- submission — is retained. Re-enable it by simply adding "PARTY" back here.
-M.BATTLE_TYPES_VISIBLE = { "NORMAL", "KNOCKOUT" }
+-- Battle types the UI is allowed to SHOW. PARTY is now re-enabled — tiers,
+-- is_party branches, resolution and submission were retained the whole time.
+M.BATTLE_TYPES_VISIBLE = { "NORMAL", "KNOCKOUT", "PARTY" }
 
 -- Resolve the battle a user holds for a given type T ∈ {NORMAL,KNOCKOUT,PARTY}.
 function M.battle_of_type(u, T)

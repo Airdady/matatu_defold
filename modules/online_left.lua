@@ -82,33 +82,17 @@ function M.draw(self, ctx)
     local cx = (ctx.EDGE_L + div_lx) / 2
     local cy = ctx.EDGE_T - 16
 
-    -- Season timer block + Back button row
-    local timer_h = 88
-    local tcy = cy - timer_h / 2
+    -- Back button row (the "SEASON ENDS IN" countdown that used to live here
+    -- now lives in the lobby header — see main/lobby.gui_script).
+    local btn_size = 54
+    local row_h = btn_size + 20
+    local tcy = cy - row_h / 2
     local ctx_ui = ctx.ui
 
-    -- Square back button
-    local btn_size = 54
-    local gap = 12
     local btn_x = cx - pw/2 + btn_size/2
     mkbtn(self, "nav_lobby", vmath.vector3(btn_x, tcy, 0), vmath.vector3(btn_size, btn_size, 0), "<", "secondary_btn", nil, "btn_md")
 
-    -- Shifted timer container
-    local timer_pw = pw - btn_size - gap
-    local timer_cx = cx + (btn_size + gap) / 2
-
-    track(self, ctx_ui.box(vmath.vector3(timer_cx, tcy, 0), vmath.vector3(timer_pw, timer_h, 0), C.COL_TIMER_BG))
-    track(self, ctx_ui.box(vmath.vector3(timer_cx, tcy - timer_h/2 + 1, 0), vmath.vector3(timer_pw, 2, 0), C.COL_GOLD_BDR))
-    
-    local timer_icon_x = timer_cx - timer_pw/2 + 34
-    track(self, ctx_ui.image(vmath.vector3(timer_icon_x, tcy, 0), vmath.vector3(44, 44, 0), "timer"))
-
-    local tx = timer_icon_x + 34
-    txtL(self, tx, tcy + 26, "SEASON ENDS IN", "small", C.COL_DIM)
-    txtL(self, tx, tcy,      self.season_text or "00:00:00", "title", C.COL_GOLD)
-    txtL(self, tx, tcy - 28, self.season_target_text or "", "small", C.COL_BRIGHT)
-
-    cy = cy - timer_h - C.BLOCK_GAP
+    cy = cy - row_h - C.BLOCK_GAP
 
     -- Global Container Padding/Spacing Logic
     -- pad_top increased and title_space decreased to push title down toward the table
