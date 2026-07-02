@@ -72,7 +72,6 @@ function M.draw(self, ctx)
     local track     = ctx.track
     local txtL      = ctx.txtL
     local txtR      = ctx.txtR
-    local mkbtn     = ctx.mkbtn
     local glass     = ctx.glass
     local commas    = ctx.commas
     local get_layout = ctx.get_layout
@@ -81,18 +80,14 @@ function M.draw(self, ctx)
     local pw = (div_lx - ctx.EDGE_L) - (C.SIDE_MARGIN * 2)
     local cx = (ctx.EDGE_L + div_lx) / 2
     local cy = ctx.EDGE_T - 16
-
-    -- Back button row (the "SEASON ENDS IN" countdown that used to live here
-    -- now lives in the lobby header — see main/lobby.gui_script).
-    local btn_size = 54
-    local row_h = btn_size + 20
-    local tcy = cy - row_h / 2
     local ctx_ui = ctx.ui
 
-    local btn_x = cx - pw/2 + btn_size/2
-    mkbtn(self, "nav_lobby", vmath.vector3(btn_x, tcy, 0), vmath.vector3(btn_size, btn_size, 0), "<", "secondary_btn", nil, "btn_md")
-
-    cy = cy - row_h - C.BLOCK_GAP
+    -- The back button (nav_lobby) and the "SEASON ENDS IN" countdown that
+    -- used to share a row here have both moved off this panel — the back
+    -- button now lives in the ONLINE screen's center header
+    -- (modules/online_center.lua) and the countdown lives in the lobby
+    -- header (main/lobby.gui_script) — so the Standings container starts
+    -- right at the top of the panel with no reserved row above it.
 
     -- Global Container Padding/Spacing Logic
     -- pad_top increased and title_space decreased to push title down toward the table
