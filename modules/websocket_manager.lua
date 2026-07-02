@@ -443,7 +443,10 @@ local function parse_message(json_string)
     M.last_savings_exchange = d
     emit("savings_exchange_result", d)
     if d.success then
-      if M.current_user_data then M.current_user_data.balance = d.newBalance end
+      if M.current_user_data then
+        M.current_user_data.balance = d.newBalance
+        M.current_user_data.savingCoins = d.newSavingCoins
+      end
       if M.current_savings_status then M.current_savings_status.savingCoins = d.newSavingCoins end
     end
   elseif t == "SAVINGS_SETTINGS_UPDATED" then
