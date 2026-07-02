@@ -57,6 +57,14 @@ local function commas(n)
 	return (n:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""))
 end
 
+-- Format an ISO date-only string ("YYYY-MM-DD") for display, e.g. "December 25, 2026".
+local MONTH_NAMES = {"January","February","March","April","May","June","July","August","September","October","November","December"}
+local function format_redemption_date(iso)
+	local y, m, d = tostring(iso or ""):match("(%d+)-(%d+)-(%d+)")
+	if not y then return "" end
+	return string.format("%s %d, %s", MONTH_NAMES[tonumber(m)] or m, tonumber(d), y)
+end
+
 local function calc_fee(method, amount)
 	if type(method) ~= "table" or type(method.charges) ~= "table" then return 0 end
 	for _, tier in ipairs(method.charges) do
@@ -264,114 +272,106 @@ rebuild = function(self)
 
 	if is_save_tab then
 		-- ── SAVE COINS body: pure internal balance -> savingCoins move, no
-		-- phone number / mobile-money numpad involved. Spans the full panel
-		-- width below the tabs row rather than the two-column geometry.
-		local sw       = MW - P*2
-		local scx      = px0
-		local scx_left = left + P
-
-		-- Explanatory copy.
-		local info_cy = tabs_cy - 56
-		local info_lines = {
-			"Savings are long-term coins that build up over time.",
-			"Unlike your regular balance, they are never spent on stakes or games.",
-			"Exchange coins into Savings now, or set an automatic contribution from every game you play.",
-		}
-		for i, line in ipairs(info_lines) do
-			ktext(self, vmath.vector3(scx_left, info_cy - (i-1) * 22, 0), line, 15, M_LABEL, gui.PIVOT_W)
-		end
-
-		-- Current Savings balance.
+		-- phone number / mobile-money numpad involved. Precise 2-column layout
+		-- (left = exchange now, right = auto-charge per game) so that even with
+		-- the auto-charge amount picker showing, everything stays inside the
+		-- 940x540 panel — see the vertical-budget arithmetic in the PR
+		-- description / commit message for this file.
 		local sav = (ws.current_savings_status and ws.current_savings_status.savingCoins)
 			or (ws.current_user_data or {}).savingCoins or 0
-		local sav_cy = info_cy - (#info_lines) * 22 - 18
-		ktext(self, vmath.vector3(scx_left, sav_cy, 0), "Savings: " .. commas(sav) .. " UGX", 20, M_TOTAL, gui.PIVOT_W)
+		local redemption_str = format_redemption_date((ws.current_savings_status or {}).nextRedemptionDate)
 
-		-- ── Section A: Exchange now ─────────────────────────────────────────
-		local sec_a_y = sav_cy - 46
-		ktext(self, vmath.vector3(scx_left, sec_a_y, 0), "EXCHANGE TO SAVINGS NOW", 15, M_LABEL, gui.PIVOT_W)
+		-- Top strip: current balance + next redemption date, full width, centered.
+		local content_top = top - 190
+		ktext(self, vmath.vector3(px0, content_top, 0), "Savings: " .. commas(sav) .. " UGX", 22, M_TOTAL)
+		if redemption_str ~= "" then
+			ktext(self, vmath.vector3(px0, content_top - 24, 0), "Next redemption: " .. redemption_str, 15, M_LABEL)
+		end
+
+		-- Divider between the top strip and the two columns below.
+		track(self, ui.box(vmath.vector3(px0, content_top - 44, 0), vmath.vector3(MW - P*2, 1, 0), M_IN_BD))
+
+		-- Vertical divider between the two columns.
+		local col_top = content_top - 64
+		track(self, ui.box(vmath.vector3(px0, col_top - 90, 0), vmath.vector3(1, 220, 0), M_IN_BD))
+
+		-- ── LEFT column: Exchange to Savings now ────────────────────────────
+		local lcx = px0 - 235
+		ktext(self, vmath.vector3(lcx, col_top, 0), "EXCHANGE NOW", 15, M_LABEL)
 
 		local balv = tonumber((ws.current_user_data or {}).balance) or 0
 		local slo, shi = 100, math.max(100, math.min(5000, balv))
 		self.save_amount = math.max(slo, math.min(shi, self.save_amount or slo))
 
-		local step_w, step_y = 260, sec_a_y - 44
-		local minus_x, plus_x = scx - step_w/2 - 34, scx + step_w/2 + 34
-		framed(self, minus_x, step_y, 52, 52, M_TAB_BD, 1, M_TAB_BG)
-		ktext(self, vmath.vector3(minus_x, step_y, 0), "-", 28, ui.WHITE)
-		local minus_hit = track(self, ui.box(vmath.vector3(minus_x, step_y, 0), vmath.vector3(52, 52, 0), vmath.vector4(0,0,0,0)))
+		local step_y = col_top - 42
+		local step_w = 200
+		framed(self, lcx - step_w/2 - 32, step_y, 46, 46, M_TAB_BD, 1, M_TAB_BG)
+		ktext(self, vmath.vector3(lcx - step_w/2 - 32, step_y, 0), "-", 26, ui.WHITE)
+		local minus_hit = track(self, ui.box(vmath.vector3(lcx - step_w/2 - 32, step_y, 0), vmath.vector3(46, 46, 0), vmath.vector4(0,0,0,0)))
 		self.buttons[#self.buttons+1] = { node = minus_hit, id = "save_amt_minus" }
 
-		framed(self, scx, step_y, step_w, 52, M_IN_BD, 1, M_IN_BG)
-		ktext(self, vmath.vector3(scx, step_y, 0), commas(self.save_amount) .. " COINS", 22, M_TOTAL)
+		framed(self, lcx, step_y, step_w, 46, M_IN_BD, 1, M_IN_BG)
+		ktext(self, vmath.vector3(lcx, step_y, 0), commas(self.save_amount) .. " COINS", 18, M_TOTAL)
 
-		framed(self, plus_x, step_y, 52, 52, M_TAB_BD, 1, M_TAB_BG)
-		ktext(self, vmath.vector3(plus_x, step_y, 0), "+", 28, ui.WHITE)
-		local plus_hit = track(self, ui.box(vmath.vector3(plus_x, step_y, 0), vmath.vector3(52, 52, 0), vmath.vector4(0,0,0,0)))
+		framed(self, lcx + step_w/2 + 32, step_y, 46, 46, M_TAB_BD, 1, M_TAB_BG)
+		ktext(self, vmath.vector3(lcx + step_w/2 + 32, step_y, 0), "+", 26, ui.WHITE)
+		local plus_hit = track(self, ui.box(vmath.vector3(lcx + step_w/2 + 32, step_y, 0), vmath.vector3(46, 46, 0), vmath.vector4(0,0,0,0)))
 		self.buttons[#self.buttons+1] = { node = plus_hit, id = "save_amt_plus" }
 
-		local confirm_y = step_y - 56
-		self.save_exchange_btn_pos = { x = scx, y = confirm_y }
-		local confirm_label = self._save_exchanging and "EXCHANGING..." or "EXCHANGE"
-		framed(self, scx, confirm_y, 260, 52, M_PAY_BD, 1, M_PANEL)
-		track(self, ui.box(vmath.vector3(scx, confirm_y, 0), vmath.vector3(258, 50, 0), M_PAY_TINT))
-		ktext(self, vmath.vector3(scx, confirm_y, 0), confirm_label, 20, M_PAY_TXT)
-		local confirm_hit = track(self, ui.box(vmath.vector3(scx, confirm_y, 0), vmath.vector3(260, 52, 0), vmath.vector4(0,0,0,0)))
+		local confirm_y = col_top - 100
+		self.save_exchange_btn_pos = { x = lcx, y = confirm_y }
+		local confirm_label = self._save_exchanging and "EXCHANGING..." or "CONFIRM EXCHANGE"
+		framed(self, lcx, confirm_y, 220, 48, M_PAY_BD, 1, M_PANEL)
+		track(self, ui.box(vmath.vector3(lcx, confirm_y, 0), vmath.vector3(218, 46, 0), M_PAY_TINT))
+		ktext(self, vmath.vector3(lcx, confirm_y, 0), confirm_label, 17, M_PAY_TXT)
+		local confirm_hit = track(self, ui.box(vmath.vector3(lcx, confirm_y, 0), vmath.vector3(220, 48, 0), vmath.vector4(0,0,0,0)))
 		self.buttons[#self.buttons+1] = { node = confirm_hit, id = "save_exchange_confirm" }
 
-		local msg_a_y = confirm_y - 32
 		if self._save_msg then
-			ktext(self, vmath.vector3(scx, msg_a_y, 0), self._save_msg, 15, self._save_msg_ok and M_OKC or M_ERR)
+			ktext(self, vmath.vector3(lcx, confirm_y - 34, 0), self._save_msg, 14, self._save_msg_ok and M_OKC or M_ERR)
 		end
 
-		-- Divider between sections.
-		local div_y = msg_a_y - 22
-		track(self, ui.box(vmath.vector3(scx, div_y, 0), vmath.vector3(sw, 1, 0), M_IN_BD))
+		-- ── RIGHT column: Auto-charge per game ──────────────────────────────
+		local rcx = px0 + 235
+		ktext(self, vmath.vector3(rcx, col_top, 0), "AUTO-CHARGE PER GAME", 15, M_LABEL)
 
-		-- ── Section B: Auto-charge per game ─────────────────────────────────
-		local sec_b_y = div_y - 30
-		ktext(self, vmath.vector3(scx_left, sec_b_y, 0), "AUTO-CHARGE PER GAME", 15, M_LABEL, gui.PIVOT_W)
-
-		local toggle_y = sec_b_y - 44
-		local seg_w, seg_gap = 110, 10
-		local off_x = scx - seg_w/2 - seg_gap/2
-		local on_x  = scx + seg_w/2 + seg_gap/2
-		framed(self, off_x, toggle_y, seg_w, 48, M_TAB_BD, 1, (not self.save_autocharge_enabled) and M_FOCUS or M_TAB_BG)
-		ktext(self, vmath.vector3(off_x, toggle_y, 0), "OFF", 18, (not self.save_autocharge_enabled) and ui.WHITE or M_TAB_TXT)
-		local off_hit = track(self, ui.box(vmath.vector3(off_x, toggle_y, 0), vmath.vector3(seg_w, 48, 0), vmath.vector4(0,0,0,0)))
+		local toggle_y = col_top - 42
+		local seg_w, seg_gap = 90, 8
+		local off_x, on_x = rcx - seg_w/2 - seg_gap/2, rcx + seg_w/2 + seg_gap/2
+		framed(self, off_x, toggle_y, seg_w, 44, M_TAB_BD, 1, (not self.save_autocharge_enabled) and M_FOCUS or M_TAB_BG)
+		ktext(self, vmath.vector3(off_x, toggle_y, 0), "OFF", 16, (not self.save_autocharge_enabled) and ui.WHITE or M_TAB_TXT)
+		local off_hit = track(self, ui.box(vmath.vector3(off_x, toggle_y, 0), vmath.vector3(seg_w, 44, 0), vmath.vector4(0,0,0,0)))
 		self.buttons[#self.buttons+1] = { node = off_hit, id = "save_autocharge_off" }
-
-		framed(self, on_x, toggle_y, seg_w, 48, M_TAB_BD, 1, self.save_autocharge_enabled and M_FOCUS or M_TAB_BG)
-		ktext(self, vmath.vector3(on_x, toggle_y, 0), "ON", 18, self.save_autocharge_enabled and ui.WHITE or M_TAB_TXT)
-		local on_hit = track(self, ui.box(vmath.vector3(on_x, toggle_y, 0), vmath.vector3(seg_w, 48, 0), vmath.vector4(0,0,0,0)))
+		framed(self, on_x, toggle_y, seg_w, 44, M_TAB_BD, 1, self.save_autocharge_enabled and M_FOCUS or M_TAB_BG)
+		ktext(self, vmath.vector3(on_x, toggle_y, 0), "ON", 16, self.save_autocharge_enabled and ui.WHITE or M_TAB_TXT)
+		local on_hit = track(self, ui.box(vmath.vector3(on_x, toggle_y, 0), vmath.vector3(seg_w, 44, 0), vmath.vector4(0,0,0,0)))
 		self.buttons[#self.buttons+1] = { node = on_hit, id = "save_autocharge_on" }
 
-		local amt_y = toggle_y - 56
+		local amt_y = toggle_y - 50
 		if self.save_autocharge_enabled then
-			ktext(self, vmath.vector3(scx_left, amt_y + 32, 0), "AMOUNT PER GAME", 15, M_LABEL, gui.PIVOT_W)
-			local amounts = { 2, 5, 10, 25 }
-			local amt_w, amt_gap = 100, 10
+			local amounts = {2, 5, 10, 25}
+			local amt_w, amt_gap = 48, 6
 			local n = #amounts
 			for i, amt in ipairs(amounts) do
-				local ax = scx + (i - (n + 1) / 2) * (amt_w + amt_gap)
+				local ax = rcx + (i - (n+1)/2) * (amt_w + amt_gap)
 				local on = (self.save_autocharge_amount == amt)
-				framed(self, ax, amt_y, amt_w, 48, M_TAB_BD, 1, on and M_FOCUS or M_TAB_BG)
-				ktext(self, vmath.vector3(ax, amt_y, 0), tostring(amt), 18, on and ui.WHITE or M_TAB_TXT)
-				local amt_hit = track(self, ui.box(vmath.vector3(ax, amt_y, 0), vmath.vector3(amt_w, 48, 0), vmath.vector4(0,0,0,0)))
+				framed(self, ax, amt_y, amt_w, 40, M_TAB_BD, 1, on and M_FOCUS or M_TAB_BG)
+				ktext(self, vmath.vector3(ax, amt_y, 0), tostring(amt), 16, on and ui.WHITE or M_TAB_TXT)
+				local amt_hit = track(self, ui.box(vmath.vector3(ax, amt_y, 0), vmath.vector3(amt_w, 40, 0), vmath.vector4(0,0,0,0)))
 				self.buttons[#self.buttons+1] = { node = amt_hit, id = "save_autocharge_amt_" .. tostring(amt) }
 			end
 		end
 
-		local plan_y = self.save_autocharge_enabled and (amt_y - 56) or (amt_y - 8)
+		local save_y = self.save_autocharge_enabled and (amt_y - 56) or (amt_y - 4)
 		local plan_label = self._plan_saving and "SAVING..." or "SAVE PLAN"
-		framed(self, scx, plan_y, 260, 52, M_PAY_BD, 1, M_PANEL)
-		track(self, ui.box(vmath.vector3(scx, plan_y, 0), vmath.vector3(258, 50, 0), M_PAY_TINT))
-		ktext(self, vmath.vector3(scx, plan_y, 0), plan_label, 20, M_PAY_TXT)
-		local plan_hit = track(self, ui.box(vmath.vector3(scx, plan_y, 0), vmath.vector3(260, 52, 0), vmath.vector4(0,0,0,0)))
+		framed(self, rcx, save_y, 220, 48, M_PAY_BD, 1, M_PANEL)
+		track(self, ui.box(vmath.vector3(rcx, save_y, 0), vmath.vector3(218, 46, 0), M_PAY_TINT))
+		ktext(self, vmath.vector3(rcx, save_y, 0), plan_label, 17, M_PAY_TXT)
+		local plan_hit = track(self, ui.box(vmath.vector3(rcx, save_y, 0), vmath.vector3(220, 48, 0), vmath.vector4(0,0,0,0)))
 		self.buttons[#self.buttons+1] = { node = plan_hit, id = "save_autocharge_plan_save" }
 
 		if self._plan_msg then
-			ktext(self, vmath.vector3(scx, plan_y - 32, 0), self._plan_msg, 15, self._plan_msg_ok and M_OKC or M_ERR)
+			ktext(self, vmath.vector3(rcx, save_y - 34, 0), self._plan_msg, 14, self._plan_msg_ok and M_OKC or M_ERR)
 		end
 
 		return

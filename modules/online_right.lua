@@ -68,6 +68,14 @@ end
 
 local INVITE_AVATAR_MAX = 60
 
+-- Format an ISO date-only string ("YYYY-MM-DD") for display, e.g. "December 25, 2026".
+local MONTH_NAMES = {"January","February","March","April","May","June","July","August","September","October","November","December"}
+local function format_redemption_date(iso)
+    local y, m, d = tostring(iso or ""):match("(%d+)-(%d+)-(%d+)")
+    if not y then return "" end
+    return string.format("%s %d, %s", MONTH_NAMES[tonumber(m)] or m, tonumber(d), y)
+end
+
 -- Game Over inspired palette
 local C_VICTORY  = vmath.vector4(0.000, 0.722, 0.831, 1.0) -- Cyan
 local C_CHAMPION = vmath.vector4(1.000, 0.843, 0.000, 1.0) -- Gold
@@ -237,7 +245,7 @@ local function draw_savings_info(self, ctx)
     local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.75)))
     self.buttons[#self.buttons+1] = { node = dim, id = "savings_info_block" }
 
-    local panel_w, panel_h = 420, 300
+    local panel_w, panel_h = 420, 330
     track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
 
     local top = CY + panel_h / 2
@@ -252,6 +260,12 @@ local function draw_savings_info(self, ctx)
     }
     for i, line in ipairs(body_lines) do
         track(self, ui.text(vmath.vector3(CX, top - 90 - (i - 1) * 24, 0), line, "small", C.COL_WHITE))
+    end
+
+    local redemption_str = format_redemption_date((ws.current_savings_status or {}).nextRedemptionDate)
+    if redemption_str ~= "" then
+        track(self, ui.text(vmath.vector3(CX, top - 90 - (#body_lines) * 24 - 14, 0),
+            "Next redemption: " .. redemption_str, "small", C.COL_GOLD))
     end
 
     local by = CY - panel_h / 2 + 40
@@ -393,9 +407,14 @@ function M.draw(self, ctx, left_M)
     -- ── User info container ───────────────────────────────────────────────
     local margin   = 15
     local av_size  = 64
-    -- +32 to make room for the SAV. (savings) row below BAL./PTS. — the extra
-    -- 32 = stat_h(28) + small_gap(4), matching the row it adds.
-    local info_h   = 64 + 32
+    -- info_h fits: name pill (28) + row_gap (9) + BAL/PTS row (42) + row_gap (9)
+    -- + SAV row (42) = 130, plus ~30px buffer = 160. Grown from the original 96
+    -- to make the bigger BAL./PTS./SAV. rows below read clearly. Growing
+    -- info_h pushes the Battles/Tournaments panels down by the same delta
+    -- (64px) — verified against the ~140px of slack that existed below the
+    -- Tournaments panel before this change (see cy arithmetic after the
+    -- Tournaments panel below).
+    local info_h   = 160
     local list_h   = 80
     local pay_h    = 44
     local gap      = 12
@@ -428,41 +447,51 @@ function M.draw(self, ctx, left_M)
     local acc_edit = track(self, ui.image(vmath.vector3(inner_r - 16, name_y, 0), vmath.vector3(18, 18, 0), "edit"))
     gui.set_color(acc_edit, C.COL_WHITE)
 
-    -- Balance + Points
-    local stat_h  = 28
-    local stat_y  = name_y - name_h/2 - 4 - stat_h/2
+    -- Balance + Points. Row height bumped from 28 -> 42 and the vertical gap
+    -- between rows from 4 -> 9 so the bigger rows below don't feel cramped.
+    local row_gap = 9
+    local stat_h  = 42
+    local stat_y  = name_y - name_h/2 - row_gap - stat_h/2
     local pts_w   = 100
     local bal_w   = info_w - pts_w - 6
     local bal_cx  = info_l + bal_w/2
     local pts_cx  = inner_r - pts_w/2
     local COL_ORANGE = vmath.vector4(1.0, 0.6, 0.0, 1.0)
-    
+    local VAL_SCALE = 1.2 -- bump on the numeric value text nodes for legibility
+
     track(self, ui.box(vmath.vector3(bal_cx, stat_y, 0), vmath.vector3(bal_w, stat_h, 0), C.COL_STAT_BG))
     txtL(self, info_l + 8, stat_y, "BAL.", "small", COL_ORANGE)
-    txtR(self, info_l + bal_w - 6, stat_y, commas(u.balance or 0), "body", COL_ORANGE)
-    
+    local bal_val = txtR(self, info_l + bal_w - 6, stat_y, commas(u.balance or 0), "body", COL_ORANGE)
+    gui.set_scale(bal_val, vmath.vector3(VAL_SCALE, VAL_SCALE, 1))
+
     track(self, ui.box(vmath.vector3(pts_cx, stat_y, 0), vmath.vector3(pts_w, stat_h, 0), C.COL_STAT_BG))
     txtL(self, pts_cx - pts_w/2 + 8, stat_y, "PTS.", "small", C.COL_DIM)
-    txtR(self, pts_cx + pts_w/2 - 8, stat_y, commas(u.points or 0), "body", C.COL_CYAN)
+    local pts_val = txtR(self, pts_cx + pts_w/2 - 8, stat_y, commas(u.points or 0), "body", C.COL_CYAN)
+    gui.set_scale(pts_val, vmath.vector3(VAL_SCALE, VAL_SCALE, 1))
 
     -- Savings (long-term coins from Half-Week Season rewards) — full-width row
     -- below BAL./PTS., in a distinct accent colour so it reads as a separate
-    -- long-term currency.
+    -- long-term currency. Same height/gap treatment as the BAL./PTS. row above.
     local COL_SAVINGS = vmath.vector4(0.20, 0.75, 0.55, 1.0)
-    local sav_y = stat_y - stat_h/2 - 4 - stat_h/2
+    local sav_y = stat_y - stat_h/2 - row_gap - stat_h/2
     track(self, ui.box(vmath.vector3(info_cx, sav_y, 0), vmath.vector3(info_w, stat_h, 0), C.COL_STAT_BG))
     txtL(self, info_l + 8, sav_y, "SAV.", "small", COL_SAVINGS)
-    txtR(self, inner_r - 58, sav_y, commas(u.savingCoins or 0), "body", COL_SAVINGS)
+    local sav_val = txtR(self, inner_r - 90, sav_y, commas(u.savingCoins or 0), "body", COL_SAVINGS)
+    gui.set_scale(sav_val, vmath.vector3(VAL_SCALE, VAL_SCALE, 1))
 
-    -- Two small circular icon buttons at the right edge of the SAV. row: "+"
+    -- Two circular icon buttons at the right edge of the SAV. row: "+"
     -- (add — exchange now / auto-charge settings) sits just to the left of "i"
-    -- (info), each given ~26px of dedicated width so they don't overlap.
-    local sav_info_pos = vmath.vector3(inner_r - 14, sav_y, 0)
-    local sav_add_pos  = vmath.vector3(inner_r - 40, sav_y, 0)
-    track(self, ui.pie(sav_info_pos, 11, vmath.vector4(0.15, 0.15, 0.15, 0.65)))
-    mkbtn(self, "savings_info", sav_info_pos, vmath.vector3(22, 22, 0), "i", vmath.vector4(0, 0, 0, 0), nil, "small", C.COL_WHITE)
-    track(self, ui.pie(sav_add_pos, 11, vmath.vector4(0.15, 0.15, 0.15, 0.65)))
-    mkbtn(self, "savings_add", sav_add_pos, vmath.vector3(22, 22, 0), "+", vmath.vector4(0, 0, 0, 0), nil, "small", COL_SAVINGS)
+    -- (info). Bumped from 22px to 34px with a visible colored-circle
+    -- background (was a barely-visible dark pie) so they read as tappable
+    -- buttons rather than decoration.
+    local icon_sz   = 34
+    local sav_info_pos = vmath.vector3(inner_r - 23, sav_y, 0)
+    local sav_add_pos  = vmath.vector3(inner_r - 63, sav_y, 0)
+    local ICON_BG = vmath.vector4(COL_SAVINGS.x, COL_SAVINGS.y, COL_SAVINGS.z, 0.40)
+    track(self, ui.pie(sav_info_pos, icon_sz/2, ICON_BG))
+    mkbtn(self, "savings_info", sav_info_pos, vmath.vector3(icon_sz, icon_sz, 0), "i", vmath.vector4(0, 0, 0, 0), nil, "btn_sm", C.COL_WHITE)
+    track(self, ui.pie(sav_add_pos, icon_sz/2, ICON_BG))
+    mkbtn(self, "savings_add", sav_add_pos, vmath.vector3(icon_sz, icon_sz, 0), "+", vmath.vector4(0, 0, 0, 0), nil, "btn_sm", C.COL_WHITE)
 
     -- Stats List (Position & Form)
     local lcy = top_y - info_h - gap - list_h/2
@@ -582,6 +611,14 @@ function M.draw(self, ctx, left_M)
     cy = cy - battle_h - C.BLOCK_GAP
 
     -- ── Tournaments panel ─────────────────────────────────────────────────
+    -- Verified against info_h = 160 (grown from 96, a +64 delta): with
+    -- EDGE_T = 720, cy starts at 704. cont_h = 15+160+12+80+12+44+15 = 338, so
+    -- cy after the info container = 704 - 338 - 18 = 348. battle_h = 172, so
+    -- cy after Battles = 348 - 172 - 18 = 158. Tournaments' own tcy2 below
+    -- sits at cy - t_h/2 = 158 - 32 = 126, so its bottom edge (tcy2 - t_h/2)
+    -- lands at 126 - 32 = 94, comfortably >= the required 20px floor (the
+    -- panel used to end with ~140px of unused space below it, so this only
+    -- eats 64px of that slack).
     local t_h  = 64
     local tcy2 = cy - t_h/2
     track(self, ui.box(vmath.vector3(cx, tcy2, 0), vmath.vector3(pw, t_h, 0), C.COL_BG))
