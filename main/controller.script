@@ -234,6 +234,10 @@ function init(self)
     forward("savings_exchange_result",  "#online", "ws_savings_exchange_result")
     forward("savings_settings_updated", "#online", "ws_savings_settings_updated")
 
+    forward("savings_status",           "#payments", "ws_savings_status")
+    forward("savings_exchange_result",  "#payments", "ws_savings_exchange_result")
+    forward("savings_settings_updated", "#payments", "ws_savings_settings_updated")
+
     table.insert(self.tokens, ws.on("auth_required", function()
         if self.screen == "online" or self.screen == "lobby" then show(self, "auth") end
     end))
