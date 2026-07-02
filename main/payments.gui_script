@@ -394,48 +394,10 @@ rebuild = function(self)
 		return
 	end
 
-	-- Saved-number tags: ALL saved numbers are shown (cap is MAX_NUMBERS), tap to
-	-- pay with one, tap its ✕ to remove it, or "+ NEW" to type a fresh one
-	-- (validated in realtime below). "+ NEW" hides once the cap is reached.
-	local saved = saved_numbers()
-	local chips_cy = tabs_cy - 72
-	local CHIP_H = 44
-	ktext(self, vmath.vector3(lx_left, chips_cy + CHIP_H/2 + 12, 0), "PAY WITH", 16, M_LABEL, gui.PIVOT_W)
-
-	local chips = {}
-	for _, p in ipairs(saved) do
-		chips[#chips+1] = { number = p.number }
-	end
-	local at_cap = #chips >= MAX_NUMBERS
-	if not at_cap then chips[#chips+1] = { is_new = true } end
-
-	local cgap = 10
-	local cw = (left_w - cgap * (#chips - 1)) / math.max(1, #chips)
-	local ccx0 = lx_left + cw/2
-	for i, c in ipairs(chips) do
-		local x = ccx0 + (i-1) * (cw + cgap)
-		if c.is_new then
-			framed(self, x, chips_cy, cw, CHIP_H, M_PAY_BD, 1, M_TAB_BG)
-			ktext(self, vmath.vector3(x, chips_cy, 0), "+ NEW", 18, M_PAY_TXT)
-			local hit = track(self, ui.box(vmath.vector3(x, chips_cy, 0), vmath.vector3(cw, CHIP_H, 0), vmath.vector4(0,0,0,0)))
-			self.buttons[#self.buttons+1] = { node = hit, id = "chip_new" }
-		else
-			local sel = phone_key(c.number) == phone_key(self.phone)
-			framed(self, x, chips_cy, cw, CHIP_H, sel and M_FOCUS or M_TAB_BD, 1, sel and M_IN_BG_F or M_TAB_BG)
-			-- Big number text, left-aligned with little padding; ✕ on the right.
-			ktext(self, vmath.vector3(x - cw/2 + 12, chips_cy, 0), to_local(c.number), 19, sel and ui.WHITE or M_TAB_TXT, gui.PIVOT_W)
-			ktext(self, vmath.vector3(x + cw/2 - 15, chips_cy, 0), "x", 20, M_DEL_TXT)
-			-- Pick hit (whole tag) first, then the remove hit on top of the ✕ so a
-			-- tap on the ✕ is matched before the pick (on_input scans newest-first).
-			local pick = track(self, ui.box(vmath.vector3(x, chips_cy, 0), vmath.vector3(cw, CHIP_H, 0), vmath.vector4(0,0,0,0)))
-			self.buttons[#self.buttons+1] = { node = pick, id = "chip_pick", data = c.number }
-			local rm = track(self, ui.box(vmath.vector3(x + cw/2 - 14, chips_cy, 0), vmath.vector3(32, CHIP_H, 0), vmath.vector4(0,0,0,0)))
-			self.buttons[#self.buttons+1] = { node = rm, id = "chip_remove", data = c.number }
-		end
-	end
-
-	-- Phone input (full width) + validated name underneath.
-	local phone_cy = chips_cy - 96
+	-- Phone input (full width, prefilled with the account's current number) +
+	-- validated name underneath. No saved-number picker: the field always
+	-- just shows the current phone number.
+	local phone_cy = tabs_cy - 90
 	input_field(lx, phone_cy, left_w, 64, "PHONE NUMBER", self.phone, "07XX XXX XXX", self.field == "phone", "focus_phone")
 
 	local name_cy = phone_cy - 46
@@ -628,39 +590,6 @@ local function handle(self, b)
 		self.field = "phone"; rebuild(self)
 	elseif id == "focus_amount" then
 		self.field = "amount"; rebuild(self)
-	elseif id == "chip_pick" then
-		-- Re-use a saved number (validated name comes from cache, instantly).
-		self.phone = to_local(b.data)
-		self.field = "amount"
-		schedule_validation(self)
-		rebuild(self)
-	elseif id == "chip_new" then
-		-- Clear for a brand-new number; focus the phone field to type it in.
-		self.phone = ""
-		self.field = "phone"
-		self.phone_name, self.phone_status, self.phone_msg = "", "", nil
-		if self._val_timer then timer.cancel(self._val_timer); self._val_timer = nil end
-		rebuild(self)
-	elseif id == "chip_remove" then
-		-- Remove this saved number completely (locally + on the backend).
-		local removed = b.data
-		local u = ws.current_user_data or {}
-		if type(u.phoneNumbers) == "table" then
-			for i = #u.phoneNumbers, 1, -1 do
-				if phone_key(u.phoneNumbers[i].number) == phone_key(removed) then
-					table.remove(u.phoneNumbers, i)
-				end
-			end
-		end
-		-- If the removed number was the one in the field, clear it.
-		if phone_key(removed) == phone_key(self.phone) then
-			self.phone = ""
-			self.field = "phone"
-			self.phone_name, self.phone_status, self.phone_msg = "", "", nil
-			if self._val_timer then timer.cancel(self._val_timer); self._val_timer = nil end
-		end
-		msg.post("#controller", "remove_phone", { phone = removed })
-		rebuild(self)
 	elseif id:sub(1,4) == "num_" then
 		local k = b.data
 		if k == "<" then
