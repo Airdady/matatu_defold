@@ -887,6 +887,10 @@ function M.end_game(self, player_won, is_cut, backend_results)
                 go.animate(cc.id, "scale.x", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_INSINE, 0.18, 0, function()
                     if pcall(go.get_position, cc.id) then
                         self.set_face(cc)
+                        -- Opponent cards render smaller while face-down (scale.y
+                        -- shrunk in layout_hand); snap y back to full before
+                        -- animating x back up so the revealed card isn't stretched.
+                        go.set(cc.id, "scale.y", CARD_SCALE_F)
                         go.animate(cc.id, "scale.x", go.PLAYBACK_ONCE_FORWARD, CARD_SCALE_F, go.EASING_OUTSINE, 0.18, 0, function()
                             flipped = flipped + 1
                             if flipped == total then on_complete() end
