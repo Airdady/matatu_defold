@@ -161,7 +161,7 @@ function M.draw(self, ctx)
 
     -- ── Season Bonuses Container ──────────────────────────────────────────────
     local num_bonuses = #prizes
-    local b_list_h = num_bonuses * C.ROW_H_LG
+    local b_list_h = num_bonuses * C.ROW_H_BONUS
     local b_cont_h = pad_top + title_space + b_list_h + pad_bot
 
     -- Draw Container Background
@@ -180,7 +180,7 @@ function M.draw(self, ctx)
 
     local my_pos = tonumber((ws.current_user_data or {}).position) or -1
     local active = M.active_tier_index(prizes, my_pos)
-    local row_h_bonus = C.ROW_H_LG
+    local row_h_bonus = C.ROW_H_BONUS
 
     for i, p in ipairs(prizes) do
         local tier_col = C.TIER_COLORS[math.min(i, #C.TIER_COLORS)]
