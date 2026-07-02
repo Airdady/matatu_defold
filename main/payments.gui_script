@@ -281,26 +281,42 @@ rebuild = function(self)
 			or (ws.current_user_data or {}).savingCoins or 0
 		local redemption_str = format_redemption_date((ws.current_savings_status or {}).nextRedemptionDate)
 
-		-- Top strip: current balance + next redemption date, full width, centered.
+		-- Top strip: current balance + next redemption date + period-progress
+		-- bar (periodProgressPercent, backend-driven), full width, centered.
 		local content_top = top - 190
 		ktext(self, vmath.vector3(px0, content_top, 0), "Savings: " .. commas(sav) .. " UGX", 22, M_TOTAL)
 		if redemption_str ~= "" then
 			ktext(self, vmath.vector3(px0, content_top - 24, 0), "Next redemption: " .. redemption_str, 15, M_LABEL)
 		end
 
+		local pct = math.max(0, math.min(100, tonumber((ws.current_savings_status or {}).periodProgressPercent) or 0))
+		local bar_w, bar_h, bar_y = MW - P*2, 12, content_top - 46
+		track(self, ui.box(vmath.vector3(px0, bar_y, 0), vmath.vector3(bar_w, bar_h, 0), vmath.vector4(1, 1, 1, 0.08)))
+		if pct > 0 then
+			local fill_w = bar_w * (pct / 100)
+			track(self, ui.box(vmath.vector3(px0 - bar_w/2 + fill_w/2, bar_y, 0), vmath.vector3(fill_w, bar_h, 0), M_TOTAL))
+		end
+		ktext(self, vmath.vector3(px0, content_top - 66, 0), pct .. "% through this savings period", 14, M_LABEL)
+
 		-- Divider between the top strip and the two columns below.
-		track(self, ui.box(vmath.vector3(px0, content_top - 44, 0), vmath.vector3(MW - P*2, 1, 0), M_IN_BD))
+		track(self, ui.box(vmath.vector3(px0, content_top - 86, 0), vmath.vector3(MW - P*2, 1, 0), M_IN_BD))
 
 		-- Vertical divider between the two columns.
-		local col_top = content_top - 64
+		local col_top = content_top - 106
 		track(self, ui.box(vmath.vector3(px0, col_top - 90, 0), vmath.vector3(1, 220, 0), M_IN_BD))
 
 		-- ── LEFT column: Exchange to Savings now ────────────────────────────
 		local lcx = px0 - 235
 		ktext(self, vmath.vector3(lcx, col_top, 0), "EXCHANGE NOW", 15, M_LABEL)
 
+		local ecfg = (ws.current_savings_status or {}).exchangeConfig
+		local emin, emax = 100, 5000
+		if type(ecfg) == "table" then
+			emin = tonumber(ecfg.min) or emin
+			emax = tonumber(ecfg.max) or emax
+		end
 		local balv = tonumber((ws.current_user_data or {}).balance) or 0
-		local slo, shi = 100, math.max(100, math.min(5000, balv))
+		local slo, shi = emin, math.max(emin, math.min(emax, balv))
 		self.save_amount = math.max(slo, math.min(shi, self.save_amount or slo))
 
 		local step_y = col_top - 42
@@ -349,7 +365,8 @@ rebuild = function(self)
 
 		local amt_y = toggle_y - 50
 		if self.save_autocharge_enabled then
-			local amounts = {2, 5, 10, 25}
+			local amounts = (ws.current_savings_status or {}).autoChargeAmounts
+			if type(amounts) ~= "table" or #amounts == 0 then amounts = {2, 5, 10, 25} end
 			local amt_w, amt_gap = 48, 6
 			local n = #amounts
 			for i, amt in ipairs(amounts) do
@@ -682,9 +699,18 @@ local function handle(self, b)
 			rebuild(self)
 		end
 	elseif id == "save_amt_minus" or id == "save_amt_plus" then
+		-- Backend-driven bounds/step (SAVINGS_STATUS.exchangeConfig), same
+		-- fallback used while drawing this tab.
+		local ecfg = (ws.current_savings_status or {}).exchangeConfig
+		local emin, emax, estep = 100, 5000, 100
+		if type(ecfg) == "table" then
+			emin  = tonumber(ecfg.min)  or emin
+			emax  = tonumber(ecfg.max)  or emax
+			estep = tonumber(ecfg.step) or estep
+		end
 		local bal = tonumber((ws.current_user_data or {}).balance) or 0
-		local lo, hi = 100, math.max(100, math.min(5000, bal))
-		local step = (id == "save_amt_plus") and 100 or -100
+		local lo, hi = emin, math.max(emin, math.min(emax, bal))
+		local step = (id == "save_amt_plus") and estep or -estep
 		self.save_amount = math.max(lo, math.min(hi, (self.save_amount or lo) + step))
 		rebuild(self)
 	elseif id == "save_exchange_confirm" then

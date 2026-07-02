@@ -518,9 +518,18 @@ function on_input(self, action_id, action)
                 elseif id == "savings_exchange_minus" or id == "savings_exchange_plus" then
                     local sa = self.savings_add
                     if sa and not sa.exchanging then
+                        -- Backend-driven bounds/step (SAVINGS_STATUS.exchangeConfig),
+                        -- with the same fallback used while drawing this dialog.
+                        local cfg = (ws.current_savings_status or {}).exchangeConfig
+                        local emin, emax, estep = 100, 5000, 100
+                        if type(cfg) == "table" then
+                            emin  = tonumber(cfg.min)  or emin
+                            emax  = tonumber(cfg.max)  or emax
+                            estep = tonumber(cfg.step) or estep
+                        end
                         local bal = tonumber((ws.current_user_data or {}).balance) or 0
-                        local lo, hi = 100, math.max(100, math.min(5000, bal))
-                        local step = (id == "savings_exchange_plus") and 100 or -100
+                        local lo, hi = emin, math.max(emin, math.min(emax, bal))
+                        local step = (id == "savings_exchange_plus") and estep or -estep
                         sa.exchange_amount = math.max(lo, math.min(hi, (sa.exchange_amount or lo) + step))
                         rebuild(self)
                     end
