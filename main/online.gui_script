@@ -358,7 +358,7 @@ end
 
 function on_message(self, message_id, message, sender)
     if message_id == hash("screen_enter") then
-        msg.post(".", "acquire_input_focus"); self._active, self.dialog, self.banners, self.list_scroll, self.battle_modal, self.invite_search, app_state.searching_invite = true, nil, nil, 0, nil, nil, false; refresh_wh(); rebuild(self)
+        msg.post(".", "acquire_input_focus"); self._active, self.dialog, self.banners, self.list_scroll, self.battle_modal, self.invite_search, app_state.searching_invite, self.savings_info_open = true, nil, nil, 0, nil, nil, false, nil; refresh_wh(); rebuild(self)
     elseif message_id == hash("ws_match_found") and self.invite_search then
         local gs, me, opp = ws.get_active_game() or {}, tostring(ws.get_current_user_id() or ""), nil
         for k, pl in pairs(gs.players or {}) do if tostring((type(pl) == "table" and (pl._id or pl.id)) or k) ~= me then opp = pl end end
@@ -455,6 +455,8 @@ function on_input(self, action_id, action)
                 elseif id == "nav_tournaments" then msg.post("#controller", "goto_tournaments")
                 elseif id == "nav_support" then msg.post("#controller", "goto_support")
                 elseif id == "nav_account" then msg.post("#controller", "goto_profile")
+                elseif id == "savings_info" then self.savings_info_open = true; rebuild(self)
+                elseif id == "savings_info_close" then self.savings_info_open = false; rebuild(self)
                 elseif id == "nav_invite" then if right_panel.start_invite_search(self, app_state, function() rebuild(self) end, b.data) then play_snd("snd_suspense") end
                 elseif id == "cancel_invite" then right_panel.stop_invite_search(self, app_state, function() rebuild(self) end); stop_snd("snd_suspense")
                 elseif id == "create_battle" then

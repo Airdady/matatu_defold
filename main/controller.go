@@ -55,6 +55,10 @@ components {
   component: "/main/incoming.gui"
 }
 components {
+  id: "daily_bonus"
+  component: "/main/daily_bonus.gui"
+}
+components {
   id: "coins"
   component: "/main/coins.gui"
 }

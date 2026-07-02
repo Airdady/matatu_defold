@@ -28,6 +28,11 @@ M.theme = "default"
 M.auth_state = "idle"
 M.auth_error = ""
 
+-- True while the global Half-Week Season Complete modal (main/season_results.gui_script)
+-- is open. Other global modals (e.g. the daily bonus dialog) check this before
+-- auto-opening themselves so they never fight the season modal for screen space.
+M.season_modal_active = false
+
 -- Themes table – each entry defines the visual style applied across lobby + game.
 -- bg_image  : animation name in the ui atlas
 -- card_set  : which card sprite sheet the deck uses ("default"|"drago"|"batman")

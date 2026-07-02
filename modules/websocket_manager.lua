@@ -28,6 +28,8 @@ M.move_inbox = {}
 M.last_game_over = {}
 M.last_season_complete = nil
 M.current_season_status = nil
+M.last_daily_bonus_status = nil
+M.last_daily_bonus_claim = nil
 
 local connection = nil
 local is_connecting = false
@@ -171,6 +173,11 @@ end
 -- close the Half-Week Season Complete modal).
 function M.send_season_results_viewed(season_id)
   M.send_message("SEASON_RESULTS_VIEWED", { seasonId = season_id })
+end
+
+-- Player pressed the claim/accept button on the daily bonus dialog.
+function M.claim_daily_bonus()
+  M.send_message("CLAIM_DAILY_BONUS", {})
 end
 
 function M.send_emoji(name, sound, to)
@@ -403,6 +410,15 @@ local function parse_message(json_string)
     -- countdown instead of guessing the Mon/Wed-noon/Sat boundary locally.
     M.current_season_status = d
     emit("season_status", d)
+  elseif t == "DAILY_BONUS_STATUS" then
+    -- Pushed right after IDENTIFY, same moment SEASON_STATUS arrives. Parked
+    -- here and read back by the global daily_bonus overlay.
+    M.last_daily_bonus_status = d
+    emit("daily_bonus_status", d)
+  elseif t == "DAILY_BONUS_CLAIMED" then
+    -- Server's reply to a CLAIM_DAILY_BONUS attempt.
+    M.last_daily_bonus_claim = d
+    emit("daily_bonus_claimed", d)
   elseif t == "TRANSACTION_COMPLETED" then
     emit("transaction_completed", d)
   elseif t == "TRANSACTION_FAILED" then
