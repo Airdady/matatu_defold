@@ -13,6 +13,7 @@
 --   coin_collect_pot { amount, sources = {{x,y},...}, center = {x,y} }
 --   coin_pot_to      { x, y }                       -- re-anchor the live pot
 --   coin_settle      { to = {x,y}, amount, win }    -- pot -> winner/balance
+--   coin_dissolve    {}                              -- pot shrinks/fades in place, no burst
 --   coin_delta       { from = {x,y}, to = {x,y}, amount, sign }
 --   coin_clear       {}
 ----------------------------------------------------------------------
@@ -22,7 +23,7 @@ local COIN  = 40
 local GOLD  = vmath.vector4(1.0, 0.84, 0.30, 1)
 
 -- Tweaks for the bundle transition and sizing
-local POT_REST_RATIO_X = 0.3 -- 30% of screen width (shifts bundle distinctly to the left)
+local POT_REST_RATIO_X = 0.2 -- 20% of screen width — further left, away from center
 local BUNDLE_SCALE = 1.0     -- Sitting bundle size (was 1.45 — way too large on screen)
 -- The amount label sits clear BELOW the scaled bundle (118 * BUNDLE_SCALE) so it
 -- never overlays the coins. Half the scaled height + the label height + a margin.
@@ -270,6 +271,15 @@ HANDLERS.coin_clear = function(self, d, done)
     done()
 end
 
+-- Like coin_settle but with no winner to fly to (e.g. the gameover modal
+-- opened on a free/zero-stake game): just dissolve any sitting pot in place
+-- instead of leaving it lingering behind the modal.
+HANDLERS.coin_dissolve = function(self, d, done)
+    dissolve_pot(self, POT_DISSOLVE_DUR)
+    local seq = self._seq
+    timer.delay(POT_DISSOLVE_DUR, false, function() if seq == self._seq then done() end end)
+end
+
 -- ── serialized queue runner ──────────────────────────────────────────────────
 local function run_next(self)
     if #self.queue == 0 then self.running = false; return end
@@ -323,6 +333,8 @@ function on_message(self, message_id, message)
         enqueue(self, "coin_pot_to", message)
     elseif message_id == hash("coin_settle") then
         enqueue(self, "coin_settle", message)
+    elseif message_id == hash("coin_dissolve") then
+        enqueue(self, "coin_dissolve", message)
     elseif message_id == hash("coin_delta") then
         enqueue(self, "coin_delta", message)
     elseif message_id == hash("coin_clear") then
