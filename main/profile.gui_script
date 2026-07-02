@@ -63,6 +63,16 @@ local function validate(name)
     return true, ""
 end
 
+-- First word of the account's real name (Relworx mobile-money validation,
+-- stored server-side as `names`), stripped to letters/digits for the
+-- username field's alnum-only rule.
+local function derive_from_names(names)
+    local first = tostring(names or ""):match("%S+") or ""
+    first = first:gsub("[^%w]", "")
+    if #first > 12 then first = first:sub(1, 12) end
+    return first
+end
+
 local function clear(self)
     for _, n in ipairs(self.nodes) do pcall(gui.delete_node, n) end
     self.nodes, self.buttons = {}, {}
@@ -258,8 +268,16 @@ function on_message(self, message_id, message, sender)
         refresh_wh()
         msg.post(".", "acquire_input_focus")
         local u = ws.current_user_data or {}
-        self.username = (u.username and not (u.username:sub(1,7)=="Player_")) and u.username or ""
-        
+        -- Prefer the Relworx-validated real name (server field `names`) over the
+        -- Play Games Services display name that the current `username` may have
+        -- been derived from at signup.
+        local from_names = derive_from_names(u.names)
+        if #from_names >= 3 then
+            self.username = from_names
+        else
+            self.username = (u.username and not (u.username:sub(1,7)=="Player_")) and u.username or ""
+        end
+
         -- Enforce capitalization on loaded username
         if #self.username > 0 then
             self.username = self.username:sub(1,1):upper() .. self.username:sub(2):lower()
