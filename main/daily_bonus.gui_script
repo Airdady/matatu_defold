@@ -61,7 +61,12 @@ end
 -- ── Day-card rendering ─────────────────────────────────────────────────────
 local CARD_W, CARD_H = 92, 128
 
-local function draw_day_card(self, x, y, card_day, entry, cur_day, a)
+-- `reveal` (optional {alpha, scale}) drives the staggered entrance: computed in
+-- Lua per-frame from elapsed time since the dialog opened (see rebuild()) rather
+-- than via gui.animate, since this file deletes/recreates every node each frame
+-- while visible — gui.animate would just fight the rebuild. `pulse` (optional,
+-- only meaningful for the current-day card) drives the breathing gold border.
+local function draw_day_card(self, x, y, card_day, entry, cur_day, a, reveal, pulse)
     local coins  = tonumber(entry and entry.coins) or 0
     local points = tonumber(entry and entry.points) or 0
 
@@ -70,43 +75,48 @@ local function draw_day_card(self, x, y, card_day, entry, cur_day, a)
     local is_locked   = cur_day and (card_day > cur_day)
 
     local fade = is_locked and 0.55 or 1.0
+    local ra = (reveal and reveal.alpha) or 1
+    local rs = (reveal and reveal.scale) or 1
 
     -- Glow / border.
     local border_col = is_current and COL_GOLD or (is_done and COL_GREEN or COL_LOCKED)
-    track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(CARD_W + 6, CARD_H + 6, 0),
-        with_a(border_col, (is_current and 0.9 or 0.35) * a * fade)))
+    local border_a = is_current and (pulse or 0.9) or 0.35
+    local border = track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(CARD_W + 6, CARD_H + 6, 0),
+        with_a(border_col, border_a * a * fade * ra)))
+    gui.set_scale(border, vmath.vector3(rs, rs, 1))
 
     -- Card body.
     local bg_col = is_current and vmath.vector4(0.28, 0.22, 0.05, 1.0)
         or (is_done and vmath.vector4(0.08, 0.16, 0.10, 1.0) or vmath.vector4(0.11, 0.11, 0.13, 1.0))
-    track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(CARD_W, CARD_H, 0), with_a(bg_col, a * fade)))
+    local body = track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(CARD_W, CARD_H, 0), with_a(bg_col, a * fade * ra)))
+    gui.set_scale(body, vmath.vector3(rs, rs, 1))
 
     -- "DAY N" label.
     local day_col = is_current and COL_GOLD or (is_done and COL_GREEN or COL_DIM)
-    local dt = track(self, ui.text(vmath.vector3(x, y + CARD_H / 2 - 20, 0), "DAY " .. tostring(card_day), "small", with_a(day_col, a * fade)))
-    gui.set_scale(dt, vmath.vector3(0.85, 0.85, 1))
+    local dt = track(self, ui.text(vmath.vector3(x, y + CARD_H / 2 - 20, 0), "DAY " .. tostring(card_day), "small", with_a(day_col, a * fade * ra)))
+    gui.set_scale(dt, vmath.vector3(0.85 * rs, 0.85 * rs, 1))
 
     -- Coins reward.
     local row_y = y + 6
     if coins > 0 then
-        local ct = track(self, ui.text(vmath.vector3(x, row_y, 0), "+" .. commas(coins), "small", with_a(COL_GOLD, a * fade)))
-        gui.set_scale(ct, vmath.vector3(0.82, 0.82, 1))
+        local ct = track(self, ui.text(vmath.vector3(x, row_y, 0), "+" .. commas(coins), "small", with_a(COL_GOLD, a * fade * ra)))
+        gui.set_scale(ct, vmath.vector3(0.82 * rs, 0.82 * rs, 1))
         row_y = row_y - 24
     end
 
     -- Points reward.
     if points > 0 then
-        local pt = track(self, ui.text(vmath.vector3(x, row_y, 0), "+" .. commas(points) .. " pts", "small", with_a(COL_CYAN, a * fade)))
-        gui.set_scale(pt, vmath.vector3(0.72, 0.72, 1))
+        local pt = track(self, ui.text(vmath.vector3(x, row_y, 0), "+" .. commas(points) .. " pts", "small", with_a(COL_CYAN, a * fade * ra)))
+        gui.set_scale(pt, vmath.vector3(0.72 * rs, 0.72 * rs, 1))
     end
 
     -- Done checkmark.
     if is_done then
-        local check = track(self, ui.text(vmath.vector3(x, y - CARD_H / 2 + 16, 0), "DONE", "small", with_a(COL_GREEN, a)))
-        gui.set_scale(check, vmath.vector3(0.7, 0.7, 1))
+        local check = track(self, ui.text(vmath.vector3(x, y - CARD_H / 2 + 16, 0), "DONE", "small", with_a(COL_GREEN, a * ra)))
+        gui.set_scale(check, vmath.vector3(0.7 * rs, 0.7 * rs, 1))
     elseif is_locked then
-        local lock = track(self, ui.text(vmath.vector3(x, y - CARD_H / 2 + 16, 0), "LOCKED", "small", with_a(COL_DIM, a * fade)))
-        gui.set_scale(lock, vmath.vector3(0.65, 0.65, 1))
+        local lock = track(self, ui.text(vmath.vector3(x, y - CARD_H / 2 + 16, 0), "LOCKED", "small", with_a(COL_DIM, a * fade * ra)))
+        gui.set_scale(lock, vmath.vector3(0.65 * rs, 0.65 * rs, 1))
     end
 end
 
@@ -145,9 +155,20 @@ local function rebuild(self)
         local x0 = px - row_w / 2 + CARD_W / 2
         local cards_y = top - 190
 
+        -- Pulsing glow for the current-day card: slow sine breathing rather than
+        -- a static border alpha.
+        local pulse = 0.7 + 0.3 * math.sin((self.t or 0) * 3)
+
+        -- Staggered per-card entrance: card i starts revealing i*0.06s after the
+        -- dialog opened, easing scale 0.7->1 / alpha 0->1 over ~0.25s.
+        local opened = self.opened_at or (self.t or 0)
         for i = 1, 7 do
             local x = x0 + (i - 1) * (CARD_W + gap)
-            draw_day_card(self, x, cards_y, i, schedule[i], cur_day, a)
+            local elapsed = (self.t or 0) - opened - (i - 1) * 0.06
+            local prog = math.max(0, math.min(1, elapsed / 0.25))
+            local eased = 1 - (1 - prog) * (1 - prog)
+            local reveal = { alpha = eased, scale = 0.7 + 0.3 * eased }
+            draw_day_card(self, x, cards_y, i, schedule[i], cur_day, a, reveal, pulse)
         end
 
         -- ── Divider ─────────────────────────────────────────────────────────
@@ -156,6 +177,9 @@ local function rebuild(self)
 
         -- ── Claim button / reward flash ─────────────────────────────────────
         local by = py - panel_h / 2 + 50
+        -- Stored every rebuild so the coin-fly animation (fired on a successful
+        -- claim response) has a stable screen-space origin to fly from.
+        self.claim_btn_pos = { x = px, y = by }
         if self.claim_result and self.claim_result.success then
             local reward = self.claim_result.reward or {}
             local flash = string.format("+%s coins   +%s pts",
@@ -164,7 +188,21 @@ local function rebuild(self)
         else
             local bw, bh = 260, 52
             local label = self.claiming and "CLAIMING..." or "CLAIM"
-            mkbtn(self, "claim_daily_bonus", vmath.vector3(px, by, 0), vmath.vector3(bw, bh, 0), label, "primary_btn", nil, "btn_md", COL_WHITE)
+            -- Quick press-scale pulse on tap: computed per-frame from elapsed
+            -- time since the tap (same immediate-mode approach as the card
+            -- reveal above), not gui.animate, for the same rebuild-every-frame
+            -- reason.
+            local press_scale = 1
+            if self.claim_press_t then
+                local since = (self.t or 0) - self.claim_press_t
+                if since >= 0 and since < 0.15 then
+                    press_scale = 0.95 + 0.05 * (since / 0.15)
+                else
+                    self.claim_press_t = nil
+                end
+            end
+            local btn = mkbtn(self, "claim_daily_bonus", vmath.vector3(px, by, 0), vmath.vector3(bw, bh, 0), label, "primary_btn", nil, "btn_md", COL_WHITE)
+            if press_scale ~= 1 then gui.set_scale(btn, vmath.vector3(press_scale, press_scale, 1)) end
         end
     end)
 
@@ -185,6 +223,10 @@ function init(self)
     self.data = nil
     self.claim_result = nil
     self.alpha = 0
+    self.t = 0
+    self.opened_at = nil
+    self.claim_btn_pos = nil
+    self.claim_press_t = nil
     refresh_wh()
 
     -- WS callbacks run in the socket owner's (controller) context — post back
@@ -206,6 +248,11 @@ function final(self)
 end
 
 function update(self, dt)
+    -- Accumulated clock, used for the card-reveal stagger, the current-day
+    -- pulse, and the claim-button press pulse — all computed per-frame in Lua
+    -- rather than via gui.animate (see rebuild()/draw_day_card()).
+    self.t = (self.t or 0) + dt
+
     -- Timing between the SEASON_STATUS/DAILY_BONUS_STATUS pushes and the
     -- season-complete overlay isn't guaranteed, so re-check every tick while a
     -- bonus is pending-but-not-yet-shown, and only open once the season modal
@@ -213,6 +260,7 @@ function update(self, dt)
     if self.pending and not self.visible and not app_state.season_modal_active then
         self.visible = true
         self.alpha = 0
+        self.opened_at = self.t
         self.pending = false
         refresh_wh()
     end
@@ -234,6 +282,28 @@ function on_message(self, message_id, message)
         local d = ws.last_daily_bonus_claim or {}
         self.claiming = false
         if d.success then
+            -- Update the shared user-data table in place so every screen
+            -- reading ws.current_user_data.balance/.points sees the new
+            -- values immediately, instead of waiting for the next refresh
+            -- (mirrors the pattern modules/online_right.lua's M.bm_submit
+            -- uses for ws.current_user_data after its own server response).
+            if ws.current_user_data then
+                ws.current_user_data.balance = d.newBalance
+                ws.current_user_data.points = d.newPoints
+            end
+
+            -- Fly coins from the claim button to the top-right HUD anchor.
+            -- Points-only rewards (no coins) skip the fly — no "points fly"
+            -- animation exists, that's out of scope here.
+            if d.reward and tonumber(d.reward.coins) and tonumber(d.reward.coins) > 0 then
+                pcall(msg.post, "#coins", "coin_delta", {
+                    from = self.claim_btn_pos or { x = 640, y = 200 },
+                    to = { x = 1160, y = 660 },
+                    amount = tonumber(d.reward.coins),
+                    sign = "+",
+                })
+            end
+
             self.claim_result = d
             rebuild(self)
             timer.delay(0.6, false, function()
@@ -266,6 +336,7 @@ function on_input(self, action_id, action)
             if gui.pick_node(b.node, action.x, action.y) then
                 if b.id == "claim_daily_bonus" and not self.claiming then
                     self.claiming = true
+                    self.claim_press_t = self.t or 0
                     ws.claim_daily_bonus()
                     rebuild(self)
                 end

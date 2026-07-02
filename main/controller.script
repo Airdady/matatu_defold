@@ -230,6 +230,9 @@ function init(self)
     forward("game_request",           "#online", "ws_game_request")
     forward("game_request_declined",  "#online", "ws_request_declined")
     forward("game_request_cancelled", "#online", "ws_request_cancelled")
+    forward("savings_status",           "#online", "ws_savings_status")
+    forward("savings_exchange_result",  "#online", "ws_savings_exchange_result")
+    forward("savings_settings_updated", "#online", "ws_savings_settings_updated")
 
     table.insert(self.tokens, ws.on("auth_required", function()
         if self.screen == "online" or self.screen == "lobby" then show(self, "auth") end
