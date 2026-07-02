@@ -18,6 +18,13 @@ M.CARD_SCALE_F  = M.TARGET_W / M.NATIVE_CARD_W
 M.TARGET_H      = M.NATIVE_CARD_H * M.CARD_SCALE_F
 M.CARD_SCALE    = vmath.vector3(M.CARD_SCALE_F, M.CARD_SCALE_F, 1.0)
 
+-- The opponent's hand in a 2-player game (online or offline) is always shown
+-- face-down (back only) — render it a touch smaller than the player's own
+-- hand so the two read as visually distinct. Cards return to CARD_SCALE the
+-- moment they're played to the pile (animate_to_pile) or revealed.
+M.OPPONENT_CARD_SCALE_F = M.CARD_SCALE_F * 0.88
+M.OPPONENT_CARD_SCALE   = vmath.vector3(M.OPPONENT_CARD_SCALE_F, M.OPPONENT_CARD_SCALE_F, 1.0)
+
 M.PILE_OFFSET_X = 50
 M.PILE_OFFSET_Y = 34
 M.SAVE_NAME     = "matatu_defold_state"
@@ -168,6 +175,12 @@ function M.layout_hand(self, hand, y, animate)
     local arc_amt = arch and math.min(34, n * 5.0) or 0
     local fan_amt = arch and math.min(8, n * 1.3) or 0
     local dir     = is_ai_hand and -1 or 1   -- mirror the curve for the top hand
+
+    -- Only the 2-player opponent hand (not the 4-player tournament, which
+    -- doesn't use this function) is rendered smaller — it's always face-down.
+    if is_ai_hand and not self.t4 then
+        for _, c in ipairs(hand) do go.set(c.id, "scale", M.OPPONENT_CARD_SCALE) end
+    end
 
     for i, c in ipairs(hand) do
         local z = Z_HAND + i * 0.001
