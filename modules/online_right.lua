@@ -222,6 +222,42 @@ local function draw_battle_modal(self, ctx)
     track(self, ui.text(vmath.vector3(CX, sub_y, 0), sub_label, "btn_lg", C_BTN_TEXT))
 end
 
+-- ── Savings Info Modal Drawing ────────────────────────────────────────────────
+local function draw_savings_info(self, ctx)
+    if not self.savings_info_open then return end
+
+    local track = ctx.track
+    local ui    = ctx.ui
+    local mkbtn = ctx.mkbtn
+    local C     = ctx.C
+    local CX, CY = ctx.CX, ctx.CY
+
+    -- Fullscreen intercept block so taps outside the small modal don't reach
+    -- whatever's underneath.
+    local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.75)))
+    self.buttons[#self.buttons+1] = { node = dim, id = "savings_info_block" }
+
+    local panel_w, panel_h = 420, 300
+    track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
+
+    local top = CY + panel_h / 2
+    track(self, ui.text(vmath.vector3(CX, top - 40, 0), "Savings", "title", C.COL_GOLD))
+
+    local body_lines = {
+        "Savings are long-term coins earned from",
+        "Half-Week Season rewards. Unlike your",
+        "regular balance, Savings never reset and",
+        "build up over time — cash them in during",
+        "special redemption events.",
+    }
+    for i, line in ipairs(body_lines) do
+        track(self, ui.text(vmath.vector3(CX, top - 90 - (i - 1) * 24, 0), line, "small", C.COL_WHITE))
+    end
+
+    local by = CY - panel_h / 2 + 40
+    mkbtn(self, "savings_info_close", vmath.vector3(CX, by, 0), vmath.vector3(200, 52, 0), "CLOSE", "primary_btn")
+end
+
 -- ── Invite Modal Drawing ──────────────────────────────────────────────────────
 local function draw_invite_search(self, ctx)
     -- The battle/knockout quick-invite renders the SHARED random-opponent reel
@@ -251,7 +287,9 @@ function M.draw(self, ctx, left_M)
     -- ── User info container ───────────────────────────────────────────────
     local margin   = 15
     local av_size  = 64
-    local info_h   = 64
+    -- +32 to make room for the SAV. (savings) row below BAL./PTS. — the extra
+    -- 32 = stat_h(28) + small_gap(4), matching the row it adds.
+    local info_h   = 64 + 32
     local list_h   = 80
     local pay_h    = 44
     local gap      = 12
@@ -300,6 +338,20 @@ function M.draw(self, ctx, left_M)
     track(self, ui.box(vmath.vector3(pts_cx, stat_y, 0), vmath.vector3(pts_w, stat_h, 0), C.COL_STAT_BG))
     txtL(self, pts_cx - pts_w/2 + 8, stat_y, "PTS.", "small", C.COL_DIM)
     txtR(self, pts_cx + pts_w/2 - 8, stat_y, commas(u.points or 0), "body", C.COL_CYAN)
+
+    -- Savings (long-term coins from Half-Week Season rewards) — full-width row
+    -- below BAL./PTS., in a distinct accent colour so it reads as a separate
+    -- long-term currency.
+    local COL_SAVINGS = vmath.vector4(0.20, 0.75, 0.55, 1.0)
+    local sav_y = stat_y - stat_h/2 - 4 - stat_h/2
+    track(self, ui.box(vmath.vector3(info_cx, sav_y, 0), vmath.vector3(info_w, stat_h, 0), C.COL_STAT_BG))
+    txtL(self, info_l + 8, sav_y, "SAV.", "small", COL_SAVINGS)
+    txtR(self, inner_r - 32, sav_y, commas(u.savingCoins or 0), "body", COL_SAVINGS)
+
+    -- Small circular "i" info-icon button at the right edge of the SAV. row.
+    local sav_icon_pos = vmath.vector3(inner_r - 14, sav_y, 0)
+    track(self, ui.pie(sav_icon_pos, 11, vmath.vector4(0.15, 0.15, 0.15, 0.65)))
+    mkbtn(self, "savings_info", sav_icon_pos, vmath.vector3(22, 22, 0), "i", vmath.vector4(0, 0, 0, 0), nil, "small", C.COL_WHITE)
 
     -- Stats List (Position & Form)
     local lcy = top_y - info_h - gap - list_h/2
@@ -441,6 +493,7 @@ function M.draw(self, ctx, left_M)
     -- ── Draw Extracted Modals on Top ──────────────────────────────────────
     draw_battle_modal(self, ctx)
     draw_invite_search(self, ctx)
+    draw_savings_info(self, ctx)
 end
 
 -- ── Input Action Exports for Main Script ─────────────────────────────────────

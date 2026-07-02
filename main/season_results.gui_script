@@ -14,6 +14,7 @@
 local ui = require("modules.ui")
 local ws = require("modules.websocket_manager")
 local screen = require("modules.screen")
+local app_state = require("modules.app_state")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local CX, CY = 640, 360
@@ -238,6 +239,7 @@ function on_message(self, message_id, message)
     if message_id == hash("show_season_results") then
         self.season_data = ws.last_season_complete or {}
         self.visible = true
+        app_state.season_modal_active = true
         self.alpha = 0
         refresh_wh()
         rebuild(self)
@@ -246,6 +248,7 @@ function on_message(self, message_id, message)
             ws.send_season_results_viewed(self.season_data.seasonId)
         end
         self.visible = false
+        app_state.season_modal_active = false
         self.season_data = nil
         rebuild(self)
     end
