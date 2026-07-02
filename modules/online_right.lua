@@ -228,7 +228,7 @@ local function draw_savings_info(self, ctx)
     local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.75)))
     self.buttons[#self.buttons+1] = { node = dim, id = "savings_info_block" }
 
-    local panel_w, panel_h = 440, 320
+    local panel_w, panel_h = 440, 380
     track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
 
     local top = CY + panel_h / 2
@@ -245,12 +245,52 @@ local function draw_savings_info(self, ctx)
         track(self, ui.text(vmath.vector3(CX, top - 96 - (i - 1) * 26, 0), line, "small", C.COL_WHITE))
     end
 
+    local st = ws.current_savings_status or {}
+    local redemption_str = format_redemption_date(st.nextRedemptionDate)
+    if redemption_str ~= "" then
+        track(self, ui.text(vmath.vector3(CX, top - 226, 0), "Next redemption: " .. redemption_str, "small", C.COL_GOLD))
+    end
+
+    -- Compact period-progress bar (how far through the current 6-month cycle).
+    local pct = math.max(0, math.min(100, tonumber(st.periodProgressPercent) or 0))
+    track(self, ui.text(vmath.vector3(CX, top - 252, 0), "SAVINGS PERIOD PROGRESS", "small", C.COL_DIM))
+    local bar_w, bar_h, bar_y = panel_w - 64, 14, top - 274
+    local COL_SAVINGS = vmath.vector4(0.20, 0.75, 0.55, 1.0)
+    track(self, ui.box(vmath.vector3(CX, bar_y, 0), vmath.vector3(bar_w, bar_h, 0), vmath.vector4(1, 1, 1, 0.08)))
+    if pct > 0 then
+        local fill_w = bar_w * (pct / 100)
+        track(self, ui.box(vmath.vector3(CX - bar_w/2 + fill_w/2, bar_y, 0), vmath.vector3(fill_w, bar_h, 0), COL_SAVINGS))
+    end
+    track(self, ui.text(vmath.vector3(CX, top - 296, 0), pct .. "% complete", "small", C.COL_WHITE))
+
     local by = CY - panel_h / 2 + 46
     mkbtn(self, "savings_info_close", vmath.vector3(CX, by, 0), vmath.vector3(220, 56, 0), "CLOSE", "primary_btn")
 end
 
+-- ── Savings helpers (backend-driven config, with a safe fallback while the
+-- first SAVINGS_STATUS round-trip hasn't landed yet) ────────────────────────
+local MONTH_NAMES = {"January","February","March","April","May","June","July","August","September","October","November","December"}
+local function format_redemption_date(iso)
+    local y, m, d = tostring(iso or ""):match("(%d+)-(%d+)-(%d+)")
+    if not y then return "" end
+    return string.format("%s %d, %s", MONTH_NAMES[tonumber(m)] or m, tonumber(d), y)
+end
+
+local function exchange_bounds()
+    local cfg = (ws.current_savings_status or {}).exchangeConfig
+    if type(cfg) == "table" then
+        return tonumber(cfg.min) or 100, tonumber(cfg.max) or 5000, tonumber(cfg.step) or 100
+    end
+    return 100, 5000, 100
+end
+
+local function autocharge_amounts()
+    local list = (ws.current_savings_status or {}).autoChargeAmounts
+    if type(list) == "table" and #list > 0 then return list end
+    return { 2, 5, 10, 25 }
+end
+
 -- ── Savings Add Modal Drawing ──────────────────────────────────────────────────
-local AUTOCHARGE_AMOUNTS = { 2, 5, 10, 25 }
 
 local function draw_savings_add(self, ctx)
     if not self.savings_add_open then return end
@@ -267,7 +307,7 @@ local function draw_savings_add(self, ctx)
     local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.75)))
     self.buttons[#self.buttons+1] = { node = dim, id = "savings_add_block" }
 
-    local panel_w, panel_h = 480, 600
+    local panel_w, panel_h = 480, 680
     track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
 
     local top = CY + panel_h / 2
@@ -276,12 +316,29 @@ local function draw_savings_add(self, ctx)
     local COL_SAVINGS = vmath.vector4(0.20, 0.75, 0.55, 1.0)
     local UNSEL_C     = vmath.vector4(0.16, 0.16, 0.18, 1)
 
+    -- ── Period progress (backend-driven: periodProgressPercent/nextRedemptionDate) ──
+    local st = ws.current_savings_status or {}
+    local pct = math.max(0, math.min(100, tonumber(st.periodProgressPercent) or 0))
+    local redemption_str = format_redemption_date(st.nextRedemptionDate)
+    local progress_label = (redemption_str ~= "")
+        and ("SAVINGS PERIOD · redeems " .. redemption_str)
+        or "SAVINGS PERIOD PROGRESS"
+    track(self, ui.text(vmath.vector3(CX, top - 64, 0), progress_label, "small", C.COL_DIM))
+    local bar_w, bar_h, bar_y = panel_w - 64, 14, top - 84
+    track(self, ui.box(vmath.vector3(CX, bar_y, 0), vmath.vector3(bar_w, bar_h, 0), vmath.vector4(1, 1, 1, 0.08)))
+    if pct > 0 then
+        local fill_w = bar_w * (pct / 100)
+        track(self, ui.box(vmath.vector3(CX - bar_w/2 + fill_w/2, bar_y, 0), vmath.vector3(fill_w, bar_h, 0), COL_SAVINGS))
+    end
+    track(self, ui.text(vmath.vector3(CX, top - 104, 0), pct .. "% complete", "small", C.COL_WHITE))
+
     -- ── Section A: Exchange to Savings now ────────────────────────────────
-    local sec_a_y = top - 76
+    local sec_a_y = top - 146
     track(self, ui.text(vmath.vector3(CX, sec_a_y, 0), "EXCHANGE TO SAVINGS NOW", "small", C.COL_DIM))
 
+    local emin, emax = exchange_bounds()
     local bal = tonumber((ws.current_user_data or {}).balance) or 0
-    local lo, hi = 100, math.max(100, math.min(5000, bal))
+    local lo, hi = emin, math.max(emin, math.min(emax, bal))
     sa.exchange_amount = math.max(lo, math.min(hi, sa.exchange_amount or lo))
 
     local step_w, step_y = 240, sec_a_y - 48
@@ -323,8 +380,9 @@ local function draw_savings_add(self, ctx)
     if sa.autocharge_enabled then
         track(self, ui.text(vmath.vector3(CX, amt_y + 34, 0), "AMOUNT PER GAME", "small", C.COL_DIM))
         local amt_w, amt_gap = 96, 10
-        local n = #AUTOCHARGE_AMOUNTS
-        for i, amt in ipairs(AUTOCHARGE_AMOUNTS) do
+        local amounts = autocharge_amounts()
+        local n = #amounts
+        for i, amt in ipairs(amounts) do
             local ax = CX + (i - (n + 1) / 2) * (amt_w + amt_gap)
             local on = (sa.autocharge_amount == amt)
             local box = track(self, ui.box(vmath.vector3(ax, amt_y, 0), vmath.vector3(amt_w, 48, 0), on and C_VICTORY or UNSEL_C))
