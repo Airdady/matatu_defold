@@ -160,11 +160,14 @@ function M.draw(self, ctx)
                 -- A player's `myBattles` map (already broadcast alongside the
                 -- legacy singular `myBattle`) can hold one battle per type —
                 -- surface a separate row for each one they actually host, so
-                -- e.g. an AI hosting both KNOCKOUT and PARTY shows up for both.
+                -- e.g. Vortex hosting both NORMAL and KNOCKOUT shows up for
+                -- both. PARTY stays server-side only (not yet ready for
+                -- players), so it's excluded here — including it would add a
+                -- confusing extra row for the same bot.
                 local battles_map = (type(pu.myBattles) == "table") and pu.myBattles or nil
                 local added_any = false
                 if battles_map then
-                    for _, T in ipairs({ "NORMAL", "KNOCKOUT", "PARTY" }) do
+                    for _, T in ipairs({ "NORMAL", "KNOCKOUT" }) do
                         local b = battles_map[T]
                         if type(b) == "table" and next(b) ~= nil then
                             local key = pu._id .. ":" .. T
