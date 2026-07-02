@@ -23,10 +23,13 @@ local GOLD  = vmath.vector4(1.0, 0.84, 0.30, 1)
 
 -- Tweaks for the bundle transition and sizing
 local POT_REST_RATIO_X = 0.3 -- 30% of screen width (shifts bundle distinctly to the left)
-local BUNDLE_SCALE = 1.45    -- Make the bundle image bigger
+local BUNDLE_SCALE = 1.0     -- Sitting bundle size (was 1.45 — way too large on screen)
 -- The amount label sits clear BELOW the scaled bundle (118 * BUNDLE_SCALE) so it
 -- never overlays the coins. Half the scaled height + the label height + a margin.
 local POT_LABEL_DY = math.floor(118 * BUNDLE_SCALE / 2) + 17
+-- How long the sitting bundle takes to dissolve (shrink + fade out) once it
+-- bursts into flying coins toward the winner — see coin_settle/dissolve_pot.
+local POT_DISSOLVE_DUR = 0.4
 
 local function v3(x, y, z) return vmath.vector3(x, y, z or 0) end
 local function rnd(a, b) return a + math.random() * (b - a) end
@@ -132,6 +135,26 @@ local function clear_pot(self)
     end
 end
 
+-- Shrinks + fades the sitting bundle out in place (instead of just deleting
+-- it) so it visibly dissolves as its coins burst away toward the winner,
+-- rather than vanishing the instant the flying coins spawn from the same spot.
+local function dissolve_pot(self, dur)
+    if not self.pot then return end
+    local bundle, label = self.pot.bundle, self.pot.label
+    self.pot = nil -- detach now so a new pot (e.g. next round) can't collide with this one
+    pcall(gui.cancel_animation, bundle, "scale")
+    pcall(gui.cancel_animation, bundle, "color.w")
+    gui.animate(bundle, "scale", vmath.vector3(BUNDLE_SCALE * 0.15, BUNDLE_SCALE * 0.15, 1), gui.EASING_INSINE, dur)
+    gui.animate(bundle, "color.w", 0, gui.EASING_INSINE, dur)
+    if label then
+        gui.animate(label, "color.w", 0, gui.EASING_INSINE, dur * 0.7)
+    end
+    timer.delay(dur, false, function()
+        pcall(gui.delete_node, bundle)
+        if label then pcall(gui.delete_node, label) end
+    end)
+end
+
 -- ── number counter (tweens a label from -> to in update) ─────────────────────
 local function add_counter(self, x, y, from, to, dur, color, sign)
     local lbl = loose_node(gui.new_text_node(v3(x, y), tostring(math.floor(from))))
@@ -202,7 +225,7 @@ HANDLERS.coin_settle = function(self, d, done)
     local px = self.pot and self.pot.x or (LOGICAL_W * POT_REST_RATIO_X)
     local py = self.pot and self.pot.y or LOGICAL_H / 2
     local amount = (self.pot and self.pot.amount) or d.amount or 0
-    clear_pot(self)
+    dissolve_pot(self, POT_DISSOLVE_DUR)
     local n = math.min(14, math.max(6, math.floor(amount / 80)))
     local landed = 0
     for i = 1, n do

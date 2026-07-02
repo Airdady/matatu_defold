@@ -27,7 +27,7 @@ M.BATTLE_TYPE_LABELS = { NORMAL = "BATTLE", KNOCKOUT = "KNOCKOUT", PARTY = "PART
 
 -- Battle types the UI is allowed to SHOW. PARTY is kept out of view again
 -- for further improvement before launch — ALL of its code (tiers, is_party
--- branches, resolution, submission, and the server-side Nova/Vortex PARTY
+-- branches, resolution, submission, and the server-side Vortex PARTY
 -- hosting) is retained. Re-enable it by simply adding "PARTY" back here.
 M.BATTLE_TYPES_VISIBLE = { "NORMAL", "KNOCKOUT" }
 

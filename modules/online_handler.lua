@@ -119,14 +119,22 @@ end
 function M.slim_ranks(ranks)
     local out = {}
     if type(ranks) ~= "table" then return out end
+    local my_id = tostring(ws.get_current_user_id() or "")
     for i, r in ipairs(ranks) do
         if i > 7 then break end
+        -- backend rank rows carry `userId`; keep id/_id fallbacks too
+        local id = r.id or r._id or r.userId
         out[#out + 1] = {
             position = r.position,
             username = r.username,
             points   = r.points,
-            -- backend rank rows carry `userId`; keep id/_id fallbacks too
-            id       = r.id or r._id or r.userId,
+            id       = id,
+            -- Decide "YOU" locally against this client's own id rather than
+            -- trusting the row's `active` flag — a game-over standings row
+            -- is broadcast identically to both players, so a server-set
+            -- flag would mark BOTH the winner's and loser's row as "YOU"
+            -- on every client.
+            active   = tostring(id or "") == my_id,
         }
     end
     return out
