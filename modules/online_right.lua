@@ -258,6 +258,112 @@ local function draw_savings_info(self, ctx)
     mkbtn(self, "savings_info_close", vmath.vector3(CX, by, 0), vmath.vector3(200, 52, 0), "CLOSE", "primary_btn")
 end
 
+-- ── Savings Add Modal Drawing ──────────────────────────────────────────────────
+-- One panel, two stacked sections (not tabs): (A) exchange-to-savings-now
+-- stepper + confirm, (B) auto-charge-per-game toggle + 4-way amount segments +
+-- save. `self.savings_add` (the stepper/toggle/message state) and
+-- `self.savings_add_open` (visibility) are set up by main/online.gui_script's
+-- "savings_add" dispatch — by the time this draws, self.savings_add is always
+-- populated, seeded from ws.current_savings_status.
+local AUTOCHARGE_AMOUNTS = { 2, 5, 10, 25 }
+
+local function draw_savings_add(self, ctx)
+    if not self.savings_add_open then return end
+    local sa = self.savings_add
+    if not sa then return end
+
+    local track  = ctx.track
+    local ui     = ctx.ui
+    local mkbtn  = ctx.mkbtn
+    local C      = ctx.C
+    local commas = ctx.commas
+    local CX, CY = ctx.CX, ctx.CY
+
+    -- Fullscreen intercept block so taps outside the panel don't reach
+    -- whatever's underneath (same pattern as draw_savings_info/draw_battle_modal).
+    local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.75)))
+    self.buttons[#self.buttons+1] = { node = dim, id = "savings_add_block" }
+
+    local panel_w, panel_h = 460, 560
+    track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
+
+    local top = CY + panel_h / 2
+    track(self, ui.text(vmath.vector3(CX, top - 36, 0), "Add to Savings", "title", C.COL_GOLD))
+
+    local COL_SAVINGS = vmath.vector4(0.20, 0.75, 0.55, 1.0)
+    local UNSEL_C     = vmath.vector4(0.16, 0.16, 0.18, 1)
+
+    -- ── Section A: Exchange to Savings now ────────────────────────────────
+    local sec_a_y = top - 70
+    track(self, ui.text(vmath.vector3(CX, sec_a_y, 0), "EXCHANGE TO SAVINGS NOW", "small", C.COL_DIM))
+
+    local bal = tonumber((ws.current_user_data or {}).balance) or 0
+    local lo, hi = 100, math.max(100, math.min(5000, bal))
+    sa.exchange_amount = math.max(lo, math.min(hi, sa.exchange_amount or lo))
+
+    local step_w, step_y = 220, sec_a_y - 44
+    mkbtn(self, "savings_exchange_minus", vmath.vector3(CX - step_w/2 - 30, step_y, 0), vmath.vector3(46, 46, 0), "-", "secondary_btn")
+    track(self, ui.box(vmath.vector3(CX, step_y, 0), vmath.vector3(step_w, 46, 0), C.COL_NAMEID_BG))
+    track(self, ui.text(vmath.vector3(CX, step_y, 0), commas(sa.exchange_amount) .. " COINS", "body", COL_SAVINGS))
+    mkbtn(self, "savings_exchange_plus", vmath.vector3(CX + step_w/2 + 30, step_y, 0), vmath.vector3(46, 46, 0), "+", "secondary_btn")
+
+    -- Stored so a successful exchange can fly coins from here (item 2b).
+    local confirm_y = step_y - 50
+    self.savings_exchange_btn_pos = { x = CX, y = confirm_y }
+    local confirm_label = sa.exchanging and "EXCHANGING..." or "CONFIRM EXCHANGE"
+    mkbtn(self, "savings_exchange_confirm", vmath.vector3(CX, confirm_y, 0), vmath.vector3(260, 48, 0), confirm_label, "primary_btn", nil, "btn_md", C.COL_WHITE)
+
+    if sa.msg then
+        track(self, ui.text(vmath.vector3(CX, confirm_y - 34, 0), sa.msg, "small",
+            sa.msg_ok and vmath.vector4(0.3, 1.0, 0.3, 1) or vmath.vector4(1, 0.3, 0.3, 1)))
+    end
+
+    -- Divider between sections.
+    local div_y = confirm_y - 68
+    track(self, ui.box(vmath.vector3(CX, div_y, 0), vmath.vector3(panel_w - 48, 2, 0), vmath.vector4(1, 1, 1, 0.12)))
+
+    -- ── Section B: Auto-charge per game ────────────────────────────────────
+    local sec_b_y = div_y - 30
+    track(self, ui.text(vmath.vector3(CX, sec_b_y, 0), "AUTO-CHARGE PER GAME", "small", C.COL_DIM))
+
+    local toggle_y = sec_b_y - 42
+    local seg_w, seg_gap = 100, 10
+    local off_x = CX - seg_w/2 - seg_gap/2
+    local on_x  = CX + seg_w/2 + seg_gap/2
+    local off_box = track(self, ui.box(vmath.vector3(off_x, toggle_y, 0), vmath.vector3(seg_w, 44, 0), (not sa.autocharge_enabled) and C_VICTORY or UNSEL_C))
+    self.buttons[#self.buttons+1] = { node = off_box, id = "savings_autocharge_off" }
+    track(self, ui.text(vmath.vector3(off_x, toggle_y, 0), "OFF", "btn_md", (not sa.autocharge_enabled) and C_BTN_TEXT or C.COL_WHITE))
+    local on_box = track(self, ui.box(vmath.vector3(on_x, toggle_y, 0), vmath.vector3(seg_w, 44, 0), sa.autocharge_enabled and C_VICTORY or UNSEL_C))
+    self.buttons[#self.buttons+1] = { node = on_box, id = "savings_autocharge_on" }
+    track(self, ui.text(vmath.vector3(on_x, toggle_y, 0), "ON", "btn_md", sa.autocharge_enabled and C_BTN_TEXT or C.COL_WHITE))
+
+    local amt_y = toggle_y - 52
+    if sa.autocharge_enabled then
+        track(self, ui.text(vmath.vector3(CX, amt_y + 30, 0), "AMOUNT PER GAME", "small", C.COL_DIM))
+        local amt_w, amt_gap = 90, 8
+        local n = #AUTOCHARGE_AMOUNTS
+        for i, amt in ipairs(AUTOCHARGE_AMOUNTS) do
+            local ax = CX + (i - (n + 1) / 2) * (amt_w + amt_gap)
+            local on = (sa.autocharge_amount == amt)
+            local box = track(self, ui.box(vmath.vector3(ax, amt_y, 0), vmath.vector3(amt_w, 42, 0), on and C_VICTORY or UNSEL_C))
+            self.buttons[#self.buttons+1] = { node = box, id = "savings_autocharge_amt_" .. tostring(amt) }
+            track(self, ui.text(vmath.vector3(ax, amt_y, 0), tostring(amt), "btn_md", on and C_BTN_TEXT or C.COL_WHITE))
+        end
+    end
+
+    local save_y = amt_y - 54
+    local save_label = sa.saving and "SAVING..." or "SAVE"
+    mkbtn(self, "savings_autocharge_save", vmath.vector3(CX, save_y, 0), vmath.vector3(200, 48, 0), save_label, "primary_btn", nil, "btn_md", C.COL_WHITE)
+
+    if sa.settings_msg then
+        track(self, ui.text(vmath.vector3(CX, save_y - 32, 0), sa.settings_msg, "small",
+            sa.settings_msg_ok and vmath.vector4(0.3, 1.0, 0.3, 1) or vmath.vector4(1, 0.3, 0.3, 1)))
+    end
+
+    local close_y = CY - panel_h / 2 + 28
+    mkbtn(self, "savings_add_close", vmath.vector3(CX, close_y, 0), vmath.vector3(200, 46, 0), "CLOSE", "secondary_btn")
+end
+
 -- ── Invite Modal Drawing ──────────────────────────────────────────────────────
 local function draw_invite_search(self, ctx)
     -- The battle/knockout quick-invite renders the SHARED random-opponent reel
@@ -346,12 +452,17 @@ function M.draw(self, ctx, left_M)
     local sav_y = stat_y - stat_h/2 - 4 - stat_h/2
     track(self, ui.box(vmath.vector3(info_cx, sav_y, 0), vmath.vector3(info_w, stat_h, 0), C.COL_STAT_BG))
     txtL(self, info_l + 8, sav_y, "SAV.", "small", COL_SAVINGS)
-    txtR(self, inner_r - 32, sav_y, commas(u.savingCoins or 0), "body", COL_SAVINGS)
+    txtR(self, inner_r - 58, sav_y, commas(u.savingCoins or 0), "body", COL_SAVINGS)
 
-    -- Small circular "i" info-icon button at the right edge of the SAV. row.
-    local sav_icon_pos = vmath.vector3(inner_r - 14, sav_y, 0)
-    track(self, ui.pie(sav_icon_pos, 11, vmath.vector4(0.15, 0.15, 0.15, 0.65)))
-    mkbtn(self, "savings_info", sav_icon_pos, vmath.vector3(22, 22, 0), "i", vmath.vector4(0, 0, 0, 0), nil, "small", C.COL_WHITE)
+    -- Two small circular icon buttons at the right edge of the SAV. row: "+"
+    -- (add — exchange now / auto-charge settings) sits just to the left of "i"
+    -- (info), each given ~26px of dedicated width so they don't overlap.
+    local sav_info_pos = vmath.vector3(inner_r - 14, sav_y, 0)
+    local sav_add_pos  = vmath.vector3(inner_r - 40, sav_y, 0)
+    track(self, ui.pie(sav_info_pos, 11, vmath.vector4(0.15, 0.15, 0.15, 0.65)))
+    mkbtn(self, "savings_info", sav_info_pos, vmath.vector3(22, 22, 0), "i", vmath.vector4(0, 0, 0, 0), nil, "small", C.COL_WHITE)
+    track(self, ui.pie(sav_add_pos, 11, vmath.vector4(0.15, 0.15, 0.15, 0.65)))
+    mkbtn(self, "savings_add", sav_add_pos, vmath.vector3(22, 22, 0), "+", vmath.vector4(0, 0, 0, 0), nil, "small", COL_SAVINGS)
 
     -- Stats List (Position & Form)
     local lcy = top_y - info_h - gap - list_h/2
@@ -494,9 +605,41 @@ function M.draw(self, ctx, left_M)
     draw_battle_modal(self, ctx)
     draw_invite_search(self, ctx)
     draw_savings_info(self, ctx)
+    draw_savings_add(self, ctx)
 end
 
 -- ── Input Action Exports for Main Script ─────────────────────────────────────
+
+-- "CONFIRM EXCHANGE" in the savings Add dialog's Section A. Sends
+-- EXCHANGE_TO_SAVINGS over WS with the currently-picked stepper amount; the
+-- SAVINGS_EXCHANGE_RESULT reply is async (parked on ws.last_savings_exchange)
+-- and handled back in main/online.gui_script's "ws_savings_exchange_result"
+-- message, which fills in sa.msg/sa.msg_ok — same split as M.bm_submit, whose
+-- own on_result callback lives inline because it goes over HTTP, not WS.
+function M.savings_exchange_confirm(self, rebuild_cb)
+    local sa = self.savings_add
+    if not sa or sa.exchanging then return end
+    local amount = tonumber(sa.exchange_amount) or 0
+    if amount <= 0 then return end
+    sa.exchanging = true
+    sa.msg, sa.msg_ok = nil, nil
+    ws.exchange_to_savings(amount)
+    rebuild_cb()
+end
+
+-- "SAVE" in the savings Add dialog's Section B. Sends SET_SAVINGS_AUTO_CHARGE
+-- with the currently-selected toggle/amount; the SAVINGS_SETTINGS_UPDATED
+-- reply is async and handled in main/online.gui_script's
+-- "ws_savings_settings_updated" message, which fills in sa.settings_msg/_ok.
+function M.savings_autocharge_save(self, rebuild_cb)
+    local sa = self.savings_add
+    if not sa or sa.saving then return end
+    sa.saving = true
+    sa.settings_msg, sa.settings_msg_ok = nil, nil
+    ws.set_savings_auto_charge(sa.autocharge_enabled and true or false, sa.autocharge_amount)
+    rebuild_cb()
+end
+
 function M.bm_submit(self, rebuild_cb)
     local bm = self.battle_modal
     if not bm or bm.submitting then return end

@@ -30,6 +30,7 @@ M.last_season_complete = nil
 M.current_season_status = nil
 M.last_daily_bonus_status = nil
 M.last_daily_bonus_claim = nil
+M.current_savings_status = nil
 
 local connection = nil
 local is_connecting = false
@@ -178,6 +179,19 @@ end
 -- Player pressed the claim/accept button on the daily bonus dialog.
 function M.claim_daily_bonus()
   M.send_message("CLAIM_DAILY_BONUS", {})
+end
+
+-- Player chose to exchange `amount` coins from their balance into Savings now
+-- (the "Exchange to Savings now" stepper in the savings Add dialog).
+function M.exchange_to_savings(amount)
+  M.send_message("EXCHANGE_TO_SAVINGS", { amount = amount })
+end
+
+-- Player saved their auto-charge-per-game preference (the "Auto-charge per
+-- game" toggle in the savings Add dialog). `amount` must be one of 2/5/10/25
+-- when `enabled` is true.
+function M.set_savings_auto_charge(enabled, amount)
+  M.send_message("SET_SAVINGS_AUTO_CHARGE", { enabled = enabled, amount = amount })
 end
 
 function M.send_emoji(name, sound, to)
@@ -419,6 +433,26 @@ local function parse_message(json_string)
     -- Server's reply to a CLAIM_DAILY_BONUS attempt.
     M.last_daily_bonus_claim = d
     emit("daily_bonus_claimed", d)
+  elseif t == "SAVINGS_STATUS" then
+    -- Pushed right after IDENTIFY, same moment SEASON_STATUS/DAILY_BONUS_STATUS
+    -- already arrive. Parked here and read back by the savings Add dialog.
+    M.current_savings_status = d
+    emit("savings_status", d)
+  elseif t == "SAVINGS_EXCHANGE_RESULT" then
+    -- Server's reply to an EXCHANGE_TO_SAVINGS attempt.
+    M.last_savings_exchange = d
+    emit("savings_exchange_result", d)
+    if d.success then
+      if M.current_user_data then M.current_user_data.balance = d.newBalance end
+      if M.current_savings_status then M.current_savings_status.savingCoins = d.newSavingCoins end
+    end
+  elseif t == "SAVINGS_SETTINGS_UPDATED" then
+    -- Server's reply to a SET_SAVINGS_AUTO_CHARGE attempt.
+    M.last_savings_settings = d
+    emit("savings_settings_updated", d)
+    if d.success and M.current_savings_status then
+      M.current_savings_status.autoCharge = { enabled = d.enabled, amount = d.amount }
+    end
   elseif t == "TRANSACTION_COMPLETED" then
     emit("transaction_completed", d)
   elseif t == "TRANSACTION_FAILED" then
