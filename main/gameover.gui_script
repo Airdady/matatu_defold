@@ -300,6 +300,13 @@ local function build(self)
 	self.n_opp_sum = label(vmath.vector3(0, 0, 0), "", 16, C_ORANGE, gui.PIVOT_CENTER, "helvetica_bold")
 	attach(self.n_opp_sum, 180, -95)
 
+	-- Savings auto-charge deduction (this player only — never the opponent's,
+	-- gameOverState.savingsDeducted is keyed by userId for exactly this
+	-- reason). Hidden unless a deduction actually happened this game.
+	self.n_you_savings = label(vmath.vector3(0, 0, 0), "", 13, vmath.vector4(0.20, 0.75, 0.55, 1.0), gui.PIVOT_CENTER, "helvetica_bold")
+	attach(self.n_you_savings, -180, -115)
+	gui.set_enabled(self.n_you_savings, false)
+
 	-- Giant Match Scores sit beautifully in the very center between the avatars
 	self.n_you_score = label(vmath.vector3(0, 0, 0), "0", 64, C_PRIMARY, gui.PIVOT_E, "helvetica_bold")
 	attach(self.n_you_score, -30, 10)
@@ -320,6 +327,11 @@ local function build(self)
 		self.n_you_score, self.n_opp_score, self.n_colon,
 		self.n_score_divider,
 	}
+	-- NOT in score_nodes on purpose: apply_layout() blanket-enables every
+	-- node in that list whenever has_score is true, which would override
+	-- "only show when a deduction actually happened this game" — its
+	-- enabled state is set explicitly, after apply_layout() runs, in the
+	-- game_over handler instead.
 
 	self.stats = {}
 	for i = 1, 3 do
@@ -694,6 +706,16 @@ function on_message(self, message_id, message)
 			has_backend_reward = true
 		end
 
+		-- Savings auto-charge deduction, this player only (savingsDeducted is
+		-- userId-keyed the same way rewards is). Applied later, after
+		-- apply_layout(), since that call blanket-enables every score_nodes
+		-- entry and this node deliberately isn't in that list.
+		local my_savings_deducted = 0
+		local savings_map = res.savingsDeducted
+		if type(savings_map) == "table" and self.my_id ~= "" then
+			my_savings_deducted = tonumber(savings_map[self.my_id]) or 0
+		end
+
 		local t_data      = res.tournamentData or {}
 		local grand_prize = t_data.grandPrize or {}
 		local is_tournament_end = (game_type == "TOURNAMENT") and (res.tournamentCompleted or res.tournamentEndedByTimeout)
@@ -847,6 +869,14 @@ function on_message(self, message_id, message)
 
 		-- Dynamically structure and position content eliminating awkward gaps
 		apply_layout(self, has_score, subtitle ~= "", has_stats)
+
+		-- Set independently of score_nodes/apply_layout (see note above): only
+		-- visible when this game actually deducted into Savings.
+		local show_savings = has_score and my_savings_deducted > 0
+		gui.set_enabled(self.n_you_savings, show_savings)
+		if show_savings then
+			gui.set_text(self.n_you_savings, "🏦 -" .. commas(my_savings_deducted) .. " to Savings")
+		end
 
 		show_stats(self, balance_change, points, win_bonus)
 		play_entrance(self)
