@@ -1,0 +1,153 @@
+-- announcement.gui_script
+-- GLOBAL public-announcement banner: lives on the controller object above
+-- every screen (render order 19 — topmost), so a broadcast surfaces
+-- anywhere in the app — lobby, game, payments... Non-modal: it never
+-- swallows input except taps on its own dismiss button, so whatever's
+-- underneath stays fully interactive.
+--
+-- Fed by two server paths that both emit the same "announcements" WS event
+-- (see modules/websocket_manager.lua) with an array of
+-- { id, text, duration, isDismissable }:
+--   1. POST /announcements live-broadcasts to everyone connected right now.
+--   2. pushUnseenAnnouncements() replays anything missed on the next IDENTIFY
+--      (e.g. the player was offline when it went out).
+-- Multiple announcements queue and show one at a time.
+
+local ws = require "modules.websocket_manager"
+local F  = require "modules.fonts"
+
+local LOGICAL_W, LOGICAL_H = 1280, 720
+
+local C_PANEL  = vmath.vector4(0.086, 0.098, 0.118, 0.97) -- #16191E
+local C_ACCENT = vmath.vector4(0.949, 0.702, 0.020, 1.0)  -- #F2B305
+local C_WHITE  = vmath.vector4(1, 1, 1, 1)
+local C_DIM    = vmath.vector4(0.788, 0.812, 0.839, 1.0)  -- #C9CFD6
+
+local PANEL_W     = 640
+local TEXT_W      = 560
+local PAD_Y       = 16
+local TOP_MARGIN  = 14
+local MIN_DURATION_MS = 4000  -- floor even if the server sends a tiny/zero duration
+local FALLBACK_DURATION_MS = 6000 -- used when the server sends 0/missing duration
+
+local function box(pos, size, color)
+    local n = gui.new_box_node(pos, size)
+    gui.set_color(n, color)
+    return n
+end
+
+local function text(pos, str, role, color, pivot)
+    local n = gui.new_text_node(pos, str)
+    gui.set_font(n, role.name)
+    gui.set_color(n, color or C_WHITE)
+    if pivot then gui.set_pivot(n, pivot) end
+    return n
+end
+
+local function build(self)
+    -- Parked off-screen above the top edge until something is queued.
+    self.root = box(vmath.vector3(LOGICAL_W/2, LOGICAL_H + 200, 0), vmath.vector3(PANEL_W, 74, 0), C_PANEL)
+    gui.set_pivot(self.root, gui.PIVOT_N)
+
+    self.strip = box(vmath.vector3(0, 0, 0), vmath.vector3(PANEL_W, 4, 0), C_ACCENT)
+    gui.set_pivot(self.strip, gui.PIVOT_N)
+    gui.set_parent(self.strip, self.root)
+
+    self.label = text(vmath.vector3(0, -PAD_Y - 4, 0), "", F.BODY, C_WHITE, gui.PIVOT_N)
+    pcall(gui.set_line_break, self.label, true)
+    gui.set_size(self.label, vmath.vector3(TEXT_W, 200, 0))
+    gui.set_parent(self.label, self.root)
+
+    self.close_bg = box(vmath.vector3(PANEL_W/2 - 22, -22, 0), vmath.vector3(30, 30, 0), vmath.vector4(0,0,0,0))
+    gui.set_pivot(self.close_bg, gui.PIVOT_CENTER)
+    gui.set_parent(self.close_bg, self.root)
+    self.close_lbl = text(vmath.vector3(0, 0, 0), "X", F.SMALL, C_DIM, gui.PIVOT_CENTER)
+    gui.set_parent(self.close_lbl, self.close_bg)
+    gui.set_enabled(self.close_bg, false)
+
+    gui.set_enabled(self.root, false)
+end
+
+function init(self)
+    msg.post(".", "acquire_input_focus")
+    gui.set_render_order(19)
+    self.queue = {}
+    self.showing = false
+    build(self)
+
+    -- WS callbacks run in the socket owner's (controller) context — post back
+    -- to THIS component through a URL captured here, in our own context.
+    local ME = msg.url("#")
+    self._token = ws.on("announcements", function(list)
+        if type(list) == "table" and #list > 0 then
+            msg.post(ME, "announcements_push", { list = list })
+        end
+    end)
+end
+
+function final(self)
+    if self._token then ws.off(self._token) end
+end
+
+local show_next -- forward declaration
+
+local function hide_and_advance(self)
+    gui.animate(self.root, "position.y", LOGICAL_H + 200, gui.EASING_INSINE, 0.25, 0, function()
+        self.showing = false
+        gui.set_enabled(self.root, false)
+        timer.delay(0.15, false, function() show_next(self) end)
+    end)
+end
+
+show_next = function(self)
+    if self.showing then return end
+    local item = table.remove(self.queue, 1)
+    if not item then return end
+    self.showing = true
+
+    gui.set_text(self.label, tostring(item.text or ""))
+    local metrics = gui.get_text_metrics_from_node(self.label)
+    local panel_h = math.max(56, metrics.height + PAD_Y * 2 + 14)
+    gui.set_size(self.root, vmath.vector3(PANEL_W, panel_h, 0))
+
+    local dismissable = item.isDismissable and true or false
+    gui.set_enabled(self.close_bg, dismissable)
+
+    local rest_y = LOGICAL_H - TOP_MARGIN
+    gui.set_position(self.root, vmath.vector3(LOGICAL_W/2, LOGICAL_H + 200, 0))
+    gui.set_enabled(self.root, true)
+
+    gui.animate(self.root, "position.y", rest_y, gui.EASING_OUTBACK, 0.35)
+
+    local dur = tonumber(item.duration) or 0
+    if dur <= 0 then dur = FALLBACK_DURATION_MS end
+    dur = math.max(MIN_DURATION_MS, dur)
+
+    self._hide_timer = timer.delay(dur / 1000.0, false, function()
+        hide_and_advance(self)
+    end)
+end
+
+function on_message(self, message_id, message)
+    if message_id == hash("announcements_push") then
+        local list = (message and message.list) or {}
+        for _, item in ipairs(list) do
+            self.queue[#self.queue + 1] = item
+        end
+        show_next(self)
+    end
+end
+
+function on_input(self, action_id, action)
+    if not gui.is_enabled(self.root) then return false end
+    if action_id == hash("touch") and action.pressed then
+        if gui.is_enabled(self.close_bg) and gui.pick_node(self.close_bg, action.x, action.y) then
+            if self._hide_timer then timer.cancel(self._hide_timer); self._hide_timer = nil end
+            hide_and_advance(self)
+            return true
+        end
+    end
+    -- Non-modal: never swallow input outside the close button — whatever's
+    -- underneath (lobby, game, dialogs) stays fully interactive.
+    return false
+end
