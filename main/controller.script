@@ -194,12 +194,17 @@ function init(self)
         if self.screen ~= "game" then show(self, "game") else msg.post("#game_logic", "ws_new_game_start") end
         if not is_round_continuation then
             local stake = (type(gs) == "table" and type(gs.stake) == "table" and tonumber(gs.stake.amount)) or 500
-            pcall(msg.post, "#coins", "coin_collect_pot", {
-                amount  = stake * 2,
-                sources = { { x = 150, y = 64 }, { x = 150, y = 656 } },
-                center  = { x = 640, y = 360 },
-            })
-            pcall(msg.post, "#coins", "coin_pot_to", { x = 340, y = 360 })
+            -- A zero-stake game (AI trial battle, free match) has no real pot
+            -- to show — skip the bundle entirely instead of sitting a "0
+            -- coins" bundle on screen for the whole game.
+            if stake > 0 then
+                pcall(msg.post, "#coins", "coin_collect_pot", {
+                    amount  = stake * 2,
+                    sources = { { x = 150, y = 64 }, { x = 150, y = 656 } },
+                    center  = { x = 640, y = 360 },
+                })
+                pcall(msg.post, "#coins", "coin_pot_to", { x = 230, y = 360 })
+            end
         end
     end))
 

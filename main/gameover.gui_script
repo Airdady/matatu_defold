@@ -677,6 +677,11 @@ function on_message(self, message_id, message)
 				to  = is_victory and { x = 460, y = 370 } or { x = 820, y = 370 },
 				win = is_victory,
 			})
+		elseif not round_continues then
+			-- No real stake to fly to a winner — make sure any sitting pot
+			-- (e.g. one still lingering from before) dissolves away as soon
+			-- as this modal opens instead of sitting behind it.
+			pcall(msg.post, "#coins", "coin_dissolve")
 		end
 
 		if self.avatars_ok then
