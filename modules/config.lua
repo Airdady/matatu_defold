@@ -6,13 +6,13 @@ local is_web = sys.get_sys_info().system_name == "HTML5"
 
 -- If in a browser, talk to localhost. If on Android/Mac, use the network IP.
 if is_web then
-    M.DOMAIN = "192.168.1.128:3000"
+    M.DOMAIN = "champion.matatuleague.com"
 else
-    M.DOMAIN = "192.168.1.128:3000"
+    M.DOMAIN = "champion.matatuleague.com"
 end
 
-M.BASE_URL = "http://" .. M.DOMAIN .. "/matatu"
-M.WS_URL = "ws://" .. M.DOMAIN .. "/matatu/ws"
+M.BASE_URL = "https://" .. M.DOMAIN .. "/matatu"
+M.WS_URL = "wss://" .. M.DOMAIN .. "/matatu/ws"
 
 M.APP_VERSION = "18.5.9"
 M.GAME_STATE_SECRET = "a27a120adfbc9f727c187748fff44547e1ee72f09481c8a965d62ed1c02e6ea3"

@@ -1,6 +1,3 @@
--- Right sidebar: Profile card, Standing badge, Form, Payments, Battles, Tournaments.
--- Also manages the Battle Creation/Update modal and the Invite Search overlay.
-
 local ws            = require("modules.websocket_manager")
 local dialog_search = require("modules.dialog_search")
 
@@ -34,9 +31,6 @@ M.BATTLE_TYPE_LABELS = { NORMAL = "BATTLE", KNOCKOUT = "KNOCKOUT", PARTY = "PART
 M.BATTLE_TYPES_VISIBLE = { "NORMAL", "KNOCKOUT" }
 
 -- Resolve the battle a user holds for a given type T ∈ {NORMAL,KNOCKOUT,PARTY}.
--- Prefers the new per-type map u.myBattles[T]; falls back to the legacy single
--- u.myBattle / u.myTournament keyed by its matchType (missing ⇒ NORMAL). A legacy
--- "ELIMINATION" matchType normalises to KNOCKOUT so old battles still resolve.
 function M.battle_of_type(u, T)
     u = u or {}
     T = tostring(T or "NORMAL"):upper()
@@ -68,14 +62,6 @@ end
 
 local INVITE_AVATAR_MAX = 60
 
--- Format an ISO date-only string ("YYYY-MM-DD") for display, e.g. "December 25, 2026".
-local MONTH_NAMES = {"January","February","March","April","May","June","July","August","September","October","November","December"}
-local function format_redemption_date(iso)
-    local y, m, d = tostring(iso or ""):match("(%d+)-(%d+)-(%d+)")
-    if not y then return "" end
-    return string.format("%s %d, %s", MONTH_NAMES[tonumber(m)] or m, tonumber(d), y)
-end
-
 -- Game Over inspired palette
 local C_VICTORY  = vmath.vector4(0.000, 0.722, 0.831, 1.0) -- Cyan
 local C_CHAMPION = vmath.vector4(1.000, 0.843, 0.000, 1.0) -- Gold
@@ -94,12 +80,10 @@ local function draw_battle_modal(self, ctx)
     local CX, CY = ctx.CX, ctx.CY
 
     -- Fullscreen intercept block and radial gradient backdrop 
-    -- (Replaces the flat grey modal box and container_bg image)
     local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.85)))
     self.buttons[#self.buttons+1] = { node = dim, id = "bm_block" }
     track(self, ui.grad_backdrop(ctx.LOGICAL_W, ctx.LOGICAL_H))
 
-    -- Normalise the active type up-front so every branch agrees on it.
     local btype  = tostring(bm.type or "NORMAL"):upper()
     if btype == "ELIMINATION" then btype = "KNOCKOUT" end
     if btype ~= "KNOCKOUT" and btype ~= "PARTY" then btype = "NORMAL" end
@@ -110,17 +94,15 @@ local function draw_battle_modal(self, ctx)
     local type_word = M.BATTLE_TYPE_LABELS[btype] or "BATTLE"
     local title     = (bm.editing and "UPDATE " or "CREATE ") .. type_word
 
-    -- Main Title
-    track(self, ui.text(vmath.vector3(CX, CY + 240, 0), title, "title", ctx.C.COL_WHITE))
-    mkbtn(self, "bm_close", vmath.vector3(CX + 340, CY + 240, 0), vmath.vector3(50, 50, 0), "X", "secondary_btn")
+    track(self, ui.text(vmath.vector3(CX, CY + 260, 0), title, "title", ctx.C.COL_WHITE))
+    -- Increased close button size
+    mkbtn(self, "bm_close", vmath.vector3(CX + 340, CY + 260, 0), vmath.vector3(56, 56, 0), "X", "secondary_btn")
 
-    -- BATTLE TYPE: segmented control. Only the VISIBLE types are drawn (PARTY is
-    -- hidden but its code is retained), and the row recentres to however many
-    -- segments remain.
-    local type_y  = CY + 140
-    track(self, ui.text(vmath.vector3(CX, type_y + 42, 0), "BATTLE TYPE", "small", C_NEUTRAL))
-    local seg_w   = 160
-    local seg_gap = 12
+    -- BATTLE TYPE
+    local type_y  = CY + 150
+    track(self, ui.text(vmath.vector3(CX, type_y + 46, 0), "BATTLE TYPE", "small", C_NEUTRAL))
+    local seg_w   = 170
+    local seg_gap = 14
     local SEG_META = {
         NORMAL   = { id = "bm_type_normal", label = "BATTLE"   },
         KNOCKOUT = { id = "bm_type_knock",  label = "KNOCKOUT" },
@@ -135,7 +117,8 @@ local function draw_battle_modal(self, ctx)
     local seg_n = #seg_specs
     for i, s in ipairs(seg_specs) do
         local sx  = CX + (i - (seg_n + 1) / 2) * (seg_w + seg_gap)
-        local box = track(self, ui.box(vmath.vector3(sx, type_y, 0), vmath.vector3(seg_w, 46, 0), s.on and C_VICTORY or UNSEL_C))
+        -- Taller segment box (52px)
+        local box = track(self, ui.box(vmath.vector3(sx, type_y, 0), vmath.vector3(seg_w, 52, 0), s.on and C_VICTORY or UNSEL_C))
         self.buttons[#self.buttons+1] = { node = box, id = s.id }
         track(self, ui.text(vmath.vector3(sx, type_y, 0), s.label, "btn_md", s.on and C_BTN_TEXT or ctx.C.COL_WHITE))
     end
@@ -167,65 +150,66 @@ local function draw_battle_modal(self, ctx)
 
     -- ENTRY FEE / STAKE
     local fee_y = CY + 10
-    track(self, ui.text(vmath.vector3(CX, fee_y + 42, 0), is_knock and "STAKE" or "ENTRY FEE", "small", C_NEUTRAL))
-    local step_w = 260
-    mkbtn(self, "bm_fee_minus", vmath.vector3(CX - step_w/2 - 30, fee_y, 0), vmath.vector3(46, 46, 0), "-", "secondary_btn")
-    track(self, ui.box(vmath.vector3(CX, fee_y, 0), vmath.vector3(step_w, 46, 0), ctx.C.COL_NAMEID_BG))
+    track(self, ui.text(vmath.vector3(CX, fee_y + 46, 0), is_knock and "STAKE" or "ENTRY FEE", "small", C_NEUTRAL))
+    local step_w = 280
+    -- Taller stepper buttons (52x52)
+    mkbtn(self, "bm_fee_minus", vmath.vector3(CX - step_w/2 - 34, fee_y, 0), vmath.vector3(52, 52, 0), "-", "secondary_btn")
+    track(self, ui.box(vmath.vector3(CX, fee_y, 0), vmath.vector3(step_w, 52, 0), ctx.C.COL_NAMEID_BG))
     track(self, ui.text(vmath.vector3(CX, fee_y, 0),
         is_knock and (commas(estake) .. " COINS") or (commas(amount) .. " COINS"), "body", C_CHAMPION))
-    mkbtn(self, "bm_fee_plus", vmath.vector3(CX + step_w/2 + 30, fee_y, 0), vmath.vector3(46, 46, 0), "+", "secondary_btn")
+    mkbtn(self, "bm_fee_plus", vmath.vector3(CX + step_w/2 + 34, fee_y, 0), vmath.vector3(52, 52, 0), "+", "secondary_btn")
 
     if is_norm then
-        track(self, ui.text(vmath.vector3(CX, fee_y - 38, 0),
+        track(self, ui.text(vmath.vector3(CX, fee_y - 42, 0),
             string.format("Winner Takes: %s + %d Pts", commas(winner_takes), fmt.points), "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
     elseif is_party then
-        track(self, ui.text(vmath.vector3(CX, fee_y - 38, 0),
+        track(self, ui.text(vmath.vector3(CX, fee_y - 42, 0),
             "Pooled prize · last player standing wins", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
     else
-        track(self, ui.text(vmath.vector3(CX, fee_y - 38, 0),
+        track(self, ui.text(vmath.vector3(CX, fee_y - 42, 0),
             "Staked score chamber · charge from the cap", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
     end
 
     -- FORMAT / PLAYERS / CAP
-    local fmt_y = CY - 110
+    local fmt_y = CY - 120
     if is_party then
         local players = bm.players or "AUTO"
-        track(self, ui.text(vmath.vector3(CX, fmt_y + 42, 0), "PLAYER COUNT", "small", C_NEUTRAL))
-        mkbtn(self, "bm_players_minus", vmath.vector3(CX - step_w/2 - 30, fmt_y, 0), vmath.vector3(46, 46, 0), "-", "secondary_btn")
-        track(self, ui.box(vmath.vector3(CX, fmt_y, 0), vmath.vector3(step_w, 46, 0), ctx.C.COL_NAMEID_BG))
+        track(self, ui.text(vmath.vector3(CX, fmt_y + 46, 0), "PLAYER COUNT", "small", C_NEUTRAL))
+        mkbtn(self, "bm_players_minus", vmath.vector3(CX - step_w/2 - 34, fmt_y, 0), vmath.vector3(52, 52, 0), "-", "secondary_btn")
+        track(self, ui.box(vmath.vector3(CX, fmt_y, 0), vmath.vector3(step_w, 52, 0), ctx.C.COL_NAMEID_BG))
         local p_txt = (players == "AUTO") and "AUTO" or (tostring(players) .. " PLAYERS")
         track(self, ui.text(vmath.vector3(CX, fmt_y, 0), p_txt, "body", ctx.C.COL_WHITE))
-        mkbtn(self, "bm_players_plus", vmath.vector3(CX + step_w/2 + 30, fmt_y, 0), vmath.vector3(46, 46, 0), "+", "secondary_btn")
-        track(self, ui.text(vmath.vector3(CX, fmt_y - 38, 0),
+        mkbtn(self, "bm_players_plus", vmath.vector3(CX + step_w/2 + 34, fmt_y, 0), vmath.vector3(52, 52, 0), "+", "secondary_btn")
+        track(self, ui.text(vmath.vector3(CX, fmt_y - 42, 0),
             (players == "AUTO") and "Auto-fill the table as players join" or "Starts once the table is full",
             "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
     elseif is_knock then
-        track(self, ui.text(vmath.vector3(CX, fmt_y + 42, 0), "SCORE CAP", "small", C_NEUTRAL))
-        mkbtn(self, "bm_cap_minus", vmath.vector3(CX - step_w/2 - 30, fmt_y, 0), vmath.vector3(46, 46, 0), "-", "secondary_btn")
-        track(self, ui.box(vmath.vector3(CX, fmt_y, 0), vmath.vector3(step_w, 46, 0), ctx.C.COL_NAMEID_BG))
+        track(self, ui.text(vmath.vector3(CX, fmt_y + 46, 0), "SCORE CAP", "small", C_NEUTRAL))
+        mkbtn(self, "bm_cap_minus", vmath.vector3(CX - step_w/2 - 34, fmt_y, 0), vmath.vector3(52, 52, 0), "-", "secondary_btn")
+        track(self, ui.box(vmath.vector3(CX, fmt_y, 0), vmath.vector3(step_w, 52, 0), ctx.C.COL_NAMEID_BG))
         track(self, ui.text(vmath.vector3(CX, fmt_y, 0), tostring(cap), "body", ctx.C.COL_WHITE))
-        mkbtn(self, "bm_cap_plus", vmath.vector3(CX + step_w/2 + 30, fmt_y, 0), vmath.vector3(46, 46, 0), "+", "secondary_btn")
-        track(self, ui.text(vmath.vector3(CX, fmt_y - 38, 0),
+        mkbtn(self, "bm_cap_plus", vmath.vector3(CX + step_w/2 + 34, fmt_y, 0), vmath.vector3(52, 52, 0), "+", "secondary_btn")
+        track(self, ui.text(vmath.vector3(CX, fmt_y - 42, 0),
             string.format("Charge: %d  ·  reach the cap and you're out", math.floor(cap / 2)), "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
     else
-        track(self, ui.text(vmath.vector3(CX, fmt_y + 42, 0), "GAME FORMAT", "small", C_NEUTRAL))
-        mkbtn(self, "bm_fmt_minus", vmath.vector3(CX - step_w/2 - 30, fmt_y, 0), vmath.vector3(46, 46, 0), "-", "secondary_btn")
-        track(self, ui.box(vmath.vector3(CX, fmt_y, 0), vmath.vector3(step_w, 46, 0), ctx.C.COL_NAMEID_BG))
+        track(self, ui.text(vmath.vector3(CX, fmt_y + 46, 0), "GAME FORMAT", "small", C_NEUTRAL))
+        mkbtn(self, "bm_fmt_minus", vmath.vector3(CX - step_w/2 - 34, fmt_y, 0), vmath.vector3(52, 52, 0), "-", "secondary_btn")
+        track(self, ui.box(vmath.vector3(CX, fmt_y, 0), vmath.vector3(step_w, 52, 0), ctx.C.COL_NAMEID_BG))
         track(self, ui.text(vmath.vector3(CX, fmt_y, 0), "BEST OF " .. fmt.games, "body", ctx.C.COL_WHITE))
-        mkbtn(self, "bm_fmt_plus", vmath.vector3(CX + step_w/2 + 30, fmt_y, 0), vmath.vector3(46, 46, 0), "+", "secondary_btn")
-        track(self, ui.text(vmath.vector3(CX, fmt_y - 38, 0),
+        mkbtn(self, "bm_fmt_plus", vmath.vector3(CX + step_w/2 + 34, fmt_y, 0), vmath.vector3(52, 52, 0), "+", "secondary_btn")
+        track(self, ui.text(vmath.vector3(CX, fmt_y - 42, 0),
             string.format("Charge: %s  ·  %d Pts to the winner", commas(fmt.charge), fmt.points), "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
     end
 
     if bm.msg then
-        track(self, ui.text(vmath.vector3(CX, CY - 180, 0), bm.msg, "small",
+        track(self, ui.text(vmath.vector3(CX, CY - 200, 0), bm.msg, "small",
             bm.msg_ok and vmath.vector4(0.3, 1.0, 0.3, 1) or vmath.vector4(1, 0.3, 0.3, 1)))
     end
 
-    -- Primary submission button identical to Game Over styling
+    -- Increased submit button height (68px)
     local sub_label = bm.submitting and "WAITING..." or title
-    local sub_y = CY - 240
-    local s_btn = track(self, ui.box(vmath.vector3(CX, sub_y, 0), vmath.vector3(360, 60, 0), C_VICTORY))
+    local sub_y = CY - 260
+    local s_btn = track(self, ui.box(vmath.vector3(CX, sub_y, 0), vmath.vector3(380, 68, 0), C_VICTORY))
     self.buttons[#self.buttons+1] = { node = s_btn, id = "bm_submit" }
     track(self, ui.text(vmath.vector3(CX, sub_y, 0), sub_label, "btn_lg", C_BTN_TEXT))
 end
@@ -240,12 +224,10 @@ local function draw_savings_info(self, ctx)
     local C     = ctx.C
     local CX, CY = ctx.CX, ctx.CY
 
-    -- Fullscreen intercept block so taps outside the small modal don't reach
-    -- whatever's underneath.
     local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.75)))
     self.buttons[#self.buttons+1] = { node = dim, id = "savings_info_block" }
 
-    local panel_w, panel_h = 420, 330
+    local panel_w, panel_h = 440, 320
     track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
 
     local top = CY + panel_h / 2
@@ -259,26 +241,14 @@ local function draw_savings_info(self, ctx)
         "special redemption events.",
     }
     for i, line in ipairs(body_lines) do
-        track(self, ui.text(vmath.vector3(CX, top - 90 - (i - 1) * 24, 0), line, "small", C.COL_WHITE))
+        track(self, ui.text(vmath.vector3(CX, top - 96 - (i - 1) * 26, 0), line, "small", C.COL_WHITE))
     end
 
-    local redemption_str = format_redemption_date((ws.current_savings_status or {}).nextRedemptionDate)
-    if redemption_str ~= "" then
-        track(self, ui.text(vmath.vector3(CX, top - 90 - (#body_lines) * 24 - 14, 0),
-            "Next redemption: " .. redemption_str, "small", C.COL_GOLD))
-    end
-
-    local by = CY - panel_h / 2 + 40
-    mkbtn(self, "savings_info_close", vmath.vector3(CX, by, 0), vmath.vector3(200, 52, 0), "CLOSE", "primary_btn")
+    local by = CY - panel_h / 2 + 46
+    mkbtn(self, "savings_info_close", vmath.vector3(CX, by, 0), vmath.vector3(220, 56, 0), "CLOSE", "primary_btn")
 end
 
 -- ── Savings Add Modal Drawing ──────────────────────────────────────────────────
--- One panel, two stacked sections (not tabs): (A) exchange-to-savings-now
--- stepper + confirm, (B) auto-charge-per-game toggle + 4-way amount segments +
--- save. `self.savings_add` (the stepper/toggle/message state) and
--- `self.savings_add_open` (visibility) are set up by main/online.gui_script's
--- "savings_add" dispatch — by the time this draws, self.savings_add is always
--- populated, seeded from ws.current_savings_status.
 local AUTOCHARGE_AMOUNTS = { 2, 5, 10, 25 }
 
 local function draw_savings_add(self, ctx)
@@ -293,12 +263,10 @@ local function draw_savings_add(self, ctx)
     local commas = ctx.commas
     local CX, CY = ctx.CX, ctx.CY
 
-    -- Fullscreen intercept block so taps outside the panel don't reach
-    -- whatever's underneath (same pattern as draw_savings_info/draw_battle_modal).
     local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.75)))
     self.buttons[#self.buttons+1] = { node = dim, id = "savings_add_block" }
 
-    local panel_w, panel_h = 460, 560
+    local panel_w, panel_h = 480, 600
     track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
 
     local top = CY + panel_h / 2
@@ -308,80 +276,77 @@ local function draw_savings_add(self, ctx)
     local UNSEL_C     = vmath.vector4(0.16, 0.16, 0.18, 1)
 
     -- ── Section A: Exchange to Savings now ────────────────────────────────
-    local sec_a_y = top - 70
+    local sec_a_y = top - 76
     track(self, ui.text(vmath.vector3(CX, sec_a_y, 0), "EXCHANGE TO SAVINGS NOW", "small", C.COL_DIM))
 
     local bal = tonumber((ws.current_user_data or {}).balance) or 0
     local lo, hi = 100, math.max(100, math.min(5000, bal))
     sa.exchange_amount = math.max(lo, math.min(hi, sa.exchange_amount or lo))
 
-    local step_w, step_y = 220, sec_a_y - 44
-    mkbtn(self, "savings_exchange_minus", vmath.vector3(CX - step_w/2 - 30, step_y, 0), vmath.vector3(46, 46, 0), "-", "secondary_btn")
-    track(self, ui.box(vmath.vector3(CX, step_y, 0), vmath.vector3(step_w, 46, 0), C.COL_NAMEID_BG))
+    local step_w, step_y = 240, sec_a_y - 48
+    mkbtn(self, "savings_exchange_minus", vmath.vector3(CX - step_w/2 - 34, step_y, 0), vmath.vector3(52, 52, 0), "-", "secondary_btn")
+    track(self, ui.box(vmath.vector3(CX, step_y, 0), vmath.vector3(step_w, 52, 0), C.COL_NAMEID_BG))
     track(self, ui.text(vmath.vector3(CX, step_y, 0), commas(sa.exchange_amount) .. " COINS", "body", COL_SAVINGS))
-    mkbtn(self, "savings_exchange_plus", vmath.vector3(CX + step_w/2 + 30, step_y, 0), vmath.vector3(46, 46, 0), "+", "secondary_btn")
+    mkbtn(self, "savings_exchange_plus", vmath.vector3(CX + step_w/2 + 34, step_y, 0), vmath.vector3(52, 52, 0), "+", "secondary_btn")
 
-    -- Stored so a successful exchange can fly coins from here (item 2b).
-    local confirm_y = step_y - 50
+    local confirm_y = step_y - 56
     self.savings_exchange_btn_pos = { x = CX, y = confirm_y }
     local confirm_label = sa.exchanging and "EXCHANGING..." or "CONFIRM EXCHANGE"
-    mkbtn(self, "savings_exchange_confirm", vmath.vector3(CX, confirm_y, 0), vmath.vector3(260, 48, 0), confirm_label, "primary_btn", nil, "btn_md", C.COL_WHITE)
+    mkbtn(self, "savings_exchange_confirm", vmath.vector3(CX, confirm_y, 0), vmath.vector3(280, 52, 0), confirm_label, "primary_btn", nil, "btn_md", C.COL_WHITE)
 
     if sa.msg then
-        track(self, ui.text(vmath.vector3(CX, confirm_y - 34, 0), sa.msg, "small",
+        track(self, ui.text(vmath.vector3(CX, confirm_y - 36, 0), sa.msg, "small",
             sa.msg_ok and vmath.vector4(0.3, 1.0, 0.3, 1) or vmath.vector4(1, 0.3, 0.3, 1)))
     end
 
-    -- Divider between sections.
-    local div_y = confirm_y - 68
-    track(self, ui.box(vmath.vector3(CX, div_y, 0), vmath.vector3(panel_w - 48, 2, 0), vmath.vector4(1, 1, 1, 0.12)))
+    -- Divider
+    local div_y = confirm_y - 74
+    track(self, ui.box(vmath.vector3(CX, div_y, 0), vmath.vector3(panel_w - 56, 2, 0), vmath.vector4(1, 1, 1, 0.12)))
 
     -- ── Section B: Auto-charge per game ────────────────────────────────────
-    local sec_b_y = div_y - 30
+    local sec_b_y = div_y - 34
     track(self, ui.text(vmath.vector3(CX, sec_b_y, 0), "AUTO-CHARGE PER GAME", "small", C.COL_DIM))
 
-    local toggle_y = sec_b_y - 42
-    local seg_w, seg_gap = 100, 10
+    local toggle_y = sec_b_y - 48
+    local seg_w, seg_gap = 110, 12
     local off_x = CX - seg_w/2 - seg_gap/2
     local on_x  = CX + seg_w/2 + seg_gap/2
-    local off_box = track(self, ui.box(vmath.vector3(off_x, toggle_y, 0), vmath.vector3(seg_w, 44, 0), (not sa.autocharge_enabled) and C_VICTORY or UNSEL_C))
+    local off_box = track(self, ui.box(vmath.vector3(off_x, toggle_y, 0), vmath.vector3(seg_w, 48, 0), (not sa.autocharge_enabled) and C_VICTORY or UNSEL_C))
     self.buttons[#self.buttons+1] = { node = off_box, id = "savings_autocharge_off" }
     track(self, ui.text(vmath.vector3(off_x, toggle_y, 0), "OFF", "btn_md", (not sa.autocharge_enabled) and C_BTN_TEXT or C.COL_WHITE))
-    local on_box = track(self, ui.box(vmath.vector3(on_x, toggle_y, 0), vmath.vector3(seg_w, 44, 0), sa.autocharge_enabled and C_VICTORY or UNSEL_C))
+    local on_box = track(self, ui.box(vmath.vector3(on_x, toggle_y, 0), vmath.vector3(seg_w, 48, 0), sa.autocharge_enabled and C_VICTORY or UNSEL_C))
     self.buttons[#self.buttons+1] = { node = on_box, id = "savings_autocharge_on" }
     track(self, ui.text(vmath.vector3(on_x, toggle_y, 0), "ON", "btn_md", sa.autocharge_enabled and C_BTN_TEXT or C.COL_WHITE))
 
-    local amt_y = toggle_y - 52
+    local amt_y = toggle_y - 60
     if sa.autocharge_enabled then
-        track(self, ui.text(vmath.vector3(CX, amt_y + 30, 0), "AMOUNT PER GAME", "small", C.COL_DIM))
-        local amt_w, amt_gap = 90, 8
+        track(self, ui.text(vmath.vector3(CX, amt_y + 34, 0), "AMOUNT PER GAME", "small", C.COL_DIM))
+        local amt_w, amt_gap = 96, 10
         local n = #AUTOCHARGE_AMOUNTS
         for i, amt in ipairs(AUTOCHARGE_AMOUNTS) do
             local ax = CX + (i - (n + 1) / 2) * (amt_w + amt_gap)
             local on = (sa.autocharge_amount == amt)
-            local box = track(self, ui.box(vmath.vector3(ax, amt_y, 0), vmath.vector3(amt_w, 42, 0), on and C_VICTORY or UNSEL_C))
+            local box = track(self, ui.box(vmath.vector3(ax, amt_y, 0), vmath.vector3(amt_w, 48, 0), on and C_VICTORY or UNSEL_C))
             self.buttons[#self.buttons+1] = { node = box, id = "savings_autocharge_amt_" .. tostring(amt) }
             track(self, ui.text(vmath.vector3(ax, amt_y, 0), tostring(amt), "btn_md", on and C_BTN_TEXT or C.COL_WHITE))
         end
     end
 
-    local save_y = amt_y - 54
+    local save_y = amt_y - 62
     local save_label = sa.saving and "SAVING..." or "SAVE"
-    mkbtn(self, "savings_autocharge_save", vmath.vector3(CX, save_y, 0), vmath.vector3(200, 48, 0), save_label, "primary_btn", nil, "btn_md", C.COL_WHITE)
+    mkbtn(self, "savings_autocharge_save", vmath.vector3(CX, save_y, 0), vmath.vector3(220, 52, 0), save_label, "primary_btn", nil, "btn_md", C.COL_WHITE)
 
     if sa.settings_msg then
-        track(self, ui.text(vmath.vector3(CX, save_y - 32, 0), sa.settings_msg, "small",
+        track(self, ui.text(vmath.vector3(CX, save_y - 36, 0), sa.settings_msg, "small",
             sa.settings_msg_ok and vmath.vector4(0.3, 1.0, 0.3, 1) or vmath.vector4(1, 0.3, 0.3, 1)))
     end
 
-    local close_y = CY - panel_h / 2 + 28
-    mkbtn(self, "savings_add_close", vmath.vector3(CX, close_y, 0), vmath.vector3(200, 46, 0), "CLOSE", "secondary_btn")
+    local close_y = CY - panel_h / 2 + 32
+    mkbtn(self, "savings_add_close", vmath.vector3(CX, close_y, 0), vmath.vector3(220, 52, 0), "CLOSE", "secondary_btn")
 end
 
 -- ── Invite Modal Drawing ──────────────────────────────────────────────────────
 local function draw_invite_search(self, ctx)
-    -- The battle/knockout quick-invite renders the SHARED random-opponent reel
-    -- dialog (modules/dialog_search) — the same overlay the tournament map uses.
     dialog_search.draw(self, ctx, self.invite_search, "invite_reel_node")
 end
 
@@ -404,116 +369,97 @@ function M.draw(self, ctx, left_M)
     local cx  = (div_rx + ctx.EDGE_R) / 2
     local cy  = ctx.EDGE_T - 16
 
-    -- ── User info container ───────────────────────────────────────────────
-    local margin   = 15
-    local av_size  = 64
-    -- info_h fits: name pill (28) + row_gap (9) + BAL/PTS row (42) + row_gap (9)
-    -- + SAV row (42) = 130, plus ~30px buffer = 160. Grown from the original 96
-    -- to make the bigger BAL./PTS./SAV. rows below read clearly. Growing
-    -- info_h pushes the Battles/Tournaments panels down by the same delta
-    -- (64px) — verified against the ~140px of slack that existed below the
-    -- Tournaments panel before this change (see cy arithmetic after the
-    -- Tournaments panel below).
-    local info_h   = 160
-    local list_h   = 80
-    local pay_h    = 44
-    local gap      = 12
-    local cont_h   = margin + info_h + gap + list_h + gap + pay_h + margin
+    -- ── User Info Container (Redesigned Profile Card) ─────────────────────
+    local margin   = 18
+    local av_size  = 84 -- Bigger Avatar
+    local stat_h   = 36 -- Chunkier currency rows
+    local header_h = 130 -- Covers Avatar, Name, and tightly-packed Balances
+    local list_h   = 80 -- Position & Form list
+    local pay_h    = 56 -- Massive touch target for payments
+    local gap      = 16
+    local cont_h   = margin + header_h + gap + list_h + gap + pay_h + margin
     local ccy      = cy - cont_h / 2
+
     glass(self, vmath.vector3(cx, ccy, 0), vmath.vector3(pw, cont_h, 0), "container_bg")
 
     local inner_l = cx - pw/2 + margin
     local inner_r = cx + pw/2 - margin
     local top_y   = cy - margin
 
-    -- Avatar Only
-    local av_x   = inner_l + av_size/2
-    local av_cy  = top_y - av_size/2
-    
+    -- Layout: Avatar to the left, Info & Balances grouped vertically on the right
+    local av_x    = inner_l + av_size/2
+    local av_cy   = top_y - av_size/2
     track(self, ui.avatar(vmath.vector3(av_x, av_cy, 0), vmath.vector3(av_size, av_size, 0), u.avatar or 1))
 
-    local info_l  = av_x + av_size/2 + 15
+    -- Text Area right of Avatar
+    local info_l  = av_x + av_size/2 + 16
     local info_w  = inner_r - info_l
-    local info_cx = (info_l + inner_r) / 2
+    local info_cx = info_l + info_w/2
 
-    -- Name pill
-    local name_h = 28
+    -- Username Pill & Edit Button
+    local name_h = 32
     local name_y = top_y - name_h/2
     track(self, ui.box(vmath.vector3(info_cx, name_y, 0), vmath.vector3(info_w, name_h, 0), C.COL_NAMEID_BG))
-    txtL(self, info_l + 10, name_y, string.upper(u.username or "PLAYER"), "body", C.COL_BRIGHT)
+    txtL(self, info_l + 12, name_y, string.upper(u.username or "PLAYER"), "body", C.COL_BRIGHT)
 
-    -- Edit icon from atlas → opens the profile screen to edit username/avatar.
-    mkbtn(self, "nav_account", vmath.vector3(inner_r - 16, name_y, 0), vmath.vector3(30, 30, 0), nil, vmath.vector4(0,0,0,0))
-    local acc_edit = track(self, ui.image(vmath.vector3(inner_r - 16, name_y, 0), vmath.vector3(18, 18, 0), "edit"))
+    mkbtn(self, "nav_account", vmath.vector3(inner_r - 18, name_y, 0), vmath.vector3(36, 36, 0), nil, vmath.vector4(0,0,0,0))
+    local acc_edit = track(self, ui.image(vmath.vector3(inner_r - 18, name_y, 0), vmath.vector3(20, 20, 0), "edit"))
     gui.set_color(acc_edit, C.COL_WHITE)
 
-    -- Balance + Points. Row height bumped from 28 -> 42 and the vertical gap
-    -- between rows from 4 -> 9 so the bigger rows below don't feel cramped.
-    local row_gap = 9
-    local stat_h  = 42
-    local stat_y  = name_y - name_h/2 - row_gap - stat_h/2
-    local pts_w   = 100
-    local bal_w   = info_w - pts_w - 6
-    local bal_cx  = info_l + bal_w/2
-    local pts_cx  = inner_r - pts_w/2
-    local COL_ORANGE = vmath.vector4(1.0, 0.6, 0.0, 1.0)
-    local VAL_SCALE = 1.2 -- bump on the numeric value text nodes for legibility
-
-    track(self, ui.box(vmath.vector3(bal_cx, stat_y, 0), vmath.vector3(bal_w, stat_h, 0), C.COL_STAT_BG))
-    txtL(self, info_l + 8, stat_y, "BAL.", "small", COL_ORANGE)
-    local bal_val = txtR(self, info_l + bal_w - 6, stat_y, commas(u.balance or 0), "body", COL_ORANGE)
-    gui.set_scale(bal_val, vmath.vector3(VAL_SCALE, VAL_SCALE, 1))
-
-    track(self, ui.box(vmath.vector3(pts_cx, stat_y, 0), vmath.vector3(pts_w, stat_h, 0), C.COL_STAT_BG))
-    txtL(self, pts_cx - pts_w/2 + 8, stat_y, "PTS.", "small", C.COL_DIM)
-    local pts_val = txtR(self, pts_cx + pts_w/2 - 8, stat_y, commas(u.points or 0), "body", C.COL_CYAN)
-    gui.set_scale(pts_val, vmath.vector3(VAL_SCALE, VAL_SCALE, 1))
-
-    -- Savings (long-term coins from Half-Week Season rewards) — full-width row
-    -- below BAL./PTS., in a distinct accent colour so it reads as a separate
-    -- long-term currency. Same height/gap treatment as the BAL./PTS. row above.
+    -- Balances Matrix (Tucked tightly under the Username with darker bg)
+    local r1_y      = name_y - name_h/2 - 12 - stat_h/2
+    local r2_y      = r1_y - stat_h/2 - 8 - stat_h/2
+    
+    local bw        = pw - (margin * 2)
+    local bal_w     = (info_w - 8) / 2
+    local pts_w     = bal_w
+    local bal_cx    = info_l + bal_w/2
+    local pts_cx    = inner_r - pts_w/2
+    local COL_ORANGE  = vmath.vector4(1.0, 0.6, 0.0, 1.0)
     local COL_SAVINGS = vmath.vector4(0.20, 0.75, 0.55, 1.0)
-    local sav_y = stat_y - stat_h/2 - row_gap - stat_h/2
-    track(self, ui.box(vmath.vector3(info_cx, sav_y, 0), vmath.vector3(info_w, stat_h, 0), C.COL_STAT_BG))
-    txtL(self, info_l + 8, sav_y, "SAV.", "small", COL_SAVINGS)
-    local sav_val = txtR(self, inner_r - 90, sav_y, commas(u.savingCoins or 0), "body", COL_SAVINGS)
-    gui.set_scale(sav_val, vmath.vector3(VAL_SCALE, VAL_SCALE, 1))
 
-    -- Two circular icon buttons at the right edge of the SAV. row: "+"
-    -- (add — exchange now / auto-charge settings) sits just to the left of "i"
-    -- (info). Bumped from 22px to 34px with a visible colored-circle
-    -- background (was a barely-visible dark pie) so they read as tappable
-    -- buttons rather than decoration.
-    local icon_sz   = 34
-    local sav_info_pos = vmath.vector3(inner_r - 23, sav_y, 0)
-    local sav_add_pos  = vmath.vector3(inner_r - 63, sav_y, 0)
-    local ICON_BG = vmath.vector4(COL_SAVINGS.x, COL_SAVINGS.y, COL_SAVINGS.z, 0.40)
-    track(self, ui.pie(sav_info_pos, icon_sz/2, ICON_BG))
-    mkbtn(self, "savings_info", sav_info_pos, vmath.vector3(icon_sz, icon_sz, 0), "i", vmath.vector4(0, 0, 0, 0), nil, "btn_sm", C.COL_WHITE)
-    track(self, ui.pie(sav_add_pos, icon_sz/2, ICON_BG))
-    mkbtn(self, "savings_add", sav_add_pos, vmath.vector3(icon_sz, icon_sz, 0), "+", vmath.vector4(0, 0, 0, 0), nil, "btn_sm", C.COL_WHITE)
+    -- Row 1: BAL | PTS (Using C.COL_NAMEID_BG for darker backdrop)
+    track(self, ui.box(vmath.vector3(bal_cx, r1_y, 0), vmath.vector3(bal_w, stat_h, 0), C.COL_NAMEID_BG))
+    txtL(self, info_l + 8, r1_y, "💰 BAL.", "small", COL_ORANGE)
+    txtR(self, bal_cx + bal_w/2 - 8, r1_y, commas(u.balance or 0), "body", COL_ORANGE)
+
+    track(self, ui.box(vmath.vector3(pts_cx, r1_y, 0), vmath.vector3(pts_w, stat_h, 0), C.COL_NAMEID_BG))
+    txtL(self, inner_r - pts_w + 8, r1_y, "💎 PTS.", "small", C.COL_CYAN)
+    txtR(self, inner_r - 8, r1_y, commas(u.points or 0), "body", C.COL_CYAN)
+
+    -- Row 2: SAVINGS (Aligned seamlessly under BAL/PTS)
+    track(self, ui.box(vmath.vector3(info_cx, r2_y, 0), vmath.vector3(info_w, stat_h, 0), C.COL_NAMEID_BG))
+    txtL(self, info_l + 8, r2_y, "🌱 SAVINGS BAL", "small", COL_SAVINGS)
+    txtR(self, inner_r - 80, r2_y, commas(u.savingCoins or 0), "body", COL_SAVINGS)
+
+    -- Savings Interactive Icons
+    local sav_info_pos = vmath.vector3(inner_r - 20, r2_y, 0)
+    local sav_add_pos  = vmath.vector3(inner_r - 54, r2_y, 0)
+    track(self, ui.pie(sav_info_pos, 14, vmath.vector4(0.15, 0.15, 0.15, 0.65)))
+    mkbtn(self, "savings_info", sav_info_pos, vmath.vector3(28, 28, 0), "i", vmath.vector4(0, 0, 0, 0), nil, "btn_md", C.COL_WHITE)
+    track(self, ui.pie(sav_add_pos, 14, vmath.vector4(0.15, 0.15, 0.15, 0.65)))
+    mkbtn(self, "savings_add", sav_add_pos, vmath.vector3(28, 28, 0), "+", vmath.vector4(0, 0, 0, 0), nil, "btn_md", COL_SAVINGS)
 
     -- Stats List (Position & Form)
-    local lcy = top_y - info_h - gap - list_h/2
-    local bw  = pw - margin*2
+    local lcy = top_y - header_h - gap - list_h/2
     track(self, ui.box(vmath.vector3(cx, lcy, 0), vmath.vector3(bw, list_h, 0), C.COL_STAT_BG))
 
     local pos      = tonumber(u.position) or -1
     local has_rank = pos > 0
     local accent_col = has_rank and C.COL_GOLD or C.COL_DIM
-    local row_h = list_h / 2
+    local row_h_list = list_h / 2
 
     -- Divider
     track(self, ui.box(vmath.vector3(cx, lcy, 0), vmath.vector3(bw - 24, 1, 0), vmath.vector4(1, 1, 1, 0.05)))
 
     -- Row 1: Your Position
-    local r1_y = lcy + row_h/2
-    txtL(self, cx - bw/2 + 12, r1_y, "YOUR POSITION", "small", C.COL_DIM)
-    txtR(self, cx + bw/2 - 12, r1_y, has_rank and ("#"..pos) or "UNRANKED", "body", accent_col)
+    local r1_y_list = lcy + row_h_list/2
+    txtL(self, cx - bw/2 + 12, r1_y_list, "YOUR POSITION", "small", C.COL_DIM)
+    txtR(self, cx + bw/2 - 12, r1_y_list, has_rank and ("#"..pos) or "UNRANKED", "body", accent_col)
 
     -- Row 2: Your Current Form
-    local r2_y = lcy - row_h/2
-    txtL(self, cx - bw/2 + 12, r2_y, "YOUR CURRENT FORM", "small", C.COL_DIM)
+    local r2_y_list = lcy - row_h_list/2
+    txtL(self, cx - bw/2 + 12, r2_y_list, "YOUR CURRENT FORM", "small", C.COL_DIM)
 
     local form = type(u.recentForm) == "table" and u.recentForm or {}
     local fsz, fgap = 26, 6 
@@ -522,56 +468,53 @@ function M.draw(self, ctx, left_M)
         local r  = form[i]
         local bx = fx0 - (i - 1) * (fsz + fgap)
         if r == "W" or r == "L" then
-            track(self, ui.box(vmath.vector3(bx, r2_y, 0), vmath.vector3(fsz, fsz, 0),
+            track(self, ui.box(vmath.vector3(bx, r2_y_list, 0), vmath.vector3(fsz, fsz, 0),
                 r == "W" and vmath.vector4(0.15, 0.70, 0.25, 0.92) or vmath.vector4(0.90, 0.25, 0.25, 0.92)))
-            track(self, ui.text(vmath.vector3(bx, r2_y, 0), r, "body", C.COL_WHITE))
+            track(self, ui.text(vmath.vector3(bx, r2_y_list, 0), r, "body", C.COL_WHITE))
         else
-            track(self, ui.box(vmath.vector3(bx, r2_y, 0), vmath.vector3(fsz, fsz, 0), vmath.vector4(1, 1, 1, 0.06)))
+            track(self, ui.box(vmath.vector3(bx, r2_y_list, 0), vmath.vector3(fsz, fsz, 0), vmath.vector4(1, 1, 1, 0.06)))
         end
     end
 
-    -- Make Payments button
+    -- Make Payments Button (Massive Target)
     local pay_y = lcy - list_h/2 - gap - pay_h/2
-    mkbtn(self, "nav_payments", vmath.vector3(cx, pay_y, 0), vmath.vector3(pw - margin*2, pay_h, 0), "MAKE PAYMENTS", "primary_btn")
+    mkbtn(self, "nav_payments", vmath.vector3(cx, pay_y, 0), vmath.vector3(bw, pay_h, 0), "MAKE PAYMENTS", "primary_btn", nil, "btn_lg")
 
-    cy = cy - cont_h - C.BLOCK_GAP
+    cy = cy - cont_h - (C.BLOCK_GAP + 8)
 
-    -- ── Battles panel (three independent types) ───────────────────────────
-    -- Each row is INDEPENDENT — it either shows the battle's summary with 
-    -- INVITE/EDIT, or a single CREATE button for that type.
-    local row_h    = 74
-    local top_pad  = 12
-    local bot_pad  = 12
-    -- Only the visible battle types get a row (PARTY hidden; code retained).
+    -- ── Battles panel (Taller, Roomier rows) ──────────────────────────────
+    local row_h    = 88 -- Significantly larger rows
+    local top_pad  = 16
+    local bot_pad  = 16
     local list_types = M.BATTLE_TYPES_VISIBLE
     local battle_h = top_pad + (row_h * #list_types) + bot_pad
     local scy = cy - battle_h/2
     glass(self, vmath.vector3(cx, scy, 0), vmath.vector3(pw, battle_h, 0), "container_bg")
 
     local rows_top = cy - top_pad
-    local row_l    = cx - pw/2 + 16
-    local row_r    = cx + pw/2 - 16
+    local row_l    = cx - pw/2 + 20
+    local row_r    = cx + pw/2 - 20
 
     for ri, T in ipairs(list_types) do
         local row_cy = rows_top - (ri - 0.5) * row_h
-        -- Subtle divider above every row except the first.
         if ri > 1 then
-            track(self, ui.box(vmath.vector3(cx, rows_top - (ri - 1) * row_h, 0), vmath.vector3(pw - 32, 1, 0), vmath.vector4(1, 1, 1, 0.05)))
+            track(self, ui.box(vmath.vector3(cx, rows_top - (ri - 1) * row_h, 0), vmath.vector3(pw - 40, 1, 0), vmath.vector4(1, 1, 1, 0.05)))
         end
 
         local icon_name = (T == "NORMAL") and "battle_icon" or (T == "KNOCKOUT" and "knockout" or "party")
-        local icon_x = row_l + 20
-        local type_icon = track(self, ui.image(vmath.vector3(icon_x, row_cy, 0), vmath.vector3(42, 42, 0), icon_name))
+        local icon_x = row_l + 24
+        local type_icon = track(self, ui.image(vmath.vector3(icon_x, row_cy, 0), vmath.vector3(48, 48, 0), icon_name))
         gui.set_color(type_icon, C.COL_WHITE)
 
-        local text_x = icon_x + 32
+        local text_x = icon_x + 38
         local label = M.BATTLE_TYPE_LABELS[T] or T
-        txtL(self, text_x, row_cy + 10, label, "btn_md", C.COL_WHITE)
+        txtL(self, text_x, row_cy + 12, label, "btn_lg", C.COL_WHITE)
 
-        local invite_w = 100
-        local btn_h    = 42
-        local edit_w   = 42 -- perfectly square inspiration
-        local pair_gap = 10
+        -- Larger Buttons
+        local invite_w = 120
+        local btn_h    = 48
+        local edit_w   = 48 
+        local pair_gap = 12
 
         local b = M.battle_of_type(u, T)
         if b then
@@ -580,63 +523,52 @@ function M.draw(self, ctx, left_M)
             if T == "PARTY" then
                 local players = b.players or "AUTO"
                 local pstr    = (type(players) == "table") and tostring(#players) or tostring(players)
-                detail = string.format("%s PLAYERS  ~  %s", pstr, commas(amt))
+                detail = string.format("%s PLAYERS    %s", pstr, commas(amt))
             elseif T == "KNOCKOUT" then
                 local cap = tonumber(b.scoreCap) or 200
-                detail = string.format("CAP %d  ~  %s", cap, commas(amt))
+                detail = string.format("CAP %d    %s", cap, commas(amt))
             else
                 local fmt = tonumber(b.matchFormat) or 3
-                detail = string.format("BEST OF %d  ~  %s", fmt, commas(amt))
+                detail = string.format("BEST OF %d    %s", fmt, commas(amt))
             end
-            -- Replaced green with the Game Over light grey (C_NEUTRAL)
-            txtL(self, text_x, row_cy - 12, detail, "small", C_NEUTRAL)
+            -- Grey, small text without the '~'
+            txtL(self, text_x, row_cy - 14, detail, "small", C.COL_DIM)
 
             local edit_bx   = row_r - edit_w/2
             local invite_bx = edit_bx - edit_w/2 - pair_gap - invite_w/2
 
             mkbtn(self, "nav_invite", vmath.vector3(invite_bx, row_cy, 0), vmath.vector3(invite_w, btn_h, 0), "INVITE", "primary_btn", T, "btn_md")
             
-            -- Edit button constructed with the edit icon from the atlas
             mkbtn(self, "update_battle", vmath.vector3(edit_bx, row_cy, 0), vmath.vector3(edit_w, btn_h, 0), "", "secondary_btn", T)
-            local eicon = track(self, ui.image(vmath.vector3(edit_bx, row_cy, 0), vmath.vector3(20, 20, 0), "edit"))
+            local eicon = track(self, ui.image(vmath.vector3(edit_bx, row_cy, 0), vmath.vector3(24, 24, 0), "edit"))
             gui.set_color(eicon, C.COL_WHITE)
         else
-            txtL(self, text_x, row_cy - 12, "Not created yet", "small", C.COL_DIM)
-            local create_w = 144
+            txtL(self, text_x, row_cy - 14, "Not created yet", "body", C.COL_DIM)
+            local create_w = 160
             local create_bx  = row_r - create_w/2
             local create_lbl = "+ CREATE"
             mkbtn(self, "create_battle", vmath.vector3(create_bx, row_cy, 0), vmath.vector3(create_w, btn_h, 0), create_lbl, "primary_btn", T, "btn_md")
         end
     end
-    cy = cy - battle_h - C.BLOCK_GAP
+    cy = cy - battle_h - (C.BLOCK_GAP + 8)
 
-    -- ── Tournaments panel ─────────────────────────────────────────────────
-    -- Verified against info_h = 160 (grown from 96, a +64 delta): with
-    -- EDGE_T = 720, cy starts at 704. cont_h = 15+160+12+80+12+44+15 = 338, so
-    -- cy after the info container = 704 - 338 - 18 = 348. battle_h = 172, so
-    -- cy after Battles = 348 - 172 - 18 = 158. Tournaments' own tcy2 below
-    -- sits at cy - t_h/2 = 158 - 32 = 126, so its bottom edge (tcy2 - t_h/2)
-    -- lands at 126 - 32 = 94, comfortably >= the required 20px floor (the
-    -- panel used to end with ~140px of unused space below it, so this only
-    -- eats 64px of that slack).
-    local t_h  = 64
+    -- ── Tournaments panel (Taller button) ─────────────────────────────────
+    local t_h  = 72
     local tcy2 = cy - t_h/2
     track(self, ui.box(vmath.vector3(cx, tcy2, 0), vmath.vector3(pw, t_h, 0), C.COL_BG))
     mkbtn(self, "nav_tournaments", vmath.vector3(cx, tcy2, 0), vmath.vector3(pw, t_h, 0), nil, "container_bg")
     
-    local icon_x = cx - 74
-    local t_icon = track(self, ui.image(vmath.vector3(icon_x, tcy2, 0), vmath.vector3(28, 28, 0), "tournament_icon"))
+    local icon_x = cx - 80
+    local t_icon = track(self, ui.image(vmath.vector3(icon_x, tcy2, 0), vmath.vector3(32, 32, 0), "tournament_icon"))
     gui.set_color(t_icon, C.COL_WHITE)
-    txtL(self, icon_x + 22, tcy2, "TOURNAMENTS", "btn_md", C.COL_WHITE)
+    txtL(self, icon_x + 28, tcy2, "TOURNAMENTS", "btn_lg", C.COL_WHITE)
 
-    local nx = cx + pw/2 - 36
+    local nx = cx + pw/2 - 40
     local ny = tcy2
-    track(self, ui.box(vmath.vector3(nx, ny, 0), vmath.vector3(44, 18, 0), vmath.vector4(0.15, 0.8, 0.25, 1.0)))
-    track(self, ui.box(vmath.vector3(nx, ny + 9, 0), vmath.vector3(44, 1, 0), C.COL_WHITE))
+    track(self, ui.box(vmath.vector3(nx, ny, 0), vmath.vector3(48, 22, 0), vmath.vector4(0.15, 0.8, 0.25, 1.0)))
+    track(self, ui.box(vmath.vector3(nx, ny + 11, 0), vmath.vector3(48, 1, 0), C.COL_WHITE))
     track(self, ui.text(vmath.vector3(nx, ny, 0), "NEW", "btn_sm", C.COL_WHITE))
     cy = cy - t_h - C.BLOCK_GAP
-
-    -- Themes moved to the main lobby (THEME utility tile). No footer link here.
 
     -- ── Draw Extracted Modals on Top ──────────────────────────────────────
     draw_battle_modal(self, ctx)
@@ -647,12 +579,6 @@ end
 
 -- ── Input Action Exports for Main Script ─────────────────────────────────────
 
--- "CONFIRM EXCHANGE" in the savings Add dialog's Section A. Sends
--- EXCHANGE_TO_SAVINGS over WS with the currently-picked stepper amount; the
--- SAVINGS_EXCHANGE_RESULT reply is async (parked on ws.last_savings_exchange)
--- and handled back in main/online.gui_script's "ws_savings_exchange_result"
--- message, which fills in sa.msg/sa.msg_ok — same split as M.bm_submit, whose
--- own on_result callback lives inline because it goes over HTTP, not WS.
 function M.savings_exchange_confirm(self, rebuild_cb)
     local sa = self.savings_add
     if not sa or sa.exchanging then return end
@@ -664,10 +590,6 @@ function M.savings_exchange_confirm(self, rebuild_cb)
     rebuild_cb()
 end
 
--- "SAVE" in the savings Add dialog's Section B. Sends SET_SAVINGS_AUTO_CHARGE
--- with the currently-selected toggle/amount; the SAVINGS_SETTINGS_UPDATED
--- reply is async and handled in main/online.gui_script's
--- "ws_savings_settings_updated" message, which fills in sa.settings_msg/_ok.
 function M.savings_autocharge_save(self, rebuild_cb)
     local sa = self.savings_add
     if not sa or sa.saving then return end
@@ -691,10 +613,6 @@ function M.bm_submit(self, rebuild_cb)
         rebuild_cb(); return
     end
 
-    -- Amount/cap come from the ladder selected by the battle type.
-    -- KNOCKOUT: a STAKED score-cap chamber — amount is the KNOCKOUT_STAKES stake
-    -- (1000/2000) and scoreCap is the KNOCKOUT_CAPS cap (charge = cap/2).
-    -- PARTY: PARTY_TIERS is the entry fee. NORMAL: bracket tier.
     local amount, match_format, score_cap
     if btype == "NORMAL" then
         local tier = M.BATTLE_TIERS[bm.stake_i] or M.BATTLE_TIERS[1]
@@ -727,8 +645,6 @@ function M.bm_submit(self, rebuild_cb)
             local data   = result.data or {}
             local battle = data.tournament or data.data or data
             local u      = ws.current_user_data or {}
-            -- Store the result per-type so the three rows stay independent, and
-            -- keep the legacy single field pointed at the last-touched battle.
             u.myBattles = (type(u.myBattles) == "table") and u.myBattles or {}
             u.myBattles[btype] = battle
             u.myBattle  = battle; ws.current_user_data = u
@@ -761,9 +677,6 @@ function M.start_invite_search(self, app_state, rebuild_cb, battle_type)
 
     local stake = (type(mb.stake) == "table") and mb.stake or { amount = tonumber(mb.stakeAmount) or 0, charge = 0 }
 
-    -- Can't cover this battle's stake (amount + charge)? Open payments instead of
-    -- starting a matchmaking search the server would reject for low balance. Return
-    -- false so the caller skips the "searching" sound/animation.
     local need = (tonumber(stake.amount) or 0) + (tonumber(stake.charge) or 0)
     local bal  = tonumber((ws.current_user_data or {}).balance) or 0
     if need > 0 and bal < need then
@@ -781,8 +694,6 @@ function M.start_invite_search(self, app_state, rebuild_cb, battle_type)
         matchType    = (tostring(mb.matchType or battle_type or "NORMAL"):upper()),
     })
 
-    -- Add a 10-second auto-timeout. Instead of closing abruptly, show a clear
-    -- "NO OPPONENT FOUND" state, play the fail sound, then close after a short beat.
     self.invite_search.timer_handle = timer.delay(10, false, function()
         if self.invite_search and not self.invite_search.found then
             M.fail_invite_search(self, app_state, rebuild_cb, "No one accepted your invite")
@@ -793,27 +704,21 @@ function M.start_invite_search(self, app_state, rebuild_cb, battle_type)
     return true
 end
 
--- Transition the invite overlay into the "no opponent found" state: render the
--- NO OPPONENT FOUND message + miss transition, play a playful fail sound, then
--- close after ~1.5s (instead of the overlay just snapping shut).
 function M.fail_invite_search(self, app_state, rebuild_cb, reason)
     local sr = self.invite_search
     if not sr or sr.found or sr.failed then return end
 
-    -- Cancel the auto-timeout so it can't fire again on top of this.
     if sr.timer_handle then pcall(timer.cancel, sr.timer_handle); sr.timer_handle = nil end
 
     sr.failed   = true
     sr.fail_msg = reason or "No one accepted your invite"
     app_state.searching_invite = false
 
-    -- Stop the looping search cue and play a playful fail sting on the controller.
     pcall(msg.post, "#snd_suspense", "stop_sound")
     pcall(msg.post, "#snd_fail", "play_sound")
 
     rebuild_cb()
 
-    -- Close after a short beat so the player reads the message + sees the transition.
     timer.delay(1.5, false, function()
         if self.invite_search == sr then
             M.stop_invite_search(self, app_state, rebuild_cb)
@@ -822,7 +727,6 @@ function M.fail_invite_search(self, app_state, rebuild_cb, reason)
 end
 
 function M.stop_invite_search(self, app_state, rebuild_cb)
-    -- Clean up timer if cancelled early
     if self.invite_search and self.invite_search.timer_handle then
         pcall(timer.cancel, self.invite_search.timer_handle)
     end
