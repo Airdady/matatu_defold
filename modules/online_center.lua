@@ -148,26 +148,52 @@ function M.draw(self, ctx)
     local my_id = ws.get_current_user_id()
 
     local rows = {}
-    local seen_users = {} -- Used to filter out duplicates
+    -- Used to filter out duplicates. Keyed by user id alone for Quick Play
+    -- (one row per user); keyed by "id:TYPE" for Battles, since a player can
+    -- host several independent battle types (NORMAL/KNOCKOUT/PARTY) at once.
+    local seen_users = {}
 
     -- Filter list: No duplicates, no self, and tab-specific logic
     for _, pu in ipairs(users) do
-        if pu._id and pu._id ~= my_id and not seen_users[pu._id] then
-            local should_add = false
-            
+        if pu._id and pu._id ~= my_id then
             if self.tab == TAB_BATTLES then
-                -- Only show players who actually have an active battle
-                if pu.myBattle then
-                    should_add = true
+                -- A player's `myBattles` map (already broadcast alongside the
+                -- legacy singular `myBattle`) can hold one battle per type —
+                -- surface a separate row for each one they actually host, so
+                -- e.g. an AI hosting both KNOCKOUT and PARTY shows up for both.
+                local battles_map = (type(pu.myBattles) == "table") and pu.myBattles or nil
+                local added_any = false
+                if battles_map then
+                    for _, T in ipairs({ "NORMAL", "KNOCKOUT", "PARTY" }) do
+                        local b = battles_map[T]
+                        if type(b) == "table" and next(b) ~= nil then
+                            local key = pu._id .. ":" .. T
+                            if not seen_users[key] then
+                                seen_users[key] = true
+                                local row_pu = {}
+                                for k, v in pairs(pu) do row_pu[k] = v end
+                                row_pu.myBattle = b
+                                rows[#rows+1] = row_pu
+                                added_any = true
+                            end
+                        end
+                    end
+                end
+                -- Fallback for payloads without a `myBattles` map — behave
+                -- exactly as before (a single row using the legacy field).
+                if not added_any and pu.myBattle then
+                    local key = pu._id .. ":legacy"
+                    if not seen_users[key] then
+                        seen_users[key] = true
+                        rows[#rows+1] = pu
+                    end
                 end
             else
-                -- Quick play: show players
-                should_add = true
-            end
-            
-            if should_add then
-                seen_users[pu._id] = true
-                rows[#rows+1] = pu
+                -- Quick play: show players (one row per user)
+                if not seen_users[pu._id] then
+                    seen_users[pu._id] = true
+                    rows[#rows+1] = pu
+                end
             end
         end
     end
