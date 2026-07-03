@@ -9,11 +9,19 @@
 --
 -- Fed by two server paths that both emit the same "announcements" WS event
 -- (see modules/websocket_manager.lua) with an array of
--- { id, text, duration, isDismissable }:
+-- { id, text, duration, rounds, isDismissable }:
 --   1. POST /announcements live-broadcasts to everyone connected right now.
 --   2. pushUnseenAnnouncements() replays anything missed on the next IDENTIFY
 --      (e.g. the player was offline when it went out).
 -- Multiple announcements queue and show one at a time.
+--
+-- `rounds` (if > 0) takes priority over `duration`: instead of a fixed time
+-- window, the banner stays up for exactly that many full scroll passes and
+-- closes the instant the last one finishes — e.g. the weekly top-winners
+-- announcement sets rounds=3 so it always shows the full roster three full
+-- times regardless of how long that actually takes for N winners, instead of
+-- a duration guess that could cut a long list short or leave a short one
+-- sitting idle. Falls back to `duration` when rounds is 0/absent.
 --
 -- `text` supports lightweight inline markup (already emitted by the weekly
 -- top-winners announcement in getTopPlayersWithPrizes.ts):
@@ -250,14 +258,32 @@ show_next = function(self)
     gui.set_enabled(self.root, true)
     gui.animate(self.root, "position.y", LOGICAL_H - TOP_MARGIN, gui.EASING_OUTSINE, 0.35)
 
-    local dur = tonumber(item.duration) or 0
-    if dur <= 0 then dur = FALLBACK_DURATION_MS end
-    dur = math.max(MIN_DURATION_MS, dur)
+    local rounds = tonumber(item.rounds) or 0
+    if rounds > 0 then
+        -- Round-based: update() closes it the instant the target pass count
+        -- is reached (see pass_count below). No fixed-time timer for this —
+        -- just a generous safety net in case something goes wrong and the
+        -- pass count never reaches its target, so the banner can't get stuck.
+        self.rounds_target = rounds
+        self.pass_count = 0
+        self._rounds_finished = false
+        local time_per_pass = (PANEL_W + self.marquee_w) / MARQUEE_SPEED
+        local safety_ms = math.max(MIN_DURATION_MS, (time_per_pass * rounds + 3) * 1000)
+        self._hide_timer = timer.delay(safety_ms / 1000.0, false, function()
+            self.current_item = nil
+            hide_and_advance(self)
+        end)
+    else
+        self.rounds_target = nil
+        local dur = tonumber(item.duration) or 0
+        if dur <= 0 then dur = FALLBACK_DURATION_MS end
+        dur = math.max(MIN_DURATION_MS, dur)
 
-    self._hide_timer = timer.delay(dur / 1000.0, false, function()
-        self.current_item = nil
-        hide_and_advance(self)
-    end)
+        self._hide_timer = timer.delay(dur / 1000.0, false, function()
+            self.current_item = nil
+            hide_and_advance(self)
+        end)
+    end
 end
 
 function update(self, dt)
@@ -293,11 +319,29 @@ function update(self, dt)
 
     local off_left = -PANEL_W / 2 - self.marquee_w
 
-    if self.m1_x < off_left then self.m1_x = self.m2_x + self.marquee_w + MARQUEE_GAP end
-    if self.m2_x < off_left then self.m2_x = self.m1_x + self.marquee_w + MARQUEE_GAP end
+    -- Each recycle is one full copy of the (identical) text having scrolled
+    -- completely off-screen — i.e. one "display round" of the same message,
+    -- toward rounds_target below.
+    if self.m1_x < off_left then
+        self.m1_x = self.m2_x + self.marquee_w + MARQUEE_GAP
+        self.pass_count = (self.pass_count or 0) + 1
+    end
+    if self.m2_x < off_left then
+        self.m2_x = self.m1_x + self.marquee_w + MARQUEE_GAP
+        self.pass_count = (self.pass_count or 0) + 1
+    end
 
     gui.set_position(self.holder1, vmath.vector3(self.m1_x, CHILD_Y, 0))
     gui.set_position(self.holder2, vmath.vector3(self.m2_x, CHILD_Y, 0))
+
+    if self.rounds_target and not self._rounds_finished and self.pass_count >= self.rounds_target then
+        -- Close right as the last requested pass finishes — don't wait for
+        -- the safety-net timer.
+        self._rounds_finished = true
+        if self._hide_timer then timer.cancel(self._hide_timer); self._hide_timer = nil end
+        self.current_item = nil
+        hide_and_advance(self)
+    end
 end
 
 function on_message(self, message_id, message)
