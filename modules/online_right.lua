@@ -479,16 +479,16 @@ function M.draw(self, ctx, left_M)
 
     -- Row 1: BAL | PTS (Using C.COL_NAMEID_BG for darker backdrop)
     track(self, ui.box(vmath.vector3(bal_cx, r1_y, 0), vmath.vector3(bal_w, stat_h, 0), C.COL_NAMEID_BG))
-    txtL(self, info_l + 8, r1_y, "💰 BAL.", "small", COL_ORANGE)
+    txtL(self, info_l + 8, r1_y, "BAL.", "small", COL_ORANGE)
     txtR(self, bal_cx + bal_w/2 - 8, r1_y, commas(u.balance or 0), "body", COL_ORANGE)
 
     track(self, ui.box(vmath.vector3(pts_cx, r1_y, 0), vmath.vector3(pts_w, stat_h, 0), C.COL_NAMEID_BG))
-    txtL(self, inner_r - pts_w + 8, r1_y, "💎 PTS.", "small", C.COL_CYAN)
+    txtL(self, inner_r - pts_w + 8, r1_y, "PTS.", "small", C.COL_CYAN)
     txtR(self, inner_r - 8, r1_y, commas(u.points or 0), "body", C.COL_CYAN)
 
     -- Row 2: SAVINGS (Aligned seamlessly under BAL/PTS)
     track(self, ui.box(vmath.vector3(info_cx, r2_y, 0), vmath.vector3(info_w, stat_h, 0), C.COL_NAMEID_BG))
-    txtL(self, info_l + 8, r2_y, "🌱 SAVINGS BAL", "small", COL_SAVINGS)
+    txtL(self, info_l + 8, r2_y, "SAVINGS BAL", "small", COL_SAVINGS)
     txtR(self, inner_r - 80, r2_y, commas(u.savingCoins or 0), "body", COL_SAVINGS)
 
     -- Savings Interactive Icons
