@@ -58,6 +58,13 @@ local FALLBACK_DURATION_MS = 7000 -- used when the server sends 0/missing durati
 local TICKER_PX  = 18
 local BOLD_ROLE  = { name = "subtitle2", base = 34 } -- same font resource as F.BUTTON, sized down
 local AVATAR_SZ  = 22
+-- A lone-space segment (e.g. the gap between "1." and {{a:N}}, or between
+-- {{a:N}} and the name) rendered and measured as its own tiny text node
+-- comes back from gui.get_text_metrics_from_node much wider than an actual
+-- inline space — whatever bearing/kerning the font bakes in per node adds up
+-- fast across a message with this many transitions. Skip rendering/measuring
+-- those entirely and advance by this fixed, compact amount instead.
+local WORD_GAP   = 5
 
 local PARKED_Y = LOGICAL_H + PANEL_H + 40 -- fully off-screen above the top edge
 
@@ -147,18 +154,25 @@ local function build_row(holder, msg_text)
             gui.set_pivot(n, gui.PIVOT_W)
             gui.set_parent(n, holder)
             nodes[#nodes + 1] = n
-            -- No extra padding here — the message text already has a single
-            -- literal space on each side of {{a:N}} (e.g. "1. {{a:5}} Name"),
-            -- same as any other word gap. Adding a gap on top of that made
-            -- the avatar's right-hand side visibly wider than its left.
             x = x + AVATAR_SZ
         else
-            local role = seg.bold and BOLD_ROLE or F.BODY
-            local n = text(vmath.vector3(x, 0, 0), seg.value, role, C_WHITE, gui.PIVOT_W, TICKER_PX)
-            gui.set_parent(n, holder)
-            nodes[#nodes + 1] = n
-            local m = gui.get_text_metrics_from_node(n)
-            x = x + m.width
+            -- Trim leading/trailing whitespace and advance by the fixed
+            -- WORD_GAP for each side instead — a literal space character's
+            -- own advance (as measured for the whole string) is oversized
+            -- per node; this also naturally covers a segment that's pure
+            -- whitespace (e.g. the lone space between "1." and {{a:N}}),
+            -- since it just leaves `mid` empty and skips rendering it.
+            local lead, mid, trail = seg.value:match("^(%s*)(.-)(%s*)$")
+            if lead ~= "" then x = x + WORD_GAP end
+            if mid ~= "" then
+                local role = seg.bold and BOLD_ROLE or F.BODY
+                local n = text(vmath.vector3(x, 0, 0), mid, role, C_WHITE, gui.PIVOT_W, TICKER_PX)
+                gui.set_parent(n, holder)
+                nodes[#nodes + 1] = n
+                local m = gui.get_text_metrics_from_node(n)
+                x = x + m.width
+            end
+            if trail ~= "" then x = x + WORD_GAP end
         end
     end
     return x, nodes
