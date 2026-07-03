@@ -28,8 +28,6 @@ local COL_CYAN    = vmath.vector4(0.20, 0.90, 1.00, 1.0)
 local COL_GREEN   = vmath.vector4(0.15, 0.70, 0.25, 1.0)
 local COL_SCRIM   = vmath.vector4(0.0, 0.0, 0.0, 0.72)
 local COL_LOCKED  = vmath.vector4(0.35, 0.35, 0.38, 1.0)
-local COL_SHADOW  = vmath.vector4(0.0, 0.0, 0.0, 0.45)
-local COL_DARKTXT = vmath.vector4(0.10, 0.08, 0.02, 1.0)
 
 local function refresh_wh()
     local m = screen.metrics()
@@ -61,7 +59,10 @@ local function mkbtn(self, id, pos, size, label, style, data, font, text_color)
 end
 
 -- ── Day-card rendering ─────────────────────────────────────────────────────
-local CARD_W, CARD_H = 88, 122
+-- Wider/taller now that the dialog floats directly on the gradient instead
+-- of being boxed into a narrower centred panel — plenty of horizontal room
+-- to spread the 7-day row out.
+local CARD_W, CARD_H = 120, 140
 
 -- `reveal` (optional {alpha, scale}) drives the staggered entrance: computed in
 -- Lua per-frame from elapsed time since the dialog opened (see rebuild()) rather
@@ -83,53 +84,42 @@ local function draw_day_card(self, x, y, card_day, entry, cur_day, a, reveal, pu
     -- small but effective cue for "this is the one that matters right now".
     local emphasis = is_current and 1.08 or 1.0
 
-    -- Glow / border. Use the rounded glass-panel texture instead of a flat
-    -- box so cards match the rest of the app's 9-slice panel language.
+    -- Border/body: plain flat boxes, no 9-slice panel texture — keeps this
+    -- screen to text + colour only, no background images.
     local border_col = is_current and COL_GOLD or (is_done and COL_GREEN or COL_LOCKED)
     local border_a = is_current and (pulse or 0.9) or 0.35
-    local border = track(self, ui.panel9(vmath.vector3(x, y, 0), vmath.vector3(CARD_W + 8, CARD_H + 8, 0), "container_bg"))
-    gui.set_color(border, with_a(border_col, border_a * a * fade * ra))
+    local border = track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(CARD_W + 8, CARD_H + 8, 0), with_a(border_col, border_a * a * fade * ra)))
     gui.set_scale(border, vmath.vector3(rs * emphasis, rs * emphasis, 1))
 
-    -- Card body.
     local bg_col = is_current and vmath.vector4(0.30, 0.23, 0.05, 1.0)
         or (is_done and vmath.vector4(0.08, 0.17, 0.11, 1.0) or vmath.vector4(0.10, 0.10, 0.13, 1.0))
-    local body = track(self, ui.panel9(vmath.vector3(x, y, 0), vmath.vector3(CARD_W, CARD_H, 0), "container_bg"))
-    gui.set_color(body, with_a(bg_col, a * fade * ra))
+    local body = track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(CARD_W, CARD_H, 0), with_a(bg_col, a * fade * ra)))
     gui.set_scale(body, vmath.vector3(rs * emphasis, rs * emphasis, 1))
 
     -- "DAY N" label.
     local day_col = is_current and COL_GOLD or (is_done and COL_GREEN or COL_DIM)
-    local dt = track(self, ui.text(vmath.vector3(x, y + CARD_H / 2 - 18, 0), "DAY " .. tostring(card_day), "small", with_a(day_col, a * fade * ra)))
-    gui.set_scale(dt, vmath.vector3(0.84 * rs * emphasis, 0.84 * rs * emphasis, 1))
+    local dt = track(self, ui.text(vmath.vector3(x, y + CARD_H / 2 - 22, 0), "DAY " .. tostring(card_day), "small", with_a(day_col, a * fade * ra)))
+    gui.set_scale(dt, vmath.vector3(0.94 * rs * emphasis, 0.94 * rs * emphasis, 1))
 
-    -- Coin icon + amount, stacked centrally — the icon gives the reward an
-    -- instant visual identity instead of a bare number.
+    -- Coin amount — plain text, no icon.
     if coins > 0 then
-        local icon_y = y + 18
-        local icon = track(self, ui.image(vmath.vector3(x, icon_y, 0), vmath.vector3(26, 28, 0), "coin_icon"))
-        gui.set_color(icon, with_a(vmath.vector4(1, 1, 1, 1), a * fade * ra))
-        gui.set_scale(icon, vmath.vector3(rs * emphasis, rs * emphasis, 1))
-
-        local ct = track(self, ui.text(vmath.vector3(x, icon_y - 27, 0), "+" .. commas(coins), "small", with_a(COL_GOLD, a * fade * ra)))
-        gui.set_scale(ct, vmath.vector3(0.84 * rs * emphasis, 0.84 * rs * emphasis, 1))
+        local ct = track(self, ui.text(vmath.vector3(x, y + 14, 0), "+" .. commas(coins), "small", with_a(COL_GOLD, a * fade * ra)))
+        gui.set_scale(ct, vmath.vector3(0.98 * rs * emphasis, 0.98 * rs * emphasis, 1))
     end
 
     -- Points reward (secondary, only if present).
     if points > 0 then
-        local pt = track(self, ui.text(vmath.vector3(x, y - 22, 0), "+" .. commas(points) .. " pts", "small", with_a(COL_CYAN, a * fade * ra)))
-        gui.set_scale(pt, vmath.vector3(0.7 * rs * emphasis, 0.7 * rs * emphasis, 1))
+        local pt = track(self, ui.text(vmath.vector3(x, y - 20, 0), "+" .. commas(points) .. " pts", "small", with_a(COL_CYAN, a * fade * ra)))
+        gui.set_scale(pt, vmath.vector3(0.78 * rs * emphasis, 0.78 * rs * emphasis, 1))
     end
 
-    -- Done / locked status, iconified instead of tiny caption text.
+    -- Done / locked status — plain text captions, no badge/icon.
     if is_done then
-        local badge = track(self, ui.panel9(vmath.vector3(x, y - CARD_H / 2 + 16, 0), vmath.vector3(CARD_W - 14, 20, 0), "container_bg"))
-        gui.set_color(badge, with_a(vmath.vector4(0.15, 0.45, 0.22, 1), a * ra))
-        local check = track(self, ui.text(vmath.vector3(x, y - CARD_H / 2 + 16, 0), "DONE", "small", with_a(COL_WHITE, a * ra)))
-        gui.set_scale(check, vmath.vector3(0.68, 0.68, 1))
+        local check = track(self, ui.text(vmath.vector3(x, y - CARD_H / 2 + 18, 0), "DONE", "small", with_a(COL_GREEN, a * ra)))
+        gui.set_scale(check, vmath.vector3(0.8, 0.8, 1))
     elseif is_locked then
-        local lock = track(self, ui.image(vmath.vector3(x, y - CARD_H / 2 + 18, 0), vmath.vector3(16, 18, 0), "lock"))
-        gui.set_color(lock, with_a(COL_DIM, a * fade * ra))
+        local lock = track(self, ui.text(vmath.vector3(x, y - CARD_H / 2 + 18, 0), "LOCKED", "small", with_a(COL_DIM, a * fade * ra)))
+        gui.set_scale(lock, vmath.vector3(0.72, 0.72, 1))
     end
 end
 
@@ -142,70 +132,48 @@ local function rebuild(self)
         local a = self.alpha or 1
         local d = self.data
 
-        -- Full-screen dim scrim: the card below carries the visual weight,
-        -- so no extra background image is layered behind it.
+        -- Full-screen dim scrim + the same radial gradient backdrop
+        -- gameover.gui_script uses — no boxed card/panel, content floats
+        -- directly on the gradient, same as that dialog.
         track(self, ui.cover(LOGICAL_W, LOGICAL_H, with_a(COL_SCRIM, a)))
+        local grad = track(self, ui.grad_backdrop(LOGICAL_W, LOGICAL_H))
+        gui.set_color(grad, vmath.vector4(1, 1, 1, a))
 
-        local panel_w, panel_h = 720, 560
         local px, py = CX, CY
-        local top = py + panel_h / 2
 
-        -- A soft drop-shadow behind the card, then the glass card itself and
-        -- a thin gold accent strip along its top edge — the same "premium
-        -- card floating on the gradient" treatment used elsewhere in the app
-        -- (e.g. modules/overlay_ui.lua's AI panel accent strip).
-        local shadow = track(self, ui.panel9(vmath.vector3(px, py - 8, 0), vmath.vector3(panel_w + 16, panel_h + 16, 0), "container_bg"))
-        gui.set_color(shadow, with_a(COL_SHADOW, a))
-        track(self, ui.panel9(vmath.vector3(px, py, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
-        local strip = track(self, ui.box(vmath.vector3(px, top - 3, 0), vmath.vector3(panel_w - 40, 6, 0), with_a(COL_GOLD, 0.9 * a)))
+        -- ── Header ───────────────────────────────────────────────────────
+        local title = track(self, ui.text(vmath.vector3(px, py + 200, 0), "DAILY BONUS", "title", with_a(COL_GOLD, a)))
+        gui.set_scale(title, vmath.vector3(0.92, 0.92, 1))
 
-        -- ── Header: coin medallion + title ──────────────────────────────────
-        local icon = track(self, ui.image(vmath.vector3(px, top - 42, 0), vmath.vector3(42, 46, 0), "coin_icon"))
-        gui.set_color(icon, vmath.vector4(1, 1, 1, a))
-        local title = track(self, ui.text(vmath.vector3(px, top - 86, 0), "DAILY BONUS", "title", with_a(COL_GOLD, a)))
-        gui.set_scale(title, vmath.vector3(0.76, 0.76, 1))
-
-        -- Streak pill: a small rounded badge reads far better than a plain
-        -- line of text for a number the player wants to feel proud of.
         local streak = tonumber(d.streak) or 0
         local streak_str = string.format("DAY %d STREAK", streak)
-        local pill_w = 44 + #streak_str * 7
-        local pill = track(self, ui.panel9(vmath.vector3(px, top - 124, 0), vmath.vector3(pill_w, 30, 0), "container_bg"))
-        gui.set_color(pill, with_a(COL_GOLD, a))
-        local pill_txt = track(self, ui.text(vmath.vector3(px, top - 124, 0), streak_str, "small", with_a(COL_DARKTXT, a)))
-        gui.set_scale(pill_txt, vmath.vector3(0.62, 0.62, 1))
+        track(self, ui.text(vmath.vector3(px, py + 160, 0), streak_str, "body", with_a(COL_GOLD, a)))
 
-        -- ── Hero: today's reward, front and centre ──────────────────────────
+        -- ── Hero: today's reward, front and centre ──────────────────────
         local schedule = type(d.schedule) == "table" and d.schedule or {}
         local cur_day = tonumber(d.day) or 1
         local today = schedule[cur_day]
-        local hero_y = top - 202
 
-        track(self, ui.text(vmath.vector3(px, top - 160, 0), "TODAY'S REWARD", "small", with_a(COL_DIM, a)))
+        track(self, ui.text(vmath.vector3(px, py + 120, 0), "TODAY'S REWARD", "small", with_a(COL_DIM, a)))
 
         local today_coins = tonumber(today and today.coins) or 0
         local today_points = tonumber(today and today.points) or 0
         local hero_pulse = 1 + 0.04 * math.sin((self.t or 0) * 3)
 
-        local hero_icon = track(self, ui.image(vmath.vector3(px - 58, hero_y, 0), vmath.vector3(56, 60, 0), "coin_icon"))
-        gui.set_color(hero_icon, vmath.vector4(1, 1, 1, a))
-        gui.set_scale(hero_icon, vmath.vector3(hero_pulse, hero_pulse, 1))
+        local hero_amount = track(self, ui.text(vmath.vector3(px, py + 70, 0), "+" .. commas(today_coins) .. " COINS", "title", with_a(COL_GOLD, a)))
+        gui.set_scale(hero_amount, vmath.vector3(0.72 * hero_pulse, 0.72 * hero_pulse, 1))
 
-        local hero_amount = track(self, ui.text(vmath.vector3(px + 24, hero_y, 0), "+" .. commas(today_coins), "title", with_a(COL_GOLD, a)))
-        gui.set_scale(hero_amount, vmath.vector3(0.62 * hero_pulse, 0.62 * hero_pulse, 1))
-
-        track(self, ui.text(vmath.vector3(px, hero_y - 42, 0), "COINS", "small", with_a(COL_WHITE, a)))
         if today_points > 0 then
-            track(self, ui.text(vmath.vector3(px, hero_y - 65, 0), "+" .. commas(today_points) .. " REWARD PTS", "small", with_a(COL_CYAN, a)))
+            track(self, ui.text(vmath.vector3(px, py + 35, 0), "+" .. commas(today_points) .. " REWARD PTS", "body", with_a(COL_CYAN, a)))
         end
 
-        -- ── 7 day-cards in a single row (progress strip) ────────────────────
-        track(self, ui.text(vmath.vector3(px, top - 292, 0), "7-DAY STREAK", "small", with_a(COL_DIM, 0.85 * a)))
+        -- ── 7 day-cards in a single row (progress strip) ────────────────
+        track(self, ui.text(vmath.vector3(px, py - 10, 0), "7-DAY STREAK", "small", with_a(COL_DIM, 0.85 * a)))
 
-        local gap = 8
+        local gap = 16
         local row_w = 7 * CARD_W + 6 * gap
         local x0 = px - row_w / 2 + CARD_W / 2
-        local cards_y = top - 368
+        local cards_y = py - 110
 
         -- Pulsing glow for the current-day card: slow sine breathing rather than
         -- a static border alpha.
@@ -223,12 +191,12 @@ local function rebuild(self)
             draw_day_card(self, x, cards_y, i, schedule[i], cur_day, a, reveal, pulse)
         end
 
-        -- ── Divider ─────────────────────────────────────────────────────────
-        local div_y = cards_y - CARD_H / 2 - 20
-        track(self, ui.box(vmath.vector3(px, div_y, 0), vmath.vector3(panel_w - 64, 2, 0), with_a(COL_DIM, 0.3 * a)))
+        -- ── Divider ─────────────────────────────────────────────────────
+        local div_y = py - 200
+        track(self, ui.box(vmath.vector3(px, div_y, 0), vmath.vector3(row_w, 2, 0), with_a(COL_DIM, 0.3 * a)))
 
-        -- ── Claim button / reward flash ─────────────────────────────────────
-        local by = py - panel_h / 2 + 55
+        -- ── Claim button / reward flash ───────────────────────────────────
+        local by = py - 250
         -- Stored every rebuild so the coin-fly animation (fired on a successful
         -- claim response) has a stable screen-space origin to fly from.
         self.claim_btn_pos = { x = px, y = by }
