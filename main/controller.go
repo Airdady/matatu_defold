@@ -74,6 +74,10 @@ components {
   id: "tutorial"
   component: "/main/tutorial.gui"
 }
+components {
+  id: "announcement"
+  component: "/main/announcement.gui"
+}
 embedded_components {
   id: "background"
   type: "sprite"
