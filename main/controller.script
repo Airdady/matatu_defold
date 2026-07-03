@@ -135,15 +135,25 @@ function init(self)
         local token = cached.idToken or cached.token or ""
         if token ~= "" then api.set_auth_token(token) end
         ws.current_user_data = cached
-        
+
         ws.identify(cached._id, cached.username or "Player", { amount = cached.balance or 0, charge = 0 }, "UG")
         ws.connect()
-        
+
         if gameservices then
             local external_id = cached._id or cached.localId or ""
             if external_id ~= "" then gameservices.onesignal_login(external_id) end
         end
         self._restore_pending = true
+    elseif gpgs then
+        -- No local session cached: try automatic (silent) GPGS sign-in right
+        -- at boot, in the background, on the lobby screen — no auth screen
+        -- shown, no manual "SIGN IN" tap needed. gpgs_callback picks up the
+        -- result via the callback registered just above; on success it signs
+        -- the player in via identify_and_connect + route_after_auth (same
+        -- routing an existing cached-session restore already does, e.g. it
+        -- will still send a profile-incomplete new player to the profile
+        -- screen — that's existing behavior, not new).
+        gpgs.silent_login()
     end
 
     msg.post("#lobby", "enable")
@@ -309,9 +319,15 @@ function on_message(self, message_id, message, sender)
         end
         show(self, "auth")
         if gpgs then
-            app_state.auth_state = "sending"
+            -- If the boot-time silent sign-in (see init()) is still in
+            -- flight, don't fire a second concurrent silent_login call —
+            -- just surface the "sending" state so the player sees a spinner
+            -- while that same attempt completes.
+            if app_state.auth_state ~= "sending" and app_state.auth_state ~= "verifying" then
+                app_state.auth_state = "sending"
+                gpgs.silent_login()
+            end
             msg.post("#auth", "auth_state_changed")
-            gpgs.silent_login()
         end
 
     elseif message_id == hash("auth_gpgs_login") then
