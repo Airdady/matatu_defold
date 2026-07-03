@@ -1,0 +1,14 @@
+# ext.manifest for the WakeLock permission.
+# Grants android.permission.WAKE_LOCK so window.set_dim_mode(window.DIMMING_OFF)
+# (called in main/game.script on screen_enter) actually keeps the screen awake
+# during a match — without this permission the Android OS silently ignores
+# the call and the device dims/sleeps as normal.
+name: "WakeLock"
+
+platforms:
+  armv7-android:
+    context:
+      manifestMergeFiles: ["manifest/AndroidManifest.xml"]
+  arm64-android:
+    context:
+      manifestMergeFiles: ["manifest/AndroidManifest.xml"]
