@@ -1,4 +1,3 @@
--- announcement.gui_script
 -- GLOBAL public-announcement banner: lives on the controller object above
 -- every screen (render order 19 — topmost). Non-modal: it never swallows
 -- input except taps on its own dismiss button, so whatever's underneath
@@ -25,8 +24,8 @@
 --
 -- `text` supports lightweight inline markup (already emitted by the weekly
 -- top-winners announcement in getTopPlayersWithPrizes.ts):
---   **bold text**   -> rendered in the bold font
---   {{a:N}}         -> avatar N rendered inline (avatars atlas, avatar_N)
+--   **bold text** -> rendered in the bold font
+--   {{a:N}}        -> avatar N rendered inline (avatars atlas, avatar_N)
 -- e.g. "**1.** {{a:5}} **PlayerOne** ~5,000/-   •   **2.** {{a:12}} ..."
 -- Plain messages with no markup render exactly as before.
 --
@@ -64,9 +63,9 @@ local AVATAR_SZ  = 22
 -- inline space — whatever bearing/kerning the font bakes in per node adds up
 -- fast across a message with this many transitions. Skip rendering/measuring
 -- those entirely and advance by this fixed, compact amount instead.
-local WORD_GAP   = 5
+local WORD_GAP   = 10
 
-local PARKED_Y = LOGICAL_H + PANEL_H + 40 -- fully off-screen above the top edge
+local PARKED_Y = LOGICAL_H + PANEL_H + 60 -- fully off-screen above the top edge
 
 local function box(pos, size, color)
     local n = gui.new_box_node(pos, size)
@@ -169,8 +168,12 @@ local function build_row(holder, msg_text)
                 local n = text(vmath.vector3(x, 0, 0), mid, role, C_WHITE, gui.PIVOT_W, TICKER_PX)
                 gui.set_parent(n, holder)
                 nodes[#nodes + 1] = n
+                
+                -- gui.get_text_metrics_from_node returns unscaled base font dimensions!
+                -- Multiply it by the node's visual scale to prevent huge extra gaps.
                 local m = gui.get_text_metrics_from_node(n)
-                x = x + m.width
+                local scale = gui.get_scale(n)
+                x = x + (m.width * scale.x)
             end
             if trail ~= "" then x = x + WORD_GAP end
         end
