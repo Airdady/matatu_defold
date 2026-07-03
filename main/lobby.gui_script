@@ -112,11 +112,7 @@ local function text_sh(self, pos, str, font, color, ox, oy)
 end
 
 -- ---------------------------------------------------------------------------
--- Season countdown (header, middle) — mirrors main/online.gui_script's
--- ISO-8601 UTC parsing. That parser is a `local function` scoped to
--- online.gui_script only (not requirable), so it's duplicated here rather
--- than shared, matching this codebase's per-file-helper convention (e.g.
--- commas() is duplicated per-file elsewhere).
+-- Season countdown (header, middle)
 -- ---------------------------------------------------------------------------
 local function days_from_civil(y, m, d)
     y = (m <= 2) and (y - 1) or y
@@ -136,9 +132,6 @@ local function parse_iso_utc(str)
     return days * 86400 + tonumber(h) * 3600 + tonumber(mi) * 60 + tonumber(s)
 end
 
--- Server-driven countdown only (no hardcoded fallback cadence): if the
--- SEASON_STATUS payload hasn't arrived yet, self.season_text stays nil and
--- the header widget is simply skipped rather than showing a fake "00:00:00".
 local function update_lobby_season(self)
     local status = ws.current_season_status
     local end_epoch = status and parse_iso_utc(status.endDate)
@@ -246,8 +239,6 @@ local function util_tile(self, cfg)
     -- Bottom indicator tick
     track(self, ui.box(vmath.vector3(x, y - h/2 + 3, 0), vmath.vector3(20, 4, 0), disabled and C_DISABLED or cfg.accent_col))
 
-    -- A disabled tile still absorbs the tap (id flagged) so it never falls
-    -- through to a tile behind it, but the handler treats it as a no-op.
     local hit = track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), C_TRANSP))
     self.buttons[#self.buttons + 1] = { node = hit, id = disabled and (cfg.disabled_id or "noop") or cfg.btn_id }
 end
@@ -570,9 +561,7 @@ local function rebuild(self)
     local n_sign = track(self, ui.text(vmath.vector3(grid_r, h_y - 32, 0), sub_txt, "small", vmath.vector4(0.4, 0.4, 0.4, 1)))
     set_pivot(n_sign, gui.PIVOT_E)
 
-    -- Center: compact "SEASON ENDS IN" countdown, filling the empty middle
-    -- of the header between the brand block and the user-status block.
-    -- Skipped gracefully if SEASON_STATUS hasn't arrived yet (self.season_text nil).
+    -- Center: compact "SEASON ENDS IN" countdown
     if self.season_text then
         local mid_x = (grid_l + grid_r) / 2
         track(self, ui.text(vmath.vector3(mid_x, h_y + 14, 0), "SEASON ENDS IN", "small", C_MUTED))
@@ -582,6 +571,18 @@ local function rebuild(self)
     -- -----------------------------------------------------------------------
     -- Tile 1: PLAY ONLINE
     -- -----------------------------------------------------------------------
+    local cta_text = "PLAY NOW"
+    local sub_text = "Real players • Live coin stakes"
+    local is_connecting = app_state.auth_state == "sending" or app_state.auth_state == "verifying"
+    
+    if is_connecting then
+        cta_text = "CONNECTING..."
+        sub_text = "Authenticating with Google Play Games..."
+    elseif app_state.auth_state == "error" then
+        cta_text = "TRY AGAIN"
+        sub_text = app_state.auth_error ~= "" and tostring(app_state.auth_error):upper() or "CONNECTION FAILED"
+    end
+
     mode_tile(self, {
         x = left_cx, y = left_cy, w = left_w, h = grid_h,
         accent      = C_RED,
@@ -590,9 +591,9 @@ local function rebuild(self)
         top_left_2  = "MULTI PLAYER",
         numeral     = "01",
         title       = "PLAY ONLINE",
-        sub         = "Real players • Live coin stakes",
-        cta_label   = "PLAY NOW",      -- Changed from badge_label = "COMING SOON"
-        btn_id      = "play_online",   -- Added hit node ID to make it clickable
+        sub         = sub_text,
+        cta_label   = cta_text,
+        btn_id      = "play_online",
     })
 
     -- -----------------------------------------------------------------------
@@ -638,15 +639,14 @@ local function rebuild(self)
     -- Utility strip
     -- -----------------------------------------------------------------------
     local util_cy  = EDGE_B + PADDING + util_h / 2
-    -- THEME opens the Themes screen (moved here from the online lobby) and is
-    -- locked until the player has a real account. CONTACT is new.
     local has_account = ws.current_user_data
         and ws.current_user_data.username
         and ws.current_user_data.username ~= ""
+        
     local util_defs = {
-        { id = "rules_open",   label = "RULES",   acc = C_U_RULES   },
-        { id = "share",        label = "SHARE",   acc = C_U_SHARE   },
-        { id = "help_open",    label = "HELP",    acc = C_U_HELP    },
+        { id = "rules_open",   label = "RULES",   acc = C_U_RULES  },
+        { id = "share",        label = "SHARE",   acc = C_U_SHARE  },
+        { id = "help_open",    label = "HELP",    acc = C_U_HELP   },
         { id = "theme_open",   label = "THEME",   acc = C_U_THEME,
           disabled = not has_account, locked_hint = "SIGN IN", disabled_id = "theme_locked" },
         { id = "contact_open", label = "CONTACT", acc = C_U_CONTACT },
@@ -663,7 +663,6 @@ local function rebuild(self)
         })
     end
 
-    -- Bottom Right Deco Star (Matches the 4-point shape in corner)
     local deco = track(self, gui.new_box_node(vmath.vector3(grid_r + 4, util_cy, 0), vmath.vector3(44, 44, 0)))
     pcall(gui.play_flipbook, deco, hash("diamonds"))
     gui.set_color(deco, vmath.vector4(0.5, 0.5, 0.5, 1))
@@ -716,7 +715,22 @@ local function handle(self, b)
     elseif b.id == "theme_open" then msg.post("#controller", "goto_themes"); return end
 
     if b.id == "play_online" then
-        msg.post("#controller", "play_online")
+        if app_state.auth_state == "sending" or app_state.auth_state == "verifying" then
+            return -- Block multiple taps whilst already attempting connection
+        end
+        
+        local has_account = ws.current_user_data and ws.current_user_data.username and ws.current_user_data.username ~= ""
+        
+        -- If they are a guest AND the auth state hasn't succeeded, trigger the Google Play sign in.
+        if not has_account and app_state.auth_state ~= "done" then
+            app_state.auth_state = "sending"
+            msg.post("#controller", "auth_retry_silent_login") -- Re-uses controller's native login routing
+            rebuild(self)
+        else
+            -- Already have an account/authenticated, proceed immediately
+            msg.post("#controller", "play_online")
+        end
+        
     elseif b.id == "quick_play" then
         app_state.mode = "offline"
         local me = ws.current_user_data or {}
@@ -760,6 +774,9 @@ function init(self)
     self.consent_phase       = "ask"
     self._season_tick        = 0
 
+    -- Force idle state on boot so it waits for user interaction
+    app_state.auth_state     = "idle"
+
     refresh_wh()
     update_lobby_season(self)
 
@@ -773,8 +790,6 @@ function init(self)
 end
 
 function update(self, dt)
-    -- Tick the header's season countdown once a second (mirrors
-    -- online.gui_script's self._tick accumulator pattern).
     self._season_tick = (self._season_tick or 0) + dt
     if self._season_tick >= 1 then
         self._season_tick = 0
@@ -806,14 +821,29 @@ function update(self, dt)
 end
 
 function on_message(self, message_id, message, sender)
-    if message_id == hash("screen_enter")  or
-       message_id == hash("enable")        or
-       message_id == hash("layout_changed") then
+    if message_id == hash("screen_enter") then
+        -- Force idle state when entering lobby so it always waits for user click
+        app_state.auth_state = "idle"
+        
         refresh_wh()
         update_lobby_season(self)
         set_state(self, self.state or STATE_LOBBY)
+        
+    elseif message_id == hash("enable") or message_id == hash("layout_changed") then
+        refresh_wh()
+        update_lobby_season(self)
+        set_state(self, self.state or STATE_LOBBY)
+        
     elseif message_id == hash("disable") then
         clear(self)
+        
+    elseif message_id == hash("auth_state_changed") then
+        -- This block mimics your auth.gui_script. When GPGS signs in completely:
+        if app_state.auth_state == "done" then
+            app_state.auth_state = "idle"
+            msg.post("#controller", "play_online")
+        end
+        rebuild(self) -- Will dynamically change the button text to connection/error states
     end
 end
 

@@ -1,4 +1,3 @@
--- controller.script
 local ws        = require("modules.websocket_manager")
 local api       = require("modules.api_service")
 local app_state = require("modules.app_state")
@@ -89,7 +88,7 @@ local function try_silent_login(self)
     self._silent_login_attempts = (self._silent_login_attempts or 0) + 1
     auth_debug("try_silent_login: attempt %d/%d", self._silent_login_attempts, MAX_SILENT_LOGIN_ATTEMPTS)
     app_state.auth_state = "sending"
-    msg.post("#auth", "auth_state_changed")
+    msg.post("#lobby", "auth_state_changed")
     gpgs.silent_login()
 end
 
@@ -102,7 +101,7 @@ local function gpgs_callback(self, message_id, message)
             auth_debug("gpgs_callback: GPGS success, auth_code_present=%s", tostring(auth_code ~= nil and auth_code ~= ""))
             if auth_code then
                 app_state.auth_state = "verifying"
-                msg.post("#auth", "auth_state_changed")
+                msg.post("#lobby", "auth_state_changed")
                 api.gpgs_login(auth_code, function(result)
                     self._silent_login_inflight = false
                     auth_debug("api.gpgs_login callback: success=%s message=%s isNewUser=%s",
@@ -118,20 +117,20 @@ local function gpgs_callback(self, message_id, message)
                                 msg.post("#signup_bonus", "show_signup_bonus", { amount = tonumber(user.balance) or 500 })
                             end
                             app_state.auth_state = "done"
-                            msg.post("#auth", "auth_state_changed")
+                            msg.post("#lobby", "auth_state_changed")
                             route_after_auth(self)
                             return
                         end
                     end
                     app_state.auth_state = "error"
                     app_state.auth_error = result.message or "Backend auth failed"
-                    msg.post("#auth", "auth_state_changed")
+                    msg.post("#lobby", "auth_state_changed")
                 end)
             else
                 self._silent_login_inflight = false
                 app_state.auth_state = "error"
                 app_state.auth_error = "Missing auth code"
-                msg.post("#auth", "auth_state_changed")
+                msg.post("#lobby", "auth_state_changed")
             end
         else
             -- Sign-in failed — retry silently (never fall back to a manual
@@ -146,7 +145,7 @@ local function gpgs_callback(self, message_id, message)
                 self._silent_login_inflight = false
                 app_state.auth_state = "error"
                 app_state.auth_error = message.error or "Couldn't sign in. Check your connection and try again."
-                msg.post("#auth", "auth_state_changed")
+                msg.post("#lobby", "auth_state_changed")
                 auth_debug("gpgs_callback: retry budget exhausted, giving up")
             end
         end
@@ -178,22 +177,12 @@ function init(self)
         if token ~= "" then api.set_auth_token(token) end
         ws.current_user_data = cached
 
-        ws.identify(cached._id, cached.username or "Player", { amount = cached.balance or 0, charge = 0 }, "UG")
-        ws.connect()
-
-        if gameservices then
-            local external_id = cached._id or cached.localId or ""
-            if external_id ~= "" then gameservices.onesignal_login(external_id) end
-        end
-        self._restore_pending = true
+        -- We removed ws.identify() and ws.connect() from here!
+        -- We load the session into memory so the UI knows who you are,
+        -- but wait for the Play Online tap to actually trigger the network.
+        auth_debug("init: cached session found, waiting for play_online tap to connect")
     else
-        -- No local session cached: do NOT attempt sign-in at boot. GPGS
-        -- isn't reliably ready this early (native SDK init timing), and an
-        -- automatic attempt here was producing an unpredictable "stuck on
-        -- connecting" experience. Sign-in is now purely on-demand: the
-        -- player stays on the lobby screen doing nothing network-wise until
-        -- they tap "Play Online"/"Play Now" (see the play_online handler),
-        -- which is the sole trigger for try_silent_login().
+        -- No local session cached: do NOT attempt sign-in at boot.
         auth_debug("init: no cached session, waiting for play_online tap to trigger sign-in")
     end
 
@@ -209,6 +198,8 @@ function init(self)
     table.insert(self.tokens, ws.on("identify_success", function()
         if self._restore_pending then
             self._restore_pending = false
+            app_state.auth_state = "idle"
+            msg.post("#lobby", "auth_state_changed")
             route_after_auth(self)
         end
     end))
@@ -300,10 +291,16 @@ function init(self)
     forward("savings_settings_updated", "#payments", "ws_savings_settings_updated")
 
     table.insert(self.tokens, ws.on("auth_required", function()
-        if self.screen == "online" or self.screen == "lobby" then show(self, "auth") end
+        app_state.auth_state = "error"
+        app_state.auth_error = "Session expired. Try again."
+        msg.post("#lobby", "auth_state_changed")
+        if self.screen == "online" or self.screen == "auth" then show(self, "lobby") end
     end))
     table.insert(self.tokens, ws.on("identify_error", function()
-        if self.screen == "online" or self.screen == "lobby" then show(self, "auth") end
+        app_state.auth_state = "error"
+        app_state.auth_error = "Connection failed."
+        msg.post("#lobby", "auth_state_changed")
+        if self.screen == "online" or self.screen == "auth" then show(self, "lobby") end
     end))
 
     forward("resync",                "#game_logic", "ws_resync")
@@ -357,8 +354,18 @@ function on_message(self, message_id, message, sender)
         auth_debug("play_online tapped: user_id=%s socket_connected=%s is_identified=%s inflight=%s",
             tostring(ws.current_user_data and ws.current_user_data._id), tostring(ws.socket_connected),
             tostring(ws.is_identified), tostring(self._silent_login_inflight))
+            
         if ws.current_user_data and (ws.current_user_data._id or "") ~= "" then
-            if ws.socket_connected then route_after_auth(self) else self._restore_pending = true end
+            if ws.socket_connected then 
+                route_after_auth(self) 
+            else 
+                self._restore_pending = true 
+                -- Visually switch the lobby button to "CONNECTING..."
+                app_state.auth_state = "verifying"
+                msg.post("#lobby", "auth_state_changed")
+                -- ACTUALLY trigger the connection now that the button was tapped
+                identify_and_connect(ws.current_user_data)
+            end
             return
         end
         -- The tap on "Play Online" IS the trigger for sign-in — no separate
@@ -390,6 +397,7 @@ function on_message(self, message_id, message, sender)
 
     elseif message_id == hash("auth_cancel") then
         app_state.auth_state = "idle"
+        msg.post("#lobby", "auth_state_changed")
         show(self, "lobby")
 
     elseif message_id == hash("profile_save") then
