@@ -129,12 +129,16 @@ local function rebuild(self)
         local a = self.alpha or 1
         local d = self.data
 
-        -- Full-screen dim scrim: blocks the view of whatever is underneath.
+        -- Full-screen dim scrim + the same radial "dialog_grad" backdrop
+        -- gameover.gui_script / incoming.gui_script (dialog_incoming.lua) use,
+        -- instead of a flat scrim + boxed panel — content floats directly on
+        -- the gradient, matching that established celebratory-dialog look.
         track(self, ui.cover(LOGICAL_W, LOGICAL_H, with_a(COL_SCRIM, a)))
+        local grad = track(self, ui.grad_backdrop(LOGICAL_W, LOGICAL_H))
+        gui.set_color(grad, vmath.vector4(1, 1, 1, a))
 
         local panel_w, panel_h = 760, 440
         local px, py = CX, CY
-        track(self, ui.panel9(vmath.vector3(px, py, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
 
         local top = py + panel_h / 2
 

@@ -242,6 +242,7 @@ function update(self, dt)
         rebuild(self)
     end
     confetti_fx.update(self, dt)
+    if self.confetti_running then confetti_fx.bring_to_front(self) end
 end
 
 function on_message(self, message_id, message)

@@ -483,6 +483,7 @@ function update(self, dt)
 	end
 
 	confetti_fx.update(self, dt)
+	if self.confetti_running then confetti_fx.bring_to_front(self) end
 end
 
 -- INPUT
