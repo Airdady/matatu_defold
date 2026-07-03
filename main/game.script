@@ -749,7 +749,8 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("screen_enter") then
         self.active = true
         app.game_active = true
-        pcall(window.set_dim_mode, window.DIMMING_OFF)
+        -- Screen-awake is set once, app-wide, in controller.script's init —
+        -- no need to (re-)set it per screen.
         self.awaiting_replay = false
         msg.post(".", "acquire_input_focus")
         GF.start_game(self)
@@ -792,7 +793,8 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("disable") then
         self.active = false
         app.game_active = false
-        pcall(window.set_dim_mode, window.DIMMING_ON)
+        -- Screen-awake stays on app-wide (see controller.script init) — do
+        -- not re-enable dimming just because the player left the game screen.
         self._knockout_scores = nil
         self._knockout_history = nil
         self._knockout_round = 0
