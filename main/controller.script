@@ -186,18 +186,15 @@ function init(self)
             if external_id ~= "" then gameservices.onesignal_login(external_id) end
         end
         self._restore_pending = true
-    elseif gpgs then
-        -- No local session cached: try automatic (silent) GPGS sign-in right
-        -- at boot, in the background, on the lobby screen — no auth screen
-        -- shown, no manual "SIGN IN" tap needed. gpgs_callback picks up the
-        -- result via the callback registered just above; on success it signs
-        -- the player in via identify_and_connect + route_after_auth (same
-        -- routing an existing cached-session restore already does, e.g. it
-        -- will still send a profile-incomplete new player to the profile
-        -- screen — that's existing behavior, not new). Retries up to
-        -- MAX_SILENT_LOGIN_ATTEMPTS times on failure before giving up.
-        self._silent_login_attempts = 0
-        try_silent_login(self)
+    else
+        -- No local session cached: do NOT attempt sign-in at boot. GPGS
+        -- isn't reliably ready this early (native SDK init timing), and an
+        -- automatic attempt here was producing an unpredictable "stuck on
+        -- connecting" experience. Sign-in is now purely on-demand: the
+        -- player stays on the lobby screen doing nothing network-wise until
+        -- they tap "Play Online"/"Play Now" (see the play_online handler),
+        -- which is the sole trigger for try_silent_login().
+        auth_debug("init: no cached session, waiting for play_online tap to trigger sign-in")
     end
 
     msg.post("#lobby", "enable")
