@@ -17,8 +17,7 @@
 
 local M = {}
 
-local LOGICAL_W, LOGICAL_H = 1280, 720
-local CX = LOGICAL_W / 2
+local screen = require("modules.screen")
 
 local CONFETTI_N = 150
 local function chex(h)
@@ -73,7 +72,13 @@ end
 function M.explode(self)
     if not self.confetti then return end
     self.confetti_running = true
-    local ox, oy = CX, 0  -- bottom-centre (Defold GUI y is up)
+
+    -- Use the REAL visible screen edges, not the fixed 1280x720 logical box —
+    -- on any device whose aspect ratio isn't exactly 16:9, the visible area
+    -- extends past that box (see modules/screen.lua), so bursting within the
+    -- fixed box alone left a visible gap of un-covered screen on one axis.
+    local m = screen.metrics()
+    local ox, oy = m.CX, m.B  -- bottom-centre of the actual visible screen
     for _, p in ipairs(self.confetti) do
         local col = CONFETTI_COLORS[math.random(#CONFETTI_COLORS)]
         gui.set_color(p.node, col)
@@ -83,9 +88,9 @@ function M.explode(self)
         p.top_delta   = rr(0.40, 0.95)
         p.swing_delta = rr(0.2, 1.0)
         p.spx, p.spz  = math.random() * 10, math.random() * 2
-        p.target_x = (left_delta - 0.5) * (LOGICAL_W * 0.9) + ox
-        p.peak_y   = p.top_delta * LOGICAL_H
-        p.floor_y  = rr(6, 36)
+        p.target_x = m.L + left_delta * (m.R - m.L)
+        p.peak_y   = oy + p.top_delta * (m.T - oy)
+        p.floor_y  = oy + rr(6, 36)
         p.exp_time  = 0.55 * rr(0.8, 1.2)
         p.fall_time = 3.5 * rr(0.7, 1.3)
         p.delay = (math.random() ^ 3) * 0.4

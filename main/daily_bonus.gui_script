@@ -61,7 +61,7 @@ local function mkbtn(self, id, pos, size, label, style, data, font, text_color)
 end
 
 -- ── Day-card rendering ─────────────────────────────────────────────────────
-local CARD_W, CARD_H = 78, 108
+local CARD_W, CARD_H = 88, 122
 
 -- `reveal` (optional {alpha, scale}) drives the staggered entrance: computed in
 -- Lua per-frame from elapsed time since the dialog opened (see rebuild()) rather
@@ -100,35 +100,35 @@ local function draw_day_card(self, x, y, card_day, entry, cur_day, a, reveal, pu
 
     -- "DAY N" label.
     local day_col = is_current and COL_GOLD or (is_done and COL_GREEN or COL_DIM)
-    local dt = track(self, ui.text(vmath.vector3(x, y + CARD_H / 2 - 16, 0), "DAY " .. tostring(card_day), "small", with_a(day_col, a * fade * ra)))
-    gui.set_scale(dt, vmath.vector3(0.72 * rs * emphasis, 0.72 * rs * emphasis, 1))
+    local dt = track(self, ui.text(vmath.vector3(x, y + CARD_H / 2 - 18, 0), "DAY " .. tostring(card_day), "small", with_a(day_col, a * fade * ra)))
+    gui.set_scale(dt, vmath.vector3(0.84 * rs * emphasis, 0.84 * rs * emphasis, 1))
 
     -- Coin icon + amount, stacked centrally — the icon gives the reward an
     -- instant visual identity instead of a bare number.
     if coins > 0 then
-        local icon_y = y + 16
-        local icon = track(self, ui.image(vmath.vector3(x, icon_y, 0), vmath.vector3(22, 24, 0), "coin_icon"))
+        local icon_y = y + 18
+        local icon = track(self, ui.image(vmath.vector3(x, icon_y, 0), vmath.vector3(26, 28, 0), "coin_icon"))
         gui.set_color(icon, with_a(vmath.vector4(1, 1, 1, 1), a * fade * ra))
         gui.set_scale(icon, vmath.vector3(rs * emphasis, rs * emphasis, 1))
 
-        local ct = track(self, ui.text(vmath.vector3(x, icon_y - 24, 0), "+" .. commas(coins), "small", with_a(COL_GOLD, a * fade * ra)))
-        gui.set_scale(ct, vmath.vector3(0.72 * rs * emphasis, 0.72 * rs * emphasis, 1))
+        local ct = track(self, ui.text(vmath.vector3(x, icon_y - 27, 0), "+" .. commas(coins), "small", with_a(COL_GOLD, a * fade * ra)))
+        gui.set_scale(ct, vmath.vector3(0.84 * rs * emphasis, 0.84 * rs * emphasis, 1))
     end
 
     -- Points reward (secondary, only if present).
     if points > 0 then
-        local pt = track(self, ui.text(vmath.vector3(x, y - 20, 0), "+" .. commas(points) .. " pts", "small", with_a(COL_CYAN, a * fade * ra)))
-        gui.set_scale(pt, vmath.vector3(0.6 * rs * emphasis, 0.6 * rs * emphasis, 1))
+        local pt = track(self, ui.text(vmath.vector3(x, y - 22, 0), "+" .. commas(points) .. " pts", "small", with_a(COL_CYAN, a * fade * ra)))
+        gui.set_scale(pt, vmath.vector3(0.7 * rs * emphasis, 0.7 * rs * emphasis, 1))
     end
 
     -- Done / locked status, iconified instead of tiny caption text.
     if is_done then
-        local badge = track(self, ui.panel9(vmath.vector3(x, y - CARD_H / 2 + 14, 0), vmath.vector3(CARD_W - 16, 18, 0), "container_bg"))
+        local badge = track(self, ui.panel9(vmath.vector3(x, y - CARD_H / 2 + 16, 0), vmath.vector3(CARD_W - 14, 20, 0), "container_bg"))
         gui.set_color(badge, with_a(vmath.vector4(0.15, 0.45, 0.22, 1), a * ra))
-        local check = track(self, ui.text(vmath.vector3(x, y - CARD_H / 2 + 14, 0), "DONE", "small", with_a(COL_WHITE, a * ra)))
-        gui.set_scale(check, vmath.vector3(0.58, 0.58, 1))
+        local check = track(self, ui.text(vmath.vector3(x, y - CARD_H / 2 + 16, 0), "DONE", "small", with_a(COL_WHITE, a * ra)))
+        gui.set_scale(check, vmath.vector3(0.68, 0.68, 1))
     elseif is_locked then
-        local lock = track(self, ui.image(vmath.vector3(x, y - CARD_H / 2 + 16, 0), vmath.vector3(14, 16, 0), "lock"))
+        local lock = track(self, ui.image(vmath.vector3(x, y - CARD_H / 2 + 18, 0), vmath.vector3(16, 18, 0), "lock"))
         gui.set_color(lock, with_a(COL_DIM, a * fade * ra))
     end
 end
@@ -142,11 +142,9 @@ local function rebuild(self)
         local a = self.alpha or 1
         local d = self.data
 
-        -- Full-screen dim scrim + the same radial "dialog_grad" backdrop
-        -- gameover.gui_script / incoming.gui_script (dialog_incoming.lua) use.
+        -- Full-screen dim scrim: the card below carries the visual weight,
+        -- so no extra background image is layered behind it.
         track(self, ui.cover(LOGICAL_W, LOGICAL_H, with_a(COL_SCRIM, a)))
-        local grad = track(self, ui.grad_backdrop(LOGICAL_W, LOGICAL_H))
-        gui.set_color(grad, vmath.vector4(1, 1, 1, a))
 
         local panel_w, panel_h = 720, 560
         local px, py = CX, CY
@@ -207,7 +205,7 @@ local function rebuild(self)
         local gap = 8
         local row_w = 7 * CARD_W + 6 * gap
         local x0 = px - row_w / 2 + CARD_W / 2
-        local cards_y = top - 362
+        local cards_y = top - 368
 
         -- Pulsing glow for the current-day card: slow sine breathing rather than
         -- a static border alpha.
