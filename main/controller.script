@@ -92,6 +92,25 @@ local function try_silent_login(self)
     gpgs.silent_login()
 end
 
+-- The server no longer recognizes this user/device for the CURRENT
+-- connection (account deleted, DB reset, deviceId mismatch, etc. —
+-- AUTH_REQUIRED/IDENTIFY_ERROR). Rather than surface a one-off "Session
+-- expired" message the player has to notice and manually retry, clear the
+-- stale local session so we don't keep re-presenting a rejected identity,
+-- and silently kick off a fresh sign-in in the background — the exact same
+-- retry machinery a first-time "Play Online" tap uses.
+local function reset_session_and_retry(self, reason)
+    auth_debug("session invalidated (%s): clearing local session, retrying sign-in in the background", reason)
+    pcall(api.clear_session)
+    ws.current_user_data = {}
+    self._restore_pending = false
+    if self.screen == "online" or self.screen == "auth" then show(self, "lobby") end
+    if gpgs and not self._silent_login_inflight then
+        self._silent_login_attempts = 0
+        try_silent_login(self)
+    end
+end
+
 local function gpgs_callback(self, message_id, message)
     auth_debug("gpgs_callback: message_id=%s status=%s error=%s",
         tostring(message_id), tostring(message and message.status), tostring(message and message.error))
@@ -291,16 +310,10 @@ function init(self)
     forward("savings_settings_updated", "#payments", "ws_savings_settings_updated")
 
     table.insert(self.tokens, ws.on("auth_required", function()
-        app_state.auth_state = "error"
-        app_state.auth_error = "Session expired. Try again."
-        msg.post("#lobby", "auth_state_changed")
-        if self.screen == "online" or self.screen == "auth" then show(self, "lobby") end
+        reset_session_and_retry(self, "auth_required")
     end))
     table.insert(self.tokens, ws.on("identify_error", function()
-        app_state.auth_state = "error"
-        app_state.auth_error = "Connection failed."
-        msg.post("#lobby", "auth_state_changed")
-        if self.screen == "online" or self.screen == "auth" then show(self, "lobby") end
+        reset_session_and_retry(self, "identify_error")
     end))
 
     forward("resync",                "#game_logic", "ws_resync")

@@ -265,6 +265,7 @@ local function parse_message(json_string)
     end
   elseif t == "AUTH_REQUIRED" then
     print("[WS-DEBUG] AUTH_REQUIRED received: " .. tostring(d.message))
+    M.is_identified = false
     emit("auth_required", d.message or "Device not registered")
   elseif t == "IDENTIFY" then
     print("[WS-DEBUG] IDENTIFY response received, marking is_identified=true")
@@ -466,6 +467,7 @@ local function parse_message(json_string)
     emit("transaction_failed", d.reason or "Failed")
   elseif t == "IDENTIFY_ERROR" then
     print("[WS-DEBUG] IDENTIFY_ERROR received: " .. tostring(d.message))
+    M.is_identified = false
     emit("identify_error", d.message or "Authentication Failed")
   elseif t == "ERROR" then
     emit("error", d.message or "Error")
