@@ -12,23 +12,33 @@
 --   2. pushUnseenAnnouncements() replays anything missed on the next IDENTIFY
 --      (e.g. the player was offline when it went out).
 -- Multiple announcements queue and show one at a time.
+--
+-- Visual: a full-width red ribbon (soft-edged gradient, no texture — no
+-- banner_bg.png asset available to build with; this reproduces the same
+-- look procedurally with layered gradient strips) carrying a continuously
+-- scrolling marquee ticker, ported from the Fab "Marquee Scrolling Text".
 
 local ws = require "modules.websocket_manager"
 local F  = require "modules.fonts"
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 
-local C_PANEL  = vmath.vector4(0.086, 0.098, 0.118, 0.97) -- #16191E
-local C_ACCENT = vmath.vector4(0.949, 0.702, 0.020, 1.0)  -- #F2B305
+local RED      = vmath.vector4(0.92, 0.13, 0.15, 1.0)
 local C_WHITE  = vmath.vector4(1, 1, 1, 1)
-local C_DIM    = vmath.vector4(0.788, 0.812, 0.839, 1.0)  -- #C9CFD6
+local C_DIM    = vmath.vector4(1, 1, 1, 0.75)
 
-local PANEL_W     = 640
-local TEXT_W      = 560
-local PAD_Y       = 16
-local TOP_MARGIN  = 14
+local PANEL_W = LOGICAL_W
+local PANEL_H = 56
+local TOP_MARGIN = 0 -- ribbon sits flush against the top edge
+
+local GRADIENT_SEGMENTS = 30
+local GRADIENT_EDGE     = 0.22 -- fraction of width spent fading in/out on each side
+
+local MARQUEE_SPEED = 150 -- px/sec
+local MARQUEE_GAP   = 140 -- gap between the two looping copies of the text
+
 local MIN_DURATION_MS = 4000  -- floor even if the server sends a tiny/zero duration
-local FALLBACK_DURATION_MS = 6000 -- used when the server sends 0/missing duration
+local FALLBACK_DURATION_MS = 7000 -- used when the server sends 0/missing duration
 
 local function box(pos, size, color)
     local n = gui.new_box_node(pos, size)
@@ -44,21 +54,54 @@ local function text(pos, str, role, color, pivot)
     return n
 end
 
+-- Soft-edged horizontal gradient built from thin strips (no texture): alpha
+-- ramps 0 -> 1 over the first GRADIENT_EDGE of the width, holds solid across
+-- the middle, then ramps back 1 -> 0 over the last GRADIENT_EDGE.
+local function build_gradient_bg(self)
+    self.bg_strips = {}
+    local seg_w = PANEL_W / GRADIENT_SEGMENTS
+    for i = 1, GRADIENT_SEGMENTS do
+        local t = (i - 0.5) / GRADIENT_SEGMENTS -- 0..1 across the width
+        local a
+        if t < GRADIENT_EDGE then
+            a = t / GRADIENT_EDGE
+        elseif t > 1 - GRADIENT_EDGE then
+            a = (1 - t) / GRADIENT_EDGE
+        else
+            a = 1
+        end
+        a = a * a * (3 - 2 * a) -- smoothstep
+        local x = -PANEL_W / 2 + (i - 0.5) * seg_w
+        local n = box(vmath.vector3(x, 0, 0), vmath.vector3(seg_w + 1, PANEL_H, 0),
+            vmath.vector4(RED.x, RED.y, RED.z, RED.w * a))
+        gui.set_parent(n, self.root)
+        self.bg_strips[#self.bg_strips + 1] = n
+    end
+end
+
 local function build(self)
     -- Parked off-screen above the top edge until something is queued.
-    self.root = box(vmath.vector3(LOGICAL_W/2, LOGICAL_H + 200, 0), vmath.vector3(PANEL_W, 74, 0), C_PANEL)
+    self.root = box(vmath.vector3(LOGICAL_W / 2, LOGICAL_H + PANEL_H + 40, 0),
+        vmath.vector3(PANEL_W, PANEL_H, 0), vmath.vector4(0, 0, 0, 0))
     gui.set_pivot(self.root, gui.PIVOT_N)
 
-    self.strip = box(vmath.vector3(0, 0, 0), vmath.vector3(PANEL_W, 4, 0), C_ACCENT)
-    gui.set_pivot(self.strip, gui.PIVOT_N)
-    gui.set_parent(self.strip, self.root)
+    build_gradient_bg(self)
 
-    self.label = text(vmath.vector3(0, -PAD_Y - 4, 0), "", F.BODY, C_WHITE, gui.PIVOT_N)
-    pcall(gui.set_line_break, self.label, true)
-    gui.set_size(self.label, vmath.vector3(TEXT_W, 200, 0))
-    gui.set_parent(self.label, self.root)
+    -- The ticker text is clipped to the ribbon's rect so it visibly enters
+    -- and exits right at the banner's edges instead of spilling past them.
+    self.clip = box(vmath.vector3(0, 0, 0), vmath.vector3(PANEL_W, PANEL_H, 0), vmath.vector4(1, 1, 1, 0))
+    gui.set_pivot(self.clip, gui.PIVOT_N)
+    gui.set_parent(self.clip, self.root)
+    gui.set_clipping_mode(self.clip, gui.CLIPPING_MODE_STENCIL)
+    gui.set_clipping_visible(self.clip, false)
 
-    self.close_bg = box(vmath.vector3(PANEL_W/2 - 22, -22, 0), vmath.vector3(30, 30, 0), vmath.vector4(0,0,0,0))
+    local mid_y = -PANEL_H / 2
+    self.m_label1 = text(vmath.vector3(0, mid_y, 0), "", F.MODAL_BOLD, C_WHITE, gui.PIVOT_W)
+    gui.set_parent(self.m_label1, self.clip)
+    self.m_label2 = text(vmath.vector3(0, mid_y, 0), "", F.MODAL_BOLD, C_WHITE, gui.PIVOT_W)
+    gui.set_parent(self.m_label2, self.clip)
+
+    self.close_bg = box(vmath.vector3(PANEL_W / 2 - 34, mid_y, 0), vmath.vector3(30, 30, 0), vmath.vector4(0, 0, 0, 0))
     gui.set_pivot(self.close_bg, gui.PIVOT_CENTER)
     gui.set_parent(self.close_bg, self.root)
     self.close_lbl = text(vmath.vector3(0, 0, 0), "X", F.SMALL, C_DIM, gui.PIVOT_CENTER)
@@ -92,7 +135,8 @@ end
 local show_next -- forward declaration
 
 local function hide_and_advance(self)
-    gui.animate(self.root, "position.y", LOGICAL_H + 200, gui.EASING_INSINE, 0.25, 0, function()
+    self.scrolling = false
+    gui.animate(self.root, "position.y", LOGICAL_H + PANEL_H + 40, gui.EASING_INSINE, 0.25, 0, function()
         self.showing = false
         gui.set_enabled(self.root, false)
         timer.delay(0.15, false, function() show_next(self) end)
@@ -105,19 +149,24 @@ show_next = function(self)
     if not item then return end
     self.showing = true
 
-    gui.set_text(self.label, tostring(item.text or ""))
-    local metrics = gui.get_text_metrics_from_node(self.label)
-    local panel_h = math.max(56, metrics.height + PAD_Y * 2 + 14)
-    gui.set_size(self.root, vmath.vector3(PANEL_W, panel_h, 0))
+    gui.set_text(self.m_label1, tostring(item.text or ""))
+    gui.set_text(self.m_label2, tostring(item.text or ""))
+    local metrics = gui.get_text_metrics_from_node(self.m_label1)
+    self.marquee_w = metrics.width
+
+    -- Enter from the right edge; the trailing copy follows one text-length + gap behind.
+    self.m1_x = PANEL_W / 2
+    self.m2_x = self.m1_x + self.marquee_w + MARQUEE_GAP
+    gui.set_position(self.m_label1, vmath.vector3(self.m1_x, -PANEL_H / 2, 0))
+    gui.set_position(self.m_label2, vmath.vector3(self.m2_x, -PANEL_H / 2, 0))
+    self.scrolling = true
 
     local dismissable = item.isDismissable and true or false
     gui.set_enabled(self.close_bg, dismissable)
 
-    local rest_y = LOGICAL_H - TOP_MARGIN
-    gui.set_position(self.root, vmath.vector3(LOGICAL_W/2, LOGICAL_H + 200, 0))
+    gui.set_position(self.root, vmath.vector3(LOGICAL_W / 2, LOGICAL_H + PANEL_H + 40, 0))
     gui.set_enabled(self.root, true)
-
-    gui.animate(self.root, "position.y", rest_y, gui.EASING_OUTBACK, 0.35)
+    gui.animate(self.root, "position.y", LOGICAL_H - TOP_MARGIN, gui.EASING_OUTSINE, 0.35)
 
     local dur = tonumber(item.duration) or 0
     if dur <= 0 then dur = FALLBACK_DURATION_MS end
@@ -126,6 +175,21 @@ show_next = function(self)
     self._hide_timer = timer.delay(dur / 1000.0, false, function()
         hide_and_advance(self)
     end)
+end
+
+function update(self, dt)
+    if not self.scrolling or not self.marquee_w or self.marquee_w <= 0 then return end
+    local step = MARQUEE_SPEED * dt
+    self.m1_x = self.m1_x - step
+    self.m2_x = self.m2_x - step
+
+    local off_left = -PANEL_W / 2 - self.marquee_w
+
+    if self.m1_x < off_left then self.m1_x = self.m2_x + self.marquee_w + MARQUEE_GAP end
+    if self.m2_x < off_left then self.m2_x = self.m1_x + self.marquee_w + MARQUEE_GAP end
+
+    gui.set_position(self.m_label1, vmath.vector3(self.m1_x, -PANEL_H / 2, 0))
+    gui.set_position(self.m_label2, vmath.vector3(self.m2_x, -PANEL_H / 2, 0))
 end
 
 function on_message(self, message_id, message)
