@@ -75,6 +75,23 @@ local function identify_and_connect(user)
     ws.connect()
 end
 
+local function is_logged_in()
+    return ws.current_user_data and type(ws.current_user_data._id) == "string" and ws.current_user_data._id ~= ""
+end
+
+local function clear_session()
+    ws.current_user_data = nil
+    pcall(api.set_auth_token, "")
+    pcall(api.save_session, {})
+    pcall(ws.disconnect) -- Sever the stale socket connection to prevent rapid-fire auth errors
+    
+    if gpgs then pcall(gpgs.logout) end -- Clear GPGS cache to force a completely fresh login request
+    
+    for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile", "lobby" }) do
+        pcall(msg.post, "#" .. s, "user_data_updated")
+    end
+end
+
 -- Sign-in is ALWAYS silent — there is no manual "SIGN IN" button anywhere in
 -- the UI. If a silent attempt fails (transient network hiccup, GPGS not
 -- ready yet right at boot, etc.) we retry automatically up to this many
@@ -88,26 +105,36 @@ local function try_silent_login(self)
     self._silent_login_attempts = (self._silent_login_attempts or 0) + 1
     auth_debug("try_silent_login: attempt %d/%d", self._silent_login_attempts, MAX_SILENT_LOGIN_ATTEMPTS)
     app_state.auth_state = "sending"
+    app_state.auth_error = "" -- Clean out the old error so it shows "CONNECTING..." immediately
     msg.post("#lobby", "auth_state_changed")
     gpgs.silent_login()
 end
 
--- The server no longer recognizes this user/device for the CURRENT
--- connection (account deleted, DB reset, deviceId mismatch, etc. —
--- AUTH_REQUIRED/IDENTIFY_ERROR). Rather than surface a one-off "Session
--- expired" message the player has to notice and manually retry, clear the
--- stale local session so we don't keep re-presenting a rejected identity,
--- and silently kick off a fresh sign-in in the background — the exact same
--- retry machinery a first-time "Play Online" tap uses.
-local function reset_session_and_retry(self, reason)
-    auth_debug("session invalidated (%s): clearing local session, retrying sign-in in the background", reason)
-    pcall(api.clear_session)
-    ws.current_user_data = {}
-    self._restore_pending = false
-    if self.screen == "online" or self.screen == "auth" then show(self, "lobby") end
-    if gpgs and not self._silent_login_inflight then
-        self._silent_login_attempts = 0
-        try_silent_login(self)
+local function handle_login_failure(self, error_message)
+    auth_debug("handle_login_failure: %s (attempt %d/%d)", tostring(error_message), self._silent_login_attempts or 0, MAX_SILENT_LOGIN_ATTEMPTS)
+    if (self._silent_login_attempts or 0) < MAX_SILENT_LOGIN_ATTEMPTS then
+        timer.delay(SILENT_LOGIN_RETRY_DELAY, false, function()
+            try_silent_login(self)
+        end)
+    else
+        -- If silent login is totally blocked (permissions dropped, cache wiped) and the user explicitly tapped "Play Online",
+        -- escalate to the interactive login sheet so they aren't completely soft-locked.
+        if self._explicit_online then
+            auth_debug("handle_login_failure: silent failed, escalating to interactive login")
+            self._explicit_online = false 
+            self._silent_login_inflight = false
+            app_state.auth_state = "sending"
+            app_state.auth_error = ""
+            msg.post("#lobby", "auth_state_changed")
+            gpgs.login()
+            return
+        end
+        
+        self._silent_login_inflight = false
+        app_state.auth_state = "error"
+        app_state.auth_error = error_message or "Couldn't sign in. Check your connection and try again."
+        msg.post("#lobby", "auth_state_changed")
+        auth_debug("handle_login_failure: retry budget exhausted, giving up")
     end
 end
 
@@ -141,32 +168,20 @@ local function gpgs_callback(self, message_id, message)
                             return
                         end
                     end
+                    -- If we reach here, backend auth failed (e.g., user deleted on server or invalid setup).
+                    -- Wipe the local session so they aren't stuck passing a broken payload.
+                    clear_session()
                     app_state.auth_state = "error"
                     app_state.auth_error = result.message or "Backend auth failed"
                     msg.post("#lobby", "auth_state_changed")
                 end)
             else
-                self._silent_login_inflight = false
-                app_state.auth_state = "error"
-                app_state.auth_error = "Missing auth code"
-                msg.post("#lobby", "auth_state_changed")
+                -- Missing auth code: Handled in the background via the new unified retry flow
+                handle_login_failure(self, "Missing auth code. Retrying...")
             end
         else
-            -- Sign-in failed — retry silently (never fall back to a manual
-            -- button) until we've used up the retry budget, then give up
-            -- quietly so the player can keep browsing offline.
-            auth_debug("gpgs_callback: sign-in failed (attempt %d/%d)", self._silent_login_attempts or 0, MAX_SILENT_LOGIN_ATTEMPTS)
-            if (self._silent_login_attempts or 0) < MAX_SILENT_LOGIN_ATTEMPTS then
-                timer.delay(SILENT_LOGIN_RETRY_DELAY, false, function()
-                    try_silent_login(self)
-                end)
-            else
-                self._silent_login_inflight = false
-                app_state.auth_state = "error"
-                app_state.auth_error = message.error or "Couldn't sign in. Check your connection and try again."
-                msg.post("#lobby", "auth_state_changed")
-                auth_debug("gpgs_callback: retry budget exhausted, giving up")
-            end
+            -- Sign-in failed — retry silently until we've used up the retry budget
+            handle_login_failure(self, message.error or "Couldn't sign in. Check your connection and try again.")
         end
     end
 end
@@ -310,10 +325,18 @@ function init(self)
     forward("savings_settings_updated", "#payments", "ws_savings_settings_updated")
 
     table.insert(self.tokens, ws.on("auth_required", function()
-        reset_session_and_retry(self, "auth_required")
+        clear_session()
+        app_state.auth_state = "error"
+        app_state.auth_error = "Session expired. Try again."
+        msg.post("#lobby", "auth_state_changed")
+        if self.screen ~= "lobby" then show(self, "lobby") end
     end))
     table.insert(self.tokens, ws.on("identify_error", function()
-        reset_session_and_retry(self, "identify_error")
+        clear_session()
+        app_state.auth_state = "error"
+        app_state.auth_error = "Connection failed."
+        msg.post("#lobby", "auth_state_changed")
+        if self.screen ~= "lobby" then show(self, "lobby") end
     end))
 
     forward("resync",                "#game_logic", "ws_resync")
@@ -355,11 +378,16 @@ end
 function on_message(self, message_id, message, sender)
     if message_id == hash("goto_lobby") then show(self, "lobby")
     elseif message_id == hash("goto_game") then show(self, "game")
-    elseif message_id == hash("goto_online") then show(self, "online")
-    elseif message_id == hash("goto_themes") then show(self, "themes")
-    elseif message_id == hash("goto_payments") then show(self, "payments")
-    elseif message_id == hash("goto_tournaments") then show(self, "tournaments")
-    elseif message_id == hash("goto_profile") then show(self, "profile")
+    elseif message_id == hash("goto_online") then
+        if is_logged_in() then show(self, "online") else show(self, "lobby") end
+    elseif message_id == hash("goto_themes") then
+        if is_logged_in() then show(self, "themes") else show(self, "lobby") end
+    elseif message_id == hash("goto_payments") then
+        if is_logged_in() then show(self, "payments") else show(self, "lobby") end
+    elseif message_id == hash("goto_tournaments") then
+        if is_logged_in() then show(self, "tournaments") else show(self, "lobby") end
+    elseif message_id == hash("goto_profile") then
+        if is_logged_in() then show(self, "profile") else show(self, "lobby") end
     elseif message_id == hash("goto_auth") then show(self, "auth")
 
     elseif message_id == hash("play_online") then
