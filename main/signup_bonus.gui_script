@@ -1,0 +1,166 @@
+-- signup_bonus.gui_script
+-- GLOBAL "Welcome / Signup Bonus" celebratory modal. Lives on the controller
+-- object above every screen (render order 13 — just below daily_bonus=14, so
+-- if a fresh account somehow also has a daily bonus available at the very
+-- first login, the daily bonus still wins the screen once both are clear to
+-- show; see the mutual-defer flags below).
+--
+-- Unlike daily_bonus/season_results this isn't driven by a websocket push —
+-- controller.script posts "show_signup_bonus" directly right after a
+-- POST /auth/google response comes back with isNewUser = true (see
+-- gpgs_callback in controller.script). Follows the same global-overlay
+-- pattern otherwise: acquire input focus, fully blocking modal, defers to
+-- the season-complete and daily-bonus modals (both higher priority, and the
+-- latter only momentarily on a brand new account) if either is showing.
+
+local ui          = require("modules.ui")
+local screen       = require("modules.screen")
+local app_state    = require("modules.app_state")
+local sound        = require("modules.sound")
+local confetti_fx  = require("modules.confetti_fx")
+
+local LOGICAL_W, LOGICAL_H = 1280, 720
+local CX, CY = 640, 360
+
+-- ── Palette ────────────────────────────────────────────────────────────────
+local COL_WHITE  = vmath.vector4(1.00, 1.00, 1.00, 1.0)
+local COL_GOLD   = vmath.vector4(1.00, 0.84, 0.20, 1.0)
+local COL_GREEN  = vmath.vector4(0.15, 0.70, 0.25, 1.0)
+local COL_DIM    = vmath.vector4(0.75, 0.75, 0.78, 1.0)
+local COL_SCRIM  = vmath.vector4(0.0, 0.0, 0.0, 0.72)
+
+local function refresh_wh()
+    local m = screen.metrics()
+    CX, CY = m.CX, m.CY
+end
+
+-- ── Node bookkeeping ──────────────────────────────────────────────────────
+local function clear(self)
+    for _, n in ipairs(self.nodes) do pcall(gui.delete_node, n) end
+    self.nodes, self.buttons = {}, {}
+end
+local function track(self, n) self.nodes[#self.nodes + 1] = n; return n end
+
+local function commas(n)
+    return (tostring(math.floor(tonumber(n) or 0)):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""))
+end
+
+local function with_a(c, a) return vmath.vector4(c.x, c.y, c.z, c.w * (a or 1)) end
+
+local function mkbtn(self, id, pos, size, label, style, font, text_color)
+    local bg = track(self, ui.btn9(pos, size, style))
+    if label then
+        track(self, ui.text(vmath.vector3(pos.x, pos.y - 3, pos.z), label, font or "btn_md", text_color or COL_WHITE))
+    end
+    self.buttons[#self.buttons + 1] = { node = bg, id = id }
+    return bg
+end
+
+-- ── Rendering ──────────────────────────────────────────────────────────────
+local function rebuild(self)
+    clear(self)
+    if not self.visible then return end
+
+    local ok, err = pcall(function()
+        local a = self.alpha or 1
+
+        -- Full-screen dim scrim: blocks the view of whatever is underneath.
+        track(self, ui.cover(LOGICAL_W, LOGICAL_H, with_a(COL_SCRIM, a)))
+
+        local panel_w, panel_h = 620, 380
+        local px, py = CX, CY
+        track(self, ui.panel9(vmath.vector3(px, py, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
+
+        local top = py + panel_h / 2
+
+        local title = track(self, ui.text(vmath.vector3(px, top - 56, 0), "WELCOME BONUS!", "title", with_a(COL_GOLD, a)))
+        gui.set_scale(title, vmath.vector3(0.85, 0.85, 1))
+
+        -- Gentle pulse on the coin amount — a bit of "pop" without full FX.
+        local pulse = 1 + 0.05 * math.sin((self.t or 0) * 4)
+        local amount_txt = track(self, ui.text(vmath.vector3(px, py + 20, 0), "+" .. commas(self.amount or 500), "title", with_a(COL_GREEN, a)))
+        gui.set_scale(amount_txt, vmath.vector3(1.1 * pulse, 1.1 * pulse, 1))
+
+        track(self, ui.text(vmath.vector3(px, py - 40, 0), "COINS", "small", with_a(COL_WHITE, a)))
+
+        track(self, ui.text(vmath.vector3(px, py - 80, 0), "You've received a signup bonus to start playing!", "small", with_a(COL_DIM, a)))
+
+        local bw, bh = 260, 52
+        local by = py - panel_h / 2 + 40
+        mkbtn(self, "claim", vmath.vector3(px, by, 0), vmath.vector3(bw, bh, 0), "LET'S PLAY!", "primary_btn", "btn_md", COL_WHITE)
+    end)
+
+    if not ok then
+        print("[SIGNUP_BONUS] draw error: " .. tostring(err))
+        clear(self)
+    end
+end
+
+-- ── Standard Defold hooks ───────────────────────────────────────────────────
+function init(self)
+    msg.post(".", "acquire_input_focus")
+    gui.set_render_order(13)
+    self.nodes, self.buttons = {}, {}
+    self.visible = false
+    self.pending = false
+    self.amount = 500
+    self.alpha = 0
+    self.t = 0
+    refresh_wh()
+    confetti_fx.build(self)
+end
+
+function update(self, dt)
+    self.t = (self.t or 0) + dt
+
+    if self.pending and not self.visible
+        and not app_state.season_modal_active
+        and not app_state.daily_bonus_active
+    then
+        self.visible = true
+        self.alpha = 0
+        self.pending = false
+        app_state.signup_bonus_active = true
+        refresh_wh()
+        confetti_fx.explode(self)
+        sound.play("confetti")
+    end
+
+    if self.visible then
+        self.alpha = math.min(1, (self.alpha or 0) + dt * 4)
+        rebuild(self)
+    end
+
+    confetti_fx.update(self, dt)
+end
+
+function on_message(self, message_id, message)
+    if message_id == hash("show_signup_bonus") then
+        self.amount = (message and tonumber(message.amount)) or 500
+        self.pending = true
+    end
+end
+
+function on_input(self, action_id, action)
+    if not self.visible then return false end
+
+    if action_id == hash("touch") and action.pressed then
+        for i = #self.buttons, 1, -1 do
+            local b = self.buttons[i]
+            if gui.pick_node(b.node, action.x, action.y) then
+                if b.id == "claim" then
+                    self.visible = false
+                    app_state.signup_bonus_active = false
+                    confetti_fx.clear(self)
+                    rebuild(self)
+                end
+                return true
+            end
+        end
+        -- Fully blocking modal: swallow taps anywhere while visible.
+        return true
+    end
+
+    -- Blocks all other input (drags, releases, keys) while visible.
+    return true
+end
