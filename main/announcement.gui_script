@@ -58,7 +58,6 @@ local FALLBACK_DURATION_MS = 7000 -- used when the server sends 0/missing durati
 local TICKER_PX  = 18
 local BOLD_ROLE  = { name = "subtitle2", base = 34 } -- same font resource as F.BUTTON, sized down
 local AVATAR_SZ  = 22
-local SEG_GAP    = 4
 
 local PARKED_Y = LOGICAL_H + PANEL_H + 40 -- fully off-screen above the top edge
 
@@ -148,7 +147,11 @@ local function build_row(holder, msg_text)
             gui.set_pivot(n, gui.PIVOT_W)
             gui.set_parent(n, holder)
             nodes[#nodes + 1] = n
-            x = x + AVATAR_SZ + SEG_GAP
+            -- No extra padding here — the message text already has a single
+            -- literal space on each side of {{a:N}} (e.g. "1. {{a:5}} Name"),
+            -- same as any other word gap. Adding a gap on top of that made
+            -- the avatar's right-hand side visibly wider than its left.
+            x = x + AVATAR_SZ
         else
             local role = seg.bold and BOLD_ROLE or F.BODY
             local n = text(vmath.vector3(x, 0, 0), seg.value, role, C_WHITE, gui.PIVOT_W, TICKER_PX)
