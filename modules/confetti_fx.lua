@@ -95,6 +95,22 @@ function M.explode(self)
     end
 end
 
+-- Moves every confetti particle node to the very front of THIS script's own
+-- render order, above whatever content nodes currently exist. Needed by any
+-- caller that rebuilds its own content from scratch every frame (clear() +
+-- recreate, the pattern daily_bonus/season_results/signup_bonus all use) —
+-- freshly created nodes render on top by default, so without this the
+-- confetti (built once, not recreated) would end up buried behind that
+-- frame's panel/text/cards instead of bursting out in front of them. Only
+-- reorders nodes within this GUI scene/component; it can't reach across a
+-- different embedded component (those are layered via gui.set_render_order).
+function M.bring_to_front(self)
+    if not self.confetti then return end
+    for _, p in ipairs(self.confetti) do
+        pcall(gui.move_above, p.node, nil)
+    end
+end
+
 function M.clear(self)
     self.confetti_running = false
     for _, p in ipairs(self.confetti or {}) do
