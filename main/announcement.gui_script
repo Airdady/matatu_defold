@@ -1,9 +1,11 @@
 -- announcement.gui_script
 -- GLOBAL public-announcement banner: lives on the controller object above
--- every screen (render order 19 — topmost), so a broadcast surfaces
--- anywhere in the app — lobby, game, payments... Non-modal: it never
--- swallows input except taps on its own dismiss button, so whatever's
--- underneath stays fully interactive.
+-- every screen (render order 19 — topmost). Non-modal: it never swallows
+-- input except taps on its own dismiss button, so whatever's underneath
+-- stays fully interactive. Never shown while the player is actually on the
+-- game screen — mid-match is the one place a banner sliding in would be
+-- unwelcome — it waits (or, if already showing when they enter a game,
+-- hides immediately and replays in full once they leave).
 --
 -- Fed by two server paths that both emit the same "announcements" WS event
 -- (see modules/websocket_manager.lua) with an array of
@@ -13,13 +15,22 @@
 --      (e.g. the player was offline when it went out).
 -- Multiple announcements queue and show one at a time.
 --
+-- `text` supports lightweight inline markup (already emitted by the weekly
+-- top-winners announcement in getTopPlayersWithPrizes.ts):
+--   **bold text**   -> rendered in the bold font
+--   {{a:N}}         -> avatar N rendered inline (avatars atlas, avatar_N)
+-- e.g. "**1.** {{a:5}} **PlayerOne** ~5,000/-   •   **2.** {{a:12}} ..."
+-- Plain messages with no markup render exactly as before.
+--
 -- Visual: banner_bg.png (assets/ui/banner_bg.png, in the "ui" atlas) — a
 -- full-width red ribbon, soft-edged fade to transparent at both ends —
--- stretched across the top edge, carrying a continuously scrolling marquee
--- ticker, ported from the Fab "Marquee Scrolling Text".
+-- carrying a continuously scrolling marquee ticker, ported from the Fab
+-- "Marquee Scrolling Text".
 
-local ws = require "modules.websocket_manager"
-local F  = require "modules.fonts"
+local ws        = require "modules.websocket_manager"
+local F         = require "modules.fonts"
+local ui        = require "modules.ui"
+local app_state = require "modules.app_state"
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 
@@ -27,14 +38,21 @@ local C_WHITE  = vmath.vector4(1, 1, 1, 1)
 local C_DIM    = vmath.vector4(1, 1, 1, 0.75)
 
 local PANEL_W = LOGICAL_W
-local PANEL_H = 56
-local TOP_MARGIN = 0 -- ribbon sits flush against the top edge
+local PANEL_H = 40
+local TOP_MARGIN = 14 -- ribbon rests this far below the true top edge
 
 local MARQUEE_SPEED = 150 -- px/sec
 local MARQUEE_GAP   = 140 -- gap between the two looping copies of the text
 
 local MIN_DURATION_MS = 4000  -- floor even if the server sends a tiny/zero duration
 local FALLBACK_DURATION_MS = 7000 -- used when the server sends 0/missing duration
+
+local TICKER_PX  = 18
+local BOLD_ROLE  = { name = "subtitle2", base = 34 } -- same font resource as F.BUTTON, sized down
+local AVATAR_SZ  = 22
+local SEG_GAP    = 4
+
+local PARKED_Y = LOGICAL_H + PANEL_H + 40 -- fully off-screen above the top edge
 
 local function box(pos, size, color)
     local n = gui.new_box_node(pos, size)
@@ -69,15 +87,80 @@ local function build_bg(self)
     gui.set_parent(self.bg, self.root)
 end
 
+----------------------------------------------------------------------
+-- Inline markup: **bold** and {{a:N}} avatar tokens
+----------------------------------------------------------------------
+local function tokenize(msg)
+    local segments = {}
+    local pos, len = 1, #msg
+    while pos <= len do
+        local b_s, b_e, b_txt = msg:find("%*%*(.-)%*%*", pos)
+        local a_s, a_e, a_id  = msg:find("%{%{a:(%d+)%}%}", pos)
+
+        local next_s, kind
+        if b_s and (not a_s or b_s <= a_s) then
+            next_s, kind = b_s, "bold"
+        elseif a_s then
+            next_s, kind = a_s, "avatar"
+        end
+
+        if not next_s then
+            local plain = msg:sub(pos)
+            if #plain > 0 then segments[#segments + 1] = { type = "text", value = plain, bold = false } end
+            break
+        end
+
+        if next_s > pos then
+            local plain = msg:sub(pos, next_s - 1)
+            if #plain > 0 then segments[#segments + 1] = { type = "text", value = plain, bold = false } end
+        end
+
+        if kind == "bold" then
+            segments[#segments + 1] = { type = "text", value = b_txt, bold = true }
+            pos = b_e + 1
+        else
+            segments[#segments + 1] = { type = "avatar", value = tonumber(a_id) or 1 }
+            pos = a_e + 1
+        end
+    end
+    return segments
+end
+
+-- Builds one copy of the ticker content as children of `holder` (a zero-size
+-- anchor node, so pivot doesn't matter — children lay out left-to-right from
+-- its position). Returns the total rendered width and the list of created
+-- nodes (tracked explicitly for cleanup — Defold's gui module has no
+-- "get children" query, so callers must remember what they made).
+local function build_row(holder, msg_text)
+    local x = 0
+    local nodes = {}
+    for _, seg in ipairs(tokenize(msg_text)) do
+        if seg.type == "avatar" then
+            local n = ui.avatar(vmath.vector3(x, 0, 0), vmath.vector3(AVATAR_SZ, AVATAR_SZ, 0), seg.value)
+            gui.set_pivot(n, gui.PIVOT_W)
+            gui.set_parent(n, holder)
+            nodes[#nodes + 1] = n
+            x = x + AVATAR_SZ + SEG_GAP
+        else
+            local role = seg.bold and BOLD_ROLE or F.BODY
+            local n = text(vmath.vector3(x, 0, 0), seg.value, role, C_WHITE, gui.PIVOT_W, TICKER_PX)
+            gui.set_parent(n, holder)
+            nodes[#nodes + 1] = n
+            local m = gui.get_text_metrics_from_node(n)
+            x = x + m.width
+        end
+    end
+    return x, nodes
+end
+
 local function build(self)
     -- Parked off-screen above the top edge until something is queued.
-    self.root = box(vmath.vector3(LOGICAL_W / 2, LOGICAL_H + PANEL_H + 40, 0),
-        vmath.vector3(PANEL_W, PANEL_H, 0), vmath.vector4(0, 0, 0, 0))
+    self.root = box(vmath.vector3(LOGICAL_W / 2, PARKED_Y, 0), vmath.vector3(PANEL_W, PANEL_H, 0), vmath.vector4(0, 0, 0, 0))
     gui.set_pivot(self.root, gui.PIVOT_N)
 
     build_bg(self)
 
-    -- The ticker text is clipped to the ribbon's rect so it visibly enters
+    -- The ticker content is clipped to the ribbon's rect so it visibly enters
     -- and exits right at the banner's edges instead of spilling past them.
     self.clip = box(vmath.vector3(0, 0, 0), vmath.vector3(PANEL_W, PANEL_H, 0), vmath.vector4(1, 1, 1, 0))
     gui.set_pivot(self.clip, gui.PIVOT_N)
@@ -85,12 +168,16 @@ local function build(self)
     gui.set_clipping_mode(self.clip, gui.CLIPPING_MODE_STENCIL)
     gui.set_clipping_visible(self.clip, false)
 
-    self.m_label1 = text(vmath.vector3(0, CHILD_Y, 0), "", F.BODY, C_WHITE, gui.PIVOT_W, 22)
-    gui.set_parent(self.m_label1, self.clip)
-    self.m_label2 = text(vmath.vector3(0, CHILD_Y, 0), "", F.BODY, C_WHITE, gui.PIVOT_W, 22)
-    gui.set_parent(self.m_label2, self.clip)
+    -- Two zero-size anchors, each holding one full copy of the ticker
+    -- content (text/avatar nodes), for the seamless looping scroll.
+    self.holder1 = gui.new_box_node(vmath.vector3(0, CHILD_Y, 0), vmath.vector3(0, 0, 0))
+    gui.set_color(self.holder1, vmath.vector4(0, 0, 0, 0))
+    gui.set_parent(self.holder1, self.clip)
+    self.holder2 = gui.new_box_node(vmath.vector3(0, CHILD_Y, 0), vmath.vector3(0, 0, 0))
+    gui.set_color(self.holder2, vmath.vector4(0, 0, 0, 0))
+    gui.set_parent(self.holder2, self.clip)
 
-    self.close_bg = box(vmath.vector3(PANEL_W / 2 - 34, CHILD_Y, 0), vmath.vector3(30, 30, 0), vmath.vector4(0, 0, 0, 0))
+    self.close_bg = box(vmath.vector3(PANEL_W / 2 - 30, CHILD_Y, 0), vmath.vector3(26, 26, 0), vmath.vector4(0, 0, 0, 0))
     gui.set_pivot(self.close_bg, gui.PIVOT_CENTER)
     gui.set_parent(self.close_bg, self.root)
     self.close_lbl = text(vmath.vector3(0, 0, 0), "X", F.SMALL, C_DIM, gui.PIVOT_CENTER)
@@ -125,7 +212,7 @@ local show_next -- forward declaration
 
 local function hide_and_advance(self)
     self.scrolling = false
-    gui.animate(self.root, "position.y", LOGICAL_H + PANEL_H + 40, gui.EASING_INSINE, 0.25, 0, function()
+    gui.animate(self.root, "position.y", PARKED_Y, gui.EASING_INSINE, 0.25, 0, function()
         self.showing = false
         gui.set_enabled(self.root, false)
         timer.delay(0.15, false, function() show_next(self) end)
@@ -134,26 +221,32 @@ end
 
 show_next = function(self)
     if self.showing then return end
+    -- Never show over live gameplay — leave it queued until the player
+    -- navigates to another screen.
+    if app_state.current_screen == "game" then return end
     local item = table.remove(self.queue, 1)
     if not item then return end
     self.showing = true
+    self.current_item = item
 
-    gui.set_text(self.m_label1, tostring(item.text or ""))
-    gui.set_text(self.m_label2, tostring(item.text or ""))
-    local metrics = gui.get_text_metrics_from_node(self.m_label1)
-    self.marquee_w = metrics.width
+    local msg_text = tostring(item.text or "")
+    for _, n in ipairs(self.holder1_nodes or {}) do pcall(gui.delete_node, n) end
+    for _, n in ipairs(self.holder2_nodes or {}) do pcall(gui.delete_node, n) end
+    self.marquee_w, self.holder1_nodes = build_row(self.holder1, msg_text)
+    local _unused_w
+    _unused_w, self.holder2_nodes = build_row(self.holder2, msg_text)
 
     -- Enter from the right edge; the trailing copy follows one text-length + gap behind.
     self.m1_x = PANEL_W / 2
     self.m2_x = self.m1_x + self.marquee_w + MARQUEE_GAP
-    gui.set_position(self.m_label1, vmath.vector3(self.m1_x, CHILD_Y, 0))
-    gui.set_position(self.m_label2, vmath.vector3(self.m2_x, CHILD_Y, 0))
+    gui.set_position(self.holder1, vmath.vector3(self.m1_x, CHILD_Y, 0))
+    gui.set_position(self.holder2, vmath.vector3(self.m2_x, CHILD_Y, 0))
     self.scrolling = true
 
     local dismissable = item.isDismissable and true or false
     gui.set_enabled(self.close_bg, dismissable)
 
-    gui.set_position(self.root, vmath.vector3(LOGICAL_W / 2, LOGICAL_H + PANEL_H + 40, 0))
+    gui.set_position(self.root, vmath.vector3(LOGICAL_W / 2, PARKED_Y, 0))
     gui.set_enabled(self.root, true)
     gui.animate(self.root, "position.y", LOGICAL_H - TOP_MARGIN, gui.EASING_OUTSINE, 0.35)
 
@@ -162,11 +255,37 @@ show_next = function(self)
     dur = math.max(MIN_DURATION_MS, dur)
 
     self._hide_timer = timer.delay(dur / 1000.0, false, function()
+        self.current_item = nil
         hide_and_advance(self)
     end)
 end
 
 function update(self, dt)
+    local on_game_screen = (app_state.current_screen == "game")
+
+    if on_game_screen then
+        if self.showing and not self._interrupting then
+            -- Player jumped into a match mid-banner: hide right away and put
+            -- the same item back at the front of the queue so it replays in
+            -- full once they're back on another screen.
+            self._interrupting = true
+            if self._hide_timer then timer.cancel(self._hide_timer); self._hide_timer = nil end
+            if self.current_item then
+                table.insert(self.queue, 1, self.current_item)
+                self.current_item = nil
+            end
+            hide_and_advance(self)
+        end
+    else
+        -- Reset unconditionally (not just when there's something to show
+        -- next) so this can't get stuck true and silently disable the
+        -- interrupt-hide the next time the player enters a game mid-banner.
+        self._interrupting = false
+        if not self.showing and #self.queue > 0 then
+            show_next(self)
+        end
+    end
+
     if not self.scrolling or not self.marquee_w or self.marquee_w <= 0 then return end
     local step = MARQUEE_SPEED * dt
     self.m1_x = self.m1_x - step
@@ -177,8 +296,8 @@ function update(self, dt)
     if self.m1_x < off_left then self.m1_x = self.m2_x + self.marquee_w + MARQUEE_GAP end
     if self.m2_x < off_left then self.m2_x = self.m1_x + self.marquee_w + MARQUEE_GAP end
 
-    gui.set_position(self.m_label1, vmath.vector3(self.m1_x, CHILD_Y, 0))
-    gui.set_position(self.m_label2, vmath.vector3(self.m2_x, CHILD_Y, 0))
+    gui.set_position(self.holder1, vmath.vector3(self.m1_x, CHILD_Y, 0))
+    gui.set_position(self.holder2, vmath.vector3(self.m2_x, CHILD_Y, 0))
 end
 
 function on_message(self, message_id, message)
@@ -196,6 +315,7 @@ function on_input(self, action_id, action)
     if action_id == hash("touch") and action.pressed then
         if gui.is_enabled(self.close_bg) and gui.pick_node(self.close_bg, action.x, action.y) then
             if self._hide_timer then timer.cancel(self._hide_timer); self._hide_timer = nil end
+            self.current_item = nil
             hide_and_advance(self)
             return true
         end

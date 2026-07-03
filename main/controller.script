@@ -115,6 +115,11 @@ function init(self)
     self.screen = "lobby"
     self.tokens = {}
 
+    -- Keep the screen awake for as long as the app is open, not just during
+    -- a match — set once here and never re-enabled (see game.script, which
+    -- used to flip this back on leaving the game screen).
+    pcall(window.set_dim_mode, window.DIMMING_OFF)
+
     for _, s in ipairs(SCREENS) do
         msg.post("#" .. s, "disable")
     end
