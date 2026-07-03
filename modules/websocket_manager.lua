@@ -600,6 +600,17 @@ function M.get_active_game() return M.active_game_state end
 function M.get_online_users() return M.online_users end
 function M.get_current_user_id() return M.current_user_id end
 
+-- Ask the backend to (re)broadcast the online-players list right now,
+-- instead of passively waiting on whatever the last push happened to be.
+-- The server's own broadcast is debounced ~1s and purely event-driven (new
+-- login, game end, disconnect, etc.) — a first-time solo player has no other
+-- event to trigger a second broadcast, so without this, entering the online
+-- screen slightly before that debounced window closes could leave the list
+-- looking permanently empty for the rest of the session.
+function M.request_online_users()
+  M.send_message("ONLINE_USERS", {})
+end
+
 -- Move inbox: parked here (shared VM) instead of being passed through msg.post.
 function M.queue_move(move, state)
   local m = move or {}

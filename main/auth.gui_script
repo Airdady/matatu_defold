@@ -40,17 +40,20 @@ local function build_auth(self)
 
     ktext(self, vmath.vector3(CX, CY + 120, 0), "GOOGLE PLAY GAMES", 32, C_CREAM)
 
+    -- Sign-in is always silent — there is no manual "SIGN IN" button here.
+    -- controller.script retries automatically a few times on failure; this
+    -- screen only ever shows a status line, plus a quiet "TRY AGAIN" once
+    -- the retry budget is exhausted.
     local s = app_state.auth_state
-    if s == "verifying" or s == "sending" then
-        ktext(self, vmath.vector3(CX, CY, 0), "Connecting...", 24, C_STATE)
-    else
-        local btn = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(360, 80, 0), C_ACCENT))
-        ktext(self, vmath.vector3(CX, CY, 0), "SIGN IN", 28, C_CREAM)
-        self.buttons[#self.buttons+1] = { node = btn, id = "gpgs_login" }
-        
-        if s == "error" and app_state.auth_error ~= "" then
-            ktext(self, vmath.vector3(CX, CY - 80, 0), tostring(app_state.auth_error):upper(), 18, vmath.vector4(1, 0.4, 0.4, 1))
+    if s == "error" then
+        if app_state.auth_error ~= "" then
+            ktext(self, vmath.vector3(CX, CY + 20, 0), tostring(app_state.auth_error):upper(), 18, vmath.vector4(1, 0.4, 0.4, 1))
         end
+        local btn = track(self, ui.box(vmath.vector3(CX, CY - 40, 0), vmath.vector3(280, 64, 0), C_ACCENT))
+        ktext(self, vmath.vector3(CX, CY - 40, 0), "TRY AGAIN", 24, C_CREAM)
+        self.buttons[#self.buttons+1] = { node = btn, id = "retry_silent_login" }
+    else
+        ktext(self, vmath.vector3(CX, CY, 0), "Connecting...", 24, C_STATE)
     end
 end
 
@@ -97,8 +100,8 @@ function on_input(self, action_id, action)
             if b.node and gui.pick_node(b.node, action.x, action.y) then
                 if b.id == "cancel" then
                     msg.post("#controller", "auth_cancel")
-                elseif b.id == "gpgs_login" then
-                    msg.post("#controller", "auth_gpgs_login")
+                elseif b.id == "retry_silent_login" then
+                    msg.post("#controller", "auth_retry_silent_login")
                 end
                 return true
             end

@@ -144,7 +144,13 @@ function M.draw(self, ctx)
     local row_h       = C.ROW_H_LIST
     local step        = row_h
 
-    local users = ws.get_online_users() or {}
+    -- Never show player data before the SERVER has actually confirmed our
+    -- identity for this connection (ws.is_identified, set only by the
+    -- IDENTIFY ack) — ws.online_users/current_user_data are plain in-memory
+    -- fields that can be non-empty from a previous session, a locally cached
+    -- profile, or a race with an in-flight identify, none of which mean this
+    -- connection is actually authenticated right now.
+    local users = ws.is_identified and (ws.get_online_users() or {}) or {}
     local my_id = ws.get_current_user_id()
 
     local rows = {}
@@ -213,7 +219,9 @@ function M.draw(self, ctx)
 
     if #rows == 0 then
         local msg = "Connecting..."
-        if ws.socket_connected then
+        if not ws.is_identified then
+            msg = "Sign in to see online players"
+        elseif ws.socket_connected then
             msg = self.tab == TAB_BATTLES and "No open battles right now" or "No opponents online right now"
         end
         track(self, ui.text(vmath.vector3(cx, list_top - region_h/2, 0), msg, "body", C.COL_DIM))

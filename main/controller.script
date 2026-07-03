@@ -67,6 +67,22 @@ local function identify_and_connect(user)
     ws.connect()
 end
 
+-- Sign-in is ALWAYS silent — there is no manual "SIGN IN" button anywhere in
+-- the UI. If a silent attempt fails (transient network hiccup, GPGS not
+-- ready yet right at boot, etc.) we retry automatically up to this many
+-- times, spaced out, before quietly giving up rather than ever prompting the
+-- player to tap anything.
+local MAX_SILENT_LOGIN_ATTEMPTS = 3
+local SILENT_LOGIN_RETRY_DELAY = 1.5
+
+local function try_silent_login(self)
+    self._silent_login_inflight = true
+    self._silent_login_attempts = (self._silent_login_attempts or 0) + 1
+    app_state.auth_state = "sending"
+    msg.post("#auth", "auth_state_changed")
+    gpgs.silent_login()
+end
+
 local function gpgs_callback(self, message_id, message)
     if message_id == gpgs.MSG_SIGN_IN or message_id == gpgs.MSG_SILENT_SIGN_IN then
         if message.status == gpgs.STATUS_SUCCESS then
@@ -75,11 +91,12 @@ local function gpgs_callback(self, message_id, message)
                 app_state.auth_state = "verifying"
                 msg.post("#auth", "auth_state_changed")
                 api.gpgs_login(auth_code, function(result)
+                    self._silent_login_inflight = false
                     if result.success and type(result.data) == "table" then
                         local user = result.data.user or result.data
                         -- Map the backend JWT token so identify_and_connect can save it
                         if result.data.token then user.token = result.data.token end
-                        
+
                         if type(user) == "table" and (user._id or user.localId) then
                             identify_and_connect(user)
                             if result.data.isNewUser then
@@ -96,18 +113,23 @@ local function gpgs_callback(self, message_id, message)
                     msg.post("#auth", "auth_state_changed")
                 end)
             else
+                self._silent_login_inflight = false
                 app_state.auth_state = "error"
                 app_state.auth_error = "Missing auth code"
                 msg.post("#auth", "auth_state_changed")
             end
         else
-            if message_id == gpgs.MSG_SIGN_IN then
+            -- Sign-in failed — retry silently (never fall back to a manual
+            -- button) until we've used up the retry budget, then give up
+            -- quietly so the player can keep browsing offline.
+            if (self._silent_login_attempts or 0) < MAX_SILENT_LOGIN_ATTEMPTS then
+                timer.delay(SILENT_LOGIN_RETRY_DELAY, false, function()
+                    try_silent_login(self)
+                end)
+            else
+                self._silent_login_inflight = false
                 app_state.auth_state = "error"
-                app_state.auth_error = message.error or "Sign in failed"
-                msg.post("#auth", "auth_state_changed")
-            elseif message_id == gpgs.MSG_SILENT_SIGN_IN then
-                -- Silent login failed, gracefully remain on the Auth UI to allow manual input
-                app_state.auth_state = "idle"
+                app_state.auth_error = message.error or "Couldn't sign in. Check your connection and try again."
                 msg.post("#auth", "auth_state_changed")
             end
         end
@@ -155,8 +177,10 @@ function init(self)
         -- the player in via identify_and_connect + route_after_auth (same
         -- routing an existing cached-session restore already does, e.g. it
         -- will still send a profile-incomplete new player to the profile
-        -- screen — that's existing behavior, not new).
-        gpgs.silent_login()
+        -- screen — that's existing behavior, not new). Retries up to
+        -- MAX_SILENT_LOGIN_ATTEMPTS times on failure before giving up.
+        self._silent_login_attempts = 0
+        try_silent_login(self)
     end
 
     msg.post("#lobby", "enable")
@@ -322,26 +346,30 @@ function on_message(self, message_id, message, sender)
         end
         show(self, "auth")
         if gpgs then
-            -- If the boot-time silent sign-in (see init()) is still in
-            -- flight, don't fire a second concurrent silent_login call —
-            -- just surface the "sending" state so the player sees a spinner
-            -- while that same attempt completes.
-            if app_state.auth_state ~= "sending" and app_state.auth_state ~= "verifying" then
-                app_state.auth_state = "sending"
-                gpgs.silent_login()
+            if self._silent_login_inflight then
+                -- A silent-login attempt (boot-time, or a previous tap) is
+                -- already in flight/retrying — just show the spinner, don't
+                -- fire a second concurrent native call.
+                msg.post("#auth", "auth_state_changed")
+            else
+                -- Deliberate tap gets a fresh full retry budget rather than
+                -- inheriting an already-exhausted one from boot.
+                self._silent_login_attempts = 0
+                try_silent_login(self)
             end
-            msg.post("#auth", "auth_state_changed")
-        end
-
-    elseif message_id == hash("auth_gpgs_login") then
-        if gpgs then
-            app_state.auth_state = "sending"
-            msg.post("#auth", "auth_state_changed")
-            gpgs.login()
         else
             app_state.auth_error = "GPGS not supported on this device"
             app_state.auth_state = "error"
             msg.post("#auth", "auth_state_changed")
+        end
+
+    elseif message_id == hash("auth_retry_silent_login") then
+        -- The only tappable thing on the auth screen: retries the same
+        -- silent flow with a fresh budget — never a manual/interactive
+        -- Google sign-in prompt.
+        if gpgs and not self._silent_login_inflight then
+            self._silent_login_attempts = 0
+            try_silent_login(self)
         end
 
     elseif message_id == hash("auth_cancel") then
