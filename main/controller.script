@@ -5,6 +5,14 @@ local app_state = require("modules.app_state")
 
 local SCREENS = { "lobby", "auth", "profile", "online", "themes", "payments", "tournaments", "game" }
 
+-- Debug trail for the sign-in/connect pipeline (boot silent-login, "Play
+-- Online" tap, GPGS callback, backend verify, WS identify) — every step logs
+-- here so a stuck/looping session can be diagnosed from device logs instead
+-- of guessed at.
+local function auth_debug(fmt, ...)
+    print(string.format("[AUTH-DEBUG] " .. fmt, ...))
+end
+
 local function show(self, screen)
     if screen ~= "game" then
         pcall(msg.post, "#coins", "coin_clear")
@@ -60,6 +68,7 @@ local function identify_and_connect(user)
     end
 
     local id = user._id or user.localId or ""
+    auth_debug("identify_and_connect: id=%s username=%s", tostring(id), tostring(user.username))
     if id ~= "" then
         ws.identify(id, user.username or "Player",
             { amount = user.balance or 0, charge = 0 }, "UG")
@@ -78,20 +87,26 @@ local SILENT_LOGIN_RETRY_DELAY = 1.5
 local function try_silent_login(self)
     self._silent_login_inflight = true
     self._silent_login_attempts = (self._silent_login_attempts or 0) + 1
+    auth_debug("try_silent_login: attempt %d/%d", self._silent_login_attempts, MAX_SILENT_LOGIN_ATTEMPTS)
     app_state.auth_state = "sending"
     msg.post("#auth", "auth_state_changed")
     gpgs.silent_login()
 end
 
 local function gpgs_callback(self, message_id, message)
+    auth_debug("gpgs_callback: message_id=%s status=%s error=%s",
+        tostring(message_id), tostring(message and message.status), tostring(message and message.error))
     if message_id == gpgs.MSG_SIGN_IN or message_id == gpgs.MSG_SILENT_SIGN_IN then
         if message.status == gpgs.STATUS_SUCCESS then
             local auth_code = gpgs.get_server_auth_code()
+            auth_debug("gpgs_callback: GPGS success, auth_code_present=%s", tostring(auth_code ~= nil and auth_code ~= ""))
             if auth_code then
                 app_state.auth_state = "verifying"
                 msg.post("#auth", "auth_state_changed")
                 api.gpgs_login(auth_code, function(result)
                     self._silent_login_inflight = false
+                    auth_debug("api.gpgs_login callback: success=%s message=%s isNewUser=%s",
+                        tostring(result.success), tostring(result.message), tostring(result.data and result.data.isNewUser))
                     if result.success and type(result.data) == "table" then
                         local user = result.data.user or result.data
                         -- Map the backend JWT token so identify_and_connect can save it
@@ -122,6 +137,7 @@ local function gpgs_callback(self, message_id, message)
             -- Sign-in failed — retry silently (never fall back to a manual
             -- button) until we've used up the retry budget, then give up
             -- quietly so the player can keep browsing offline.
+            auth_debug("gpgs_callback: sign-in failed (attempt %d/%d)", self._silent_login_attempts or 0, MAX_SILENT_LOGIN_ATTEMPTS)
             if (self._silent_login_attempts or 0) < MAX_SILENT_LOGIN_ATTEMPTS then
                 timer.delay(SILENT_LOGIN_RETRY_DELAY, false, function()
                     try_silent_login(self)
@@ -131,6 +147,7 @@ local function gpgs_callback(self, message_id, message)
                 app_state.auth_state = "error"
                 app_state.auth_error = message.error or "Couldn't sign in. Check your connection and try again."
                 msg.post("#auth", "auth_state_changed")
+                auth_debug("gpgs_callback: retry budget exhausted, giving up")
             end
         end
     end
@@ -340,33 +357,35 @@ function on_message(self, message_id, message, sender)
 
     elseif message_id == hash("play_online") then
         self._explicit_online = true
+        auth_debug("play_online tapped: user_id=%s socket_connected=%s is_identified=%s inflight=%s",
+            tostring(ws.current_user_data and ws.current_user_data._id), tostring(ws.socket_connected),
+            tostring(ws.is_identified), tostring(self._silent_login_inflight))
         if ws.current_user_data and (ws.current_user_data._id or "") ~= "" then
             if ws.socket_connected then route_after_auth(self) else self._restore_pending = true end
             return
         end
-        show(self, "auth")
+        -- The tap on "Play Online" IS the trigger for sign-in — no separate
+        -- auth screen/dialog is shown for this. The player stays exactly
+        -- where they are while gpgs_callback resolves in the background;
+        -- once identify_and_connect succeeds, route_after_auth() (called
+        -- from gpgs_callback) takes them straight to "online" since
+        -- self._explicit_online is already set above.
         if gpgs then
             if self._silent_login_inflight then
-                -- A silent-login attempt (boot-time, or a previous tap) is
-                -- already in flight/retrying — just show the spinner, don't
-                -- fire a second concurrent native call.
-                msg.post("#auth", "auth_state_changed")
+                auth_debug("play_online: a silent-login attempt is already in flight, ignoring duplicate tap")
             else
-                -- Deliberate tap gets a fresh full retry budget rather than
-                -- inheriting an already-exhausted one from boot.
                 self._silent_login_attempts = 0
                 try_silent_login(self)
             end
         else
-            app_state.auth_error = "GPGS not supported on this device"
-            app_state.auth_state = "error"
-            msg.post("#auth", "auth_state_changed")
+            auth_debug("play_online: gpgs extension not available on this device")
         end
 
     elseif message_id == hash("auth_retry_silent_login") then
-        -- The only tappable thing on the auth screen: retries the same
-        -- silent flow with a fresh budget — never a manual/interactive
-        -- Google sign-in prompt.
+        -- The only tappable thing on the auth screen (shown only for the
+        -- auth_required/identify_error recovery path, not for play_online):
+        -- retries the same silent flow with a fresh budget — never a
+        -- manual/interactive Google sign-in prompt.
         if gpgs and not self._silent_login_inflight then
             self._silent_login_attempts = 0
             try_silent_login(self)

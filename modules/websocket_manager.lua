@@ -144,6 +144,8 @@ function M.identify(id, username, stake, country)
     country = country or "",
     appVersion = config.APP_VERSION,
   }
+  print(string.format("[WS-DEBUG] identify() called: id=%s socket_connected=%s (%s)",
+    tostring(id), tostring(M.socket_connected), M.socket_connected and "sending IDENTIFY now" or "queued for on_connected"))
   if M.socket_connected then
     M.send_message("IDENTIFY", pending_identity)
   end
@@ -262,8 +264,10 @@ local function parse_message(json_string)
       emit("network_quality", { user_id = uid, latency_ms = tonumber(d.latency) or 0 })
     end
   elseif t == "AUTH_REQUIRED" then
+    print("[WS-DEBUG] AUTH_REQUIRED received: " .. tostring(d.message))
     emit("auth_required", d.message or "Device not registered")
   elseif t == "IDENTIFY" then
+    print("[WS-DEBUG] IDENTIFY response received, marking is_identified=true")
     M.is_identified = true
     local user_payload = d
     if type(d.user) == "table" then
@@ -461,6 +465,7 @@ local function parse_message(json_string)
   elseif t == "TRANSACTION_FAILED" then
     emit("transaction_failed", d.reason or "Failed")
   elseif t == "IDENTIFY_ERROR" then
+    print("[WS-DEBUG] IDENTIFY_ERROR received: " .. tostring(d.message))
     emit("identify_error", d.message or "Authentication Failed")
   elseif t == "ERROR" then
     emit("error", d.message or "Error")
@@ -516,6 +521,7 @@ local function on_connected()
   current_reconnect_delay = config.INITIAL_RECONNECT_DELAY
   start_keep_alive()
   emit("connected")
+  print(string.format("[WS-DEBUG] on_connected: pending_identity=%s", tostring(pending_identity ~= nil)))
   if pending_identity then M.send_message("IDENTIFY", pending_identity) end
 end
 
@@ -567,7 +573,11 @@ local function ws_callback(_, conn, data)
 end
 
 function M.connect()
-  if is_connecting or M.socket_connected then return end
+  if is_connecting or M.socket_connected then
+    print(string.format("[WS-DEBUG] connect() no-op: is_connecting=%s socket_connected=%s",
+      tostring(is_connecting), tostring(M.socket_connected)))
+    return
+  end
   if not websocket then
     print("[WS] ERROR: extension-websocket not installed. Add it to game.project dependencies.")
     emit("connection_error", "websocket extension missing")
