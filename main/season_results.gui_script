@@ -15,6 +15,13 @@ local ui = require("modules.ui")
 local ws = require("modules.websocket_manager")
 local screen = require("modules.screen")
 local app_state = require("modules.app_state")
+local sound = require("modules.sound")
+local confetti_fx = require("modules.confetti_fx")
+
+-- Ranks at/below this threshold get the confetti + popper-sound celebration
+-- on top of the normal results (the same "shout-out" gameover.gui_script
+-- gives a tournament grand-prize win).
+local CELEBRATE_RANK_MAX = 20
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local CX, CY = 640, 360
@@ -204,6 +211,7 @@ function init(self)
     self.season_data = nil
     self.alpha = 0
     refresh_wh()
+    confetti_fx.build(self)
 
     -- WS callbacks run in the socket owner's (controller) context — post back
     -- to THIS component through a URL captured here, in our own context. We
@@ -233,6 +241,7 @@ function update(self, dt)
         self.alpha = math.min(1, (self.alpha or 0) + dt * 4)
         rebuild(self)
     end
+    confetti_fx.update(self, dt)
 end
 
 function on_message(self, message_id, message)
@@ -243,6 +252,16 @@ function on_message(self, message_id, message)
         self.alpha = 0
         refresh_wh()
         rebuild(self)
+
+        -- Shout-out: confetti + popper sound for a Top-20 finish, same
+        -- celebration gameover.gui_script gives a tournament grand-prize win.
+        local rank = tonumber(self.season_data.playerRank)
+        if rank and rank > 0 and rank <= CELEBRATE_RANK_MAX then
+            confetti_fx.explode(self)
+            sound.play("confetti")
+        else
+            confetti_fx.clear(self)
+        end
     elseif message_id == hash("season_results_close") then
         if self.season_data and self.season_data.seasonId then
             ws.send_season_results_viewed(self.season_data.seasonId)
@@ -250,6 +269,7 @@ function on_message(self, message_id, message)
         self.visible = false
         app_state.season_modal_active = false
         self.season_data = nil
+        confetti_fx.clear(self)
         rebuild(self)
     end
 end

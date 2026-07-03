@@ -82,6 +82,9 @@ local function gpgs_callback(self, message_id, message)
                         
                         if type(user) == "table" and (user._id or user.localId) then
                             identify_and_connect(user)
+                            if result.data.isNewUser then
+                                msg.post("#signup_bonus", "show_signup_bonus", { amount = tonumber(user.balance) or 500 })
+                            end
                             app_state.auth_state = "done"
                             msg.post("#auth", "auth_state_changed")
                             route_after_auth(self)

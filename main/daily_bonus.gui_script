@@ -262,6 +262,7 @@ function update(self, dt)
         self.alpha = 0
         self.opened_at = self.t
         self.pending = false
+        app_state.daily_bonus_active = true
         refresh_wh()
     end
 
@@ -312,6 +313,7 @@ function on_message(self, message_id, message)
                 self.claiming = false
                 self.claim_result = nil
                 self.data = nil
+                app_state.daily_bonus_active = false
                 rebuild(self)
             end)
         else
@@ -321,6 +323,7 @@ function on_message(self, message_id, message)
             self.pending = false
             self.claim_result = nil
             self.data = nil
+            app_state.daily_bonus_active = false
             rebuild(self)
         end
     end

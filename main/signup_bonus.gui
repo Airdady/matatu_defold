@@ -1,4 +1,4 @@
-script: "/main/season_results.gui_script"
+script: "/main/signup_bonus.gui_script"
 fonts {
   name: "title"
   font: "/fonts/title.font"
