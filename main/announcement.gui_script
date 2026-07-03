@@ -13,26 +13,22 @@
 --      (e.g. the player was offline when it went out).
 -- Multiple announcements queue and show one at a time.
 --
--- Visual: a full-width red ribbon (soft-edged gradient, no texture — no
--- banner_bg.png asset available to build with; this reproduces the same
--- look procedurally with layered gradient strips) carrying a continuously
--- scrolling marquee ticker, ported from the Fab "Marquee Scrolling Text".
+-- Visual: banner_bg.png (assets/ui/banner_bg.png, in the "ui" atlas) — a
+-- full-width red ribbon, soft-edged fade to transparent at both ends —
+-- stretched across the top edge, carrying a continuously scrolling marquee
+-- ticker, ported from the Fab "Marquee Scrolling Text".
 
 local ws = require "modules.websocket_manager"
 local F  = require "modules.fonts"
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 
-local RED      = vmath.vector4(0.92, 0.13, 0.15, 1.0)
 local C_WHITE  = vmath.vector4(1, 1, 1, 1)
 local C_DIM    = vmath.vector4(1, 1, 1, 0.75)
 
 local PANEL_W = LOGICAL_W
 local PANEL_H = 56
 local TOP_MARGIN = 0 -- ribbon sits flush against the top edge
-
-local GRADIENT_SEGMENTS = 30
-local GRADIENT_EDGE     = 0.22 -- fraction of width spent fading in/out on each side
 
 local MARQUEE_SPEED = 150 -- px/sec
 local MARQUEE_GAP   = 140 -- gap between the two looping copies of the text
@@ -58,36 +54,19 @@ local function text(pos, str, role, color, pivot, px)
     return n
 end
 
--- Soft-edged horizontal gradient built from thin strips (no texture): alpha
--- ramps 0 -> 1 over the first GRADIENT_EDGE of the width, holds solid across
--- the middle, then ramps back 1 -> 0 over the last GRADIENT_EDGE.
-local function build_gradient_bg(self)
-    self.bg_strips = {}
-    local seg_w = PANEL_W / GRADIENT_SEGMENTS
-    for i = 1, GRADIENT_SEGMENTS do
-        local t = (i - 0.5) / GRADIENT_SEGMENTS -- 0..1 across the width
-        local a
-        if t < GRADIENT_EDGE then
-            a = t / GRADIENT_EDGE
-        elseif t > 1 - GRADIENT_EDGE then
-            a = (1 - t) / GRADIENT_EDGE
-        else
-            a = 1
-        end
-        a = a * a * (3 - 2 * a) -- smoothstep
-        local x = -PANEL_W / 2 + (i - 0.5) * seg_w
-        -- root has PIVOT_N (its "position" is its own top edge, since that's
-        -- where its OWN box hangs from), but a plain default-pivot (center)
-        -- child at local y=0 renders centered ON that top edge — half above
-        -- it, half below — not spanning the ribbon's actual 0..-PANEL_H
-        -- extent the way the clip/text/close-button (all offset by
-        -- -PANEL_H/2) do. Match that same offset so the gradient actually
-        -- sits behind the content instead of being shifted up by half its height.
-        local n = box(vmath.vector3(x, -PANEL_H / 2, 0), vmath.vector3(seg_w + 1, PANEL_H, 0),
-            vmath.vector4(RED.x, RED.y, RED.z, RED.w * a))
-        gui.set_parent(n, self.root)
-        self.bg_strips[#self.bg_strips + 1] = n
-    end
+-- root has PIVOT_N (its "position" is its own top edge, since that's where
+-- its OWN box hangs from), but a plain default-pivot (center) child at local
+-- y=0 renders centered ON that top edge — half above it, half below — not
+-- spanning the ribbon's actual 0..-PANEL_H extent the way the clip/text/
+-- close-button (all offset by -PANEL_H/2) do. Every child below matches that
+-- same offset so it actually sits behind/aligned with the banner content.
+local CHILD_Y = -PANEL_H / 2
+
+local function build_bg(self)
+    self.bg = gui.new_box_node(vmath.vector3(0, CHILD_Y, 0), vmath.vector3(PANEL_W, PANEL_H, 0))
+    gui.set_texture(self.bg, "ui")
+    pcall(gui.play_flipbook, self.bg, hash("banner_bg"))
+    gui.set_parent(self.bg, self.root)
 end
 
 local function build(self)
@@ -96,7 +75,7 @@ local function build(self)
         vmath.vector3(PANEL_W, PANEL_H, 0), vmath.vector4(0, 0, 0, 0))
     gui.set_pivot(self.root, gui.PIVOT_N)
 
-    build_gradient_bg(self)
+    build_bg(self)
 
     -- The ticker text is clipped to the ribbon's rect so it visibly enters
     -- and exits right at the banner's edges instead of spilling past them.
@@ -106,13 +85,12 @@ local function build(self)
     gui.set_clipping_mode(self.clip, gui.CLIPPING_MODE_STENCIL)
     gui.set_clipping_visible(self.clip, false)
 
-    local mid_y = -PANEL_H / 2
-    self.m_label1 = text(vmath.vector3(0, mid_y, 0), "", F.BODY, C_WHITE, gui.PIVOT_W, 22)
+    self.m_label1 = text(vmath.vector3(0, CHILD_Y, 0), "", F.BODY, C_WHITE, gui.PIVOT_W, 22)
     gui.set_parent(self.m_label1, self.clip)
-    self.m_label2 = text(vmath.vector3(0, mid_y, 0), "", F.BODY, C_WHITE, gui.PIVOT_W, 22)
+    self.m_label2 = text(vmath.vector3(0, CHILD_Y, 0), "", F.BODY, C_WHITE, gui.PIVOT_W, 22)
     gui.set_parent(self.m_label2, self.clip)
 
-    self.close_bg = box(vmath.vector3(PANEL_W / 2 - 34, mid_y, 0), vmath.vector3(30, 30, 0), vmath.vector4(0, 0, 0, 0))
+    self.close_bg = box(vmath.vector3(PANEL_W / 2 - 34, CHILD_Y, 0), vmath.vector3(30, 30, 0), vmath.vector4(0, 0, 0, 0))
     gui.set_pivot(self.close_bg, gui.PIVOT_CENTER)
     gui.set_parent(self.close_bg, self.root)
     self.close_lbl = text(vmath.vector3(0, 0, 0), "X", F.SMALL, C_DIM, gui.PIVOT_CENTER)
@@ -168,8 +146,8 @@ show_next = function(self)
     -- Enter from the right edge; the trailing copy follows one text-length + gap behind.
     self.m1_x = PANEL_W / 2
     self.m2_x = self.m1_x + self.marquee_w + MARQUEE_GAP
-    gui.set_position(self.m_label1, vmath.vector3(self.m1_x, -PANEL_H / 2, 0))
-    gui.set_position(self.m_label2, vmath.vector3(self.m2_x, -PANEL_H / 2, 0))
+    gui.set_position(self.m_label1, vmath.vector3(self.m1_x, CHILD_Y, 0))
+    gui.set_position(self.m_label2, vmath.vector3(self.m2_x, CHILD_Y, 0))
     self.scrolling = true
 
     local dismissable = item.isDismissable and true or false
@@ -199,8 +177,8 @@ function update(self, dt)
     if self.m1_x < off_left then self.m1_x = self.m2_x + self.marquee_w + MARQUEE_GAP end
     if self.m2_x < off_left then self.m2_x = self.m1_x + self.marquee_w + MARQUEE_GAP end
 
-    gui.set_position(self.m_label1, vmath.vector3(self.m1_x, -PANEL_H / 2, 0))
-    gui.set_position(self.m_label2, vmath.vector3(self.m2_x, -PANEL_H / 2, 0))
+    gui.set_position(self.m_label1, vmath.vector3(self.m1_x, CHILD_Y, 0))
+    gui.set_position(self.m_label2, vmath.vector3(self.m2_x, CHILD_Y, 0))
 end
 
 function on_message(self, message_id, message)
