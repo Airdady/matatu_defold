@@ -2,7 +2,7 @@
 
 # Configuration
 # TARGET_IP="10.51.116.223"
-TARGET_IP="192.168.1.127"
+TARGET_IP="192.168.1.109"
 TARGET_PORT="5555"
 
 echo "--- Preparing remote connection for $TARGET_IP ---"
