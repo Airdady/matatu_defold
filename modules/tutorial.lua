@@ -9,6 +9,16 @@
 -- supplies the on-screen rect of the element being pointed at (cards live in
 -- world space, HUD elements in GUI space, so only the owning screen can measure
 -- them). The overlay renders the spotlight + arrow + text + NEXT button.
+--
+-- IMPORTANT: this scripted walkthrough plays a fixed, Matatu-only card
+-- sequence (2 of Diamonds, Ace of Spades/Clubs, Jack, cutting-card 7 — none of
+-- which exist in a Whot deck). M.should_start / M.start_game hard-refuse to
+-- activate outside a Matatu build (see modules/game_mode.lua) so it can never
+-- be reactivated by mistake and show Matatu-only instructions/cards on a Whot
+-- or Kadi build. A Whot equivalent needs its own scripted sequence + a
+-- matching server-side scripted deal, and is not implemented yet.
+
+local GameMode = require "modules.game_mode"
 
 local M = {}
 
@@ -143,6 +153,7 @@ end
 -- ── Lobby hooks ────────────────────────────────────────────────────────────────
 -- Returns true if a first-time player should see the onboarding flow.
 function M.should_start(user_data)
+    if not GameMode.is_matatu() then return false end -- Matatu-only card sequence
     user_data = user_data or {}
     local games_played = tonumber(user_data.gamesPlayed) or 0
     if user_data.tutorialCompleted == true and games_played > 0 then return false end
@@ -174,7 +185,7 @@ end
 
 -- ── Game hooks ─────────────────────────────────────────────────────────────────
 function M.start_game(is_scripted)
-    if not is_scripted then
+    if not is_scripted or not GameMode.is_matatu() then
         M.step = S.INACTIVE
         clear_highlight()
         return
