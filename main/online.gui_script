@@ -6,6 +6,7 @@ local config    = require("modules.config")
 local app_state = require("modules.app_state")
 local ws        = require("modules.websocket_manager")
 local screen    = require("modules.screen")
+local GameMode  = require("modules.game_mode")
 
 local left_panel      = require("modules.online_left")
 local center_panel    = require("modules.online_center")
@@ -304,7 +305,21 @@ end
 
 -- ── Standard Defold Hooks ─────────────────────────────────────────────────────
 function init(self)
-    self.nodes, self.buttons, self.stake_index, self.tab, self.list_scroll, self._tick = {}, {}, 2, TAB_QUICK, 0, 0
+    -- Default stake index was hardcoded to 2 (the smallest paid tier in
+    -- Matatu's table). Look up this game's own default amount instead
+    -- (GameMode.DEFAULT_STAKE_AMOUNT: matatu=200, whot=100, kadi=10) so the
+    -- stake app_state starts in sync with online_center.lua's own default
+    -- selection, and Whot/Kadi builds don't start pinned to a UGX-derived index.
+    local default_idx = 2
+    if config.STAKE_LEVELS then
+        for idx, lvl in ipairs(config.STAKE_LEVELS) do
+            if lvl.amount == GameMode.DEFAULT_STAKE_AMOUNT then
+                default_idx = idx
+                break
+            end
+        end
+    end
+    self.nodes, self.buttons, self.stake_index, self.tab, self.list_scroll, self._tick = {}, {}, default_idx, TAB_QUICK, 0, 0
     app_state.selected_stake = app_state.selected_stake or config.STAKE_LEVELS[self.stake_index]
     refresh_wh(); update_season(self)
 end

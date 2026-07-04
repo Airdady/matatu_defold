@@ -9,12 +9,14 @@ local M = {}
 
 -- ── Drawing Logic ─────────────────────────────────────────────────────────
 function M.draw(self, ctx)
-    -- Initialize default stake to 200 on the first draw
+    -- Initialize default stake on the first draw, using this game's own
+    -- default amount (GameMode.DEFAULT_STAKE_AMOUNT: matatu=200, whot=100,
+    -- kadi=10) instead of a literal that only exists in Matatu's table.
     if not self._stake_initialized then
         self._stake_initialized = true
         if config.STAKE_LEVELS then
             for idx, lvl in pairs(config.STAKE_LEVELS) do
-                if lvl.amount == 200 then
+                if lvl.amount == GameMode.DEFAULT_STAKE_AMOUNT then
                     self.stake_index = idx
                     break
                 end
@@ -93,10 +95,25 @@ function M.draw(self, ctx)
     if self.tab == TAB_QUICK then
         local stakes_gap   = 10
         local stake_card_h = 62
-        local st_w         = (list_w - (3 * stakes_gap)) / 4
-        
+
         local my_balance  = tonumber((ws.current_user_data or {}).balance) or 0
-        local stakes      = { 100, 200, 500, 1000 }
+
+        -- Paid stake tiers for this game, in order, straight from
+        -- config.STAKE_LEVELS (skips the "Free" 0-amount tier, which has no
+        -- button here). Was hardcoded to Matatu's UGX amounts
+        -- {100,200,500,1000}, so Whot/Kadi builds kept showing UGX values
+        -- instead of their own NGN/KES tiers.
+        local stakes = {}
+        if config.STAKE_LEVELS then
+            for _, lvl in ipairs(config.STAKE_LEVELS) do
+                if lvl.amount and lvl.amount > 0 then
+                    stakes[#stakes+1] = lvl.amount
+                end
+            end
+        end
+
+        local tile_count = math.max(#stakes, 1)
+        local st_w       = (list_w - ((tile_count - 1) * stakes_gap)) / tile_count
 
         for i, st in ipairs(stakes) do
             local sx = content_l + (i - 0.5) * st_w + (i - 1) * stakes_gap
