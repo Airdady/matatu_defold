@@ -1,5 +1,6 @@
-local ws     = require("modules.websocket_manager")
-local config = require("modules.config")
+local ws       = require("modules.websocket_manager")
+local config   = require("modules.config")
+local GameMode = require("modules.game_mode")
 
 local TAB_QUICK   = 1
 local TAB_BATTLES = 2
@@ -282,11 +283,16 @@ function M.draw(self, ctx)
                 local mb  = pu.myBattle
                 local amt = tonumber((mb.stake or {}).amount) or tonumber(mb.stakeAmount) or 0
                 local fmt = tonumber(mb.matchFormat) or 3
+                -- "NO JOKERS" is a Matatu-only ruleset concept (CLASSIC vs
+                -- JOKERS); Whot/Kadi have no such toggle, so never show it
+                -- outside a Matatu build.
                 local rules = mb.rules
                 local is_classic = false
-                if type(rules) == "string" then is_classic = rules:upper() == "CLASSIC"
-                elseif type(rules) == "table" then
-                    for _, r in ipairs(rules) do if tostring(r):upper() == "CLASSIC" then is_classic = true end end
+                if GameMode.is_matatu() then
+                    if type(rules) == "string" then is_classic = rules:upper() == "CLASSIC"
+                    elseif type(rules) == "table" then
+                        for _, r in ipairs(rules) do if tostring(r):upper() == "CLASSIC" then is_classic = true end end
+                    end
                 end
                 if is_classic then
                     local jx = info_x - 160 -- Shifted slightly left to accommodate the larger "body" text
