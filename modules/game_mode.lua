@@ -44,6 +44,7 @@ local DEFS = {
         currency_symbol     = "UGX",
         phone_country_code  = "256",
         phone_placeholder   = "07XX XXX XXX",
+        default_stake_amount = 200,
         how_to  = {
             "On your turn, play a card matching the",
             "top card's SUIT or NUMBER.",
@@ -68,6 +69,7 @@ local DEFS = {
         currency_symbol     = "\226\130\166", -- ₦
         phone_country_code  = "234",
         phone_placeholder   = "0801 234 5678",
+        default_stake_amount = 100,
         how_to  = {
             "On your turn, play a card matching the",
             "top card's SHAPE or NUMBER.",
@@ -92,6 +94,7 @@ local DEFS = {
         currency_symbol     = "KSh",
         phone_country_code  = "254",
         phone_placeholder   = "07XX XXX XXX",
+        default_stake_amount = 10,
         how_to  = {
             "On your turn, play a card matching the",
             "top card's SUIT or NUMBER.",
@@ -121,6 +124,7 @@ M.CURRENCY_CODE        = d.currency_code
 M.CURRENCY_SYMBOL      = d.currency_symbol
 M.PHONE_COUNTRY_CODE   = d.phone_country_code
 M.PHONE_PLACEHOLDER    = d.phone_placeholder
+M.DEFAULT_STAKE_AMOUNT = d.default_stake_amount
 
 -- Convenience predicates
 function M.is_whot()   return M.GAME == "WHOT"   end
