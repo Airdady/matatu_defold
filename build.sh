@@ -8,12 +8,20 @@
 # USAGE:
 #   ./build.sh [whot|matatu|kadi]
 #
-# The game argument (default: whot) is the single switch for the whole
-# build: it patches modules/game_mode.lua's M.GAME so every endpoint,
-# card-art path and in-app label follows (see that file's header), and
-# sets game.project's [project] title + [android] package to match, so
-# each game installs as its own distinct app instead of overwriting
-# whichever one was built last.
+# The game argument (default: whot) patches modules/game_mode.lua's M.GAME so
+# every endpoint, card-art path and in-app label follows (see that file's
+# header), and sets game.project's [project] title to match.
+#
+# IMPORTANT: the Android [android] package name is deliberately NEVER changed
+# by game here. Google Sign-In (GPGS) is registered in Google Cloud Console
+# against one specific (package name + signing certificate) pair per
+# [gpgs] client_id/app_id in game.project; building under a different,
+# unregistered package makes on-device Google Sign-In fail with a
+# DEVELOPER_ERROR before the request ever reaches the backend — it looks like
+# a server/auth bug but is actually a client identity mismatch. All three
+# games therefore ship under whatever package is already configured in
+# game.project (do not vary it per game unless that package is also
+# registered as an Android OAuth client for this project).
 # ==========================================================
 
 set -e
@@ -23,14 +31,27 @@ GAME="${1:-whot}"
 GAME="$(echo "$GAME" | tr '[:upper:]' '[:lower:]')"
 
 case "$GAME" in
-    whot)   GAME_UPPER="WHOT";   PACKAGE_NAME="com.matatu.whot";   PROJECT_TITLE="Whot"   ;;
-    matatu) GAME_UPPER="MATATU"; PACKAGE_NAME="com.matatu.champ";  PROJECT_TITLE="Matatu" ;;
-    kadi)   GAME_UPPER="KADI";   PACKAGE_NAME="com.matatu.kadi";   PROJECT_TITLE="Kadi"   ;;
+    whot)   GAME_UPPER="WHOT";   PROJECT_TITLE="Whot"   ;;
+    matatu) GAME_UPPER="MATATU"; PROJECT_TITLE="Matatu" ;;
+    kadi)   GAME_UPPER="KADI";   PROJECT_TITLE="Kadi"   ;;
     *)
         echo "❌ Unknown game '$GAME' — expected: whot | matatu | kadi"
         exit 1
         ;;
 esac
+
+# Package name is read from game.project, never written by this script (see
+# the GPGS note above) — this keeps Google Sign-In working for every game.
+PACKAGE_NAME=$(awk '
+    /^\[android\]/ { in_android=1; next }
+    /^\[/ { in_android=0 }
+    in_android && /^package[[:space:]]*=/ { sub(/^package[[:space:]]*=[[:space:]]*/, ""); print; exit }
+' game.project)
+
+if [ -z "$PACKAGE_NAME" ]; then
+    echo "❌ Could not read [android] package from game.project"
+    exit 1
+fi
 
 BUNDLE_DIR="./bundles/android_debug_${GAME}"
 
@@ -83,68 +104,7 @@ awk -v t="$PROJECT_TITLE" '
 ' game.project > game.project.tmp && mv game.project.tmp game.project
 
 echo "✅ game.project -> title = $PROJECT_TITLE"
-
-# ==========================================================
-# 1. UPDATE PACKAGE NAME
-# ==========================================================
-
-echo ""
-echo "📝 Updating game.project package..."
-
-if grep -q "\[android\]" game.project; then
-
-    if grep -q "^package =" game.project; then
-
-        awk -v p="$PACKAGE_NAME" '
-        BEGIN { in_android=0 }
-
-        /^\[android\]/ {
-            in_android=1
-            print
-            next
-        }
-
-        /^\[/ && $0 != "[android]" {
-            in_android=0
-        }
-
-        in_android && /^package =/ {
-            print "package = " p
-            next
-        }
-
-        {
-            print
-        }
-        ' game.project > game.project.tmp
-
-        mv game.project.tmp game.project
-
-    else
-
-        awk -v p="$PACKAGE_NAME" '
-        /^\[android\]/ {
-            print
-            print "package = " p
-            next
-        }
-
-        {
-            print
-        }
-        ' game.project > game.project.tmp
-
-        mv game.project.tmp game.project
-    fi
-
-else
-
-    echo "" >> game.project
-    echo "[android]" >> game.project
-    echo "package = $PACKAGE_NAME" >> game.project
-fi
-
-echo "✅ Package updated"
+echo "ℹ️  Package left as-is (${PACKAGE_NAME}) — required for Google Sign-In, see note above."
 
 # ==========================================================
 # 2. BUILD APK

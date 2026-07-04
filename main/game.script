@@ -110,6 +110,12 @@ function init(self)
     self._game_over_absolute_timeout = 0
     self._gs_anim_locks = 0
     self._is_processing_game_over = false -- Safely lock game over to prevent duplicate triggers
+    -- Set the instant the server says the game ended (ws_game_over), well
+    -- before self.game_over itself flips true — that only happens once the
+    -- watchdog settles and process_game_over_queue's own 1.2s delay elapses.
+    -- Without this, board/hand cards stayed tappable for that whole window
+    -- (most noticeable when the OPPONENT won, since the board sits idle).
+    self.input_locked_for_game_over = false
 
     -- ---- self.* dispatch table -------------------------------------------
     self.play_sound       = function(name) play_sound(self, name) end
@@ -551,7 +557,7 @@ function on_input(self, action_id, action)
 
     reconcile_input_locks(self)
 
-    if self.game_over or self.is_processing_move or self.emoji_popover_open then
+    if self.game_over or self.input_locked_for_game_over or self.is_processing_move or self.emoji_popover_open then
         return true
     end
 
@@ -706,6 +712,7 @@ local function start_new_online_game(self, state, is_explicit_start_event)
         self._game_over_absolute_timeout = 0
         self._gs_anim_locks = 0
     end
+    self.input_locked_for_game_over = false
     self._is_processing_game_over = false -- Free processing lock
     
     -- Flush move queue to prevent ghost moves carrying into the next round
@@ -807,7 +814,8 @@ function on_message(self, message_id, message, sender)
         self._game_over_settle_time = 0
         self._game_over_absolute_timeout = 0
         self._is_processing_game_over = false
-        
+        self.input_locked_for_game_over = false
+
         notify_gui(self.gui_suit, "reset_hud")
         notify_gui(self.gui_over, "reset_hud")
         notify_gui(self.gui_hud, "reset_hud")
@@ -997,6 +1005,13 @@ function on_message(self, message_id, message, sender)
             self.pending_game_over_data = ws.last_game_over or {}
             self._game_over_absolute_timeout = 0
             self._game_over_settle_time = 0
+            -- Lock input NOW, not several seconds from now when self.game_over
+            -- finally flips true — the watchdog above waits for the move
+            -- queue/animations to settle before even starting the reveal
+            -- sequence, and that sequence has its own delays on top. Without
+            -- this, board/hand cards stayed tappable the whole time the
+            -- "opponent won" result was already known but not yet shown.
+            self.input_locked_for_game_over = true
         end
 
     elseif message_id == hash("ws_replay_declined") then
