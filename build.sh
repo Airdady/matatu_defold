@@ -4,13 +4,35 @@
 # DEfOLD ANDROID DEBUG BUILD + MULTI-DEVICE INSTALL
 # INSTALLS ON ALL CONNECTED DEVICES
 # PRESERVES APP DATA/CACHE
+#
+# USAGE:
+#   ./build.sh [whot|matatu|kadi]
+#
+# The game argument (default: whot) is the single switch for the whole
+# build: it patches modules/game_mode.lua's M.GAME so every endpoint,
+# card-art path and in-app label follows (see that file's header), and
+# sets game.project's [project] title + [android] package to match, so
+# each game installs as its own distinct app instead of overwriting
+# whichever one was built last.
 # ==========================================================
 
 set -e
 
 # ---------------- CONFIG ----------------
-PACKAGE_NAME="com.matatu.champ"
-BUNDLE_DIR="./bundles/android_debug"
+GAME="${1:-whot}"
+GAME="$(echo "$GAME" | tr '[:upper:]' '[:lower:]')"
+
+case "$GAME" in
+    whot)   GAME_UPPER="WHOT";   PACKAGE_NAME="com.matatu.whot";   PROJECT_TITLE="Whot"   ;;
+    matatu) GAME_UPPER="MATATU"; PACKAGE_NAME="com.matatu.champ";  PROJECT_TITLE="Matatu" ;;
+    kadi)   GAME_UPPER="KADI";   PACKAGE_NAME="com.matatu.kadi";   PROJECT_TITLE="Kadi"   ;;
+    *)
+        echo "❌ Unknown game '$GAME' — expected: whot | matatu | kadi"
+        exit 1
+        ;;
+esac
+
+BUNDLE_DIR="./bundles/android_debug_${GAME}"
 
 # Optional manual activity
 MAIN_ACTIVITY=""
@@ -25,8 +47,42 @@ ARCHITECTURES="armv7-android,arm64-android"
 
 echo "=========================================================="
 echo "🚀 Starting Defold Android Debug Build"
+echo "🎮 Game:    $GAME_UPPER"
 echo "📦 Package: $PACKAGE_NAME"
 echo "=========================================================="
+
+# ==========================================================
+# 0. SWITCH THE GAME MODE (modules/game_mode.lua + game.project title)
+# ==========================================================
+
+echo ""
+echo "🎛️  Setting GAME_MODE to $GAME_UPPER..."
+
+if [ ! -f modules/game_mode.lua ]; then
+    echo "❌ modules/game_mode.lua not found — is this the matatu_defold repo root?"
+    exit 1
+fi
+
+# M.GAME = "WHOT"          -- "MATATU" | "WHOT" | "KADI"
+sed -i.bak -E "s/^(M\.GAME[[:space:]]*=[[:space:]]*)\"[A-Z]+\"/\1\"${GAME_UPPER}\"/" modules/game_mode.lua
+rm -f modules/game_mode.lua.bak
+
+if ! grep -q "M.GAME = \"${GAME_UPPER}\"" modules/game_mode.lua; then
+    echo "❌ Failed to set M.GAME in modules/game_mode.lua"
+    exit 1
+fi
+
+echo "✅ modules/game_mode.lua -> M.GAME = \"${GAME_UPPER}\""
+
+# [project] title = ...
+awk -v t="$PROJECT_TITLE" '
+    /^\[project\]/ { print; in_project=1; next }
+    /^\[/ && $0 != "[project]" { in_project=0 }
+    in_project && /^title[[:space:]]*=/ { print "title = " t; next }
+    { print }
+' game.project > game.project.tmp && mv game.project.tmp game.project
+
+echo "✅ game.project -> title = $PROJECT_TITLE"
 
 # ==========================================================
 # 1. UPDATE PACKAGE NAME
