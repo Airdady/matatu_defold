@@ -430,21 +430,34 @@ function M.apply_general_market(self, actor_seat)
     notify(GUI_HUD, "t4_flash", { text = "GENERAL MARKET!" })
 
     actor_seat = actor_seat or self.t4.turn_seat
+
+    -- Every OTHER alive seat draws 1 card, ONE AT A TIME in turn order —
+    -- not all simultaneously — so the pickup reads as a clean cascading
+    -- sequence instead of every hand flying in at once.
+    local order = {}
     for _, s in ipairs(alive_seats(self)) do
-        if s ~= actor_seat then
-            if s.is_human and self.t4.human_alive then
-                self.draw_to_hand(self.player_hand, true, 1, nil)
-            else
-                ai_draw(self, s, 1, nil)
-            end
-        end
+        if s ~= actor_seat then order[#order + 1] = s end
     end
 
-    -- Give the draws a moment to animate, then the actor plays again.
     local seq = self._seq
-    timer.delay(0.7, false, function()
-        if seq == self._seq and not self.game_over then M.apply_hold_on(self) end
-    end)
+    local function draw_next(i)
+        if seq ~= self._seq or self.game_over then return end
+        local s = order[i]
+        if not s then
+            -- Everyone has drawn; the actor plays again.
+            timer.delay(0.3, false, function()
+                if seq == self._seq and not self.game_over then M.apply_hold_on(self) end
+            end)
+            return
+        end
+        local function advance() draw_next(i + 1) end
+        if s.is_human and self.t4.human_alive then
+            self.draw_to_hand(self.player_hand, true, 1, advance)
+        else
+            ai_draw(self, s, 1, advance)
+        end
+    end
+    draw_next(1)
 end
 
 -- ── AI seat turn ─────────────────────────────────────────────────────────────
@@ -773,6 +786,11 @@ end
 
 function M.game_over_human_out(self, finisher)
     self.t4.revealing = false
+    -- Unlike finish_round (a normal round end), this path is reached
+    -- directly from an AFK timeout / elimination-chamber cutoff without ever
+    -- setting self.game_over — so board/hand cards stayed fully tappable
+    -- behind the game-over modal whenever the human lost this way.
+    self.game_over = true
     notify(GUI_OVER, "game_over", {
         won = false, player_score = 0, ai_score = 0,
         is_cut = false, series_active = false, series_over = true,
