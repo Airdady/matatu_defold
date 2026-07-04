@@ -71,6 +71,13 @@ local function calc_fee(method, amount)
 		local mn = tonumber(tier.min) or 0
 		local mx = tier.max and tonumber(tier.max) or nil
 		if amount >= mn and (mx == nil or amount <= mx) then
+			-- Percent tiers (e.g. the 3% deposit fee) scale with amount, unlike
+			-- withdrawal's flat per-tier fee; round the same way the backend's
+			-- calcDepositBreakdown does so the fee shown here matches the fee
+			-- the server actually charges/records.
+			if tier.percent then
+				return math.floor(amount * tonumber(tier.percent) + 0.5)
+			end
 			return tonumber(tier.fee) or 0
 		end
 	end
@@ -89,7 +96,7 @@ local function methods()
 		list = u.payments
 	else
 		list = {
-			{ type = "DEPOSIT",  min = 500,  charges = { { min = 0, fee = 0 } } },
+			{ type = "DEPOSIT",  min = 500,  charges = { { min = 0, percent = 0.03 } } },
 			{ type = "WITHDRAW", min = 1000, charges = { { min = 0, fee = 200 } } },
 		}
 	end
@@ -103,7 +110,7 @@ local function methods()
 		end
 		-- Always leave at least a deposit option so the dialog stays usable.
 		if #filtered == 0 then
-			filtered = { { type = "DEPOSIT", min = 500, charges = { { min = 0, fee = 0 } } } }
+			filtered = { { type = "DEPOSIT", min = 500, charges = { { min = 0, percent = 0.03 } } } }
 		end
 		return filtered
 	end
