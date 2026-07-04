@@ -24,12 +24,26 @@ local M = {}
 M.GAME = "WHOT"          -- "MATATU" | "WHOT" | "KADI"
 
 -- Per-game definitions.
+--
+-- country/currency_code/currency_symbol/phone_country_code/phone_placeholder
+-- mirror be_matatu's COUNTRY_CONFIG (src/common/constants/gameConfig.ts) —
+-- Matatu=Uganda/UGX (existing, unchanged), Whot=Nigeria/NGN, Kadi=Kenya/KES.
+-- These drive display only (currency labels, phone-field placeholder); the
+-- real-money online stake AMOUNTS are intentionally NOT switched here yet —
+-- see WHOT_PORT_NOTES.md for why (the backend's stake tables are hardcoded
+-- UGX-only in several money-settlement files and would need a coordinated
+-- fix first, to avoid corrupting a Whot/Kadi player's real stake).
 local DEFS = {
     MATATU = {
         path    = "matatu",
         brand   = "Matatu",
         title   = "MATATU",
         tagline = "East Africa's favourite card game.",
+        country            = "Uganda",
+        currency_code       = "UGX",
+        currency_symbol     = "UGX",
+        phone_country_code  = "256",
+        phone_placeholder   = "07XX XXX XXX",
         how_to  = {
             "On your turn, play a card matching the",
             "top card's SUIT or NUMBER.",
@@ -49,6 +63,11 @@ local DEFS = {
         brand   = "Whot",
         title   = "WHOT",
         tagline = "Africa's favourite shapes card game.",
+        country            = "Nigeria",
+        currency_code       = "NGN",
+        currency_symbol     = "\226\130\166", -- ₦
+        phone_country_code  = "234",
+        phone_placeholder   = "0801 234 5678",
         how_to  = {
             "On your turn, play a card matching the",
             "top card's SHAPE or NUMBER.",
@@ -68,6 +87,11 @@ local DEFS = {
         brand   = "Kadi",
         title   = "KADI",
         tagline = "The classic Kadi card game.",
+        country            = "Kenya",
+        currency_code       = "KES",
+        currency_symbol     = "KSh",
+        phone_country_code  = "254",
+        phone_placeholder   = "07XX XXX XXX",
         how_to  = {
             "On your turn, play a card matching the",
             "top card's SUIT or NUMBER.",
@@ -91,6 +115,12 @@ M.BRAND   = d.brand       -- "Whot"  (mixed case, for sentences)
 M.TITLE   = d.title       -- "WHOT"  (upper, for the big lobby title)
 M.TAGLINE = d.tagline
 M.BOT     = d.brand .. " Bot"
+
+M.COUNTRY             = d.country
+M.CURRENCY_CODE        = d.currency_code
+M.CURRENCY_SYMBOL      = d.currency_symbol
+M.PHONE_COUNTRY_CODE   = d.phone_country_code
+M.PHONE_PLACEHOLDER    = d.phone_placeholder
 
 -- Convenience predicates
 function M.is_whot()   return M.GAME == "WHOT"   end
