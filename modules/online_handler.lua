@@ -1,6 +1,7 @@
 local ws = require "modules.websocket_manager"
 local Defs = require "modules.card_defs"
 local CV = require "modules.card_view"
+local GameMode = require "modules.game_mode"
 
 local GUI_HUD   = "#game"
 local GUI_SUIT  = "#suit_select"
@@ -747,7 +748,12 @@ function M.start_game(self, state)
     local opp_hand  = (type(op.hand) == "table") and op.hand or nil
     local opp_count = op.handCount or (opp_hand and #opp_hand) or 7
     local top_card  = state.currentCard
-    local cut_card  = state.cuttingCard
+    -- Matatu-only: a side "cutting card" placed beside the deck. The server
+    -- sends `cuttingCard` for every game (it's the Whot/Kadi initial deal's
+    -- starter too), but only Matatu treats it as a persistent side card —
+    -- Whot/Kadi's true top-of-pile lives in state.currentCard/playedCards
+    -- (rebuilt into the discard pile below), so never render it as one there.
+    local cut_card  = GameMode.is_matatu() and state.cuttingCard or nil
 
     self.active_penalty = state.activePenaltyCount or 0
     self.chosen_suit    = state.chosenSuit or ""
