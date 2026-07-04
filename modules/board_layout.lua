@@ -18,6 +18,16 @@ M.CARD_SCALE_F  = M.TARGET_W / M.NATIVE_CARD_W
 M.TARGET_H      = M.NATIVE_CARD_H * M.CARD_SCALE_F
 M.CARD_SCALE    = vmath.vector3(M.CARD_SCALE_F, M.CARD_SCALE_F, 1.0)
 
+-- The opponent's hand in a 2-player game (online or offline) is always shown
+-- face-down (back only) — render it a touch smaller than the player's own
+-- hand so the two read as visually distinct. Cards return to CARD_SCALE the
+-- moment they're played to the pile (animate_to_pile) or revealed. The same
+-- ratio also tightens the gap between opponent cards (calc_spacing) so the
+-- whole hand shrinks proportionally instead of just the cards themselves.
+M.OPPONENT_SCALE_RATIO  = 0.88
+M.OPPONENT_CARD_SCALE_F = M.CARD_SCALE_F * M.OPPONENT_SCALE_RATIO
+M.OPPONENT_CARD_SCALE   = vmath.vector3(M.OPPONENT_CARD_SCALE_F, M.OPPONENT_CARD_SCALE_F, 1.0)
+
 M.PILE_OFFSET_X = 50
 M.PILE_OFFSET_Y = 34
 M.SAVE_NAME     = "matatu_defold_state"
@@ -41,10 +51,11 @@ local Z_HAND, Z_CUT = M.Z_HAND, M.Z_CUT
 ----------------------------------------------------------------------
 -- Hand spacing
 ----------------------------------------------------------------------
-function M.calc_spacing(self, n)
+function M.calc_spacing(self, n, scale_f)
     if n <= 1 then return 0 end
-    local base_gap = TARGET_W
-    local extra_gap = math.min(24, math.max(0, 8 - n) * 6)
+    scale_f = scale_f or 1.0
+    local base_gap = TARGET_W * scale_f
+    local extra_gap = math.min(24, math.max(0, 8 - n) * 6) * scale_f
     local desired_gap = base_gap + extra_gap
 
     local required = n * desired_gap
@@ -154,20 +165,30 @@ end
 function M.layout_hand(self, hand, y, animate)
     local n = #hand
     if n == 0 then return end
-    local spacing = M.calc_spacing(self, n)
-    local start = self.CENTER.x - ((n - 1) * spacing) / 2.0
 
     -- Gentle arch + fan in EVERY mode (offline, online and the 4-player
     -- tournament) so the look is consistent. The human's bottom hand arches up;
     -- the opponent's top hand mirrors it (bulges down toward the centre). In a
     -- 4-player tournament only the live human's hand is arched.
     local is_player_hand = (hand == self.player_hand)
-    local is_ai_hand     = (hand == self.ai_hand)
-    local arch = (is_player_hand and (not self.t4 or self.t4.human_alive))
-              or (is_ai_hand and not self.t4)
+    -- Only the 2-player opponent hand (the 4-player tournament doesn't use
+    -- this function) is rendered smaller — it's always face-down.
+    local is_ai_hand     = (hand == self.ai_hand) and not self.t4
+
+    -- The opponent's cards render smaller (see OPPONENT_CARD_SCALE above) —
+    -- tighten the gap between them by the same ratio so the hand shrinks
+    -- proportionally instead of just the cards themselves.
+    local spacing = M.calc_spacing(self, n, is_ai_hand and M.OPPONENT_SCALE_RATIO or 1.0)
+    local start = self.CENTER.x - ((n - 1) * spacing) / 2.0
+
+    local arch = (is_player_hand and (not self.t4 or self.t4.human_alive)) or is_ai_hand
     local arc_amt = arch and math.min(34, n * 5.0) or 0
     local fan_amt = arch and math.min(8, n * 1.3) or 0
     local dir     = is_ai_hand and -1 or 1   -- mirror the curve for the top hand
+
+    if is_ai_hand then
+        for _, c in ipairs(hand) do go.set(c.id, "scale", M.OPPONENT_CARD_SCALE) end
+    end
 
     for i, c in ipairs(hand) do
         local z = Z_HAND + i * 0.001

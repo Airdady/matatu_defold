@@ -26,6 +26,11 @@ M.active_game_state = {}
 -- payloads here in the shared Lua VM and only post a lightweight wake signal.
 M.move_inbox = {}
 M.last_game_over = {}
+M.last_season_complete = nil
+M.current_season_status = nil
+M.last_daily_bonus_status = nil
+M.last_daily_bonus_claim = nil
+M.current_savings_status = nil
 
 local connection = nil
 local is_connecting = false
@@ -139,6 +144,8 @@ function M.identify(id, username, stake, country)
     country = country or "",
     appVersion = config.APP_VERSION,
   }
+  print(string.format("[WS-DEBUG] identify() called: id=%s socket_connected=%s (%s)",
+    tostring(id), tostring(M.socket_connected), M.socket_connected and "sending IDENTIFY now" or "queued for on_connected"))
   if M.socket_connected then
     M.send_message("IDENTIFY", pending_identity)
   end
@@ -163,6 +170,30 @@ end
 
 function M.decline_game_request(request_id)
   M.send_message("GAME_REQUEST_DECLINED", { requestId = request_id })
+end
+
+-- Ack that the player has viewed the Season Results screen (sent when they
+-- close the Half-Week Season Complete modal).
+function M.send_season_results_viewed(season_id)
+  M.send_message("SEASON_RESULTS_VIEWED", { seasonId = season_id })
+end
+
+-- Player pressed the claim/accept button on the daily bonus dialog.
+function M.claim_daily_bonus()
+  M.send_message("CLAIM_DAILY_BONUS", {})
+end
+
+-- Player chose to exchange `amount` coins from their balance into Savings now
+-- (the "Exchange to Savings now" stepper in the savings Add dialog).
+function M.exchange_to_savings(amount)
+  M.send_message("EXCHANGE_TO_SAVINGS", { amount = amount })
+end
+
+-- Player saved their auto-charge-per-game preference (the "Auto-charge per
+-- game" toggle in the savings Add dialog). `amount` must be one of 2/5/10/25
+-- when `enabled` is true.
+function M.set_savings_auto_charge(enabled, amount)
+  M.send_message("SET_SAVINGS_AUTO_CHARGE", { enabled = enabled, amount = amount })
 end
 
 function M.send_emoji(name, sound, to)
@@ -233,8 +264,11 @@ local function parse_message(json_string)
       emit("network_quality", { user_id = uid, latency_ms = tonumber(d.latency) or 0 })
     end
   elseif t == "AUTH_REQUIRED" then
+    print("[WS-DEBUG] AUTH_REQUIRED received: " .. tostring(d.message))
+    M.is_identified = false
     emit("auth_required", d.message or "Device not registered")
   elseif t == "IDENTIFY" then
+    print("[WS-DEBUG] IDENTIFY response received, marking is_identified=true")
     M.is_identified = true
     local user_payload = d
     if type(d.user) == "table" then
@@ -384,11 +418,56 @@ local function parse_message(json_string)
     -- ride through msg.post — and read back by the online lobby.
     M.last_head_to_head = d or {}
     emit("head_to_head", d or {})
+  elseif t == "SEASON_COMPLETE" then
+    -- Half-Week Season wrap-up: final rank, rewards, badges/missions, and the
+    -- full leaderboard. Parked here (too big to ride through msg.post) and
+    -- read back by the global season_results overlay.
+    M.last_season_complete = d
+    emit("season_complete", d)
+  elseif t == "SEASON_STATUS" then
+    -- Pushed right after IDENTIFY so the client can drive an accurate
+    -- countdown instead of guessing the Mon/Wed-noon/Sat boundary locally.
+    M.current_season_status = d
+    emit("season_status", d)
+  elseif t == "DAILY_BONUS_STATUS" then
+    -- Pushed right after IDENTIFY, same moment SEASON_STATUS arrives. Parked
+    -- here and read back by the global daily_bonus overlay.
+    M.last_daily_bonus_status = d
+    emit("daily_bonus_status", d)
+  elseif t == "DAILY_BONUS_CLAIMED" then
+    -- Server's reply to a CLAIM_DAILY_BONUS attempt.
+    M.last_daily_bonus_claim = d
+    emit("daily_bonus_claimed", d)
+  elseif t == "SAVINGS_STATUS" then
+    -- Pushed right after IDENTIFY, same moment SEASON_STATUS/DAILY_BONUS_STATUS
+    -- already arrive. Parked here and read back by the savings Add dialog.
+    M.current_savings_status = d
+    emit("savings_status", d)
+  elseif t == "SAVINGS_EXCHANGE_RESULT" then
+    -- Server's reply to an EXCHANGE_TO_SAVINGS attempt.
+    M.last_savings_exchange = d
+    emit("savings_exchange_result", d)
+    if d.success then
+      if M.current_user_data then
+        M.current_user_data.balance = d.newBalance
+        M.current_user_data.savingCoins = d.newSavingCoins
+      end
+      if M.current_savings_status then M.current_savings_status.savingCoins = d.newSavingCoins end
+    end
+  elseif t == "SAVINGS_SETTINGS_UPDATED" then
+    -- Server's reply to a SET_SAVINGS_AUTO_CHARGE attempt.
+    M.last_savings_settings = d
+    emit("savings_settings_updated", d)
+    if d.success and M.current_savings_status then
+      M.current_savings_status.autoCharge = { enabled = d.enabled, amount = d.amount }
+    end
   elseif t == "TRANSACTION_COMPLETED" then
     emit("transaction_completed", d)
   elseif t == "TRANSACTION_FAILED" then
     emit("transaction_failed", d.reason or "Failed")
   elseif t == "IDENTIFY_ERROR" then
+    print("[WS-DEBUG] IDENTIFY_ERROR received: " .. tostring(d.message))
+    M.is_identified = false
     emit("identify_error", d.message or "Authentication Failed")
   elseif t == "ERROR" then
     emit("error", d.message or "Error")
@@ -444,6 +523,7 @@ local function on_connected()
   current_reconnect_delay = config.INITIAL_RECONNECT_DELAY
   start_keep_alive()
   emit("connected")
+  print(string.format("[WS-DEBUG] on_connected: pending_identity=%s", tostring(pending_identity ~= nil)))
   if pending_identity then M.send_message("IDENTIFY", pending_identity) end
 end
 
@@ -495,7 +575,11 @@ local function ws_callback(_, conn, data)
 end
 
 function M.connect()
-  if is_connecting or M.socket_connected then return end
+  if is_connecting or M.socket_connected then
+    print(string.format("[WS-DEBUG] connect() no-op: is_connecting=%s socket_connected=%s",
+      tostring(is_connecting), tostring(M.socket_connected)))
+    return
+  end
   if not websocket then
     print("[WS] ERROR: extension-websocket not installed. Add it to game.project dependencies.")
     emit("connection_error", "websocket extension missing")
@@ -527,6 +611,17 @@ end
 function M.get_active_game() return M.active_game_state end
 function M.get_online_users() return M.online_users end
 function M.get_current_user_id() return M.current_user_id end
+
+-- Ask the backend to (re)broadcast the online-players list right now,
+-- instead of passively waiting on whatever the last push happened to be.
+-- The server's own broadcast is debounced ~1s and purely event-driven (new
+-- login, game end, disconnect, etc.) — a first-time solo player has no other
+-- event to trigger a second broadcast, so without this, entering the online
+-- screen slightly before that debounced window closes could leave the list
+-- looking permanently empty for the rest of the session.
+function M.request_online_users()
+  M.send_message("ONLINE_USERS", {})
+end
 
 -- Move inbox: parked here (shared VM) instead of being passed through msg.post.
 function M.queue_move(move, state)

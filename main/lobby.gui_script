@@ -74,7 +74,7 @@ local STATE_TOURNEY   = "tournament"
 -- Tutorial data
 -- ---------------------------------------------------------------------------
 local TUTORIAL_PAGES = {
-    { t = "WELCOME TO WHOT", lines = { "Africa's favourite shapes card game.", "Match by shape or number and be the", "first to empty your hand to win!" } },
+    { t = "WELCOME TO MATATU", lines = { "East Africa's favourite card game.", "Match, attack, and be the first to", "empty your hand to win!" } },
     { t = "GAME MODES", lines = { "PLAY ONLINE  —  live coin matches", "QUICK PLAY  —  practice vs the AI", "BATTLE AI  —  best-of series", "TOURNAMENT  —  bracket of players" } },
     { t = "HOW TO PLAY", lines = { "On your turn, play a card matching the", "top card's SUIT or NUMBER.", "No match?  Tap the deck to DRAW." } },
     { t = "SPECIAL CARDS", lines = { "8 / J    skip the opponent (play again)", "2 / 3    opponent draws a penalty", "Ace      choose the next suit", "Joker    pass on a 5-card penalty", "Ace of Spades  cancels any penalty", "7    the cutting card can end a round" } },
@@ -109,6 +109,40 @@ local function text_sh(self, pos, str, font, color, ox, oy)
     ox = ox or 1; oy = oy or -2
     track(self, ui.text(vmath.vector3(pos.x + ox, pos.y + oy, 0), str, font, vmath.vector4(0, 0, 0, 0.8)))
     return track(self, ui.text(pos, str, font, color))
+end
+
+-- ---------------------------------------------------------------------------
+-- Season countdown (header, middle)
+-- ---------------------------------------------------------------------------
+local function days_from_civil(y, m, d)
+    y = (m <= 2) and (y - 1) or y
+    local era = math.floor((y >= 0 and y or y - 399) / 400)
+    local yoe = y - era * 400
+    local mp = (m + 9) % 12
+    local doy = math.floor((153 * mp + 2) / 5) + d - 1
+    local doe = yoe * 365 + math.floor(yoe / 4) - math.floor(yoe / 100) + doy
+    return era * 146097 + doe - 719468
+end
+
+local function parse_iso_utc(str)
+    if type(str) ~= "string" then return nil end
+    local y, mo, d, h, mi, s = str:match("(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
+    if not y then return nil end
+    local days = days_from_civil(tonumber(y), tonumber(mo), tonumber(d))
+    return days * 86400 + tonumber(h) * 3600 + tonumber(mi) * 60 + tonumber(s)
+end
+
+local function update_lobby_season(self)
+    local status = ws.current_season_status
+    local end_epoch = status and parse_iso_utc(status.endDate)
+    if not end_epoch then
+        self.season_text = nil
+        return
+    end
+    local diff = math.max(0, end_epoch - os.time())
+    self.season_text = diff >= 86400
+        and string.format("%dD %02dH %02dM %02dS", math.floor(diff / 86400), math.floor((diff % 86400) / 3600), math.floor((diff % 3600) / 60), diff % 60)
+        or string.format("%02dH %02dM %02dS", math.floor(diff / 3600), math.floor((diff % 3600) / 60), diff % 60)
 end
 
 -- ---------------------------------------------------------------------------
@@ -205,8 +239,6 @@ local function util_tile(self, cfg)
     -- Bottom indicator tick
     track(self, ui.box(vmath.vector3(x, y - h/2 + 3, 0), vmath.vector3(20, 4, 0), disabled and C_DISABLED or cfg.accent_col))
 
-    -- A disabled tile still absorbs the tap (id flagged) so it never falls
-    -- through to a tile behind it, but the handler treats it as a no-op.
     local hit = track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), C_TRANSP))
     self.buttons[#self.buttons + 1] = { node = hit, id = disabled and (cfg.disabled_id or "noop") or cfg.btn_id }
 end
@@ -381,7 +413,7 @@ local function draw_ai_select(self)
     local sb_y = CY - 128
     local sb = track(self, ui.btn9(vmath.vector3(CX, sb_y, 0), vmath.vector3(296, 60, 0), "primary_btn"))
     text_sh(self, vmath.vector3(CX, sb_y + 3, 0), "START BATTLE", "body", C_CREAM, 2, -2)
-    track(self, ui.text(vmath.vector3(CX, sb_y - 20, 0), "vs Whot Bot", "small", C_MUTED))
+    track(self, ui.text(vmath.vector3(CX, sb_y - 20, 0), "vs Matatu Bot", "small", C_MUTED))
     self.buttons[#self.buttons + 1] = { node = sb, id = "start_ai" }
 
     local bkb = track(self, ui.btn9(vmath.vector3(CX - pw / 2 + 50, CY + ph / 2 - 24, 0), vmath.vector3(78, 32, 0), "secondary_btn"))
@@ -512,7 +544,7 @@ local function rebuild(self)
     local n_red = track(self, ui.box(vmath.vector3(grid_l + 2, h_y - 6, 0), vmath.vector3(4, 30, 0), C_RED))
     set_pivot(n_red, gui.PIVOT_W)
     
-    local n_m = track(self, ui.text(vmath.vector3(grid_l + 16, h_y, 0), "WHOT", "title", C_CREAM))
+    local n_m = track(self, ui.text(vmath.vector3(grid_l + 16, h_y, 0), "MATATU", "title", C_CREAM))
     set_pivot(n_m, gui.PIVOT_W)
     pcall(gui.set_scale, n_m, vmath.vector3(1.1, 1.1, 1))
 
@@ -529,9 +561,28 @@ local function rebuild(self)
     local n_sign = track(self, ui.text(vmath.vector3(grid_r, h_y - 32, 0), sub_txt, "small", vmath.vector4(0.4, 0.4, 0.4, 1)))
     set_pivot(n_sign, gui.PIVOT_E)
 
+    -- Center: compact "SEASON ENDS IN" countdown
+    if self.season_text then
+        local mid_x = (grid_l + grid_r) / 2
+        track(self, ui.text(vmath.vector3(mid_x, h_y + 14, 0), "SEASON ENDS IN", "small", C_MUTED))
+        track(self, ui.text(vmath.vector3(mid_x, h_y - 12, 0), self.season_text, "body", C_GOLD))
+    end
+
     -- -----------------------------------------------------------------------
     -- Tile 1: PLAY ONLINE
     -- -----------------------------------------------------------------------
+    local cta_text = "PLAY NOW"
+    local sub_text = "Real players • Live coin stakes"
+    local is_connecting = app_state.auth_state == "sending" or app_state.auth_state == "verifying"
+    
+    if is_connecting then
+        cta_text = "CONNECTING..."
+        sub_text = "Authenticating with Google Play Games..."
+    elseif app_state.auth_state == "error" then
+        cta_text = "TRY AGAIN"
+        sub_text = app_state.auth_error ~= "" and tostring(app_state.auth_error):upper() or "CONNECTION FAILED"
+    end
+
     mode_tile(self, {
         x = left_cx, y = left_cy, w = left_w, h = grid_h,
         accent      = C_RED,
@@ -540,9 +591,9 @@ local function rebuild(self)
         top_left_2  = "MULTI PLAYER",
         numeral     = "01",
         title       = "PLAY ONLINE",
-        sub         = "Real players • Live coin stakes",
-        cta_label   = "COMING SOON",      -- Changed from badge_label = "COMING SOON"
-        btn_id      = "play_online",   -- Added hit node ID to make it clickable
+        sub         = sub_text,
+        cta_label   = cta_text,
+        btn_id      = "play_online",
     })
 
     -- -----------------------------------------------------------------------
@@ -588,15 +639,14 @@ local function rebuild(self)
     -- Utility strip
     -- -----------------------------------------------------------------------
     local util_cy  = EDGE_B + PADDING + util_h / 2
-    -- THEME opens the Themes screen (moved here from the online lobby) and is
-    -- locked until the player has a real account. CONTACT is new.
     local has_account = ws.current_user_data
         and ws.current_user_data.username
         and ws.current_user_data.username ~= ""
+        
     local util_defs = {
-        { id = "rules_open",   label = "RULES",   acc = C_U_RULES   },
-        { id = "share",        label = "SHARE",   acc = C_U_SHARE   },
-        { id = "help_open",    label = "HELP",    acc = C_U_HELP    },
+        { id = "rules_open",   label = "RULES",   acc = C_U_RULES  },
+        { id = "share",        label = "SHARE",   acc = C_U_SHARE  },
+        { id = "help_open",    label = "HELP",    acc = C_U_HELP   },
         { id = "theme_open",   label = "THEME",   acc = C_U_THEME,
           disabled = not has_account, locked_hint = "SIGN IN", disabled_id = "theme_locked" },
         { id = "contact_open", label = "CONTACT", acc = C_U_CONTACT },
@@ -613,7 +663,6 @@ local function rebuild(self)
         })
     end
 
-    -- Bottom Right Deco Star (Matches the 4-point shape in corner)
     local deco = track(self, gui.new_box_node(vmath.vector3(grid_r + 4, util_cy, 0), vmath.vector3(44, 44, 0)))
     pcall(gui.play_flipbook, deco, hash("diamonds"))
     gui.set_color(deco, vmath.vector4(0.5, 0.5, 0.5, 1))
@@ -661,18 +710,33 @@ local function handle(self, b)
     if b.id == "help_open" then self.state = STATE_LOBBY; self.tut_page, self.tutorial_active = 1, true; rebuild(self); return
     elseif b.id == "rules_open" then self.state = STATE_LOBBY; self.tut_page, self.tutorial_active = 3, true; rebuild(self); return
     elseif b.id == "support" then pcall(function() local config = require("modules.config"); sys.open_url(config.BASE_URL .. "/support") end); return
-    elseif b.id == "share" then pcall(function() local config = require("modules.config"); sys.open_url("https://wa.me/?text=Play%20Whot%20with%20me!%20https%3A%2F%2F" .. config.DOMAIN) end); return
-    elseif b.id == "contact_open" then pcall(function() sys.open_url("mailto:matatu.league@gmail.com?subject=Whot%20Support") end); return
+    elseif b.id == "share" then pcall(function() local config = require("modules.config"); sys.open_url("https://wa.me/?text=Play%20Matatu%20with%20me!%20https%3A%2F%2F" .. config.DOMAIN) end); return
+    elseif b.id == "contact_open" then pcall(function() sys.open_url("mailto:matatu.league@gmail.com?subject=Matatu%20Support") end); return
     elseif b.id == "theme_open" then msg.post("#controller", "goto_themes"); return end
 
     if b.id == "play_online" then
-        msg.post("#controller", "play_online")
+        if app_state.auth_state == "sending" or app_state.auth_state == "verifying" then
+            return -- Block multiple taps whilst already attempting connection
+        end
+        
+        local has_account = ws.current_user_data and ws.current_user_data.username and ws.current_user_data.username ~= ""
+        
+        -- If they are a guest AND the auth state hasn't succeeded, trigger the Google Play sign in.
+        if not has_account and app_state.auth_state ~= "done" then
+            app_state.auth_state = "sending"
+            msg.post("#controller", "auth_retry_silent_login") -- Re-uses controller's native login routing
+            rebuild(self)
+        else
+            -- Already have an account/authenticated, proceed immediately
+            msg.post("#controller", "play_online")
+        end
+        
     elseif b.id == "quick_play" then
         app_state.mode = "offline"
         local me = ws.current_user_data or {}
         app_state.offline_game = game_logic.new({
             human_id = "you", ai_id = "ai", human_name = me.username or "You", human_avatar = me.avatar or 1,
-            ai_name = "Whot Bot", ai_avatar = 2, rules = "JOKERS", series = 1, p_wins = 0, ai_wins = 0
+            ai_name = "Matatu Bot", ai_avatar = 2, rules = "JOKERS", series = 1, p_wins = 0, ai_wins = 0
         })
         msg.post("#controller", "goto_game")
     elseif b.id == "battle_ai"        then set_state(self, STATE_AI_SELECT)
@@ -685,7 +749,7 @@ local function handle(self, b)
         local me = ws.current_user_data or {}
         app_state.offline_game = game_logic.new({
             human_id = "you", ai_id = "ai", human_name = me.username or "You", human_avatar = me.avatar or 1,
-            ai_name = "Whot Bot", ai_avatar = 2, rules = "JOKERS", series = app_state.ai_series or 3, p_wins = 0, ai_wins = 0
+            ai_name = "Matatu Bot", ai_avatar = 2, rules = "JOKERS", series = app_state.ai_series or 3, p_wins = 0, ai_wins = 0
         })
         msg.post("#controller", "goto_game")
 
@@ -708,8 +772,13 @@ function init(self)
     self.tutorial_active     = not tutorial_seen()
     self.consent_active      = not akira.installed()
     self.consent_phase       = "ask"
+    self._season_tick        = 0
+
+    -- Force idle state on boot so it waits for user interaction
+    app_state.auth_state     = "idle"
 
     refresh_wh()
+    update_lobby_season(self)
 
     if not app_state.ai_series          then app_state.ai_series          = 3        end
     if not app_state.tournament_size    then app_state.tournament_size    = 4        end
@@ -721,6 +790,14 @@ function init(self)
 end
 
 function update(self, dt)
+    self._season_tick = (self._season_tick or 0) + dt
+    if self._season_tick >= 1 then
+        self._season_tick = 0
+        local prev = self.season_text
+        update_lobby_season(self)
+        if self.season_text ~= prev then rebuild(self) end
+    end
+
     if self.consent_active and self.consent_phase == "installing" then
         self._install_t = (self._install_t or 0) + dt
         local p = math.min(1, self._install_t / INSTALL_DURATION)
@@ -744,13 +821,29 @@ function update(self, dt)
 end
 
 function on_message(self, message_id, message, sender)
-    if message_id == hash("screen_enter")  or
-       message_id == hash("enable")        or
-       message_id == hash("layout_changed") then
+    if message_id == hash("screen_enter") then
+        -- Force idle state when entering lobby so it always waits for user click
+        app_state.auth_state = "idle"
+        
         refresh_wh()
+        update_lobby_season(self)
         set_state(self, self.state or STATE_LOBBY)
+        
+    elseif message_id == hash("enable") or message_id == hash("layout_changed") then
+        refresh_wh()
+        update_lobby_season(self)
+        set_state(self, self.state or STATE_LOBBY)
+        
     elseif message_id == hash("disable") then
         clear(self)
+        
+    elseif message_id == hash("auth_state_changed") then
+        -- This block mimics your auth.gui_script. When GPGS signs in completely:
+        if app_state.auth_state == "done" then
+            app_state.auth_state = "idle"
+            msg.post("#controller", "play_online")
+        end
+        rebuild(self) -- Will dynamically change the button text to connection/error states
     end
 end
 

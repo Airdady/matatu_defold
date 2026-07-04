@@ -57,6 +57,14 @@ local function commas(n)
 	return (n:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""))
 end
 
+-- Format an ISO date-only string ("YYYY-MM-DD") for display, e.g. "December 25, 2026".
+local MONTH_NAMES = {"January","February","March","April","May","June","July","August","September","October","November","December"}
+local function format_redemption_date(iso)
+	local y, m, d = tostring(iso or ""):match("(%d+)-(%d+)-(%d+)")
+	if not y then return "" end
+	return string.format("%s %d, %s", MONTH_NAMES[tonumber(m)] or m, tonumber(d), y)
+end
+
 local function calc_fee(method, amount)
 	if type(method) ~= "table" or type(method.charges) ~= "table" then return 0 end
 	for _, tier in ipairs(method.charges) do
@@ -217,6 +225,7 @@ rebuild = function(self)
 
 	local ms = methods()
 	local method = ms[self.method_index] or ms[1]
+	local is_save_tab = tostring((method and method.type) or ""):upper() == "SAVE COINS"
 	local amount = tonumber(self.amount) or 0
 	local fee = calc_fee(method, amount)
 	local total = amount + fee
@@ -261,48 +270,134 @@ rebuild = function(self)
 		self.buttons[#self.buttons+1] = { node = hit, id = "method", data = i }
 	end
 
-	-- Saved-number tags: ALL saved numbers are shown (cap is MAX_NUMBERS), tap to
-	-- pay with one, tap its ✕ to remove it, or "+ NEW" to type a fresh one
-	-- (validated in realtime below). "+ NEW" hides once the cap is reached.
-	local saved = saved_numbers()
-	local chips_cy = tabs_cy - 72
-	local CHIP_H = 44
-	ktext(self, vmath.vector3(lx_left, chips_cy + CHIP_H/2 + 12, 0), "PAY WITH", 16, M_LABEL, gui.PIVOT_W)
+	if is_save_tab then
+		-- ── SAVE COINS body: pure internal balance -> savingCoins move, no
+		-- phone number / mobile-money numpad involved. Precise 2-column layout
+		-- (left = exchange now, right = auto-charge per game) so that even with
+		-- the auto-charge amount picker showing, everything stays inside the
+		-- 940x540 panel — see the vertical-budget arithmetic in the PR
+		-- description / commit message for this file.
+		local sav = (ws.current_savings_status and ws.current_savings_status.savingCoins)
+			or (ws.current_user_data or {}).savingCoins or 0
+		local redemption_str = format_redemption_date((ws.current_savings_status or {}).nextRedemptionDate)
 
-	local chips = {}
-	for _, p in ipairs(saved) do
-		chips[#chips+1] = { number = p.number }
-	end
-	local at_cap = #chips >= MAX_NUMBERS
-	if not at_cap then chips[#chips+1] = { is_new = true } end
-
-	local cgap = 10
-	local cw = (left_w - cgap * (#chips - 1)) / math.max(1, #chips)
-	local ccx0 = lx_left + cw/2
-	for i, c in ipairs(chips) do
-		local x = ccx0 + (i-1) * (cw + cgap)
-		if c.is_new then
-			framed(self, x, chips_cy, cw, CHIP_H, M_PAY_BD, 1, M_TAB_BG)
-			ktext(self, vmath.vector3(x, chips_cy, 0), "+ NEW", 18, M_PAY_TXT)
-			local hit = track(self, ui.box(vmath.vector3(x, chips_cy, 0), vmath.vector3(cw, CHIP_H, 0), vmath.vector4(0,0,0,0)))
-			self.buttons[#self.buttons+1] = { node = hit, id = "chip_new" }
-		else
-			local sel = phone_key(c.number) == phone_key(self.phone)
-			framed(self, x, chips_cy, cw, CHIP_H, sel and M_FOCUS or M_TAB_BD, 1, sel and M_IN_BG_F or M_TAB_BG)
-			-- Big number text, left-aligned with little padding; ✕ on the right.
-			ktext(self, vmath.vector3(x - cw/2 + 12, chips_cy, 0), to_local(c.number), 19, sel and ui.WHITE or M_TAB_TXT, gui.PIVOT_W)
-			ktext(self, vmath.vector3(x + cw/2 - 15, chips_cy, 0), "x", 20, M_DEL_TXT)
-			-- Pick hit (whole tag) first, then the remove hit on top of the ✕ so a
-			-- tap on the ✕ is matched before the pick (on_input scans newest-first).
-			local pick = track(self, ui.box(vmath.vector3(x, chips_cy, 0), vmath.vector3(cw, CHIP_H, 0), vmath.vector4(0,0,0,0)))
-			self.buttons[#self.buttons+1] = { node = pick, id = "chip_pick", data = c.number }
-			local rm = track(self, ui.box(vmath.vector3(x + cw/2 - 14, chips_cy, 0), vmath.vector3(32, CHIP_H, 0), vmath.vector4(0,0,0,0)))
-			self.buttons[#self.buttons+1] = { node = rm, id = "chip_remove", data = c.number }
+		-- Top strip: current balance + next redemption date + period-progress
+		-- bar (periodProgressPercent, backend-driven), full width, centered.
+		local content_top = top - 190
+		ktext(self, vmath.vector3(px0, content_top, 0), "Savings: " .. commas(sav) .. " UGX", 22, M_TOTAL)
+		if redemption_str ~= "" then
+			ktext(self, vmath.vector3(px0, content_top - 24, 0), "Next redemption: " .. redemption_str, 15, M_LABEL)
 		end
+
+		local pct = math.max(0, math.min(100, tonumber((ws.current_savings_status or {}).periodProgressPercent) or 0))
+		local bar_w, bar_h, bar_y = MW - P*2, 12, content_top - 46
+		track(self, ui.box(vmath.vector3(px0, bar_y, 0), vmath.vector3(bar_w, bar_h, 0), vmath.vector4(1, 1, 1, 0.08)))
+		if pct > 0 then
+			local fill_w = bar_w * (pct / 100)
+			track(self, ui.box(vmath.vector3(px0 - bar_w/2 + fill_w/2, bar_y, 0), vmath.vector3(fill_w, bar_h, 0), M_TOTAL))
+		end
+		ktext(self, vmath.vector3(px0, content_top - 66, 0), pct .. "% through this savings period", 14, M_LABEL)
+
+		-- Divider between the top strip and the two columns below.
+		track(self, ui.box(vmath.vector3(px0, content_top - 86, 0), vmath.vector3(MW - P*2, 1, 0), M_IN_BD))
+
+		-- Vertical divider between the two columns.
+		local col_top = content_top - 106
+		track(self, ui.box(vmath.vector3(px0, col_top - 90, 0), vmath.vector3(1, 220, 0), M_IN_BD))
+
+		-- ── LEFT column: Exchange to Savings now ────────────────────────────
+		local lcx = px0 - 235
+		ktext(self, vmath.vector3(lcx, col_top, 0), "EXCHANGE NOW", 15, M_LABEL)
+
+		local ecfg = (ws.current_savings_status or {}).exchangeConfig
+		local emin, emax = 100, 5000
+		if type(ecfg) == "table" then
+			emin = tonumber(ecfg.min) or emin
+			emax = tonumber(ecfg.max) or emax
+		end
+		local balv = tonumber((ws.current_user_data or {}).balance) or 0
+		local slo, shi = emin, math.max(emin, math.min(emax, balv))
+		self.save_amount = math.max(slo, math.min(shi, self.save_amount or slo))
+
+		local step_y = col_top - 42
+		local step_w = 200
+		framed(self, lcx - step_w/2 - 32, step_y, 46, 46, M_TAB_BD, 1, M_TAB_BG)
+		ktext(self, vmath.vector3(lcx - step_w/2 - 32, step_y, 0), "-", 26, ui.WHITE)
+		local minus_hit = track(self, ui.box(vmath.vector3(lcx - step_w/2 - 32, step_y, 0), vmath.vector3(46, 46, 0), vmath.vector4(0,0,0,0)))
+		self.buttons[#self.buttons+1] = { node = minus_hit, id = "save_amt_minus" }
+
+		framed(self, lcx, step_y, step_w, 46, M_IN_BD, 1, M_IN_BG)
+		ktext(self, vmath.vector3(lcx, step_y, 0), commas(self.save_amount) .. " COINS", 18, M_TOTAL)
+
+		framed(self, lcx + step_w/2 + 32, step_y, 46, 46, M_TAB_BD, 1, M_TAB_BG)
+		ktext(self, vmath.vector3(lcx + step_w/2 + 32, step_y, 0), "+", 26, ui.WHITE)
+		local plus_hit = track(self, ui.box(vmath.vector3(lcx + step_w/2 + 32, step_y, 0), vmath.vector3(46, 46, 0), vmath.vector4(0,0,0,0)))
+		self.buttons[#self.buttons+1] = { node = plus_hit, id = "save_amt_plus" }
+
+		local confirm_y = col_top - 100
+		self.save_exchange_btn_pos = { x = lcx, y = confirm_y }
+		local confirm_label = self._save_exchanging and "EXCHANGING..." or "CONFIRM EXCHANGE"
+		framed(self, lcx, confirm_y, 220, 48, M_PAY_BD, 1, M_PANEL)
+		track(self, ui.box(vmath.vector3(lcx, confirm_y, 0), vmath.vector3(218, 46, 0), M_PAY_TINT))
+		ktext(self, vmath.vector3(lcx, confirm_y, 0), confirm_label, 17, M_PAY_TXT)
+		local confirm_hit = track(self, ui.box(vmath.vector3(lcx, confirm_y, 0), vmath.vector3(220, 48, 0), vmath.vector4(0,0,0,0)))
+		self.buttons[#self.buttons+1] = { node = confirm_hit, id = "save_exchange_confirm" }
+
+		if self._save_msg then
+			ktext(self, vmath.vector3(lcx, confirm_y - 34, 0), self._save_msg, 14, self._save_msg_ok and M_OKC or M_ERR)
+		end
+
+		-- ── RIGHT column: Auto-charge per game ──────────────────────────────
+		local rcx = px0 + 235
+		ktext(self, vmath.vector3(rcx, col_top, 0), "AUTO-CHARGE PER GAME", 15, M_LABEL)
+
+		local toggle_y = col_top - 42
+		local seg_w, seg_gap = 90, 8
+		local off_x, on_x = rcx - seg_w/2 - seg_gap/2, rcx + seg_w/2 + seg_gap/2
+		framed(self, off_x, toggle_y, seg_w, 44, M_TAB_BD, 1, (not self.save_autocharge_enabled) and M_FOCUS or M_TAB_BG)
+		ktext(self, vmath.vector3(off_x, toggle_y, 0), "OFF", 16, (not self.save_autocharge_enabled) and ui.WHITE or M_TAB_TXT)
+		local off_hit = track(self, ui.box(vmath.vector3(off_x, toggle_y, 0), vmath.vector3(seg_w, 44, 0), vmath.vector4(0,0,0,0)))
+		self.buttons[#self.buttons+1] = { node = off_hit, id = "save_autocharge_off" }
+		framed(self, on_x, toggle_y, seg_w, 44, M_TAB_BD, 1, self.save_autocharge_enabled and M_FOCUS or M_TAB_BG)
+		ktext(self, vmath.vector3(on_x, toggle_y, 0), "ON", 16, self.save_autocharge_enabled and ui.WHITE or M_TAB_TXT)
+		local on_hit = track(self, ui.box(vmath.vector3(on_x, toggle_y, 0), vmath.vector3(seg_w, 44, 0), vmath.vector4(0,0,0,0)))
+		self.buttons[#self.buttons+1] = { node = on_hit, id = "save_autocharge_on" }
+
+		local amt_y = toggle_y - 50
+		if self.save_autocharge_enabled then
+			local amounts = (ws.current_savings_status or {}).autoChargeAmounts
+			if type(amounts) ~= "table" or #amounts == 0 then amounts = {2, 5, 10, 25} end
+			local amt_w, amt_gap = 48, 6
+			local n = #amounts
+			for i, amt in ipairs(amounts) do
+				local ax = rcx + (i - (n+1)/2) * (amt_w + amt_gap)
+				local on = (self.save_autocharge_amount == amt)
+				framed(self, ax, amt_y, amt_w, 40, M_TAB_BD, 1, on and M_FOCUS or M_TAB_BG)
+				ktext(self, vmath.vector3(ax, amt_y, 0), tostring(amt), 16, on and ui.WHITE or M_TAB_TXT)
+				local amt_hit = track(self, ui.box(vmath.vector3(ax, amt_y, 0), vmath.vector3(amt_w, 40, 0), vmath.vector4(0,0,0,0)))
+				self.buttons[#self.buttons+1] = { node = amt_hit, id = "save_autocharge_amt_" .. tostring(amt) }
+			end
+		end
+
+		local save_y = self.save_autocharge_enabled and (amt_y - 56) or (amt_y - 4)
+		local plan_label = self._plan_saving and "SAVING..." or "SAVE PLAN"
+		framed(self, rcx, save_y, 220, 48, M_PAY_BD, 1, M_PANEL)
+		track(self, ui.box(vmath.vector3(rcx, save_y, 0), vmath.vector3(218, 46, 0), M_PAY_TINT))
+		ktext(self, vmath.vector3(rcx, save_y, 0), plan_label, 17, M_PAY_TXT)
+		local plan_hit = track(self, ui.box(vmath.vector3(rcx, save_y, 0), vmath.vector3(220, 48, 0), vmath.vector4(0,0,0,0)))
+		self.buttons[#self.buttons+1] = { node = plan_hit, id = "save_autocharge_plan_save" }
+
+		if self._plan_msg then
+			ktext(self, vmath.vector3(rcx, save_y - 34, 0), self._plan_msg, 14, self._plan_msg_ok and M_OKC or M_ERR)
+		end
+
+		return
 	end
 
-	-- Phone input (full width) + validated name underneath.
-	local phone_cy = chips_cy - 96
+	-- Phone input (full width, prefilled with the account's current number) +
+	-- validated name underneath. No saved-number picker: the field always
+	-- just shows the current phone number.
+	local phone_cy = tabs_cy - 90
 	input_field(lx, phone_cy, left_w, 64, "PHONE NUMBER", self.phone, "07XX XXX XXX", self.field == "phone", "focus_phone")
 
 	local name_cy = phone_cy - 46
@@ -369,6 +464,15 @@ function init(self)
 	self.phone, self.amount = "", ""
 	self.phone_name, self.phone_status, self.phone_msg = "", "", nil
 	self.field = "amount"
+	-- SAVE COINS tab state (kept separate from the BUY/SELL phone/amount/msg
+	-- fields above so switching tabs never stomps on one another's status text).
+	self.save_amount = 100
+	self.save_autocharge_enabled = false
+	self.save_autocharge_amount = 5
+	self._save_msg, self._save_msg_ok = nil, nil
+	self._save_exchanging = false
+	self._plan_msg, self._plan_msg_ok = nil, nil
+	self._plan_saving = false
 	-- The dialog floats above the online lobby gui.
 	gui.set_render_order(14)
 	refresh_wh()
@@ -393,6 +497,15 @@ function on_message(self, message_id, message, sender)
 		self.field = (self.phone == "") and "phone" or "amount"
 		self.phone_name, self.phone_status, self.phone_msg = "", "", nil
 		schedule_validation(self)
+		-- Reseed the SAVE COINS auto-charge toggle/amount from the parked
+		-- SAVINGS_STATUS payload (same seeding online_right.lua's "savings_add"
+		-- dispatch uses) so it reflects the player's actual saved preference.
+		do
+			local st = ws.current_savings_status or {}
+			local ac = type(st.autoCharge) == "table" and st.autoCharge or {}
+			self.save_autocharge_enabled = ac.enabled and true or false
+			self.save_autocharge_amount = tonumber(ac.amount) or 5
+		end
 		rebuild(self)
 	elseif message_id == hash("enable") then
 		self._active = true
@@ -435,6 +548,35 @@ function on_message(self, message_id, message, sender)
 		self._msg_proc = false
 		if message.ok then self.amount = "" end
 		if self._active then rebuild(self) end
+	elseif message_id == hash("ws_savings_exchange_result") then
+		local d = ws.last_savings_exchange or {}
+		self._save_exchanging = false
+		if d.success then
+			self._save_msg, self._save_msg_ok = string.format("Exchanged %s coins to Savings.", commas(tonumber(d.amount) or 0)), true
+			local amt = tonumber(d.amount) or 0
+			if amt > 0 then
+				pcall(msg.post, "#coins", "coin_delta", {
+					from = self.save_exchange_btn_pos or { x = 640, y = 200 },
+					to = { x = 1160, y = 660 },
+					amount = amt,
+					sign = "-",
+				})
+			end
+		else
+			self._save_msg, self._save_msg_ok = d.message or "Exchange failed", false
+		end
+		if self._active then rebuild(self) end
+	elseif message_id == hash("ws_savings_settings_updated") then
+		local d = ws.last_savings_settings or {}
+		self._plan_saving = false
+		if d.success then
+			self._plan_msg, self._plan_msg_ok = "Auto-charge plan saved.", true
+		else
+			self._plan_msg, self._plan_msg_ok = d.message or "Save failed", false
+		end
+		if self._active then rebuild(self) end
+	elseif message_id == hash("ws_savings_status") then
+		if self._active then rebuild(self) end
 	end
 end
 
@@ -448,39 +590,6 @@ local function handle(self, b)
 		self.field = "phone"; rebuild(self)
 	elseif id == "focus_amount" then
 		self.field = "amount"; rebuild(self)
-	elseif id == "chip_pick" then
-		-- Re-use a saved number (validated name comes from cache, instantly).
-		self.phone = to_local(b.data)
-		self.field = "amount"
-		schedule_validation(self)
-		rebuild(self)
-	elseif id == "chip_new" then
-		-- Clear for a brand-new number; focus the phone field to type it in.
-		self.phone = ""
-		self.field = "phone"
-		self.phone_name, self.phone_status, self.phone_msg = "", "", nil
-		if self._val_timer then timer.cancel(self._val_timer); self._val_timer = nil end
-		rebuild(self)
-	elseif id == "chip_remove" then
-		-- Remove this saved number completely (locally + on the backend).
-		local removed = b.data
-		local u = ws.current_user_data or {}
-		if type(u.phoneNumbers) == "table" then
-			for i = #u.phoneNumbers, 1, -1 do
-				if phone_key(u.phoneNumbers[i].number) == phone_key(removed) then
-					table.remove(u.phoneNumbers, i)
-				end
-			end
-		end
-		-- If the removed number was the one in the field, clear it.
-		if phone_key(removed) == phone_key(self.phone) then
-			self.phone = ""
-			self.field = "phone"
-			self.phone_name, self.phone_status, self.phone_msg = "", "", nil
-			if self._val_timer then timer.cancel(self._val_timer); self._val_timer = nil end
-		end
-		msg.post("#controller", "remove_phone", { phone = removed })
-		rebuild(self)
 	elseif id:sub(1,4) == "num_" then
 		local k = b.data
 		if k == "<" then
@@ -516,6 +625,42 @@ local function handle(self, b)
 			else
 				if #self.amount < 9 then self.amount = self.amount..k end
 			end
+			rebuild(self)
+		end
+	elseif id == "save_amt_minus" or id == "save_amt_plus" then
+		-- Backend-driven bounds/step (SAVINGS_STATUS.exchangeConfig), same
+		-- fallback used while drawing this tab.
+		local ecfg = (ws.current_savings_status or {}).exchangeConfig
+		local emin, emax, estep = 100, 5000, 100
+		if type(ecfg) == "table" then
+			emin  = tonumber(ecfg.min)  or emin
+			emax  = tonumber(ecfg.max)  or emax
+			estep = tonumber(ecfg.step) or estep
+		end
+		local bal = tonumber((ws.current_user_data or {}).balance) or 0
+		local lo, hi = emin, math.max(emin, math.min(emax, bal))
+		local step = (id == "save_amt_plus") and estep or -estep
+		self.save_amount = math.max(lo, math.min(hi, (self.save_amount or lo) + step))
+		rebuild(self)
+	elseif id == "save_exchange_confirm" then
+		if not self._save_exchanging then
+			self._save_exchanging = true
+			self._save_msg, self._save_msg_ok = nil, nil
+			ws.exchange_to_savings(self.save_amount)
+			rebuild(self)
+		end
+	elseif id == "save_autocharge_off" then
+		self.save_autocharge_enabled = false; rebuild(self)
+	elseif id == "save_autocharge_on" then
+		self.save_autocharge_enabled = true; rebuild(self)
+	elseif type(id) == "string" and id:match("^save_autocharge_amt_") then
+		local amt = tonumber(id:match("_(%d+)$"))
+		if amt then self.save_autocharge_amount = amt; rebuild(self) end
+	elseif id == "save_autocharge_plan_save" then
+		if not self._plan_saving then
+			self._plan_saving = true
+			self._plan_msg, self._plan_msg_ok = nil, nil
+			ws.set_savings_auto_charge(self.save_autocharge_enabled, self.save_autocharge_amount)
 			rebuild(self)
 		end
 	end

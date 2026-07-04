@@ -46,7 +46,8 @@ local SIDE_RATIO  = 0.30
 local SIDE_MARGIN = 20
 local CENTER_PAD  = 22
 local ROW_H_SM    = 38
-local ROW_H_LG    = 44
+local ROW_H_LG    = 36 -- Standings row height (was 44 — too much vertical padding)
+local ROW_H_BONUS = 42 -- Season Bonuses row height — a bit roomier than Standings
 local ROW_H_LIST  = 56
 local ROW_GAP     = 5
 local HDR_H_TABLE = 30
@@ -86,7 +87,7 @@ local STRIPE_MID   = vmath.vector4(0.039, 0.031, 0.027, 1.0)
 local STRIPE_INNER = vmath.vector4(0.337, 0.333, 0.314, 1.0)
 
 local C = {
-    SIDE_MARGIN = SIDE_MARGIN, CENTER_PAD = CENTER_PAD, ROW_H_SM = ROW_H_SM, ROW_H_LG = ROW_H_LG, ROW_H_LIST = ROW_H_LIST, ROW_GAP = ROW_GAP, HDR_H_TABLE = HDR_H_TABLE, SECTION_GAP = SECTION_GAP, BLOCK_GAP = BLOCK_GAP, INNER_PAD = INNER_PAD, COL_BG = COL_BG, COL_GLASS = COL_GLASS, COL_GLASS_HI = COL_GLASS_HI, ROW_EVEN = ROW_EVEN, ROW_ODD = ROW_ODD, ROW_YOU = ROW_YOU, TIER_COLORS = TIER_COLORS, TIER_DIM = TIER_COLORS[5], COL_DIM = COL_DIM, COL_MID = COL_MID, COL_BRIGHT = COL_BRIGHT, COL_GOLD = COL_GOLD, COL_WHITE = COL_WHITE, COL_GREEN = COL_GREEN, COL_RED = COL_RED, COL_CYAN = COL_CYAN, COL_BORDER = COL_BORDER, COL_GOLD_BDR = COL_GOLD_BDR, COL_GOLD_BDR_D = COL_GOLD_BDR_D, COL_TIMER_BG = COL_TIMER_BG, COL_HEADER_BG = COL_HEADER_BG, COL_BADGE_BG = COL_BADGE_BG, COL_NAMEID_BG = COL_NAMEID_BG, COL_STAT_BG = COL_STAT_BG,
+    SIDE_MARGIN = SIDE_MARGIN, CENTER_PAD = CENTER_PAD, ROW_H_SM = ROW_H_SM, ROW_H_LG = ROW_H_LG, ROW_H_BONUS = ROW_H_BONUS, ROW_H_LIST = ROW_H_LIST, ROW_GAP = ROW_GAP, HDR_H_TABLE = HDR_H_TABLE, SECTION_GAP = SECTION_GAP, BLOCK_GAP = BLOCK_GAP, INNER_PAD = INNER_PAD, COL_BG = COL_BG, COL_GLASS = COL_GLASS, COL_GLASS_HI = COL_GLASS_HI, ROW_EVEN = ROW_EVEN, ROW_ODD = ROW_ODD, ROW_YOU = ROW_YOU, TIER_COLORS = TIER_COLORS, TIER_DIM = TIER_COLORS[5], COL_DIM = COL_DIM, COL_MID = COL_MID, COL_BRIGHT = COL_BRIGHT, COL_GOLD = COL_GOLD, COL_WHITE = COL_WHITE, COL_GREEN = COL_GREEN, COL_RED = COL_RED, COL_CYAN = COL_CYAN, COL_BORDER = COL_BORDER, COL_GOLD_BDR = COL_GOLD_BDR, COL_GOLD_BDR_D = COL_GOLD_BDR_D, COL_TIMER_BG = COL_TIMER_BG, COL_HEADER_BG = COL_HEADER_BG, COL_BADGE_BG = COL_BADGE_BG, COL_NAMEID_BG = COL_NAMEID_BG, COL_STAT_BG = COL_STAT_BG,
 }
 
 local function refresh_wh()
@@ -205,8 +206,66 @@ rebuild = function(self)
     draw_dialog(self, ctx)
 end
 
+-- ── ISO-8601 UTC date parsing ──────────────────────────────────────────────────
+-- No shared date-parsing utility exists yet in modules/ (checked modules/util.lua),
+-- so this small local parser converts "YYYY-MM-DDTHH:MM:SS(.sss)(Z)" into a UTC
+-- epoch-seconds integer using a manual days-since-epoch calculation (does NOT rely
+-- on os.time's local-timezone interpretation of the table, which would be wrong
+-- on any device not set to UTC).
+local function days_from_civil(y, m, d)
+    -- Howard Hinnant's civil_from_days algorithm, inverted (UTC, proleptic Gregorian).
+    y = (m <= 2) and (y - 1) or y
+    local era = math.floor((y >= 0 and y or y - 399) / 400)
+    local yoe = y - era * 400
+    local mp = (m + 9) % 12
+    local doy = math.floor((153 * mp + 2) / 5) + d - 1
+    local doe = yoe * 365 + math.floor(yoe / 4) - math.floor(yoe / 100) + doy
+    return era * 146097 + doe - 719468
+end
+
+local function parse_iso_utc(str)
+    if type(str) ~= "string" then return nil end
+    local y, mo, d, h, mi, s = str:match("(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
+    if not y then return nil end
+    local days = days_from_civil(tonumber(y), tonumber(mo), tonumber(d))
+    return days * 86400 + tonumber(h) * 3600 + tonumber(mi) * 60 + tonumber(s)
+end
+
+-- Wall-clock "now" as UTC epoch seconds, matching parse_iso_utc's epoch base
+-- (os.time() already returns a UTC-based Unix epoch across platforms; only the
+-- *table→time* direction is locale-sensitive, which is why we avoid it above).
+local function now_utc()
+    return os.time()
+end
+
 -- ── Season Logic ──────────────────────────────────────────────────────────────
+-- Server-driven countdown: when ws.current_season_status has been received
+-- (pushed right after IDENTIFY), drive the countdown off its real endDate.
+-- Falls back to the legacy hardcoded Mon/Wed-noon/Sat cadence (Africa/Nairobi
+-- UTC+3) so nothing regresses before the first SEASON_STATUS round-trip.
 local function update_season(self)
+    local status = ws.current_season_status
+    local end_epoch = status and parse_iso_utc(status.endDate)
+
+    if end_epoch then
+        local now = now_utc()
+        local diff = math.max(0, end_epoch - now)
+        self.season_text = diff >= 86400
+            and string.format("%dD %02dH %02dM %02dS", math.floor(diff / 86400), math.floor((diff % 86400) / 3600), math.floor((diff % 3600) / 60), diff % 60)
+            or string.format("%02dH %02dM %02dS", math.floor(diff / 3600), math.floor((diff % 3600) / 60), diff % 60)
+        self.season_target_text = "Season #" .. tostring(status.seasonNumber or "?")
+
+        self.deadline, self.deadline_clock, self.deadline_urgency = "", nil, nil
+        if diff <= 86400 then
+            self.deadline = "SEASON END"
+            local dh = math.floor(diff / 3600)
+            self.deadline_clock = string.format("%02d:%02d:%02d", dh, math.floor((diff % 3600) / 60), diff % 60)
+            self.deadline_urgency = dh < 1 and "FINAL HOUR!" or (dh < 3 and "Time running out!" or (dh < 6 and "Last chance!" or "Ends soon"))
+        end
+        return
+    end
+
+    -- ── Fallback: hardcoded Mon/Wed-noon/Sat cadence (Africa/Nairobi UTC+3) ──
     local t, now_eat = os.date("!*t", os.time() + 3 * 3600), os.time() + 3 * 3600
     local seconds_today = t.hour * 3600 + t.min * 60 + t.sec
     local midnight_today_eat = now_eat - seconds_today
@@ -300,7 +359,12 @@ end
 
 function on_message(self, message_id, message, sender)
     if message_id == hash("screen_enter") then
-        msg.post(".", "acquire_input_focus"); self._active, self.dialog, self.banners, self.list_scroll, self.battle_modal, self.invite_search, app_state.searching_invite = true, nil, nil, 0, nil, nil, false; refresh_wh(); rebuild(self)
+        msg.post(".", "acquire_input_focus"); self._active, self.dialog, self.banners, self.list_scroll, self.battle_modal, self.invite_search, app_state.searching_invite, self.savings_info_open, self.savings_add_open = true, nil, nil, 0, nil, nil, false, nil, nil; refresh_wh(); rebuild(self)
+        -- Actively ask for a fresh online-players list every time this
+        -- screen is entered — don't just trust whatever's cached from the
+        -- last (debounced, purely event-driven) server broadcast, which may
+        -- have fired before we were ready to receive it.
+        if ws.is_identified then pcall(ws.request_online_users) end
     elseif message_id == hash("ws_match_found") and self.invite_search then
         local gs, me, opp = ws.get_active_game() or {}, tostring(ws.get_current_user_id() or ""), nil
         for k, pl in pairs(gs.players or {}) do if tostring((type(pl) == "table" and (pl._id or pl.id)) or k) ~= me then opp = pl end end
@@ -332,6 +396,49 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("ws_request_declined") or message_id == hash("ws_request_cancelled") then
         if self.banners and message and message.request_id then for i = #self.banners, 1, -1 do if self.banners[i].request_id == message.request_id then table.remove(self.banners, i) end end; if #self.banners == 0 then self.banners = nil end end
         self.dialog, self.list_scroll = nil, 0; if self._active then rebuild(self) end
+    elseif message_id == hash("ws_savings_status") then
+        -- SAVINGS_STATUS parked on ws.current_savings_status — nothing to seed
+        -- here (the "savings_add" dispatch seeds self.savings_add lazily on
+        -- open), just repaint if the SAV. row or an open dialog needs the
+        -- fresh numbers.
+        if self._active then rebuild(self) end
+    elseif message_id == hash("ws_savings_exchange_result") then
+        local d = ws.last_savings_exchange or {}
+        local sa = self.savings_add
+        if sa then
+            sa.exchanging = false
+            if d.success then
+                sa.msg, sa.msg_ok = string.format("Exchanged %s coins to Savings.", commas(tonumber(d.amount) or 0)), true
+                -- Balance -> savings is a balance-decreasing action: fly coins
+                -- from the CONFIRM EXCHANGE button to the top-right HUD anchor,
+                -- sign = "-" (mirrors the coin_delta primitive used by the
+                -- daily bonus claim's "+" flow).
+                local amt = tonumber(d.amount) or 0
+                if amt > 0 then
+                    pcall(msg.post, "#coins", "coin_delta", {
+                        from = self.savings_exchange_btn_pos or { x = 640, y = 200 },
+                        to = { x = 1160, y = 660 },
+                        amount = amt,
+                        sign = "-",
+                    })
+                end
+            else
+                sa.msg, sa.msg_ok = d.message or "Exchange failed", false
+            end
+        end
+        if self._active then rebuild(self) end
+    elseif message_id == hash("ws_savings_settings_updated") then
+        local d = ws.last_savings_settings or {}
+        local sa = self.savings_add
+        if sa then
+            sa.saving = false
+            if d.success then
+                sa.settings_msg, sa.settings_msg_ok = "Auto-charge settings saved.", true
+            else
+                sa.settings_msg, sa.settings_msg_ok = d.message or "Save failed", false
+            end
+        end
+        if self._active then rebuild(self) end
     end
 end
 
@@ -397,6 +504,55 @@ function on_input(self, action_id, action)
                 elseif id == "nav_tournaments" then msg.post("#controller", "goto_tournaments")
                 elseif id == "nav_support" then msg.post("#controller", "goto_support")
                 elseif id == "nav_account" then msg.post("#controller", "goto_profile")
+                elseif id == "savings_info" then self.savings_info_open = true; rebuild(self)
+                elseif id == "savings_info_close" then self.savings_info_open = false; rebuild(self)
+                elseif id == "savings_add" then
+                    if not self.savings_add then
+                        -- Seed from the parked SAVINGS_STATUS payload so the
+                        -- toggle reflects the player's actual current
+                        -- preference rather than always defaulting to OFF.
+                        local st = ws.current_savings_status or {}
+                        local ac = type(st.autoCharge) == "table" and st.autoCharge or {}
+                        self.savings_add = {
+                            exchange_amount = 100,
+                            autocharge_enabled = ac.enabled and true or false,
+                            autocharge_amount = tonumber(ac.amount) or 5,
+                        }
+                    end
+                    self.savings_add_open = true; rebuild(self)
+                elseif id == "savings_add_close" then self.savings_add_open = false; rebuild(self)
+                elseif id == "savings_exchange_minus" or id == "savings_exchange_plus" then
+                    local sa = self.savings_add
+                    if sa and not sa.exchanging then
+                        -- Backend-driven bounds/step (SAVINGS_STATUS.exchangeConfig),
+                        -- with the same fallback used while drawing this dialog.
+                        local cfg = (ws.current_savings_status or {}).exchangeConfig
+                        local emin, emax, estep = 100, 5000, 100
+                        if type(cfg) == "table" then
+                            emin  = tonumber(cfg.min)  or emin
+                            emax  = tonumber(cfg.max)  or emax
+                            estep = tonumber(cfg.step) or estep
+                        end
+                        local bal = tonumber((ws.current_user_data or {}).balance) or 0
+                        local lo, hi = emin, math.max(emin, math.min(emax, bal))
+                        local step = (id == "savings_exchange_plus") and estep or -estep
+                        sa.exchange_amount = math.max(lo, math.min(hi, (sa.exchange_amount or lo) + step))
+                        rebuild(self)
+                    end
+                elseif id == "savings_exchange_confirm" then right_panel.savings_exchange_confirm(self, function() rebuild(self) end)
+                elseif id == "savings_autocharge_off" then
+                    local sa = self.savings_add
+                    if sa and not sa.saving then sa.autocharge_enabled = false; rebuild(self) end
+                elseif id == "savings_autocharge_on" then
+                    local sa = self.savings_add
+                    if sa and not sa.saving then sa.autocharge_enabled = true; rebuild(self) end
+                elseif type(id) == "string" and id:match("^savings_autocharge_amt_") then
+                    local sa = self.savings_add
+                    if sa and not sa.saving then
+                        local amt = tonumber(id:match("_(%d+)$"))
+                        if amt then sa.autocharge_amount = amt; rebuild(self) end
+                    end
+                elseif id == "savings_autocharge_save" then right_panel.savings_autocharge_save(self, function() rebuild(self) end)
                 elseif id == "nav_invite" then if right_panel.start_invite_search(self, app_state, function() rebuild(self) end, b.data) then play_snd("snd_suspense") end
                 elseif id == "cancel_invite" then right_panel.stop_invite_search(self, app_state, function() rebuild(self) end); stop_snd("snd_suspense")
                 elseif id == "create_battle" then

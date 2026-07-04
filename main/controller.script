@@ -1,9 +1,16 @@
--- controller.script
 local ws        = require("modules.websocket_manager")
 local api       = require("modules.api_service")
 local app_state = require("modules.app_state")
 
 local SCREENS = { "lobby", "auth", "profile", "online", "themes", "payments", "tournaments", "game" }
+
+-- Debug trail for the sign-in/connect pipeline (boot silent-login, "Play
+-- Online" tap, GPGS callback, backend verify, WS identify) — every step logs
+-- here so a stuck/looping session can be diagnosed from device logs instead
+-- of guessed at.
+local function auth_debug(fmt, ...)
+    print(string.format("[AUTH-DEBUG] " .. fmt, ...))
+end
 
 local function show(self, screen)
     if screen ~= "game" then
@@ -60,6 +67,7 @@ local function identify_and_connect(user)
     end
 
     local id = user._id or user.localId or ""
+    auth_debug("identify_and_connect: id=%s username=%s", tostring(id), tostring(user.username))
     if id ~= "" then
         ws.identify(id, user.username or "Player",
             { amount = user.balance or 0, charge = 0 }, "UG")
@@ -67,46 +75,113 @@ local function identify_and_connect(user)
     ws.connect()
 end
 
+local function is_logged_in()
+    return ws.current_user_data and type(ws.current_user_data._id) == "string" and ws.current_user_data._id ~= ""
+end
+
+local function clear_session()
+    ws.current_user_data = nil
+    pcall(api.set_auth_token, "")
+    pcall(api.save_session, {})
+    pcall(ws.disconnect) -- Sever the stale socket connection to prevent rapid-fire auth errors
+    
+    if gpgs then pcall(gpgs.logout) end -- Clear GPGS cache to force a completely fresh login request
+    
+    for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile", "lobby" }) do
+        pcall(msg.post, "#" .. s, "user_data_updated")
+    end
+end
+
+-- Sign-in is ALWAYS silent — there is no manual "SIGN IN" button anywhere in
+-- the UI. If a silent attempt fails (transient network hiccup, GPGS not
+-- ready yet right at boot, etc.) we retry automatically up to this many
+-- times, spaced out, before quietly giving up rather than ever prompting the
+-- player to tap anything.
+local MAX_SILENT_LOGIN_ATTEMPTS = 3
+local SILENT_LOGIN_RETRY_DELAY = 1.5
+
+local function try_silent_login(self)
+    self._silent_login_inflight = true
+    self._silent_login_attempts = (self._silent_login_attempts or 0) + 1
+    auth_debug("try_silent_login: attempt %d/%d", self._silent_login_attempts, MAX_SILENT_LOGIN_ATTEMPTS)
+    app_state.auth_state = "sending"
+    app_state.auth_error = "" -- Clean out the old error so it shows "CONNECTING..." immediately
+    msg.post("#lobby", "auth_state_changed")
+    gpgs.silent_login()
+end
+
+local function handle_login_failure(self, error_message)
+    auth_debug("handle_login_failure: %s (attempt %d/%d)", tostring(error_message), self._silent_login_attempts or 0, MAX_SILENT_LOGIN_ATTEMPTS)
+    if (self._silent_login_attempts or 0) < MAX_SILENT_LOGIN_ATTEMPTS then
+        timer.delay(SILENT_LOGIN_RETRY_DELAY, false, function()
+            try_silent_login(self)
+        end)
+    else
+        -- If silent login is totally blocked (permissions dropped, cache wiped) and the user explicitly tapped "Play Online",
+        -- escalate to the interactive login sheet so they aren't completely soft-locked.
+        if self._explicit_online then
+            auth_debug("handle_login_failure: silent failed, escalating to interactive login")
+            self._explicit_online = false 
+            self._silent_login_inflight = false
+            app_state.auth_state = "sending"
+            app_state.auth_error = ""
+            msg.post("#lobby", "auth_state_changed")
+            gpgs.login()
+            return
+        end
+        
+        self._silent_login_inflight = false
+        app_state.auth_state = "error"
+        app_state.auth_error = error_message or "Couldn't sign in. Check your connection and try again."
+        msg.post("#lobby", "auth_state_changed")
+        auth_debug("handle_login_failure: retry budget exhausted, giving up")
+    end
+end
+
 local function gpgs_callback(self, message_id, message)
+    auth_debug("gpgs_callback: message_id=%s status=%s error=%s",
+        tostring(message_id), tostring(message and message.status), tostring(message and message.error))
     if message_id == gpgs.MSG_SIGN_IN or message_id == gpgs.MSG_SILENT_SIGN_IN then
         if message.status == gpgs.STATUS_SUCCESS then
             local auth_code = gpgs.get_server_auth_code()
+            auth_debug("gpgs_callback: GPGS success, auth_code_present=%s", tostring(auth_code ~= nil and auth_code ~= ""))
             if auth_code then
                 app_state.auth_state = "verifying"
-                msg.post("#auth", "auth_state_changed")
+                msg.post("#lobby", "auth_state_changed")
                 api.gpgs_login(auth_code, function(result)
+                    self._silent_login_inflight = false
+                    auth_debug("api.gpgs_login callback: success=%s message=%s isNewUser=%s",
+                        tostring(result.success), tostring(result.message), tostring(result.data and result.data.isNewUser))
                     if result.success and type(result.data) == "table" then
                         local user = result.data.user or result.data
                         -- Map the backend JWT token so identify_and_connect can save it
                         if result.data.token then user.token = result.data.token end
-                        
+
                         if type(user) == "table" and (user._id or user.localId) then
                             identify_and_connect(user)
+                            if result.data.isNewUser then
+                                msg.post("#signup_bonus", "show_signup_bonus", { amount = tonumber(user.balance) or 500 })
+                            end
                             app_state.auth_state = "done"
-                            msg.post("#auth", "auth_state_changed")
+                            msg.post("#lobby", "auth_state_changed")
                             route_after_auth(self)
                             return
                         end
                     end
+                    -- If we reach here, backend auth failed (e.g., user deleted on server or invalid setup).
+                    -- Wipe the local session so they aren't stuck passing a broken payload.
+                    clear_session()
                     app_state.auth_state = "error"
                     app_state.auth_error = result.message or "Backend auth failed"
-                    msg.post("#auth", "auth_state_changed")
+                    msg.post("#lobby", "auth_state_changed")
                 end)
             else
-                app_state.auth_state = "error"
-                app_state.auth_error = "Missing auth code"
-                msg.post("#auth", "auth_state_changed")
+                -- Missing auth code: Handled in the background via the new unified retry flow
+                handle_login_failure(self, "Missing auth code. Retrying...")
             end
         else
-            if message_id == gpgs.MSG_SIGN_IN then
-                app_state.auth_state = "error"
-                app_state.auth_error = message.error or "Sign in failed"
-                msg.post("#auth", "auth_state_changed")
-            elseif message_id == gpgs.MSG_SILENT_SIGN_IN then
-                -- Silent login failed, gracefully remain on the Auth UI to allow manual input
-                app_state.auth_state = "idle"
-                msg.post("#auth", "auth_state_changed")
-            end
+            -- Sign-in failed — retry silently until we've used up the retry budget
+            handle_login_failure(self, message.error or "Couldn't sign in. Check your connection and try again.")
         end
     end
 end
@@ -114,6 +189,11 @@ end
 function init(self)
     self.screen = "lobby"
     self.tokens = {}
+
+    -- Keep the screen awake for as long as the app is open, not just during
+    -- a match — set once here and never re-enabled (see game.script, which
+    -- used to flip this back on leaving the game screen).
+    pcall(window.set_dim_mode, window.DIMMING_OFF)
 
     for _, s in ipairs(SCREENS) do
         msg.post("#" .. s, "disable")
@@ -130,15 +210,14 @@ function init(self)
         local token = cached.idToken or cached.token or ""
         if token ~= "" then api.set_auth_token(token) end
         ws.current_user_data = cached
-        
-        ws.identify(cached._id, cached.username or "Player", { amount = cached.balance or 0, charge = 0 }, "UG")
-        ws.connect()
-        
-        if gameservices then
-            local external_id = cached._id or cached.localId or ""
-            if external_id ~= "" then gameservices.onesignal_login(external_id) end
-        end
-        self._restore_pending = true
+
+        -- We removed ws.identify() and ws.connect() from here!
+        -- We load the session into memory so the UI knows who you are,
+        -- but wait for the Play Online tap to actually trigger the network.
+        auth_debug("init: cached session found, waiting for play_online tap to connect")
+    else
+        -- No local session cached: do NOT attempt sign-in at boot.
+        auth_debug("init: no cached session, waiting for play_online tap to trigger sign-in")
     end
 
     msg.post("#lobby", "enable")
@@ -153,6 +232,8 @@ function init(self)
     table.insert(self.tokens, ws.on("identify_success", function()
         if self._restore_pending then
             self._restore_pending = false
+            app_state.auth_state = "idle"
+            msg.post("#lobby", "auth_state_changed")
             route_after_auth(self)
         end
     end))
@@ -194,12 +275,17 @@ function init(self)
         if self.screen ~= "game" then show(self, "game") else msg.post("#game_logic", "ws_new_game_start") end
         if not is_round_continuation then
             local stake = (type(gs) == "table" and type(gs.stake) == "table" and tonumber(gs.stake.amount)) or 500
-            pcall(msg.post, "#coins", "coin_collect_pot", {
-                amount  = stake * 2,
-                sources = { { x = 150, y = 64 }, { x = 150, y = 656 } },
-                center  = { x = 640, y = 360 },
-            })
-            pcall(msg.post, "#coins", "coin_pot_to", { x = 340, y = 360 })
+            -- A zero-stake game (AI trial battle, free match) has no real pot
+            -- to show — skip the bundle entirely instead of sitting a "0
+            -- coins" bundle on screen for the whole game.
+            if stake > 0 then
+                pcall(msg.post, "#coins", "coin_collect_pot", {
+                    amount  = stake * 2,
+                    sources = { { x = 150, y = 64 }, { x = 150, y = 656 } },
+                    center  = { x = 640, y = 360 },
+                })
+                pcall(msg.post, "#coins", "coin_pot_to", { x = 230, y = 360 })
+            end
         end
     end))
 
@@ -230,12 +316,27 @@ function init(self)
     forward("game_request",           "#online", "ws_game_request")
     forward("game_request_declined",  "#online", "ws_request_declined")
     forward("game_request_cancelled", "#online", "ws_request_cancelled")
+    forward("savings_status",           "#online", "ws_savings_status")
+    forward("savings_exchange_result",  "#online", "ws_savings_exchange_result")
+    forward("savings_settings_updated", "#online", "ws_savings_settings_updated")
+
+    forward("savings_status",           "#payments", "ws_savings_status")
+    forward("savings_exchange_result",  "#payments", "ws_savings_exchange_result")
+    forward("savings_settings_updated", "#payments", "ws_savings_settings_updated")
 
     table.insert(self.tokens, ws.on("auth_required", function()
-        if self.screen == "online" or self.screen == "lobby" then show(self, "auth") end
+        clear_session()
+        app_state.auth_state = "error"
+        app_state.auth_error = "Session expired. Try again."
+        msg.post("#lobby", "auth_state_changed")
+        if self.screen ~= "lobby" then show(self, "lobby") end
     end))
     table.insert(self.tokens, ws.on("identify_error", function()
-        if self.screen == "online" or self.screen == "lobby" then show(self, "auth") end
+        clear_session()
+        app_state.auth_state = "error"
+        app_state.auth_error = "Connection failed."
+        msg.post("#lobby", "auth_state_changed")
+        if self.screen ~= "lobby" then show(self, "lobby") end
     end))
 
     forward("resync",                "#game_logic", "ws_resync")
@@ -277,39 +378,67 @@ end
 function on_message(self, message_id, message, sender)
     if message_id == hash("goto_lobby") then show(self, "lobby")
     elseif message_id == hash("goto_game") then show(self, "game")
-    elseif message_id == hash("goto_online") then show(self, "online")
-    elseif message_id == hash("goto_themes") then show(self, "themes")
-    elseif message_id == hash("goto_payments") then show(self, "payments")
-    elseif message_id == hash("goto_tournaments") then show(self, "tournaments")
-    elseif message_id == hash("goto_profile") then show(self, "profile")
+    elseif message_id == hash("goto_online") then
+        if is_logged_in() then show(self, "online") else show(self, "lobby") end
+    elseif message_id == hash("goto_themes") then
+        if is_logged_in() then show(self, "themes") else show(self, "lobby") end
+    elseif message_id == hash("goto_payments") then
+        if is_logged_in() then show(self, "payments") else show(self, "lobby") end
+    elseif message_id == hash("goto_tournaments") then
+        if is_logged_in() then show(self, "tournaments") else show(self, "lobby") end
+    elseif message_id == hash("goto_profile") then
+        if is_logged_in() then show(self, "profile") else show(self, "lobby") end
     elseif message_id == hash("goto_auth") then show(self, "auth")
 
     elseif message_id == hash("play_online") then
         self._explicit_online = true
+        auth_debug("play_online tapped: user_id=%s socket_connected=%s is_identified=%s inflight=%s",
+            tostring(ws.current_user_data and ws.current_user_data._id), tostring(ws.socket_connected),
+            tostring(ws.is_identified), tostring(self._silent_login_inflight))
+            
         if ws.current_user_data and (ws.current_user_data._id or "") ~= "" then
-            if ws.socket_connected then route_after_auth(self) else self._restore_pending = true end
+            if ws.socket_connected then 
+                route_after_auth(self) 
+            else 
+                self._restore_pending = true 
+                -- Visually switch the lobby button to "CONNECTING..."
+                app_state.auth_state = "verifying"
+                msg.post("#lobby", "auth_state_changed")
+                -- ACTUALLY trigger the connection now that the button was tapped
+                identify_and_connect(ws.current_user_data)
+            end
             return
         end
-        show(self, "auth")
+        -- The tap on "Play Online" IS the trigger for sign-in — no separate
+        -- auth screen/dialog is shown for this. The player stays exactly
+        -- where they are while gpgs_callback resolves in the background;
+        -- once identify_and_connect succeeds, route_after_auth() (called
+        -- from gpgs_callback) takes them straight to "online" since
+        -- self._explicit_online is already set above.
         if gpgs then
-            app_state.auth_state = "sending"
-            msg.post("#auth", "auth_state_changed")
-            gpgs.silent_login()
+            if self._silent_login_inflight then
+                auth_debug("play_online: a silent-login attempt is already in flight, ignoring duplicate tap")
+            else
+                self._silent_login_attempts = 0
+                try_silent_login(self)
+            end
+        else
+            auth_debug("play_online: gpgs extension not available on this device")
         end
 
-    elseif message_id == hash("auth_gpgs_login") then
-        if gpgs then
-            app_state.auth_state = "sending"
-            msg.post("#auth", "auth_state_changed")
-            gpgs.login()
-        else
-            app_state.auth_error = "GPGS not supported on this device"
-            app_state.auth_state = "error"
-            msg.post("#auth", "auth_state_changed")
+    elseif message_id == hash("auth_retry_silent_login") then
+        -- The only tappable thing on the auth screen (shown only for the
+        -- auth_required/identify_error recovery path, not for play_online):
+        -- retries the same silent flow with a fresh budget — never a
+        -- manual/interactive Google sign-in prompt.
+        if gpgs and not self._silent_login_inflight then
+            self._silent_login_attempts = 0
+            try_silent_login(self)
         end
 
     elseif message_id == hash("auth_cancel") then
         app_state.auth_state = "idle"
+        msg.post("#lobby", "auth_state_changed")
         show(self, "lobby")
 
     elseif message_id == hash("profile_save") then

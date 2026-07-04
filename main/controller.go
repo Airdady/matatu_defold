@@ -55,8 +55,20 @@ components {
   component: "/main/incoming.gui"
 }
 components {
+  id: "daily_bonus"
+  component: "/main/daily_bonus.gui"
+}
+components {
+  id: "signup_bonus"
+  component: "/main/signup_bonus.gui"
+}
+components {
   id: "coins"
   component: "/main/coins.gui"
+}
+components {
+  id: "season_results"
+  component: "/main/season_results.gui"
 }
 components {
   id: "suit_select"
@@ -65,6 +77,10 @@ components {
 components {
   id: "tutorial"
   component: "/main/tutorial.gui"
+}
+components {
+  id: "announcement"
+  component: "/main/announcement.gui"
 }
 embedded_components {
   id: "background"

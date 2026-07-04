@@ -72,7 +72,6 @@ function M.draw(self, ctx)
     local track     = ctx.track
     local txtL      = ctx.txtL
     local txtR      = ctx.txtR
-    local mkbtn     = ctx.mkbtn
     local glass     = ctx.glass
     local commas    = ctx.commas
     local get_layout = ctx.get_layout
@@ -81,34 +80,14 @@ function M.draw(self, ctx)
     local pw = (div_lx - ctx.EDGE_L) - (C.SIDE_MARGIN * 2)
     local cx = (ctx.EDGE_L + div_lx) / 2
     local cy = ctx.EDGE_T - 16
-
-    -- Season timer block + Back button row
-    local timer_h = 88
-    local tcy = cy - timer_h / 2
     local ctx_ui = ctx.ui
 
-    -- Square back button
-    local btn_size = 54
-    local gap = 12
-    local btn_x = cx - pw/2 + btn_size/2
-    mkbtn(self, "nav_lobby", vmath.vector3(btn_x, tcy, 0), vmath.vector3(btn_size, btn_size, 0), "<", "secondary_btn", nil, "btn_md")
-
-    -- Shifted timer container
-    local timer_pw = pw - btn_size - gap
-    local timer_cx = cx + (btn_size + gap) / 2
-
-    track(self, ctx_ui.box(vmath.vector3(timer_cx, tcy, 0), vmath.vector3(timer_pw, timer_h, 0), C.COL_TIMER_BG))
-    track(self, ctx_ui.box(vmath.vector3(timer_cx, tcy - timer_h/2 + 1, 0), vmath.vector3(timer_pw, 2, 0), C.COL_GOLD_BDR))
-    
-    local timer_icon_x = timer_cx - timer_pw/2 + 34
-    track(self, ctx_ui.image(vmath.vector3(timer_icon_x, tcy, 0), vmath.vector3(44, 44, 0), "timer"))
-
-    local tx = timer_icon_x + 34
-    txtL(self, tx, tcy + 26, "SEASON ENDS IN", "small", C.COL_DIM)
-    txtL(self, tx, tcy,      self.season_text or "00:00:00", "title", C.COL_GOLD)
-    txtL(self, tx, tcy - 28, self.season_target_text or "", "small", C.COL_BRIGHT)
-
-    cy = cy - timer_h - C.BLOCK_GAP
+    -- The back button (nav_lobby) and the "SEASON ENDS IN" countdown that
+    -- used to share a row here have both moved off this panel — the back
+    -- button now lives in the ONLINE screen's center header
+    -- (modules/online_center.lua) and the countdown lives in the lobby
+    -- header (main/lobby.gui_script) — so the Standings container starts
+    -- right at the top of the panel with no reserved row above it.
 
     -- Global Container Padding/Spacing Logic
     -- pad_top increased and title_space decreased to push title down toward the table
@@ -182,7 +161,7 @@ function M.draw(self, ctx)
 
     -- ── Season Bonuses Container ──────────────────────────────────────────────
     local num_bonuses = #prizes
-    local b_list_h = num_bonuses * C.ROW_H_LG
+    local b_list_h = num_bonuses * C.ROW_H_BONUS
     local b_cont_h = pad_top + title_space + b_list_h + pad_bot
 
     -- Draw Container Background
@@ -201,7 +180,7 @@ function M.draw(self, ctx)
 
     local my_pos = tonumber((ws.current_user_data or {}).position) or -1
     local active = M.active_tier_index(prizes, my_pos)
-    local row_h_bonus = C.ROW_H_LG
+    local row_h_bonus = C.ROW_H_BONUS
 
     for i, p in ipairs(prizes) do
         local tier_col = C.TIER_COLORS[math.min(i, #C.TIER_COLORS)]

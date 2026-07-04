@@ -29,6 +29,7 @@ function M.draw(self, ctx)
     local commas     = ctx.commas
     local get_layout = ctx.get_layout
     local ui         = ctx.ui
+    local mkbtn      = ctx.mkbtn
 
     local _, _, div_lx, div_rx = get_layout()
     local center_cx = (div_lx + div_rx) / 2
@@ -44,10 +45,17 @@ function M.draw(self, ctx)
     local hcy   = top - hdr_h/2
     track(self, ui.box(vmath.vector3(center_cx, hcy, 0), vmath.vector3(list_w, hdr_h, 0), C.COL_HEADER_BG))
     track(self, ui.box(vmath.vector3(center_cx, hcy - hdr_h/2 + 1, 0), vmath.vector3(list_w, 1, 0), C.COL_BORDER))
-    
-    txtL(self, content_l + 6, hcy + 16,  "AVAILABLE PLAYERS", "body", C.COL_BRIGHT)
-    
-    local helper = txtL(self, content_l + 6, hcy - 12, "Tap a player to request a game. If they decline, try another!", "small", C.COL_GOLD)
+
+    -- Back-to-lobby button at the left edge of the header, vertically centered on hcy.
+    local back_btn_size = 48
+    local back_btn_gap  = 12
+    local back_btn_x    = content_l + back_btn_size/2
+    mkbtn(self, "nav_lobby", vmath.vector3(back_btn_x, hcy, 0), vmath.vector3(back_btn_size, back_btn_size, 0), "<", "secondary_btn", nil, "btn_md")
+
+    local title_l = back_btn_x + back_btn_size/2 + back_btn_gap
+    txtL(self, title_l, hcy + 16,  "AVAILABLE PLAYERS", "body", C.COL_BRIGHT)
+
+    local helper = txtL(self, title_l, hcy - 12, "Tap a player to request a game. If they decline, try another!", "small", C.COL_GOLD)
     gui.set_scale(helper, vmath.vector3(1.1, 1.1, 1))
 
     local cy = top - hdr_h
@@ -136,30 +144,65 @@ function M.draw(self, ctx)
     local row_h       = C.ROW_H_LIST
     local step        = row_h
 
-    local users = ws.get_online_users() or {}
+    -- Never show player data before the SERVER has actually confirmed our
+    -- identity for this connection (ws.is_identified, set only by the
+    -- IDENTIFY ack) — ws.online_users/current_user_data are plain in-memory
+    -- fields that can be non-empty from a previous session, a locally cached
+    -- profile, or a race with an in-flight identify, none of which mean this
+    -- connection is actually authenticated right now.
+    local users = ws.is_identified and (ws.get_online_users() or {}) or {}
     local my_id = ws.get_current_user_id()
 
     local rows = {}
-    local seen_users = {} -- Used to filter out duplicates
+    -- Used to filter out duplicates. Keyed by user id alone for Quick Play
+    -- (one row per user); keyed by "id:TYPE" for Battles, since a player can
+    -- host several independent battle types (NORMAL/KNOCKOUT/PARTY) at once.
+    local seen_users = {}
 
     -- Filter list: No duplicates, no self, and tab-specific logic
     for _, pu in ipairs(users) do
-        if pu._id and pu._id ~= my_id and not seen_users[pu._id] then
-            local should_add = false
-            
+        if pu._id and pu._id ~= my_id then
             if self.tab == TAB_BATTLES then
-                -- Only show players who actually have an active battle
-                if pu.myBattle then
-                    should_add = true
+                -- A player's `myBattles` map (already broadcast alongside the
+                -- legacy singular `myBattle`) can hold one battle per type —
+                -- surface a separate row for each one they actually host, so
+                -- e.g. Vortex hosting both NORMAL and KNOCKOUT shows up for
+                -- both. PARTY stays server-side only (not yet ready for
+                -- players), so it's excluded here — including it would add a
+                -- confusing extra row for the same bot.
+                local battles_map = (type(pu.myBattles) == "table") and pu.myBattles or nil
+                local added_any = false
+                if battles_map then
+                    for _, T in ipairs({ "NORMAL", "KNOCKOUT" }) do
+                        local b = battles_map[T]
+                        if type(b) == "table" and next(b) ~= nil then
+                            local key = pu._id .. ":" .. T
+                            if not seen_users[key] then
+                                seen_users[key] = true
+                                local row_pu = {}
+                                for k, v in pairs(pu) do row_pu[k] = v end
+                                row_pu.myBattle = b
+                                rows[#rows+1] = row_pu
+                                added_any = true
+                            end
+                        end
+                    end
+                end
+                -- Fallback for payloads without a `myBattles` map — behave
+                -- exactly as before (a single row using the legacy field).
+                if not added_any and pu.myBattle then
+                    local key = pu._id .. ":legacy"
+                    if not seen_users[key] then
+                        seen_users[key] = true
+                        rows[#rows+1] = pu
+                    end
                 end
             else
-                -- Quick play: show players
-                should_add = true
-            end
-            
-            if should_add then
-                seen_users[pu._id] = true
-                rows[#rows+1] = pu
+                -- Quick play: show players (one row per user)
+                if not seen_users[pu._id] then
+                    seen_users[pu._id] = true
+                    rows[#rows+1] = pu
+                end
             end
         end
     end
@@ -176,7 +219,9 @@ function M.draw(self, ctx)
 
     if #rows == 0 then
         local msg = "Connecting..."
-        if ws.socket_connected then
+        if not ws.is_identified then
+            msg = "Sign in to see online players"
+        elseif ws.socket_connected then
             msg = self.tab == TAB_BATTLES and "No open battles right now" or "No opponents online right now"
         end
         track(self, ui.text(vmath.vector3(cx, list_top - region_h/2, 0), msg, "body", C.COL_DIM))
