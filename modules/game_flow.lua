@@ -176,6 +176,59 @@ function M.after_play_settled(self, rec, is_player, result, ticket)
         else
             self.next_turn()
         end
+    elseif result.type == NA.HOLD_ON then
+        -- Card 1 (Hold On): the player who just played keeps the turn and
+        -- plays again.
+        notify_gui(self.gui_suit, "suit_select", { mode = "close" })
+        log(actor .. " plays Hold On — plays again!")
+        if self.t4 then
+            require("modules.tournament4").apply_hold_on(self)
+            return
+        end
+        if is_player then
+            if #self.player_hand == 0 then
+                if self.online_mode then self.deactivate_turn(); OnlineHandler.end_turn(self)
+                else self.next_turn() end
+                return
+            end
+            self.player_has_drawn = false
+            self.is_local_action_locked = false
+            notify_gui(self.gui_hud, "skip", { show = false })
+            RE.pre_validate_hand(self)
+        else
+            OfflineHandler.do_ai_turn(self, true)
+        end
+    elseif result.type == NA.GENERAL_MARKET then
+        -- Card 14 (General Market): every opponent draws one card, then the
+        -- player who played it goes again. Heads-up: the single opponent draws.
+        notify_gui(self.gui_suit, "suit_select", { mode = "close" })
+        log(actor .. " plays General Market — opponent draws 1!")
+        if self.t4 then
+            require("modules.tournament4").apply_general_market(self, self.t4.turn_seat)
+            return
+        end
+        local function continue_actor()
+            if is_player then
+                if #self.player_hand == 0 then
+                    if self.online_mode then self.deactivate_turn(); OnlineHandler.end_turn(self)
+                    else self.next_turn() end
+                    return
+                end
+                self.player_has_drawn = false
+                self.is_local_action_locked = false
+                notify_gui(self.gui_hud, "skip", { show = false })
+                RE.pre_validate_hand(self)
+            else
+                OfflineHandler.do_ai_turn(self, true)
+            end
+        end
+        if self.online_mode then
+            -- The server applies the opponent draw and pushes state; just keep control.
+            continue_actor()
+        else
+            local opp_hand = is_player and self.ai_hand or self.player_hand
+            M.draw_to_hand(self, opp_hand, not is_player, 1, function() continue_actor() end)
+        end
     else
         notify_gui(self.gui_suit, "suit_select", { mode = "close" })
         local pen = RE.get_active_penalty(self)

@@ -1,4 +1,6 @@
 -- config.lua
+local GameMode = require "modules.game_mode"
+
 local M = {}
 
 -- Detect if we are running in an HTML5 Web Browser
@@ -11,8 +13,12 @@ else
     M.DOMAIN = "champion.matatuleague.com"
 end
 
-M.BASE_URL = "https://" .. M.DOMAIN .. "/matatu"
-M.WS_URL = "wss://" .. M.DOMAIN .. "/matatu/ws"
+-- Endpoints follow the active game (see modules/game_mode.lua). The backend
+-- selects the matching rule engine from this URL path, so GAME_MODE = "WHOT"
+-- => /whot => the server validates moves with its Whot rules; "MATATU" =>
+-- /matatu; "KADI" => /kadi.
+M.BASE_URL = "https://" .. M.DOMAIN .. "/" .. GameMode.PATH
+M.WS_URL   = "wss://" .. M.DOMAIN .. "/" .. GameMode.PATH .. "/ws"
 
 M.APP_VERSION = "18.5.9"
 M.GAME_STATE_SECRET = "a27a120adfbc9f727c187748fff44547e1ee72f09481c8a965d62ed1c02e6ea3"

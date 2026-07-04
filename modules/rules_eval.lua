@@ -1,11 +1,14 @@
 ----------------------------------------------------------------------
--- rules_eval.lua
+-- rules_eval.lua  (WHOT build)
 -- The decision layer: given the current board + a candidate card, is the
--- move legal and what happens next. Also owns the cutting-card match test,
--- the authoritative server-state getters (penalty / suit), play-effect
--- sound selection, and hand scoring.
+-- move legal and what happens next. Wraps modules.card_rules (now the Whot
+-- engine); never touches sprites or layout.
 --
--- Wraps modules.card_rules; this module never touches sprites or layout.
+-- The public function names are unchanged from the Matatu build so the board
+-- controller (game.script / game_flow.lua / tournament4.lua) keeps working.
+-- Whot has no "cutting card" and no per-suit penalty stacking, so the cutting
+-- helpers are reduced to no-ops and the chosen-suit getter now returns the
+-- chosen *shape*.
 ----------------------------------------------------------------------
 local Rules = require "modules.card_rules"
 local Defs  = require "modules.card_defs"
@@ -23,27 +26,10 @@ end
 function M.top_played(self) return self.played_cards[#self.played_cards] end
 
 ----------------------------------------------------------------------
--- Cutting Card Match Logic
+-- Cutting Card Match Logic — Whot has no cutting card.
 ----------------------------------------------------------------------
-function M.is_cutting_match(self, rec)
-    if not self.cutting_card then return false end
-    if tonumber(rec.v) ~= 7 then return false end
-
-    local cut = self.cutting_card
-    local cv = tonumber(cut.v)
-
-    if cv == 50 then
-        local cut_red = (cut.s == "H" or cut.s == "D" or cut.s == "R")
-        local rec_red = (rec.s == "H" or rec.s == "D")
-        local cut_black = (cut.s == "S" or cut.s == "C" or cut.s == "B")
-        local rec_black = (rec.s == "S" or rec.s == "C")
-
-        if cut_red and rec_red then return true end
-        if cut_black and rec_black then return true end
-        return false
-    else
-        return rec.s == cut.s
-    end
+function M.is_cutting_match(_self, _rec)
+    return false
 end
 
 ----------------------------------------------------------------------
@@ -56,12 +42,17 @@ function M.get_active_penalty(self)
     return self.active_penalty
 end
 
+-- Returns the forced shape after a Whot card. Reads server state when online;
+-- the server may report it as chosenShape or (legacy) chosenSuit.
 function M.get_active_suit(self)
-    if self.online_mode and self.game_state and self.game_state.chosenSuit and self.game_state.chosenSuit ~= "" and self.game_state.chosenSuit ~= "null" then
-        return tostring(self.game_state.chosenSuit)
+    if self.online_mode and self.game_state then
+        local gs = self.game_state
+        local s = gs.chosenShape or gs.chosenSuit
+        if s and s ~= "" and s ~= "null" then return tostring(s) end
     end
-    return self.chosen_suit
+    return self.chosen_suit or self.chosen_shape or ""
 end
+M.get_active_shape = M.get_active_suit
 
 ----------------------------------------------------------------------
 -- Rule evaluation
@@ -73,42 +64,31 @@ function M.evaluate_play(self, rec, hand)
     local curr_rule = M.rules_card(rec)
 
     local penalty = M.get_active_penalty(self)
-    local suit = M.get_active_suit(self)
+    local shape = M.get_active_suit(self)
 
     -- First move: nothing to match against, so anything is legal.
     if not prev_rule then
-        local result = Rules.get_next_action(curr_rule, curr_rule, false, "", 0, 0, #hand == 1, Rules.RULES_JOKERS)
+        local result = Rules.get_next_action(curr_rule, curr_rule, false, "", 0, 0, #hand == 1)
         if not result then result = {} end
         result.valid = true
-        result.is_cut = M.is_cutting_match(self, rec)
         return result
     end
 
-    -- Normal validation through the shared rule engine.
-    -- The 7 (cutting card) is NOT wild: it must legally match by suit or value
-    -- exactly like every other card before it can ever count as a cut.
     local result = Rules.get_next_action(
         prev_rule, curr_rule,
         penalty > 0,
-        suit,
+        shape,
         penalty, 0,
-        #hand == 1,
-        Rules.RULES_JOKERS)
+        #hand == 1)
 
     if result == nil then
         result = { valid = false, type = Rules.NextActionType.INVALID_MOVE }
     end
 
-    -- Only mark a cutting win when the move was otherwise legal.
-    if result.valid and M.is_cutting_match(self, rec) then
-        result.is_cut = true
-    end
-
     return result
 end
 
--- Validation is internal only; no visual tinting of cards. Kept as a hook so
--- callers (and online_handler) can fire it after any state change.
+-- Validation is internal only; kept as a hook for callers/online_handler.
 function M.pre_validate_hand(self)
 end
 
@@ -122,46 +102,31 @@ end
 
 ----------------------------------------------------------------------
 -- Play-effect sound selection
+--   Reuses the existing Matatu sound atlas names. Whot Pick Two -> the
+--   "2 penalty" sting, Pick Three -> the "3 penalty" sting, everything
+--   else -> the normal play sound.
 ----------------------------------------------------------------------
 function M.trigger_play_effects(self, rec, is_last)
-    local v = tonumber(rec.v) or 1
+    local v = tonumber(rec.v) or 0
     local snd = "SoundPlay"
     if v == 2 then snd = "SoundPlay20"
-    elseif v == 3 then snd = "SoundPlay30"
-    elseif v == 50 then snd = "SoundPlayJoker" end
-    if M.is_cutting_match(self, rec) then snd = "SoundPlayCut" end
-    -- The LAST card on the table ends the round: it lands with the normal
-    -- play sound — no penalty fanfare, since no pick follows a winning card.
-    if is_last and snd ~= "SoundPlayCut" then snd = "SoundPlay" end
-    -- While a penalty is active, only a PARTIAL penalty (answering with a WEAKER
-    -- penalty card, which reduces the stack) drops to the normal play sound — a
-    -- final card already did so above. Answering with an equal or BIGGER penalty
-    -- keeps the card's special penalty sound.
-    if not is_last and snd ~= "SoundPlayCut" and (M.get_active_penalty(self) or 0) > 0 then
-        local tp = M.top_played(self)
-        if tp and Rules.is_penalty_card(rec, Rules.RULES_JOKERS) then
-            local prev_pen   = Rules.get_card_penalty_value(tp)
-            local played_pen = Rules.get_card_penalty_value(rec)
-            if prev_pen > played_pen then snd = "SoundPlay" end
-        end
-    end
+    elseif v == 5 then snd = "SoundPlay30" end
+
+    -- The last card ends the round: it lands with the normal play sound.
+    if is_last then snd = "SoundPlay" end
+
     self.play_sound(snd)
 end
 
 ----------------------------------------------------------------------
--- Hand scoring
+-- Hand scoring (Whot: Whot = 20, otherwise the card's face value)
 ----------------------------------------------------------------------
 function M.hand_score(hand)
     local total = 0
     for _, c in ipairs(hand) do
-        local v = tonumber(c.v) or 10
-        local pts = v
-        if v == 1 then if c.s == "S" then pts = 60 else pts = 15 end
-        elseif v == 2 then pts = 20
-        elseif v == 3 then pts = 30
-        elseif v == 50 then pts = 50
-        elseif v == 15 then pts = 15 end
-        total = total + pts
+        local v = tonumber(c.v) or 0
+        if v == 20 or c.s == "W" then total = total + 20
+        else total = total + v end
     end
     return total
 end

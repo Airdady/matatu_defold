@@ -13,7 +13,7 @@ function M.notify_gui(target_url, message_id, message_data)
 end
 
 function M.log(text)
-    print("Matatu Game: " .. tostring(text))
+    print("Whot Game: " .. tostring(text))
 end
 
 function M.rand_range(a, b)

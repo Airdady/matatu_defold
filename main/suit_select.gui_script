@@ -1,4 +1,4 @@
--- suit_select.gui_script — Matatu Suit Selector Overlay (Defold)
+-- suit_select.gui_script — Whot Shape Selector Overlay (Defold)
 
 -- FIXED: Target mapped precisely to the /controller object to guarantee routing.
 local GAME = "/controller#game_logic"
@@ -9,14 +9,18 @@ local LOGICAL_H = 720
 
 local C_WHITE = vmath.vector4(1.0, 1.0, 1.0, 1.0)
 
-local SUIT_ORDER  = { "H", "D", "S", "C" }
-local SUIT_IMG    = { H = "hearts", D = "diamonds", S = "spades", C = "clubs" }
-local SUIT_SYMBOL = { H = "♥", D = "♦", S = "♠", C = "♣" }
+-- WHOT build: the selector picks one of the five Whot shapes, not card suits.
+-- Shape art lives in the shared "ui" atlas (circle/triangle/cross/square/star);
+-- the chosen shape CODE is what the rule engine matches on.
+local SUIT_ORDER  = { "C", "T", "X", "S", "R" }
+local SUIT_IMG    = { C = "circle", T = "triangle", X = "cross", S = "square", R = "star" }
+local SUIT_SYMBOL = { C = "C", T = "T", X = "X", S = "S", R = "R" } -- fallback if art missing
 local SUIT_COLOR  = {
-    H = vmath.vector4(0.85, 0.1,  0.1,  1.0),
-    D = vmath.vector4(0.85, 0.1,  0.1,  1.0),
-    S = vmath.vector4(0.15, 0.15, 0.25, 1.0),
-    C = vmath.vector4(0.10, 0.20, 0.10, 1.0),
+    C = vmath.vector4(0.85, 0.15, 0.15, 1.0), -- Circle
+    T = vmath.vector4(0.15, 0.55, 0.85, 1.0), -- Triangle
+    X = vmath.vector4(0.20, 0.65, 0.25, 1.0), -- Cross
+    S = vmath.vector4(0.85, 0.65, 0.10, 1.0), -- Square
+    R = vmath.vector4(0.65, 0.25, 0.75, 1.0), -- Star
 }
 
 local function box(pos, size, color, pivot)
@@ -69,7 +73,7 @@ local function build_suit_select(self)
 
     self.ss_buttons = {}
     for i, s in ipairs(SUIT_ORDER) do
-        local angle = math.pi / 2 - ((i - 1) * 2 * math.pi / 4)
+        local angle = math.pi / 2 - ((i - 1) * 2 * math.pi / #SUIT_ORDER)
         local px = math.cos(angle) * SS_RADIUS
         local py = math.sin(angle) * SS_RADIUS
         local btn_pos = vmath.vector3(px, py, 0)
@@ -83,11 +87,17 @@ local function build_suit_select(self)
         local b_txt = label(vmath.vector3(0, 0, 0), SUIT_SYMBOL[s], 32, SUIT_COLOR[s], gui.PIVOT_CENTER)
         gui.set_parent(b_txt, b_bg)
 
-        pcall(function()
-            gui.set_texture(b_img, "ui")
-            gui.play_flipbook(b_img, hash(SUIT_IMG[s]))
-            gui.set_text(b_txt, "")
-        end)
+        -- Show the shape art from the "ui" atlas; if it can't be loaded the
+        -- node stays transparent and the letter label remains as a fallback.
+        gui.set_color(b_img, vmath.vector4(1, 1, 1, 0))
+        if SUIT_IMG[s] then
+            pcall(function()
+                gui.set_texture(b_img, "ui")
+                gui.play_flipbook(b_img, hash(SUIT_IMG[s]))
+                gui.set_color(b_img, C_WHITE)
+                gui.set_text(b_txt, "")
+            end)
+        end
 
         self.ss_buttons[s] = { bg = b_bg, img = b_img, txt = b_txt, start_pos = btn_pos }
     end

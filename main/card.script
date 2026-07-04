@@ -1,21 +1,14 @@
--- card.script
--- Per-theme card art, mirroring the Godot Card.gd THEME_TEXTURE_PATHS model:
--- every theme resolves to ONE full sprite sheet (default / drago / batman),
--- so themed decks restyle every card face A→K plus the jokers and back.
--- The sheet is chosen once at spawn from the active theme; frame names are
--- identical across the three atlases, so all flipbook code stays unchanged.
+-- card.script  (WHOT build)
+-- Whot ships a single deck art set (assets/cards/cards.atlas), so there is no
+-- per-theme sprite-sheet swap. The card sprite uses the default Whot atlas
+-- assigned on the embedded component; frame names are "<v><s>" (e.g. "10T",
+-- "20W") plus "BACK_DEFAULT".
+--
+-- The atlas resource properties are retained so existing card.go references
+-- keep resolving, but init no longer swaps them.
 
 go.property("atlas_default", resource.atlas("/assets/cards/cards.atlas"))
-go.property("atlas_drago", resource.atlas("/assets/cards/cards_drago.atlas"))
-go.property("atlas_batman", resource.atlas("/assets/cards/cards_batman.atlas"))
-
-local app = require "modules.app_state"
 
 function init(self)
-    local set = (app.get_theme() or {}).card_set or "default"
-    if set == "drago" then
-        go.set("#sprite", "image", self.atlas_drago)
-    elseif set == "batman" then
-        go.set("#sprite", "image", self.atlas_batman)
-    end
+    -- Single Whot deck art: nothing to swap.
 end

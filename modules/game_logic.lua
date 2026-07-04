@@ -34,19 +34,19 @@ local function hand_of(g, id)
 end
 
 local function is_plain_starter(card)
-	-- Avoid starting the discard pile on a power/wild card.
-	if card.v == 50 then
+	-- Avoid starting the discard pile on a power/wild Whot card.
+	if card.v == rules.VALUES.WHOT or card.s == "W" then
 		return false
-	end -- joker
-	if card.v == rules.VALUES.ACE then
+	end -- Whot wildcard (choose shape)
+	if card.v == rules.VALUES.HOLD_ON then
 		return false
-	end -- ace (choose suit)
-	if card.v == rules.VALUES.TWO or card.v == rules.VALUES.THREE then
+	end -- Hold On (play again)
+	if card.v == rules.VALUES.PICK_TWO or card.v == rules.VALUES.PICK_THREE then
 		return false
 	end -- penalty
-	if card.v == rules.VALUES.EIGHT or card.v == rules.VALUES.JACK then
+	if card.v == rules.VALUES.SUSPENSION or card.v == rules.VALUES.GENERAL_MARKET then
 		return false
-	end -- skip
+	end -- skip / general market
 	return true
 end
 
@@ -131,6 +131,12 @@ function M.new(opts)
 		has_drawn = false,
 		must_continue = false,
 		awaiting_suit = false,
+		-- Persist the requested match length so the board can tell a single
+		-- Quick Play game (series == 1, no scoreboard) apart from a Battle-AI
+		-- best-of series. Without this, callers fell through to app.ai_series
+		-- (default 3) and Quick Play wrongly showed a best-of-3 scoreboard.
+		series = opts.series or 1,
+		config = opts.config or opts,
 	}
 	local d = deck_mod.new_shuffled()
 
@@ -154,7 +160,7 @@ function M.new(opts)
 			},
 			[g.ai_id] = {
 				hand = {},
-				username = opts.ai_name or "Matatu Bot",
+				username = opts.ai_name or "Whot Bot",
 				avatar = opts.ai_avatar or 2,
 				isAI = true,
 			},
@@ -220,7 +226,9 @@ local function apply_play(g, id, index, res, chosen_suit)
 	local NA = rules.NextActionType
 	local t = res.type
 
-	if t == NA.CHOOSE_SUIT then
+	-- NA.CHOOSE_SUIT is an alias of NA.CHOOSE_SHAPE in the Whot engine, so a
+	-- Whot card lands here. `chosen_suit` carries the chosen *shape*.
+	if t == NA.CHOOSE_SHAPE then
 		if chosen_suit and chosen_suit ~= "" then
 			g.state.chosenSuit = chosen_suit
 			summary.chosen_suit = chosen_suit
@@ -242,9 +250,20 @@ local function apply_play(g, id, index, res, chosen_suit)
 		end
 		switch_turn(g)
 		summary.turn_changed = true
-	elseif t == NA.SKIP_TURN then
-		-- Heads-up: skipping the opponent means the actor keeps control.
+	elseif t == NA.SKIP_TURN or t == NA.HOLD_ON then
+		-- Suspension (8): heads-up, skipping the opponent keeps control.
+		-- Hold On (1): the actor explicitly plays again. Both keep control.
 		g.state.activePenaltyCount = 0
+		g.has_drawn = false
+		g.must_continue = true
+		summary.continue_turn = true
+	elseif t == NA.GENERAL_MARKET then
+		-- General Market (14): every opponent draws 1, then the actor plays
+		-- again. Heads-up means the single opponent draws one card.
+		g.state.activePenaltyCount = 0
+		local opp = other_id(g, id)
+		summary.opp_drew = draw_cards(g, opp, res.draw_cards or 1)
+		summary.opp_id = opp
 		g.has_drawn = false
 		g.must_continue = true
 		summary.continue_turn = true
