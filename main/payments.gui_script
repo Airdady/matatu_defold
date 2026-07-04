@@ -10,6 +10,7 @@
 local ui        = require("modules.ui")
 local ws        = require("modules.websocket_manager")
 local screen    = require("modules.screen")
+local GameMode  = require("modules.game_mode")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local VISIBLE_W, VISIBLE_H = 1280, 720
@@ -218,7 +219,7 @@ rebuild = function(self)
 	self.buttons[#self.buttons+1] = { node = close_hit, id = "back" }
 
 	local u = ws.current_user_data or {}
-	ktext(self, vmath.vector3(right - 70, top - 44, 0), "Balance: " .. commas(u.balance or 0) .. " UGX", 16, M_LABEL, gui.PIVOT_E)
+	ktext(self, vmath.vector3(right - 70, top - 44, 0), "Balance: " .. commas(u.balance or 0) .. " " .. GameMode.CURRENCY_SYMBOL, 16, M_LABEL, gui.PIVOT_E)
 
 	-- Thin divider under the header.
 	track(self, ui.box(vmath.vector3(px0, top - 76, 0), vmath.vector3(MW - P*2, 1, 0), M_IN_BD))
@@ -284,7 +285,7 @@ rebuild = function(self)
 		-- Top strip: current balance + next redemption date + period-progress
 		-- bar (periodProgressPercent, backend-driven), full width, centered.
 		local content_top = top - 190
-		ktext(self, vmath.vector3(px0, content_top, 0), "Savings: " .. commas(sav) .. " UGX", 22, M_TOTAL)
+		ktext(self, vmath.vector3(px0, content_top, 0), "Savings: " .. commas(sav) .. " " .. GameMode.CURRENCY_SYMBOL, 22, M_TOTAL)
 		if redemption_str ~= "" then
 			ktext(self, vmath.vector3(px0, content_top - 24, 0), "Next redemption: " .. redemption_str, 15, M_LABEL)
 		end
@@ -398,7 +399,7 @@ rebuild = function(self)
 	-- validated name underneath. No saved-number picker: the field always
 	-- just shows the current phone number.
 	local phone_cy = tabs_cy - 90
-	input_field(lx, phone_cy, left_w, 64, "PHONE NUMBER", self.phone, "07XX XXX XXX", self.field == "phone", "focus_phone")
+	input_field(lx, phone_cy, left_w, 64, "PHONE NUMBER", self.phone, GameMode.PHONE_PLACEHOLDER, self.field == "phone", "focus_phone")
 
 	local name_cy = phone_cy - 46
 	if self.phone_status == "verifying" then
@@ -411,14 +412,14 @@ rebuild = function(self)
 
 	-- Amount input (full width).
 	local amount_cy = name_cy - 70
-	input_field(lx, amount_cy, left_w, 64, "AMOUNT (UGX)", (self.amount ~= "") and commas(self.amount) or "", "0", self.field == "amount", "focus_amount")
+	input_field(lx, amount_cy, left_w, 64, "AMOUNT (" .. GameMode.CURRENCY_CODE .. ")", (self.amount ~= "") and commas(self.amount) or "", "0", self.field == "amount", "focus_amount")
 
 	-- Min / Fee / Total row.
 	local info_cy = amount_cy - 54
-	ktext(self, vmath.vector3(lx_left, info_cy, 0), "Min: " .. commas(minv) .. " UGX", 16,
+	ktext(self, vmath.vector3(lx_left, info_cy, 0), "Min: " .. commas(minv) .. " " .. GameMode.CURRENCY_SYMBOL, 16,
 		(amount > 0 and amount < minv) and M_MIN_WARN or M_FEE, gui.PIVOT_W)
-	ktext(self, vmath.vector3(lx, info_cy, 0), "Fee: " .. commas(fee) .. " UGX", 16, M_FEE)
-	ktext(self, vmath.vector3(lx_left + left_w, info_cy, 0), "Total: " .. commas(total) .. " UGX", 16, M_TOTAL, gui.PIVOT_E)
+	ktext(self, vmath.vector3(lx, info_cy, 0), "Fee: " .. commas(fee) .. " " .. GameMode.CURRENCY_SYMBOL, 16, M_FEE)
+	ktext(self, vmath.vector3(lx_left + left_w, info_cy, 0), "Total: " .. commas(total) .. " " .. GameMode.CURRENCY_SYMBOL, 16, M_TOTAL, gui.PIVOT_E)
 
 	-- Status line.
 	if self._msg then

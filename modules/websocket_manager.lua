@@ -390,12 +390,26 @@ local function parse_message(json_string)
     -- post-game balances in gameOverState.balances — apply ours immediately
     -- so every screen shows the updated balance there and then (the IDENTIFY
     -- refresh is suppressed for zero-stake games and tournament round-continues).
+    local user_touched = false
     if type(results.balances) == "table" then
       local bal = tonumber(results.balances[M.current_user_id])
       if bal ~= nil then
         M.current_user_data.balance = bal
-        emit("user_updated", M.current_user_data)
+        user_touched = true
       end
+    end
+    -- The backend also computes a fresh, match-relative rank/points slice for
+    -- the two players who just played (endGame.ts's `freshRank`), specifically
+    -- so the online lobby's STANDINGS panel can reflect the result right away.
+    -- Without applying it here, ws.current_user_data.rank keeps whatever was
+    -- last fetched before the game started, so the left panel never updates
+    -- "live" when a game completes even though the user_updated event fires.
+    if type(results.rank) == "table" and #results.rank > 0 then
+      M.current_user_data.rank = results.rank
+      user_touched = true
+    end
+    if user_touched then
+      emit("user_updated", M.current_user_data)
     end
     emit("game_over", results)
     -- Once a game is FINALLY over (i.e. NOT a continuing tournament/battle round)
