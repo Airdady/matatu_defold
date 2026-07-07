@@ -650,10 +650,14 @@ local function rebuild(self)
         { id = "rules_open",   label = "RULES",   acc = C_U_RULES  },
         { id = "share",        label = "SHARE",   acc = C_U_SHARE  },
         { id = "help_open",    label = "HELP",    acc = C_U_HELP   },
-        { id = "theme_open",   label = "THEME",   acc = C_U_THEME,
-          disabled = not has_account, locked_hint = "SIGN IN", disabled_id = "theme_locked" },
         { id = "contact_open", label = "CONTACT", acc = C_U_CONTACT },
     }
+    -- Card themes (Dragon/Batman/etc. skins) are a Matatu-only customization;
+    -- Whot ships a single fixed card set, so the button has nothing to open.
+    if GameMode.is_matatu() then
+        table.insert(util_defs, 4, { id = "theme_open", label = "THEME", acc = C_U_THEME,
+            disabled = not has_account, locked_hint = "SIGN IN", disabled_id = "theme_locked" })
+    end
     local n_util  = #util_defs
     local util_tw = math.floor((grid_w - GUTTER * (n_util - 1)) / n_util)
 
