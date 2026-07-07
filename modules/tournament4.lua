@@ -8,13 +8,14 @@
 -- the table — and the seat holding the MOST cards leaves the table. A fresh
 -- deal starts with the survivors — 4 → 3 → 2 → 1 — until a champion remains.
 ----------------------------------------------------------------------
-local Defs  = require "modules.card_defs"
-local deck  = require "modules.deck"
-local RE    = require "modules.rules_eval"
-local Rules = require "modules.card_rules"
-local AI    = require "modules.ai_player"
-local util  = require "modules.game_util"
-local BL    = require "modules.board_layout"
+local Defs     = require "modules.card_defs"
+local deck     = require "modules.deck"
+local RE       = require "modules.rules_eval"
+local Rules    = require "modules.card_rules"
+local AI       = require "modules.ai_player"
+local util     = require "modules.game_util"
+local BL       = require "modules.board_layout"
+local GameMode = require "modules.game_mode"
 
 local M = {}
 
@@ -34,6 +35,17 @@ local notify = util.notify_gui
 local function get_card_value(v, s)
     local val = tonumber(v)
     if not val then return 0 end
+
+    if GameMode.is_whot() then
+        -- Whot: every card counts its literal face value (a Pick Two "2" is
+        -- worth 2, a General Market "14" is worth 14, ...) — no penalty-card
+        -- inflation. The one exception is Star-shaped cards, which always
+        -- count DOUBLE their face value (a Star "2" scores 4, a Star "5"
+        -- scores 10, ...).
+        if s == Rules.SHAPE_STAR then return val * 2 end
+        return val
+    end
+
     if val == 50 then return 50 end
     if val == 14 or val == 1 or val == 15 then
         if s == "S" then return 60 else return 15 end
