@@ -7,6 +7,7 @@
 ----------------------------------------------------------------------
 local Rules          = require "modules.card_rules"
 local Defs           = require "modules.card_defs"
+local GameMode       = require "modules.game_mode"
 local ws             = require "modules.websocket_manager"
 local app            = require "modules.app_state"
 local util           = require "modules.game_util"
@@ -781,6 +782,15 @@ function M.end_game(self, player_won, is_cut, backend_results)
         local function get_card_value(v, s)
             local val = tonumber(v)
             if not val then return 0 end
+
+            if GameMode.is_whot() then
+                -- Whot: literal face value for every card, except Star-shaped
+                -- cards which always count DOUBLE (see tournament4.lua's
+                -- get_card_value for the same rule, offline).
+                if s == Rules.SHAPE_STAR then return val * 2 end
+                return val
+            end
+
             if val == 50 then return 50 end
             if val == 14 or val == 1 or val == 15 then
                 if s == "S" then return 60 else return 15 end

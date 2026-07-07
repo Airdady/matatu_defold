@@ -119,13 +119,15 @@ function M.trigger_play_effects(self, rec, is_last)
 end
 
 ----------------------------------------------------------------------
--- Hand scoring (Whot: Whot = 20, otherwise the card's face value)
+-- Hand scoring (Whot: face value for every card, except Star-shaped cards
+-- which always count DOUBLE their face value; the Whot wildcard is 20).
 ----------------------------------------------------------------------
 function M.hand_score(hand)
     local total = 0
     for _, c in ipairs(hand) do
         local v = tonumber(c.v) or 0
         if v == 20 or c.s == "W" then total = total + 20
+        elseif c.s == Rules.SHAPE_STAR then total = total + v * 2
         else total = total + v end
     end
     return total
