@@ -177,7 +177,7 @@ function M.after_play_settled(self, rec, is_player, result, ticket)
         else
             self.next_turn()
         end
-    elseif result.type == NA.HOLD_ON then
+    elseif NA.HOLD_ON and result.type == NA.HOLD_ON then
         -- Card 1 (Hold On): the player who just played keeps the turn and
         -- plays again.
         notify_gui(self.gui_suit, "suit_select", { mode = "close" })
@@ -199,7 +199,7 @@ function M.after_play_settled(self, rec, is_player, result, ticket)
         else
             OfflineHandler.do_ai_turn(self, true)
         end
-    elseif result.type == NA.GENERAL_MARKET then
+    elseif NA.GENERAL_MARKET and result.type == NA.GENERAL_MARKET then
         -- Card 14 (General Market): every opponent draws one card, then the
         -- player who played it goes again. Heads-up: the single opponent draws.
         notify_gui(self.gui_suit, "suit_select", { mode = "close" })

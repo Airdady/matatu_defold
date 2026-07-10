@@ -1,14 +1,36 @@
--- card.script  (WHOT build)
--- Whot ships a single deck art set (assets/cards/cards.atlas), so there is no
--- per-theme sprite-sheet swap. The card sprite uses the default Whot atlas
--- assigned on the embedded component; frame names are "<v><s>" (e.g. "10T",
--- "20W") plus "BACK_DEFAULT".
+-- card.script
+-- Per-game + per-theme card art. The sprite's sheet is chosen ONCE at spawn:
 --
--- The atlas resource properties are retained so existing card.go references
--- keep resolving, but init no longer swaps them.
+--   WHOT build          -> assets/cards/cards_whot.atlas (single Whot art set;
+--                          frame names "<v><s>" e.g. "10T"/"20W" + BACK_DEFAULT,
+--                          with a "card_back" alias so the .go default resolves)
+--   MATATU/KADI builds  -> the classic sheets, restyled per the active THEME
+--                          (default / drago / batman) exactly as before the
+--                          Whot port — frame names are identical across the
+--                          three theme atlases, so all flipbook code is
+--                          unchanged. Kadi uses the standard deck art too.
+--
+-- Which frame NAMES the game logic asks for comes from modules/card_defs.lua,
+-- which dispatches per game the same way — so the names always exist in
+-- whichever atlas is assigned here.
 
 go.property("atlas_default", resource.atlas("/assets/cards/cards.atlas"))
+go.property("atlas_drago", resource.atlas("/assets/cards/cards_drago.atlas"))
+go.property("atlas_batman", resource.atlas("/assets/cards/cards_batman.atlas"))
+go.property("atlas_whot", resource.atlas("/assets/cards/cards_whot.atlas"))
+
+local app      = require "modules.app_state"
+local GameMode = require "modules.game_mode"
 
 function init(self)
-    -- Single Whot deck art: nothing to swap.
+    if GameMode.is_whot() then
+        go.set("#sprite", "image", self.atlas_whot)
+        return
+    end
+    local set = (app.get_theme() or {}).card_set or "default"
+    if set == "drago" then
+        go.set("#sprite", "image", self.atlas_drago)
+    elseif set == "batman" then
+        go.set("#sprite", "image", self.atlas_batman)
+    end
 end

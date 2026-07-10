@@ -156,13 +156,13 @@ local function rebuild(self)
         track(self, ui.panel9(vmath.vector3(px, py, 0), vmath.vector3(cw, ch, 0),
             t.active and "container_bg_active" or "container_bg"))
 
-        -- Card fan preview (Scaled down to fit elegantly).
-        -- Always render the shipped Whot card art here, regardless of
-        -- th_def.card_set/card_back: those still point at the old Matatu
-        -- drago/batman sheets, which would show real Matatu cards (Ace of
-        -- Spades etc.) in a Whot build.
-        local tex       = "cards"
-        local back_anim = "BACK_DEFAULT"
+        -- Card fan preview (Scaled down to fit elegantly). Theme-driven again:
+        -- the themes screen is Matatu-only (the lobby hides its button for
+        -- other games), and cards.atlas is the classic Matatu sheet once more,
+        -- so each theme previews its own card set/back like before the port.
+        local th_def    = app_state.THEMES[t.id]
+        local tex       = CARD_TEX[(th_def and th_def.card_set) or "default"] or "cards"
+        local back_anim = (th_def and th_def.card_back) or "card_back"
         local card_h    = 85
         local card_w    = math.floor(card_h * 212 / 238)
         
@@ -177,8 +177,8 @@ local function rebuild(self)
             if rot ~= 0 then gui.set_rotation(n, vmath.vector3(0, 0, rot)) end
             track(self, n)
         end
-        fan_card(-60, fan_y_off - 4, "20W", 10)  -- the Whot wildcard
-        fan_card(60, fan_y_off - 4, "8R", -10)   -- Suspension of Star
+        fan_card(-60, fan_y_off - 4, "card_15S", 10)
+        fan_card(60, fan_y_off - 4, "card_13H", -10)
         fan_card(0, fan_y_off, back_anim, 0)
 
         -- Netflix-style pseudo-gradient shadow

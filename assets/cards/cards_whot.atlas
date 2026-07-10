@@ -1,230 +1,213 @@
 images {
-  image: "/assets/cards/card_10C.png"
+  image: "/assets/cards/whot/10C.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_10D.png"
+  image: "/assets/cards/whot/10S.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_10H.png"
+  image: "/assets/cards/whot/10T.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_10S.png"
+  image: "/assets/cards/whot/10X.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_11C.png"
+  image: "/assets/cards/whot/11C.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_11D.png"
+  image: "/assets/cards/whot/11S.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_11H.png"
+  image: "/assets/cards/whot/11T.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_11S.png"
+  image: "/assets/cards/whot/11X.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_12C.png"
+  image: "/assets/cards/whot/12C.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_12D.png"
+  image: "/assets/cards/whot/12T.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_12H.png"
+  image: "/assets/cards/whot/13C.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_12S.png"
+  image: "/assets/cards/whot/13S.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_13C.png"
+  image: "/assets/cards/whot/13T.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_13D.png"
+  image: "/assets/cards/whot/13X.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_13H.png"
+  image: "/assets/cards/whot/14C.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_13S.png"
+  image: "/assets/cards/whot/14S.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_15C.png"
+  image: "/assets/cards/whot/14T.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_15D.png"
+  image: "/assets/cards/whot/14X.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_15H.png"
+  image: "/assets/cards/whot/1C.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_15S.png"
+  image: "/assets/cards/whot/1R.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_2C.png"
+  image: "/assets/cards/whot/1S.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_2D.png"
+  image: "/assets/cards/whot/1T.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_2H.png"
+  image: "/assets/cards/whot/1X.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_2S.png"
+  image: "/assets/cards/whot/20W.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_3C.png"
+  image: "/assets/cards/whot/2C.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_3D.png"
+  image: "/assets/cards/whot/2R.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_3H.png"
+  image: "/assets/cards/whot/2S.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_3S.png"
+  image: "/assets/cards/whot/2T.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_4C.png"
+  image: "/assets/cards/whot/2X.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_4D.png"
+  image: "/assets/cards/whot/3C.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_4H.png"
+  image: "/assets/cards/whot/3R.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_4S.png"
+  image: "/assets/cards/whot/3S.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_50B.png"
+  image: "/assets/cards/whot/3T.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_50R.png"
+  image: "/assets/cards/whot/3X.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_5C.png"
+  image: "/assets/cards/whot/4C.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_5D.png"
+  image: "/assets/cards/whot/4R.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_5H.png"
+  image: "/assets/cards/whot/4T.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_5S.png"
+  image: "/assets/cards/whot/5C.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_6C.png"
+  image: "/assets/cards/whot/5R.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_6D.png"
+  image: "/assets/cards/whot/5S.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_6H.png"
+  image: "/assets/cards/whot/5T.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_6S.png"
+  image: "/assets/cards/whot/5X.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_7C.png"
+  image: "/assets/cards/whot/7C.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_7D.png"
+  image: "/assets/cards/whot/7R.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_7H.png"
+  image: "/assets/cards/whot/7S.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_7S.png"
+  image: "/assets/cards/whot/7T.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_8C.png"
+  image: "/assets/cards/whot/7X.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_8D.png"
+  image: "/assets/cards/whot/8C.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_8H.png"
+  image: "/assets/cards/whot/8R.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_8S.png"
+  image: "/assets/cards/whot/8T.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/cards/card_9C.png"
+  image: "/assets/cards/whot/BACK_DEFAULT.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
-images {
-  image: "/assets/cards/card_9D.png"
-  sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-}
-images {
-  image: "/assets/cards/card_9H.png"
-  sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-}
-images {
-  image: "/assets/cards/card_9S.png"
-  sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-}
-images {
-  image: "/assets/cards/card_back.png"
-  sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-}
-images {
-  image: "/assets/cards/card_back_black.png"
-  sprite_trim_mode: SPRITE_TRIM_MODE_OFF
-}
-images {
-  image: "/assets/cards/card_back_blue.png"
-  sprite_trim_mode: SPRITE_TRIM_MODE_OFF
+animations {
+  id: "card_back"
+  images {
+    image: "/assets/cards/whot/BACK_DEFAULT.png"
+    sprite_trim_mode: SPRITE_TRIM_MODE_OFF
+  }
 }
 margin: 0
 extrude_borders: 2

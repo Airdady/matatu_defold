@@ -11,11 +11,13 @@
 -- (src/matatu, src/whot, src/kadi) and selects it from the URL path, so simply
 -- pointing the client at /whot makes the server validate Whot moves.
 --
--- NOTE on the game *logic*: this particular build ships the WHOT rule set,
--- deck and card art (see card_rules.lua / deck.lua / card_defs.lua / the cards
--- atlas). MATATU and KADI switch the endpoints + branding here; to also switch
--- the offline rules/deck/art you drop in their variant modules behind the same
--- M.GAME check (Matatu's live on `main`; Kadi's client game is not built yet).
+-- The game *logic and art* switch here too: modules/card_rules.lua, deck.lua,
+-- card_defs.lua, ai_player.lua, rules_eval.lua and game_logic.lua are thin
+-- dispatchers over modules/games/<game>/, and main/card.script assigns the
+-- matching card atlas (classic Matatu sheets + themes, or cards_whot.atlas).
+-- KADI currently plays with the standard deck + the Matatu client engine —
+-- its own special-card rules are not ported client-side yet (the backend
+-- /kadi engine is authoritative for online play).
 -- =============================================================================
 
 local M = {}
