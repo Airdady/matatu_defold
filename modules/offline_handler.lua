@@ -1,7 +1,8 @@
-local AI    = require "modules.ai_player"
-local Defs  = require "modules.card_defs"
-local Rules = require "modules.card_rules"
-local app   = require "modules.app_state"
+local AI       = require "modules.ai_player"
+local Defs     = require "modules.card_defs"
+local Rules    = require "modules.card_rules"
+local app      = require "modules.app_state"
+local GameMode = require "modules.game_mode"
 
 local GUI_HUD   = "#game"
 local GUI_SUIT  = "#suit_select"
@@ -153,27 +154,52 @@ function M.build_and_deal(self)
             delay = delay + DEAL_DELAY
         end
 
-        -- WHOT: there is no "cutting card". Flip a NORMAL starter card face-up
-        -- into the CENTRE discard pile, so the first player must match it by
-        -- shape or number. A normal card is anything that is NOT a power/wild
-        -- card: 1 (Hold On), 2 (Pick Two), 5 (Pick Three), 8 (Suspension),
-        -- 14 (General Market) or 20 (Whot).
-        self.cutting_card = nil
-        local function is_special_start(c)
-            local v = tonumber(c.v)
-            return v == 1 or v == 2 or v == 5 or v == 8 or v == 14 or v == 20 or c.s == "W"
+        if GameMode.is_whot() then
+            -- WHOT: there is no "cutting card". Flip a NORMAL starter card face-up
+            -- into the CENTRE discard pile, so the first player must match it by
+            -- shape or number. A normal card is anything that is NOT a power/wild
+            -- card: 1 (Hold On), 2 (Pick Two), 5 (Pick Three), 8 (Suspension),
+            -- 14 (General Market) or 20 (Whot).
+            self.cutting_card = nil
+            local function is_special_start(c)
+                local v = tonumber(c.v)
+                return v == 1 or v == 2 or v == 5 or v == 8 or v == 14 or v == 20 or c.s == "W"
+            end
+            local start_idx = nil
+            for i, c in ipairs(self.deck) do
+                if not is_special_start(c) then start_idx = i; break end
+            end
+            start_idx = start_idx or 1
+            local starter = table.remove(self.deck, start_idx)
+            -- animate_to_pile faces the card up, inserts it as the first played
+            -- card and lands it in the centre.
+            timer.delay(delay + 0.15, false, function()
+                if seq == self._seq then self.animate_to_pile(starter, false, nil) end
+            end)
+        else
+            -- MATATU/KADI: pull the first non-7 as the CUTTING CARD and park it
+            -- face-up beside the deck (the classic pre-Whot deal, restored).
+            local cut_idx = 1
+            for i, c in ipairs(self.deck) do
+                if tonumber(c.v) ~= 7 then
+                    cut_idx = i
+                    break
+                end
+            end
+
+            local cut = table.remove(self.deck, cut_idx)
+            self.cutting_card = cut
+            local cut_pos = vmath.vector3(self.DECK_POS.x + CUTTING_CARD_OFFSET_X, self.DECK_POS.y, self.Z_CUT)
+            go.set(cut.id, "position.z", self.Z_FLY)
+
+            timer.delay(delay + 0.15, false, function() if seq == self._seq then self.set_face(cut) end end)
+
+            go.animate(cut.id, "position", go.PLAYBACK_ONCE_FORWARD, cut_pos, go.EASING_OUTCUBIC, 0.5, delay,
+                function()
+                    if seq == self._seq then go.set(cut.id, "position.z", self.Z_CUT) end
+                end)
+            go.animate(cut.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, 90, go.EASING_OUTCUBIC, 0.5, delay)
         end
-        local start_idx = nil
-        for i, c in ipairs(self.deck) do
-            if not is_special_start(c) then start_idx = i; break end
-        end
-        start_idx = start_idx or 1
-        local starter = table.remove(self.deck, start_idx)
-        -- animate_to_pile faces the card up, inserts it as the first played
-        -- card and lands it in the centre.
-        timer.delay(delay + 0.15, false, function()
-            if seq == self._seq then self.animate_to_pile(starter, false, nil) end
-        end)
         delay = delay + 0.5
 
         for i, c in ipairs(self.deck) do

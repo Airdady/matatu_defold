@@ -1008,25 +1008,44 @@ function M.deal_round(self)
         local dp = self.DECK_POS
         delay = delay + 0.42
         
-        -- WHOT: no cutting card. Flip a NORMAL starter card face-up into the
-        -- CENTRE pile so the first player must match it by shape or number.
-        -- A normal card is never 1/2/5/8/14/20 (power/wild cards).
-        self.cutting_card = nil
-        if #pool > 0 then
-            local function is_special_start(c)
-                local v = tonumber(c.v)
-                return v == 1 or v == 2 or v == 5 or v == 8 or v == 14 or v == 20 or c.s == "W"
+        if GameMode.is_whot() then
+            -- WHOT: no cutting card. Flip a NORMAL starter card face-up into the
+            -- CENTRE pile so the first player must match it by shape or number.
+            -- A normal card is never 1/2/5/8/14/20 (power/wild cards).
+            self.cutting_card = nil
+            if #pool > 0 then
+                local function is_special_start(c)
+                    local v = tonumber(c.v)
+                    return v == 1 or v == 2 or v == 5 or v == 8 or v == 14 or v == 20 or c.s == "W"
+                end
+                local sidx = 1
+                for i, c in ipairs(pool) do
+                    if not is_special_start(c) then sidx = i; break end
+                end
+                local starter = table.remove(pool, sidx)
+                -- animate_to_pile faces it up, inserts it as the first played card
+                -- and lands it in the centre.
+                timer.delay(delay + 0.15, false, function()
+                    if seq == self._seq then self.animate_to_pile(starter, false, nil) end
+                end)
             end
-            local sidx = 1
+        elseif #pool > 0 then
+            -- MATATU/KADI: park the first non-7 beside the deck as the CUTTING
+            -- CARD (the classic pre-Whot deal, restored).
+            local cut_idx = 1
             for i, c in ipairs(pool) do
-                if not is_special_start(c) then sidx = i; break end
+                if tostring(c.v) ~= "7" then
+                    cut_idx = i
+                    break
+                end
             end
-            local starter = table.remove(pool, sidx)
-            -- animate_to_pile faces it up, inserts it as the first played card
-            -- and lands it in the centre.
-            timer.delay(delay + 0.15, false, function()
-                if seq == self._seq then self.animate_to_pile(starter, false, nil) end
-            end)
+
+            self.cutting_card = table.remove(pool, cut_idx)
+
+            go.set(self.cutting_card.id, "position.z", BL.Z_CUT)
+            go.animate(self.cutting_card.id, "position", go.PLAYBACK_ONCE_FORWARD, vmath.vector3(dp.x + BL.CUTTING_CARD_OFFSET_X, dp.y, BL.Z_CUT), go.EASING_OUTCUBIC, 0.5, delay)
+            go.animate(self.cutting_card.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, 90, go.EASING_OUTCUBIC, 0.5, delay)
+            timer.delay(delay + 0.15, false, function() if seq == self._seq then self.set_face(self.cutting_card) end end)
         end
 
         for i, c in ipairs(pool) do
