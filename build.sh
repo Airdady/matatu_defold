@@ -10,7 +10,11 @@
 #
 # The game argument (default: whot) patches modules/game_mode.lua's M.GAME so
 # every endpoint, card-art path and in-app label follows (see that file's
-# header), and sets game.project's [project] title to match.
+# header), sets game.project's [project] title to match, and regenerates the
+# Android launcher icon (adaptive + legacy, bundle/android/res/**) from
+# tools/icons/<game>.svg via tools/generate_android_icons.py — so the icon on
+# the home screen matches whichever game was just built instead of whatever
+# happened to be baked in from the last manual run.
 #
 # IMPORTANT: the Android [android] package name is deliberately NEVER changed
 # by game here. Google Sign-In (GPGS) is registered in Google Cloud Console
@@ -31,9 +35,12 @@ GAME="${1:-whot}"
 GAME="$(echo "$GAME" | tr '[:upper:]' '[:lower:]')"
 
 case "$GAME" in
-    whot)   GAME_UPPER="WHOT";   PROJECT_TITLE="Whot"   ;;
-    matatu) GAME_UPPER="MATATU"; PROJECT_TITLE="Matatu" ;;
-    kadi)   GAME_UPPER="KADI";   PROJECT_TITLE="Kadi"   ;;
+    whot)   GAME_UPPER="WHOT";   PROJECT_TITLE="Whot"
+            ICON_SVG="tools/icons/whot.svg";   ICON_BG="#C42B2B,#6E1414" ;;
+    matatu) GAME_UPPER="MATATU"; PROJECT_TITLE="Matatu"
+            ICON_SVG="tools/icons/matatu.svg"; ICON_BG="#4a3020,#2b1810" ;;
+    kadi)   GAME_UPPER="KADI";   PROJECT_TITLE="Kadi"
+            ICON_SVG="tools/icons/kadi.svg";   ICON_BG="#12503a,#0a2e20" ;;
     *)
         echo "❌ Unknown game '$GAME' — expected: whot | matatu | kadi"
         exit 1
@@ -105,6 +112,25 @@ awk -v t="$PROJECT_TITLE" '
 
 echo "✅ game.project -> title = $PROJECT_TITLE"
 echo "ℹ️  Package left as-is (${PACKAGE_NAME}) — required for Google Sign-In, see note above."
+
+# ==========================================================
+# 1. REGENERATE THE LAUNCHER ICON (bundle/android/res/**) FOR $GAME_UPPER
+# ==========================================================
+
+echo ""
+echo "🎨 Regenerating launcher icon for $GAME_UPPER..."
+
+if [ ! -f "$ICON_SVG" ]; then
+    echo "⚠️  $ICON_SVG not found — skipping icon regeneration (keeping whatever is already in bundle/android/res)."
+elif ! command -v python3 >/dev/null 2>&1; then
+    echo "⚠️  python3 not found — skipping icon regeneration (keeping whatever is already in bundle/android/res)."
+else
+    if python3 tools/generate_android_icons.py "$ICON_SVG" --background "$ICON_BG" --out . ; then
+        echo "✅ bundle/android/res/** -> ${ICON_SVG}"
+    else
+        echo "⚠️  Icon generation failed (see error above) — keeping whatever is already in bundle/android/res. Install deps with: pip install pillow cairosvg"
+    fi
+fi
 
 # ==========================================================
 # 2. BUILD APK
