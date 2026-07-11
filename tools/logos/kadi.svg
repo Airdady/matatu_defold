@@ -1,0 +1,18 @@
+<svg width="833" height="708" viewBox="0 0 833 708" xmlns="http://www.w3.org/2000/svg">
+  <!-- Same pale fanned-card watermark treatment as matatu.svg (Kadi plays
+       with the standard suited deck too, see modules/game_mode.lua) — a
+       different suit combination so it reads as its own variant rather
+       than an exact duplicate of Matatu's watermark. -->
+  <g fill="#EBEBEB" fill-opacity="0.15">
+    <rect x="10" y="60" width="330" height="440" rx="28" transform="rotate(-14 175 280)"/>
+    <rect x="255" y="10" width="330" height="440" rx="28"/>
+    <rect x="500" y="60" width="330" height="440" rx="28" transform="rotate(14 665 280)"/>
+  </g>
+
+  <text x="130" y="330" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif"
+        font-size="230" fill="#EBEBEB" fill-opacity="0.22" transform="rotate(-14 130 330)">&#9830;</text>
+  <text x="420" y="330" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif"
+        font-size="230" fill="#EBEBEB" fill-opacity="0.28">&#9824;</text>
+  <text x="710" y="330" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif"
+        font-size="230" fill="#EBEBEB" fill-opacity="0.22" transform="rotate(14 710 330)">&#9827;</text>
+</svg>
