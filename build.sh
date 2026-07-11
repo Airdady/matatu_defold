@@ -10,22 +10,30 @@
 #
 # The game argument (default: whot) patches modules/game_mode.lua's M.GAME so
 # every endpoint, card-art path and in-app label follows (see that file's
-# header), sets game.project's [project] title to match, and regenerates the
-# Android launcher icon (adaptive + legacy, bundle/android/res/**) from
-# tools/icons/<game>.svg via tools/generate_android_icons.py — so the icon on
-# the home screen matches whichever game was just built instead of whatever
-# happened to be baked in from the last manual run.
+# header), sets game.project's [project] title AND [android] package to
+# match, and regenerates the Android launcher icon + bg_logo watermark
+# (bundle/android/res/**, assets/ui/bg_logo.png) from tools/icons/<game>.svg
+# and tools/logos/<game>.svg — so every visual identity asset matches
+# whichever game was just built instead of whatever happened to be baked in
+# from the last manual run.
 #
-# IMPORTANT: the Android [android] package name is deliberately NEVER changed
-# by game here. Google Sign-In (GPGS) is registered in Google Cloud Console
-# against one specific (package name + signing certificate) pair per
-# [gpgs] client_id/app_id in game.project; building under a different,
-# unregistered package makes on-device Google Sign-In fail with a
-# DEVELOPER_ERROR before the request ever reaches the backend — it looks like
-# a server/auth bug but is actually a client identity mismatch. All three
-# games therefore ship under whatever package is already configured in
-# game.project (do not vary it per game unless that package is also
-# registered as an Android OAuth client for this project).
+# Package names (fixed per game, see the case statement below):
+#   matatu -> com.matatu.champ
+#   whot   -> com.matatu.pro
+#   kadi   -> com.matatu.kadi
+#
+# IMPORTANT — Google Sign-In (GPGS): it's registered in Google Cloud Console
+# against one specific (package name + signing certificate SHA-1) pair per
+# [gpgs] client_id/app_id in game.project. Building under a package that
+# ISN'T registered as an Android OAuth client makes on-device Google Sign-In
+# fail with a DEVELOPER_ERROR before the request ever reaches the backend —
+# it looks like a server/auth bug but is actually a client identity
+# mismatch. All three packages above are signed with the SAME keystore (one
+# Defold bundle config), so the SHA-1 is constant — but EACH package name
+# still needs its OWN Android OAuth client entry registered in Google Cloud
+# Console before Sign-In will work for that game. If a game's Sign-In starts
+# failing right after switching its package here, that registration is the
+# first thing to check.
 # ==========================================================
 
 set -e
@@ -36,29 +44,22 @@ GAME="$(echo "$GAME" | tr '[:upper:]' '[:lower:]')"
 
 case "$GAME" in
     whot)   GAME_UPPER="WHOT";   PROJECT_TITLE="Whot"
-            ICON_SVG="tools/icons/whot.svg";   ICON_BG="#C42B2B,#6E1414" ;;
+            PACKAGE_NAME="com.matatu.pro"
+            ICON_SVG="tools/icons/whot.svg";   ICON_BG="#C42B2B,#6E1414"
+            LOGO_SVG="tools/logos/whot.svg" ;;
     matatu) GAME_UPPER="MATATU"; PROJECT_TITLE="Matatu"
-            ICON_SVG="tools/icons/matatu.svg"; ICON_BG="#4a3020,#2b1810" ;;
+            PACKAGE_NAME="com.matatu.champ"
+            ICON_SVG="tools/icons/matatu.svg"; ICON_BG="#4a3020,#2b1810"
+            LOGO_SVG="tools/logos/matatu.svg" ;;
     kadi)   GAME_UPPER="KADI";   PROJECT_TITLE="Kadi"
-            ICON_SVG="tools/icons/kadi.svg";   ICON_BG="#12503a,#0a2e20" ;;
+            PACKAGE_NAME="com.matatu.kadi"
+            ICON_SVG="tools/icons/kadi.svg";   ICON_BG="#12503a,#0a2e20"
+            LOGO_SVG="tools/logos/kadi.svg" ;;
     *)
         echo "❌ Unknown game '$GAME' — expected: whot | matatu | kadi"
         exit 1
         ;;
 esac
-
-# Package name is read from game.project, never written by this script (see
-# the GPGS note above) — this keeps Google Sign-In working for every game.
-PACKAGE_NAME=$(awk '
-    /^\[android\]/ { in_android=1; next }
-    /^\[/ { in_android=0 }
-    in_android && /^package[[:space:]]*=/ { sub(/^package[[:space:]]*=[[:space:]]*/, ""); print; exit }
-' game.project)
-
-if [ -z "$PACKAGE_NAME" ]; then
-    echo "❌ Could not read [android] package from game.project"
-    exit 1
-fi
 
 BUNDLE_DIR="./bundles/android_debug_${GAME}"
 
@@ -102,19 +103,23 @@ fi
 
 echo "✅ modules/game_mode.lua -> M.GAME = \"${GAME_UPPER}\""
 
-# [project] title = ...
-awk -v t="$PROJECT_TITLE" '
-    /^\[project\]/ { print; in_project=1; next }
-    /^\[/ && $0 != "[project]" { in_project=0 }
+# [project] title = ... / [android] package = ...
+awk -v t="$PROJECT_TITLE" -v p="$PACKAGE_NAME" '
+    /^\[project\]/ { print; in_project=1; in_android=0; next }
+    /^\[android\]/ { print; in_android=1; in_project=0; next }
+    /^\[/ { in_project=0; in_android=0 }
     in_project && /^title[[:space:]]*=/ { print "title = " t; next }
+    in_android && /^package[[:space:]]*=/ { print "package = " p; next }
     { print }
 ' game.project > game.project.tmp && mv game.project.tmp game.project
 
 echo "✅ game.project -> title = $PROJECT_TITLE"
-echo "ℹ️  Package left as-is (${PACKAGE_NAME}) — required for Google Sign-In, see note above."
+echo "✅ game.project -> [android] package = $PACKAGE_NAME"
+echo "ℹ️  Make sure ${PACKAGE_NAME} is registered as an Android OAuth client for Google Sign-In (see note above) before relying on it for this game."
 
 # ==========================================================
-# 1. REGENERATE THE LAUNCHER ICON (bundle/android/res/**) FOR $GAME_UPPER
+# 1. REGENERATE VISUAL IDENTITY ASSETS FOR $GAME_UPPER
+#    (launcher icon: bundle/android/res/** ; bg_logo watermark: assets/ui/)
 # ==========================================================
 
 echo ""
@@ -129,6 +134,21 @@ else
         echo "✅ bundle/android/res/** -> ${ICON_SVG}"
     else
         echo "⚠️  Icon generation failed (see error above) — keeping whatever is already in bundle/android/res. Install deps with: pip install pillow cairosvg"
+    fi
+fi
+
+echo ""
+echo "🎨 Regenerating bg_logo watermark for $GAME_UPPER..."
+
+if [ ! -f "$LOGO_SVG" ]; then
+    echo "⚠️  $LOGO_SVG not found — skipping bg_logo regeneration (keeping whatever is already in assets/ui/bg_logo.png)."
+elif ! command -v python3 >/dev/null 2>&1; then
+    echo "⚠️  python3 not found — skipping bg_logo regeneration (keeping whatever is already in assets/ui/bg_logo.png)."
+else
+    if python3 tools/generate_bg_logo.py "$LOGO_SVG" ; then
+        echo "✅ assets/ui/bg_logo.png -> ${LOGO_SVG}"
+    else
+        echo "⚠️  bg_logo generation failed (see error above) — keeping whatever is already in assets/ui/bg_logo.png. Install deps with: pip install pillow cairosvg"
     fi
 fi
 

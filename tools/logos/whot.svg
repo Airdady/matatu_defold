@@ -1,0 +1,15 @@
+<svg width="833" height="708" viewBox="0 0 833 708" xmlns="http://www.w3.org/2000/svg">
+  <!-- Same pale fanned-card watermark treatment as matatu.svg/kadi.svg, but
+       carrying Whot's own shape system (Circle / Triangle / Star) instead
+       of playing-card suits, matching modules/card_rules.lua's shapes. -->
+  <g fill="#EBEBEB" fill-opacity="0.15">
+    <rect x="10" y="60" width="330" height="440" rx="28" transform="rotate(-14 175 280)"/>
+    <rect x="255" y="10" width="330" height="440" rx="28"/>
+    <rect x="500" y="60" width="330" height="440" rx="28" transform="rotate(14 665 280)"/>
+  </g>
+
+  <circle cx="130" cy="330" r="120" fill="#EBEBEB" fill-opacity="0.22" transform="rotate(-14 130 330)"/>
+  <polygon points="420,215 525,415 315,415" fill="#EBEBEB" fill-opacity="0.28"/>
+  <path d="M710 210 l32 96 h100 l-81 60 31 96 -82 -60 -82 60 31-96 -81-60 h100 z"
+        fill="#EBEBEB" fill-opacity="0.22" transform="rotate(14 710 330)"/>
+</svg>

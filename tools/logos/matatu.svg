@@ -1,0 +1,19 @@
+<svg width="833" height="708" viewBox="0 0 833 708" xmlns="http://www.w3.org/2000/svg">
+  <!-- Pale translucent fanned-card watermark, matching the existing shipped
+       assets/ui/bg_logo.png composition: three large cards tilted across
+       the canvas, each carrying one big suit glyph, all in light gray at
+       low opacity on a transparent background so it reads as a subtle
+       texture over the app's dark felt background, not foreground art. -->
+  <g fill="#EBEBEB" fill-opacity="0.15">
+    <rect x="10" y="60" width="330" height="440" rx="28" transform="rotate(-14 175 280)"/>
+    <rect x="255" y="10" width="330" height="440" rx="28"/>
+    <rect x="500" y="60" width="330" height="440" rx="28" transform="rotate(14 665 280)"/>
+  </g>
+
+  <text x="130" y="330" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif"
+        font-size="230" fill="#EBEBEB" fill-opacity="0.22" transform="rotate(-14 130 330)">&#9827;</text>
+  <text x="420" y="330" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif"
+        font-size="230" fill="#EBEBEB" fill-opacity="0.28">&#9829;</text>
+  <text x="710" y="330" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif"
+        font-size="230" fill="#EBEBEB" fill-opacity="0.22" transform="rotate(14 710 330)">&#9824;</text>
+</svg>
