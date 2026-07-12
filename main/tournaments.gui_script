@@ -439,7 +439,12 @@ update_play_button = function(self)
     gui.set_enabled(self.play_lock_node, false)
 
     if self.is_pre_launch then
-        gui.set_text(self.play_txt_node, "COMING SOON")
+        -- Same stake + coin + lock display as the normal "not started yet"
+        -- state below (current_level_index == 0) — no "COMING SOON" text,
+        -- just the stake amount with the lock icon showing it can't be
+        -- tapped yet.
+        gui.set_text(self.play_txt_node, commas(stake.amount or 0))
+        gui.set_enabled(self.play_coin_node, true)
         gui.set_enabled(self.play_lock_node, true)
         self.play_disabled = true
     elseif self.is_dormant then
