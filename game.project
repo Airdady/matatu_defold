@@ -1,5 +1,5 @@
 [project]
-title = Whot
+title = Matatu
 version = 18.5.9
 bundle_resources = /bundle
 dependencies#0 = https://github.com/defold/extension-websocket/archive/refs/tags/4.2.3.zip
@@ -34,7 +34,7 @@ default_texture_min_filter = linear
 default_texture_mag_filter = linear
 
 [android]
-package = com.matatu.pro
+package = com.matatu.champ
 input_method = INPUT_METHOD_HIDDEN
 
 [gpgs]

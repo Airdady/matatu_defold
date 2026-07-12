@@ -23,7 +23,7 @@
 local M = {}
 
 -- >>> CHANGE THIS ONE LINE TO RE-TARGET THE WHOLE BUILD <<<
-M.GAME = "WHOT"          -- "MATATU" | "WHOT" | "KADI"
+M.GAME = "MATATU"          -- "MATATU" | "WHOT" | "KADI"
 
 -- Per-game definitions.
 --
