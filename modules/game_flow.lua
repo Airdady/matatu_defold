@@ -1066,18 +1066,11 @@ function M.start_game(self)
     if app.mode == "online" then
         local state = ws.get_active_game()
         if state and next(state) ~= nil then
-            -- A scripted 50-stake game vs the backend tutorial bot drives the
-            -- in-game walkthrough. Prefer the backend's isScripted flag, falling
-            -- back to the Godot heuristic (50 stake + an AI opponent).
-            local scripted = false
-            if state.isScripted == true then
-                scripted = true
-            elseif (tonumber((state.stake or {}).amount) or 0) == 50 and type(state.players) == "table" then
-                for _, p in pairs(state.players) do
-                    if type(p) == "table" and (p.isAI or p.isAi) then scripted = true; break end
-                end
-            end
-            tut("start_game", scripted)
+            -- The scripted "rigged first match" tutorial has been removed —
+            -- every online game (including a brand-new player's first) now
+            -- deals a genuinely shuffled hand, so the in-game walkthrough
+            -- never re-arms here (tut("start_game", false) above already
+            -- covers this).
             OnlineHandler.start_game(self, state)
             return
         end
