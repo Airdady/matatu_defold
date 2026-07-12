@@ -166,10 +166,8 @@ function M.layout_hand(self, hand, y, animate)
     local n = #hand
     if n == 0 then return end
 
-    -- Gentle arch + fan in EVERY mode (offline, online and the 4-player
-    -- tournament) so the look is consistent. The human's bottom hand arches up;
-    -- the opponent's top hand mirrors it (bulges down toward the centre). In a
-    -- 4-player tournament only the live human's hand is arched.
+    -- Flat, evenly-spaced layout everywhere EXCEPT the 4-player tournament,
+    -- which keeps the gentle arch + fan (the live human's hand only).
     local is_player_hand = (hand == self.player_hand)
     -- Only the 2-player opponent hand (the 4-player tournament doesn't use
     -- this function) is rendered smaller — it's always face-down.
@@ -181,7 +179,7 @@ function M.layout_hand(self, hand, y, animate)
     local spacing = M.calc_spacing(self, n, is_ai_hand and M.OPPONENT_SCALE_RATIO or 1.0)
     local start = self.CENTER.x - ((n - 1) * spacing) / 2.0
 
-    local arch = (is_player_hand and (not self.t4 or self.t4.human_alive)) or is_ai_hand
+    local arch = self.t4 ~= nil and is_player_hand and self.t4.human_alive
     local arc_amt = arch and math.min(34, n * 5.0) or 0
     local fan_amt = arch and math.min(8, n * 1.3) or 0
     local dir     = is_ai_hand and -1 or 1   -- mirror the curve for the top hand
