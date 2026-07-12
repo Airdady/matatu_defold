@@ -237,7 +237,11 @@ local function reshuffle_if_needed(self)
     local top = table.remove(self.played_cards)
     local to_shuffle = self.played_cards
     self.played_cards = { top }
-    
+
+    -- Bump BEFORE the z reset below — see card_view.lua's animate_to_pile,
+    -- which checks this to avoid re-asserting a stale z on this exact card
+    -- if its own fly-to-pile animation was still in flight when this ran.
+    self.pile_gen = (self.pile_gen or 0) + 1
     go.set(top.id, "position.z", BL.Z_PILE)
     
     local data = {}

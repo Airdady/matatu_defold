@@ -81,9 +81,21 @@ function M.animate_to_pile(self, rec, is_player, on_done)
     go.set(rec.id, "position.z", Z_FLY)
     go.set(rec.id, "scale", CARD_SCALE)
     local seq = self._seq
+    -- Snapshot the reshuffle generation now, before the 0.42s flight starts.
+    -- reshuffle_deck (game_flow.lua) / reshuffle_if_needed (tournament4.lua)
+    -- both bump self.pile_gen the instant they run, and immediately give the
+    -- retained "top" card (which, if it's this very card, can only be the
+    -- most-recently-played one) its own correct low z right then. If a
+    -- reshuffle happens while THIS card is still mid-flight, applying the
+    -- z captured above afterward would stomp that already-correct reset
+    -- back to a stale, high value — which is exactly what let the old
+    -- discard-pile anchor render above every card played after a reshuffle.
+    local my_gen = self.pile_gen or 0
     go.animate(rec.id, "position", go.PLAYBACK_ONCE_FORWARD, target, go.EASING_OUTCUBIC, 0.42, 0, function()
         if seq ~= self._seq then return end
-        go.set(rec.id, "position.z", z)
+        if (self.pile_gen or 0) == my_gen then
+            go.set(rec.id, "position.z", z)
+        end
         if on_done then on_done() end
     end)
     go.animate(rec.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, rot, go.EASING_OUTCUBIC, 0.42)

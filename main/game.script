@@ -597,18 +597,25 @@ function on_input(self, action_id, action)
         if result.valid then
             self.is_local_action_locked = true
             self.play_card(hit_card, true, result)
-            
-            local cv = tonumber(hit_card.v)
-            local is_chain = result.play_again or result.continued_turn or result.chain or result.skip
-                          or cv == 8 or cv == 11
-                          
-            if is_chain then
-                timer.delay(0.1, false, function()
-                    if self.is_player_turn() and not self.waiting then
-                        self.is_local_action_locked = false
-                    end
-                end)
-            end
+
+            -- Do NOT re-open the lock here. It used to unlock optimistically
+            -- ~0.1s after any 8/Jack play (a raw card-VALUE guess at "this
+            -- grants another turn"), but the card's fly-to-pile animation
+            -- takes ~0.42s (card_view.lua's animate_to_pile) and the actual
+            -- skip/hold-on/general-market resolution — including whether
+            -- this player even keeps control at all — only happens in
+            -- game_flow.lua's after_play_settled, once that flight lands.
+            -- Unlocking early let a fast second tap slip in while the first
+            -- card was still mid-flight and turn control hadn't actually
+            -- been resolved yet: in 4-player games this let the human play
+            -- an extra full card as themselves before tournament4.apply_skip
+            -- had even stepped the turn away, and — since a raw card VALUE
+            -- was used instead of the real result type — it also mis-fired
+            -- for an ordinary (non-special) "11" card in Whot, which has no
+            -- skip effect at all. after_play_settled (for 2-player
+            -- Hold-On/Skip/General-Market continuations) and
+            -- tournament4.begin_turn (once control legitimately returns to
+            -- the human seat) are the only places that re-open this lock now.
         else
             safe_shake_card(self, hit_card)
         end

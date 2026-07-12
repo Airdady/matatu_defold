@@ -345,6 +345,10 @@ function M.reshuffle_deck(self, done)
     local top = table.remove(self.played_cards)
     local recycled = self.played_cards
     self.played_cards = { top }
+    -- Bump BEFORE the z reset below, so a same-frame-or-later animate_to_pile
+    -- completion for this exact card (still mid-flight when reshuffle fired)
+    -- sees a stale generation and skips re-asserting its old, high z.
+    self.pile_gen = (self.pile_gen or 0) + 1
     go.set(top.id, "position.z", Z_PILE + 0.001)
 
     local existing = {}
