@@ -437,6 +437,12 @@ local function parse_message(json_string)
     -- full leaderboard. Parked here (too big to ride through msg.post) and
     -- read back by the global season_results overlay.
     M.last_season_complete = d
+    -- The server sends a fresh SEASON_STATUS for the new season right after
+    -- this, but clear the stale one now as a safety net — otherwise, if that
+    -- follow-up message is ever lost, the countdown UI would stay frozen
+    -- showing the just-closed season's (now past) endDate forever instead of
+    -- just hiding until the next SEASON_STATUS arrives.
+    M.current_season_status = nil
     emit("season_complete", d)
   elseif t == "SEASON_STATUS" then
     -- Pushed right after IDENTIFY so the client can drive an accurate
