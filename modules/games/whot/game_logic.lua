@@ -319,17 +319,16 @@ function M.player_draw(g)
 		return M.player_pass(g)
 	end
 
+	-- Whot: drawing always ends the turn — no "pick and play" of the card
+	-- just drawn (or any other card already in hand).
 	local drew = draw_cards(g, g.human_id, 1)
-	g.has_drawn = true
-	local playable = M.has_any_playable(g, g.human_id)
+	switch_turn(g)
 	return {
 		ok = true,
 		kind = "draw",
 		drew = drew,
-		turn_changed = false,
-		can_pass = playable,
-		auto_pass = not playable,
-		message = playable and "Play a card or pass" or "No playable card — passing",
+		turn_changed = true,
+		message = "Drew a card — turn ends",
 		actor = g.human_id,
 	}
 end
@@ -371,9 +370,11 @@ function M.ai_step(g)
 			switch_turn(g)
 			return { ok = true, kind = "draw", drew = drew, turn_changed = true, actor = g.ai_id }
 		end
+		-- Whot: drawing always ends the turn — the AI never re-decides to
+		-- play the card it just drew.
 		local drew = draw_cards(g, g.ai_id, 1)
-		g.has_drawn = true
-		return { ok = true, kind = "draw", drew = drew, turn_changed = false, actor = g.ai_id }
+		switch_turn(g)
+		return { ok = true, kind = "draw", drew = drew, turn_changed = true, actor = g.ai_id }
 	end
 
 	-- pass

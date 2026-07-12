@@ -61,6 +61,12 @@ function M.do_ai_turn(self, is_combo)
                 self.draw_to_hand(self.ai_hand, false, n, function() self.next_turn() end)
             else
                 self.draw_to_hand(self.ai_hand, false, 1, function()
+                    if GameMode.is_whot() then
+                        -- Whot: drawing always ends the turn — the AI never
+                        -- re-decides to play the card it just drew.
+                        self.next_turn()
+                        return
+                    end
                     local cut_idx2 = nil
                     if self.cutting_card then
                         for i, c in ipairs(self.ai_hand) do
