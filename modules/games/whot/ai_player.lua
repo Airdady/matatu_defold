@@ -441,6 +441,10 @@ function M.choose(state, hand, opts)
         return { kind = "pass" }
     end
 
+    -- Drawing always ends the turn in Whot — never "pick and play" the card
+    -- just drawn (or any other card) once has_drawn is true.
+    if has_drawn then return { kind = "pass" } end
+
     for i, c in ipairs(hand) do
         if c.v == card.v and c.s == card.s then
             return { kind = "play", index = i, suit = resp.selectedShape or "" }

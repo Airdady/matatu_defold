@@ -450,8 +450,13 @@ function M.check_post_draw(self, frozen_penalty)
         if self.game_state then self.game_state.activePenaltyCount = frozen_penalty end
     end
 
+    -- Whot: drawing always ends the turn, even if the drawn card (or any
+    -- other card already in hand) is playable — no "pick and play". The
+    -- other games intentionally keep the "play if you can" behavior below.
     local has_any = false
-    if #self.played_cards == 0 then
+    if GameMode.is_whot() then
+        has_any = false
+    elseif #self.played_cards == 0 then
         has_any = true
     else
         for _, c in ipairs(self.player_hand) do
