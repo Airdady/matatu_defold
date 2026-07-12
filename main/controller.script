@@ -84,9 +84,18 @@ local function clear_session()
     pcall(api.set_auth_token, "")
     pcall(api.save_session, {})
     pcall(ws.disconnect) -- Sever the stale socket connection to prevent rapid-fire auth errors
-    
-    if gpgs then pcall(gpgs.logout) end -- Clear GPGS cache to force a completely fresh login request
-    
+
+    -- Deliberately NOT calling gpgs.logout() here. This used to wipe Google's
+    -- own cached sign-in state on every auth_required/identify_error (even
+    -- ones as mundane as "Connection failed" — a plain network hiccup, not
+    -- an identity problem), which forced a full interactive Google sign-in
+    -- prompt the next time regardless of how solid the player's actual login
+    -- was. Clearing only our own local session/token is enough to stop a
+    -- broken identify from looping; try_silent_login's gpgs.silent_login()
+    -- can then still succeed silently next time using the still-cached
+    -- Google account, re-authenticating in the background exactly as
+    -- intended, instead of re-prompting every single time.
+
     for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile", "lobby" }) do
         pcall(msg.post, "#" .. s, "user_data_updated")
     end
@@ -309,6 +318,7 @@ function init(self)
     table.insert(self.tokens, ws.on("head_to_head", function() msg.post("#online", "ws_head_to_head") end))
 
     forward("online_users",           "#online", "ws_online_users")
+    forward("rank_update",            "#online", "ws_rank_update")
     forward("connected",              "#online", "ws_connected")
     forward("disconnected",           "#online", "ws_disconnected")
     forward("identify_success",       "#online", "ws_identify")

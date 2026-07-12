@@ -370,6 +370,17 @@ function update(self, dt)
 
     self._tick = self._tick + dt
     if self._tick >= 1 then self._tick = 0; update_season(self); rebuild(self) end
+
+    -- Periodic fallback so the standings panel doesn't go stale even when no
+    -- online-users change happens to fire (e.g. someone already online
+    -- earns points from a game elsewhere without a fresh join/leave event) —
+    -- the ws_online_users-triggered request above covers the common case
+    -- faster than this on its own.
+    self._rank_tick = (self._rank_tick or 0) + dt
+    if self._rank_tick >= 20 then
+        self._rank_tick = 0
+        if ws.is_identified then pcall(ws.request_rank) end
+    end
 end
 
 function on_message(self, message_id, message, sender)
@@ -379,7 +390,7 @@ function on_message(self, message_id, message, sender)
         -- screen is entered — don't just trust whatever's cached from the
         -- last (debounced, purely event-driven) server broadcast, which may
         -- have fired before we were ready to receive it.
-        if ws.is_identified then pcall(ws.request_online_users) end
+        if ws.is_identified then pcall(ws.request_online_users); pcall(ws.request_rank) end
     elseif message_id == hash("ws_match_found") and self.invite_search then
         local gs, me, opp = ws.get_active_game() or {}, tostring(ws.get_current_user_id() or ""), nil
         for k, pl in pairs(gs.players or {}) do if tostring((type(pl) == "table" and (pl._id or pl.id)) or k) ~= me then opp = pl end end
@@ -393,7 +404,17 @@ function on_message(self, message_id, message, sender)
         right_panel.fail_invite_search(self, app_state, function() rebuild(self) end, message and message.reason)
     elseif message_id == hash("enable") then refresh_wh(); self._active = true
     elseif message_id == hash("disable") then self._active = false; clear(self)
-    elseif message_id == hash("layout_changed") or message_id == hash("user_data_updated") or message_id == hash("ws_online_users") or message_id == hash("ws_connected") or message_id == hash("ws_disconnected") then if self._active then rebuild(self) end
+    elseif message_id == hash("layout_changed") or message_id == hash("user_data_updated") or message_id == hash("ws_online_users") or message_id == hash("ws_connected") or message_id == hash("ws_disconnected") then
+        if self._active then rebuild(self) end
+        -- A change in who's online (someone joining/leaving, e.g. a brand-new
+        -- user who just got their signup bonus) is exactly when this client's
+        -- own "player above/below me" standings snapshot is most likely to be
+        -- stale — ask for a fresh one instead of waiting on the periodic tick.
+        if message_id == hash("ws_online_users") and self._active and ws.is_identified then
+            pcall(ws.request_rank)
+        end
+    elseif message_id == hash("ws_rank_update") then
+        if self._active then rebuild(self) end
     elseif message_id == hash("ws_game_request") then
         -- Plain incoming requests are rendered by the GLOBAL overlay
         -- (main/incoming.gui_script). The inline tournament/battle banner is only

@@ -223,6 +223,19 @@ function M.request_head_to_head(opponent_id)
   })
 end
 
+-- Ask the backend for a fresh "player above me / player below me" snapshot.
+-- current_user_data.rank is otherwise only ever set once, at IDENTIFY, plus
+-- a 2-row update for the two participants of a game that just ended — so a
+-- bystander sitting in the online lobby never saw someone ELSE's points/
+-- balance change (e.g. a new user joining and getting their signup bonus)
+-- reflected in their own standings panel until they reconnected. The
+-- RANK_UPDATE response updates current_user_data.rank in place and fires
+-- "rank_update" so online_left.lua can re-render.
+function M.request_rank()
+  if M.current_user_id == "" then return end
+  M.send_message("REQUEST_RANK", { _id = M.current_user_id })
+end
+
 -- ── message parsing ─────────────────────────────────────────────────────────
 local function handle_online_users(msg_data)
   local users = {}
@@ -432,6 +445,13 @@ local function parse_message(json_string)
     -- ride through msg.post — and read back by the online lobby.
     M.last_head_to_head = d or {}
     emit("head_to_head", d or {})
+  elseif t == "RANK_UPDATE" then
+    -- Response to M.request_rank() — refresh the "player above/below me"
+    -- standings snapshot in place, same shape as the rank IDENTIFY sends.
+    if M.current_user_data then
+      M.current_user_data.rank = (d and d.nearby) or {}
+    end
+    emit("rank_update", d or {})
   elseif t == "SEASON_COMPLETE" then
     -- Half-Week Season wrap-up: final rank, rewards, badges/missions, and the
     -- full leaderboard. Parked here (too big to ride through msg.post) and
