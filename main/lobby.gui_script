@@ -135,17 +135,32 @@ local function parse_iso_utc(str)
     return days * 86400 + tonumber(h) * 3600 + tonumber(mi) * 60 + tonumber(s)
 end
 
+local WEEKDAY_NAMES = { "SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY" }
+
+-- end_epoch is a UTC unix timestamp; os.date (no "!" prefix) converts it to
+-- the device's local wall-clock time, so the day/time shown always matches
+-- what the player sees on their own clock.
+local function format_season_deadline(end_epoch)
+    local t = os.date("*t", end_epoch)
+    local h12 = t.hour % 12
+    if h12 == 0 then h12 = 12 end
+    local ampm = t.hour < 12 and "AM" or "PM"
+    return string.format("ENDS %s AT %d:%02d %s", WEEKDAY_NAMES[t.wday] or "?", h12, t.min, ampm)
+end
+
 local function update_lobby_season(self)
     local status = ws.current_season_status
     local end_epoch = status and parse_iso_utc(status.endDate)
     if not end_epoch then
         self.season_text = nil
+        self.season_deadline_text = nil
         return
     end
     local diff = math.max(0, end_epoch - os.time())
     self.season_text = diff >= 86400
         and string.format("%dD %02dH %02dM %02dS", math.floor(diff / 86400), math.floor((diff % 86400) / 3600), math.floor((diff % 3600) / 60), diff % 60)
         or string.format("%02dH %02dM %02dS", math.floor(diff / 3600), math.floor((diff % 3600) / 60), diff % 60)
+    self.season_deadline_text = format_season_deadline(end_epoch)
 end
 
 -- ---------------------------------------------------------------------------
@@ -195,6 +210,24 @@ local function mode_tile(self, cfg)
     if cfg.sub then
         local n_sub = track(self, ui.text(vmath.vector3(acc_x + 16, title_y - 32, 0), cfg.sub, "small", C_MUTED))
         set_pivot(n_sub, gui.PIVOT_W)
+    end
+
+    -- Season countdown block (PLAY ONLINE tile only) — sits in the gap
+    -- between the subtitle and the CTA pill: a big "ends in" countdown with
+    -- the actual day-of-week/time it ends underneath, visible to guests too.
+    if cfg.season_countdown then
+        local sy = title_y - 62
+        local n_slabel = track(self, ui.text(vmath.vector3(acc_x + 16, sy, 0), "SEASON ENDS IN", "small", C_MUTED))
+        set_pivot(n_slabel, gui.PIVOT_W)
+
+        local n_scount = track(self, ui.text(vmath.vector3(acc_x + 16, sy - 30, 0), cfg.season_countdown, "subtitle2", C_GOLD))
+        set_pivot(n_scount, gui.PIVOT_W)
+        pcall(gui.set_scale, n_scount, vmath.vector3(1.15, 1.15, 1))
+
+        if cfg.season_deadline then
+            local n_sdead = track(self, ui.text(vmath.vector3(acc_x + 16, sy - 62, 0), cfg.season_deadline, "small", C_MUTED))
+            set_pivot(n_sdead, gui.PIVOT_W)
+        end
     end
 
     -- CTA Button (PLAY NOW) or Badge (COMING SOON)
@@ -564,12 +597,9 @@ local function rebuild(self)
     local n_sign = track(self, ui.text(vmath.vector3(grid_r, h_y - 32, 0), sub_txt, "small", vmath.vector4(0.4, 0.4, 0.4, 1)))
     set_pivot(n_sign, gui.PIVOT_E)
 
-    -- Center: compact "SEASON ENDS IN" countdown
-    if self.season_text then
-        local mid_x = (grid_l + grid_r) / 2
-        track(self, ui.text(vmath.vector3(mid_x, h_y + 14, 0), "SEASON ENDS IN", "small", C_MUTED))
-        track(self, ui.text(vmath.vector3(mid_x, h_y - 12, 0), self.season_text, "body", C_GOLD))
-    end
+    -- The "SEASON ENDS IN" countdown now lives inside the PLAY ONLINE tile
+    -- (see mode_tile's season_countdown block below) instead of here, so it
+    -- reads in context with the mode it applies to.
 
     -- -----------------------------------------------------------------------
     -- Tile 1: PLAY ONLINE
@@ -595,6 +625,8 @@ local function rebuild(self)
         numeral     = "01",
         title       = "PLAY ONLINE",
         sub         = sub_text,
+        season_countdown = self.season_text,
+        season_deadline  = self.season_deadline_text,
         cta_label   = cta_text,
         btn_id      = "play_online",
     })
