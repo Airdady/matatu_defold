@@ -1,25 +1,64 @@
 local ws            = require("modules.websocket_manager")
 local dialog_search = require("modules.dialog_search")
+local GameMode      = require("modules.game_mode")
 
 local M = {}
 
--- Battle stakes cap out at 2000 (the 5000 / 10000 tiers were removed).
-M.BATTLE_TIERS = {
-    { amount = 500,   formats = { { games = 3, charge = 75,  points = 9 } } },
-    { amount = 1000,  formats = { { games = 3, charge = 75,  points = 9 }, { games = 5, charge = 125, points = 15 } } },
-    { amount = 2000,  formats = { { games = 3, charge = 75,  points = 9 }, { games = 5, charge = 125, points = 15 },
-                                  { games = 7, charge = 175, points = 21 }, { games = 9, charge = 225, points = 27 } } },
+-- Battle/Knockout/Party stake ladders, per game's own local currency
+-- (UGX/NGN/KES) — mirrors modules/config.lua's STAKE_LEVELS_BY_GAME
+-- conversion ratio (NGN ~= UGX * 0.5, KES ~= UGX * 0.05, rounded to clean
+-- denominations), which itself matches be_matatu's
+-- SETTLEMENT_STAKE_LEVELS_BY_GAME. These ladders were previously flat UGX
+-- numbers applied unconverted to Whot/Kadi builds too.
+
+-- Battle stakes cap out at the top tier (the higher UGX 5000 / 10000 tiers
+-- were removed for Matatu; other games' top tiers scale down accordingly).
+local BATTLE_TIERS_BY_GAME = {
+    MATATU = {
+        { amount = 500,   formats = { { games = 3, charge = 75,  points = 9 } } },
+        { amount = 1000,  formats = { { games = 3, charge = 75,  points = 9 }, { games = 5, charge = 125, points = 15 } } },
+        { amount = 2000,  formats = { { games = 3, charge = 75,  points = 9 }, { games = 5, charge = 125, points = 15 },
+                                      { games = 7, charge = 175, points = 21 }, { games = 9, charge = 225, points = 27 } } },
+    },
+    WHOT = {
+        { amount = 250,   formats = { { games = 3, charge = 40,  points = 9 } } },
+        { amount = 500,   formats = { { games = 3, charge = 40,  points = 9 }, { games = 5, charge = 65,  points = 15 } } },
+        { amount = 1000,  formats = { { games = 3, charge = 40,  points = 9 }, { games = 5, charge = 65,  points = 15 },
+                                      { games = 7, charge = 90,  points = 21 }, { games = 9, charge = 115, points = 27 } } },
+    },
+    KADI = {
+        { amount = 25,    formats = { { games = 3, charge = 4,  points = 9 } } },
+        { amount = 50,    formats = { { games = 3, charge = 4,  points = 9 }, { games = 5, charge = 7,  points = 15 } } },
+        { amount = 100,   formats = { { games = 3, charge = 4,  points = 9 }, { games = 5, charge = 7,  points = 15 },
+                                      { games = 7, charge = 9,  points = 21 }, { games = 9, charge = 12, points = 27 } } },
+    },
 }
+M.BATTLE_TIERS = BATTLE_TIERS_BY_GAME[GameMode.GAME] or BATTLE_TIERS_BY_GAME.MATATU
 
 -- KNOCKOUT uses a flat low-stake ladder as its SCORE CAP (charge = cap/2).
-M.KNOCKOUT_CAPS = { 100, 200, 300, 500 }
+local KNOCKOUT_CAPS_BY_GAME = {
+    MATATU = { 100, 200, 300, 500 },
+    WHOT   = { 50,  100, 150, 250 },
+    KADI   = { 5,   10,  15,  25  },
+}
+M.KNOCKOUT_CAPS = KNOCKOUT_CAPS_BY_GAME[GameMode.GAME] or KNOCKOUT_CAPS_BY_GAME.MATATU
 
 -- KNOCKOUT is a STAKED score-cap chamber: players put up one of these stake
 -- amounts, and the charge is derived from the score cap (cap/2).
-M.KNOCKOUT_STAKES = { 1000, 2000 }
+local KNOCKOUT_STAKES_BY_GAME = {
+    MATATU = { 1000, 2000 },
+    WHOT   = { 500,  1000 },
+    KADI   = { 50,   100  },
+}
+M.KNOCKOUT_STAKES = KNOCKOUT_STAKES_BY_GAME[GameMode.GAME] or KNOCKOUT_STAKES_BY_GAME.MATATU
 
 -- PARTY uses its own flat entry-fee ladder (the stepper just cycles these).
-M.PARTY_TIERS = { 100, 200, 500 }
+local PARTY_TIERS_BY_GAME = {
+    MATATU = { 100, 200, 500 },
+    WHOT   = { 50,  100, 250 },
+    KADI   = { 5,   10,  25  },
+}
+M.PARTY_TIERS = PARTY_TIERS_BY_GAME[GameMode.GAME] or PARTY_TIERS_BY_GAME.MATATU
 
 -- The three independent battle types. Internal keys map to display labels.
 M.BATTLE_TYPES = { "NORMAL", "KNOCKOUT", "PARTY" }
