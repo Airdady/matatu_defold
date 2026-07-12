@@ -7,14 +7,10 @@ set -e
 # CONFIGURATION
 # ═══════════════════════════════════════════════════════════
 BOB_JAR="bob.jar"
-OUTPUT_DIR="./bundles/android_release"
 TMP_SETTINGS="override.ini"
 
-KEYSTORE_PATH="./whot.keystore"
-KEYSTORE_PASS="./keystore.pass.txt"
-KEYSTORE_ALIAS="matatu_alias"
-
 # Default Variables (Overwritten by terminal command flags)
+GAME="whot"
 VERSION_NAME=""
 VERSION_CODE=""
 
@@ -33,8 +29,8 @@ print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_usage() {
-    echo -e "Usage: ./release.sh --version-name <x.x.x> --version-code <int>"
-    echo -e "Example: ${YELLOW}./release.sh --version-name \"1.2.0\" --version-code 15${NC}"
+    echo -e "Usage: ./release.sh --game <whot|matatu|kadi> --version-name <x.x.x> --version-code <int>"
+    echo -e "Example: ${YELLOW}./release.sh --game matatu --version-name \"1.2.0\" --version-code 15${NC}"
 }
 
 # ═══════════════════════════════════════════════════════════
@@ -42,6 +38,7 @@ print_usage() {
 # ═══════════════════════════════════════════════════════════
 while [[ "$#" -gt 0 ]]; do
     case $1 in
+        --game) GAME="$2"; shift ;;
         --version-name) VERSION_NAME="$2"; shift ;;
         --version-code) VERSION_CODE="$2"; shift ;;
         *) print_error "Unknown parameter passed: $1"; print_usage; exit 1 ;;
@@ -49,10 +46,52 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
+GAME="$(echo "$GAME" | tr '[:upper:]' '[:lower:]')"
+
 # Validation Checks
 if [ -z "$VERSION_NAME" ] || [ -z "$VERSION_CODE" ]; then
     print_error "Missing required production arguments."
     print_usage
+    exit 1
+fi
+
+# ═══════════════════════════════════════════════════════════
+# PER-GAME CONFIG
+# ═══════════════════════════════════════════════════════════
+# Package name + visual identity sources mirror build.sh's case statement.
+# All three games are currently signed with the SAME keystore/alias — see
+# build.sh's Google Sign-In note: each package name still needs its OWN
+# Android OAuth client registered against this keystore's SHA-1 in Google
+# Cloud Console, so sharing the keystore is intentional, not a placeholder.
+# Kept as a per-game case (rather than one top-level constant) so switching
+# any single game to its own dedicated keystore later is a one-line change.
+case "$GAME" in
+    whot)   GAME_UPPER="WHOT";   PROJECT_TITLE="Whot"
+            PACKAGE_NAME="com.matatu.pro"
+            ICON_SVG="tools/icons/whot.svg";   ICON_BG="#C42B2B,#6E1414"
+            LOGO_SVG="tools/logos/whot.svg"
+            KEYSTORE_PATH="./whot.keystore"; KEYSTORE_PASS="./keystore.pass.txt"; KEYSTORE_ALIAS="matatu_alias" ;;
+    matatu) GAME_UPPER="MATATU"; PROJECT_TITLE="Matatu"
+            PACKAGE_NAME="com.matatu.champ"
+            ICON_SVG="tools/icons/matatu.svg"; ICON_BG="#4a3020,#2b1810"
+            LOGO_SVG="tools/logos/matatu.svg"
+            KEYSTORE_PATH="./whot.keystore"; KEYSTORE_PASS="./keystore.pass.txt"; KEYSTORE_ALIAS="matatu_alias" ;;
+    kadi)   GAME_UPPER="KADI";   PROJECT_TITLE="Kadi"
+            PACKAGE_NAME="com.matatu.kadi"
+            ICON_SVG="tools/icons/kadi.svg";   ICON_BG="#12503a,#0a2e20"
+            LOGO_SVG="tools/logos/kadi.svg"
+            KEYSTORE_PATH="./whot.keystore"; KEYSTORE_PASS="./keystore.pass.txt"; KEYSTORE_ALIAS="matatu_alias" ;;
+    *)
+        print_error "Unknown game '$GAME' — expected: whot | matatu | kadi"
+        print_usage
+        exit 1
+        ;;
+esac
+
+OUTPUT_DIR="./bundles/android_release_${GAME}"
+
+if [ ! -f "$KEYSTORE_PATH" ]; then
+    print_error "Keystore not found at $KEYSTORE_PATH"
     exit 1
 fi
 
@@ -62,25 +101,84 @@ if [ ! -f "$KEYSTORE_PASS" ]; then
     exit 1
 fi
 
-print_status "Preparing Defold Release Build: v$VERSION_NAME (Code: $VERSION_CODE)"
+print_status "Preparing Defold Release Build: $GAME_UPPER v$VERSION_NAME (Code: $VERSION_CODE)"
 
 # ═══════════════════════════════════════════════════════════
-# PRE-BUILD CONFIGURATION
+# 0. SWITCH THE GAME MODE (modules/game_mode.lua)
 # ═══════════════════════════════════════════════════════════
-print_status "Generating temporary configurations with com.matatu.pro injection..."
+# M.GAME drives every endpoint/card-art path/in-app label at runtime, so it
+# has to be baked into the Lua source before bob.jar archives it — unlike
+# the project title/package below, this can't be done via a --settings
+# override.
+print_status "Setting GAME_MODE to $GAME_UPPER..."
 
-# bob.jar requires an actual config file for settings overrides
+if [ ! -f modules/game_mode.lua ]; then
+    print_error "modules/game_mode.lua not found — is this the matatu_defold repo root?"
+    exit 1
+fi
+
+sed -i.bak -E "s/^(M\.GAME[[:space:]]*=[[:space:]]*)\"[A-Z]+\"/\1\"${GAME_UPPER}\"/" modules/game_mode.lua
+rm -f modules/game_mode.lua.bak
+
+if ! grep -q "M.GAME = \"${GAME_UPPER}\"" modules/game_mode.lua; then
+    print_error "Failed to set M.GAME in modules/game_mode.lua"
+    exit 1
+fi
+
+print_success "modules/game_mode.lua -> M.GAME = \"${GAME_UPPER}\""
+
+# ═══════════════════════════════════════════════════════════
+# 1. REGENERATE VISUAL IDENTITY ASSETS FOR $GAME_UPPER
+#    (launcher icon: bundle/android/res/** ; bg_logo watermark: assets/ui/)
+# ═══════════════════════════════════════════════════════════
+print_status "Regenerating launcher icon for $GAME_UPPER..."
+
+if [ ! -f "$ICON_SVG" ]; then
+    print_warning "$ICON_SVG not found — skipping icon regeneration (keeping whatever is already in bundle/android/res)."
+elif ! command -v python3 >/dev/null 2>&1; then
+    print_warning "python3 not found — skipping icon regeneration (keeping whatever is already in bundle/android/res)."
+else
+    if python3 tools/generate_android_icons.py "$ICON_SVG" --background "$ICON_BG" --out . ; then
+        print_success "bundle/android/res/** -> ${ICON_SVG}"
+    else
+        print_warning "Icon generation failed (see error above) — keeping whatever is already in bundle/android/res. Install deps with: pip install pillow cairosvg"
+    fi
+fi
+
+print_status "Regenerating bg_logo watermark for $GAME_UPPER..."
+
+if [ ! -f "$LOGO_SVG" ]; then
+    print_warning "$LOGO_SVG not found — skipping bg_logo regeneration (keeping whatever is already in assets/ui/bg_logo.png)."
+elif ! command -v python3 >/dev/null 2>&1; then
+    print_warning "python3 not found — skipping bg_logo regeneration (keeping whatever is already in assets/ui/bg_logo.png)."
+else
+    if python3 tools/generate_bg_logo.py "$LOGO_SVG" ; then
+        print_success "assets/ui/bg_logo.png -> ${LOGO_SVG}"
+    else
+        print_warning "bg_logo generation failed (see error above) — keeping whatever is already in assets/ui/bg_logo.png. Install deps with: pip install pillow cairosvg"
+    fi
+fi
+
+# ═══════════════════════════════════════════════════════════
+# 2. PRE-BUILD CONFIGURATION
+# ═══════════════════════════════════════════════════════════
+print_status "Generating temporary configuration with ${PACKAGE_NAME} injection..."
+
+# bob.jar requires an actual config file for settings overrides. Title +
+# package are applied here (not by editing game.project directly) so a
+# release build never leaves the working tree dirty.
 echo "[project]" > $TMP_SETTINGS
 echo "version = $VERSION_NAME" >> $TMP_SETTINGS
+echo "title = $PROJECT_TITLE" >> $TMP_SETTINGS
 echo "" >> $TMP_SETTINGS
 echo "[android]" >> $TMP_SETTINGS
 echo "version_code = $VERSION_CODE" >> $TMP_SETTINGS
-echo "package = com.matatu.pro" >> $TMP_SETTINGS
+echo "package = $PACKAGE_NAME" >> $TMP_SETTINGS
 
 print_status "Configurations updated successfully."
 
 # ═══════════════════════════════════════════════════════════
-# COMPILATION PROCESS
+# 3. COMPILATION PROCESS
 # ═══════════════════════════════════════════════════════════
 mkdir -p "$OUTPUT_DIR"
 
@@ -117,13 +215,14 @@ rm -f "$TMP_SETTINGS"
 if [ $BUILD_STATUS -eq 0 ]; then
     echo "-------------------------------------------------------"
     print_success "Build Successful!"
-    
+
     # Locate the compiled bundle package
     RELEASE_PATH=$(find "$OUTPUT_DIR" -name "*.aab" | head -n 1)
-    
+
     if [ -n "$RELEASE_PATH" ]; then
         echo -e "📁 ${YELLOW}Output Destination:${NC} $RELEASE_PATH"
-        echo -e "🆔 ${YELLOW}Package Name:${NC} com.matatu.nap"
+        echo -e "🎮 ${YELLOW}Game:${NC} $GAME_UPPER"
+        echo -e "🆔 ${YELLOW}Package Name:${NC} $PACKAGE_NAME"
         echo -e "🏷  ${YELLOW}App Store Version:${NC} $VERSION_NAME ($VERSION_CODE)"
         echo -e "📦 ${YELLOW}Target Engine Format:${NC} .aab (Android App Bundle)"
         echo ""
