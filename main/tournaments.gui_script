@@ -312,14 +312,67 @@ local function is_level_complete(self, level_idx)
     return false
 end
 
+-- Local device wall-clock is in whatever timezone the phone is set to, but
+-- t.launchDate arrives as a UTC ISO-8601 string ("...Z") from the backend
+-- (Tournament model), so a naive string/local-time comparison would be off
+-- by the device's UTC offset. Converts an ISO UTC timestamp to a real epoch
+-- comparable against os.time().
+local function utc_offset_seconds()
+    local now = os.time()
+    local utc = os.date("!*t", now)
+    utc.isdst = false
+    return os.difftime(now, os.time(utc))
+end
+
+local function parse_iso_utc_epoch(iso)
+    if type(iso) ~= "string" then return nil end
+    local y, mo, d, h, mi, s = iso:match("(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
+    if not y then return nil end
+    local as_if_local = os.time({
+        year = tonumber(y), month = tonumber(mo), day = tonumber(d),
+        hour = tonumber(h), min = tonumber(mi), sec = tonumber(s), isdst = false,
+    })
+    if not as_if_local then return nil end
+    return as_if_local + utc_offset_seconds()
+end
+
 -- ── Timer State Checks ───────────────────────────────────────────────────────
 check_timer_states = function(self)
     local t = pick_tournament()
     if not t then return end
 
     local now = os.time()
-    
-    self.is_pre_launch = false
+
+    -- If the tournament's launchDate (backend Tournament.launchDate, e.g.
+    -- "the tournament starts in coming months") hasn't arrived yet, the PLAY
+    -- button must stay inactive — the backend never enforces this itself
+    -- (launchDate is purely informational server-side), so this is the only
+    -- gate. A missing/unparseable launchDate is treated as "already live"
+    -- (matches every existing tournament, which has no launchDate set).
+    local launch_epoch = parse_iso_utc_epoch(t.launchDate)
+    self.is_pre_launch = (launch_epoch ~= nil) and (now < launch_epoch)
+    if self.is_pre_launch then
+        local diff = launch_epoch - now
+        local days = math.floor(diff / 86400)
+        if days >= 1 then
+            self.timer_str = string.format("STARTS IN %d DAY%s", days, days == 1 and "" or "S")
+        else
+            self.timer_str = string.format("STARTS IN %02d:%02d:%02d",
+                math.floor(diff / 3600), math.floor((diff % 3600) / 60), diff % 60)
+        end
+        self.timer_desc = "Launching soon"
+
+        if self.last_pre_launch_state ~= self.is_pre_launch then
+            self.last_pre_launch_state = self.is_pre_launch
+            if self._active then rebuild(self) end
+        end
+        return
+    end
+    if self.last_pre_launch_state ~= self.is_pre_launch then
+        self.last_pre_launch_state = self.is_pre_launch
+        if self._active then rebuild(self) end
+    end
+
     self.is_dormant = false
     self.timer_str = "00:00:00"
     self.timer_desc = ""
