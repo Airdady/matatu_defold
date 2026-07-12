@@ -607,9 +607,14 @@ local function rebuild(self)
     local n_ocg = track(self, ui.text(vmath.vector3(grid_l + 16, h_y - 32, 0), "ONLINE CARD GAME", "small", C_MUTED))
     set_pivot(n_ocg, gui.PIVOT_W)
 
-    -- Right Guest Status
-    local user_txt = (ws.current_user_data and ws.current_user_data.username) or "GUEST"
-    local sub_txt  = (ws.current_user_data and ws.current_user_data.username) and "RANKED ACCOUNT" or "TAP 'PLAY ONLINE' TO SIGN IN"
+    -- Right Guest Status. Explicit ~= "" check (not just truthiness) —
+    -- username is no longer auto-filled from Google Play Games at signup,
+    -- so a signed-in-but-not-yet-named user has username == "", which is
+    -- truthy in Lua and would otherwise blank out the header and wrongly
+    -- read "RANKED ACCOUNT" instead of prompting sign-in.
+    local has_username = ws.current_user_data and ws.current_user_data.username and ws.current_user_data.username ~= ""
+    local user_txt = has_username and ws.current_user_data.username or "GUEST"
+    local sub_txt  = has_username and "RANKED ACCOUNT" or "TAP 'PLAY ONLINE' TO SIGN IN"
 
     local n_guest = track(self, ui.text(vmath.vector3(grid_r, h_y, 0), user_txt, "title", C_CREAM))
     set_pivot(n_guest, gui.PIVOT_E)
