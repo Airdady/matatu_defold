@@ -65,6 +65,30 @@ function M.play_card(self, rec, is_player, result)
         tut("on_card_played", tonumber(rec.v), tostring(rec.s))
     end
 
+    -- Rapid play: when this result keeps the turn with the SAME player
+    -- (SKIP_TURN / HOLD_ON / GENERAL_MARKET) and doesn't empty their hand,
+    -- re-open input immediately instead of waiting ~0.42s for this card's
+    -- fly-to-pile animation to finish — that fixed delay was previously the
+    -- only thing gating a legitimate rapid second tap (e.g. chaining
+    -- skip cards), and rejected it even though the result was already known
+    -- synchronously via RE.evaluate_play at tap time. after_play_settled
+    -- still runs its full logic once the animation completes as before (win
+    -- check, GUI, server messaging) — its ticket check at the top
+    -- (`ticket < self._play_ticket`) safely no-ops that stale call if a
+    -- further play has since superseded it, so nothing double-processes.
+    -- T4 is excluded: there a SKIP genuinely hands the turn to the next
+    -- seat, so it must stay gated on tournament4.apply_skip/begin_turn.
+    if is_player and not self.t4 and #self.player_hand > 0 then
+        local NA = Rules.NextActionType
+        if result.type == NA.SKIP_TURN
+        or (NA.HOLD_ON and result.type == NA.HOLD_ON)
+        or (NA.GENERAL_MARKET and result.type == NA.GENERAL_MARKET) then
+            self.player_has_drawn = false
+            self.is_local_action_locked = false
+            notify_gui(self.gui_hud, "skip", { show = false })
+        end
+    end
+
     self.animate_to_pile(rec, is_player, function()
         if is_player or not self.online_mode then
             M.after_play_settled(self, rec, is_player, result, current_ticket)
