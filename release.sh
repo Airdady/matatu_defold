@@ -70,17 +70,17 @@ case "$GAME" in
             PACKAGE_NAME="com.matatu.pro"
             ICON_SVG="tools/icons/whot.svg";   ICON_BG="#C42B2B,#6E1414"
             LOGO_SVG="tools/logos/whot.svg"
-            KEYSTORE_PATH="./whot.keystore"; KEYSTORE_PASS="./keystore.pass.txt"; KEYSTORE_ALIAS="matatu_alias" ;;
+            KEYSTORE_PATH="./whot.keystore"; KEYSTORE_PASS="./whot.pass.txt"; KEYSTORE_ALIAS="matatu_alias" ;;
     matatu) GAME_UPPER="MATATU"; PROJECT_TITLE="Matatu"
             PACKAGE_NAME="com.matatu.champ"
             ICON_SVG="tools/icons/matatu.svg"; ICON_BG="#4a3020,#2b1810"
             LOGO_SVG="tools/logos/matatu.svg"
-            KEYSTORE_PATH="./whot.keystore"; KEYSTORE_PASS="./keystore.pass.txt"; KEYSTORE_ALIAS="matatu_alias" ;;
+            KEYSTORE_PATH="./champion-keystore.jks"; KEYSTORE_PASS="./champion-keystore.pass.txt"; KEYSTORE_ALIAS="upload" ;;
     kadi)   GAME_UPPER="KADI";   PROJECT_TITLE="Kadi"
             PACKAGE_NAME="com.matatu.kadi"
             ICON_SVG="tools/icons/kadi.svg";   ICON_BG="#12503a,#0a2e20"
             LOGO_SVG="tools/logos/kadi.svg"
-            KEYSTORE_PATH="./whot.keystore"; KEYSTORE_PASS="./keystore.pass.txt"; KEYSTORE_ALIAS="matatu_alias" ;;
+            KEYSTORE_PATH="./kadi.keystore"; KEYSTORE_PASS="./kadi.pass.txt"; KEYSTORE_ALIAS="matatu_alias" ;;
     *)
         print_error "Unknown game '$GAME' — expected: whot | matatu | kadi"
         print_usage
