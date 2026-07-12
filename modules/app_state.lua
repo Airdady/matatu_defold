@@ -28,6 +28,14 @@ M.theme = "default"
 M.auth_state = "idle"
 M.auth_error = ""
 
+-- Available-username alternatives returned alongside a USERNAME_TAKEN save
+-- failure (e.g. "scovia" -> "scovia7"/"scovia23"/"scovia1993"). Parked here
+-- rather than riding through msg.post's "profile_saved" payload — this
+-- codebase's established convention for data too structured to reliably pass
+-- through a message table (see websocket_manager.lua's last_head_to_head/
+-- last_season_complete for the same pattern).
+M.username_suggestions = {}
+
 -- True while the global Half-Week Season Complete modal (main/season_results.gui_script)
 -- is open. Other global modals (e.g. the daily bonus dialog) check this before
 -- auto-opening themselves so they never fight the season modal for screen space.

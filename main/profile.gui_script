@@ -149,6 +149,20 @@ local function rebuild(self)
         track(self, ui.text(vmath.vector3(EDGE_R - 110, EDGE_T - 76, 0), tostring(self._error), "small", P_ERROR))
     end
 
+    -- Username-taken suggestions — tap one to fill it into the input.
+    if self._suggestions and #self._suggestions > 0 then
+        local chip_w, chip_h, chip_gap = 92, 32, 8
+        local sug_y = EDGE_T - 104
+        local total_w = #self._suggestions * chip_w + (#self._suggestions - 1) * chip_gap
+        local sx = (EDGE_R - 110) + total_w / 2 - chip_w / 2
+        for i, name in ipairs(self._suggestions) do
+            local chip_cx = sx - (i - 1) * (chip_w + chip_gap)
+            local chip = track(self, ui.box(vmath.vector3(chip_cx, sug_y, 0), vmath.vector3(chip_w, chip_h, 0), P_BADGE_BG))
+            track(self, ui.text(vmath.vector3(chip_cx, sug_y, 0), name, "small", P_GOLD_LIGHT))
+            self.buttons[#self.buttons+1] = { node = chip, id = "suggestion", data = name }
+        end
+    end
+
     -- Center vertical divider to split the 50/50 layout (starts from below header divider)
     local avail_h = (d_y - 9) - EDGE_B
     track(self, ui.box(vmath.vector3(CX, EDGE_B + avail_h / 2, 0), vmath.vector3(2, avail_h, 0), P_GOLD_LINE))
@@ -302,6 +316,7 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("profile_saved") then
         self._saving = false
         self._error = message.ok and nil or (message.message or "Save failed")
+        self._suggestions = (not message.ok) and app_state.username_suggestions or nil
         if self._active then rebuild(self) end
     end
 end
@@ -311,6 +326,7 @@ local function handle(self, b)
         if validate(self.username) and not self._saving then
             self._saving = true
             self._error = nil
+            self._suggestions = nil
             msg.post("#controller", "profile_save", { username = self.username, avatar = self.avatar })
             rebuild(self)
         end
@@ -318,6 +334,11 @@ local function handle(self, b)
         if validate(self.username) then msg.post("#controller", "goto_online") end
     elseif b.id == "avatar" then
         self.avatar = b.data
+        rebuild(self)
+    elseif b.id == "suggestion" then
+        self.username = tostring(b.data or "")
+        self._error = nil
+        self._suggestions = nil
         rebuild(self)
     elseif b.id:sub(1,2) == "k_" then
         if b.id == "k_back" then
@@ -332,6 +353,8 @@ local function handle(self, b)
             end
             self.username = self.username .. ch
         end
+        -- Stale suggestions no longer match what's typed — clear them.
+        self._error, self._suggestions = nil, nil
         rebuild(self)
     end
 end
