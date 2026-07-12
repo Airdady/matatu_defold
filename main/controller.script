@@ -478,9 +478,12 @@ function on_message(self, message_id, message, sender)
                 for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile", "lobby" }) do
                     msg.post("#" .. s, "user_data_updated")
                 end
+                app_state.username_suggestions = {}
                 msg.post("#profile", "profile_saved", { ok = true })
                 show(self, "online")
             else
+                local rdata = result.data
+                app_state.username_suggestions = (type(rdata) == "table" and rdata.suggestions) or {}
                 msg.post("#profile", "profile_saved", { ok = false, message = result.message or "Save failed" })
             end
         end)
