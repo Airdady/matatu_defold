@@ -27,11 +27,12 @@ local CELL_SIZE = 64
 local THUMB_SCALE = 1.3
 local FLY_SIZE = 96
 
--- Top-left destination for the SENT emoji's flight animation only — synced
--- with the original Godot BUBBLE_OFFSET (125 * 1.8 = ~225, 40 * 1.8 = ~72).
--- The RECEIVED bubble uses a different, near-the-button destination (see
--- show_emoji_anim) — these two were previously sharing this same constant,
--- which broke the sent animation's intended top-left direction.
+-- Top-left "reaction stage" destination — synced with the original Godot
+-- BUBBLE_OFFSET (125 * 1.8 = ~225, 40 * 1.8 = ~72). This sits just to the
+-- right of the opponent's avatar (hud_ui.lua parents o_avatar_bg at local
+-- (0, 275) inside hud_root, which is anchored to world (120, LOGICAL_H/2) —
+-- avatar center is ~(120, 635)), not near the local emoji picker button.
+-- Both the SENT emoji's flight and the RECEIVED bubble land here.
 local SEND_DEST_X = 225
 local SEND_DEST_Y = LOGICAL_H - 72
 
@@ -384,12 +385,11 @@ local function show_emoji_anim(self, name, fly, local_start_pos, start_scale)
             gui.animate(n, "color.w", 0.0, gui.EASING_INSINE, fade_duration, fade_delay, done)
         end
     else
-        -- Received emoji: lands right next to the emoji picker button
-        -- itself (flight_anchor is already positioned/anchored just above
-        -- it — see M.init), so a reaction from the opponent shows up where
-        -- the player would expect to interact with emoji, not off in a
-        -- fixed corner unrelated to the button's actual position.
-        local recv_dest_world = gui.get_position(self.flight_anchor)
+        -- Received emoji: lands top-left, just after the opponent's avatar
+        -- (same reaction-stage spot the sent flight animates toward) — it
+        -- represents the opponent's reaction, so it belongs near them, not
+        -- next to the local player's own emoji picker button.
+        local recv_dest_world = vmath.vector3(SEND_DEST_X, SEND_DEST_Y, 0)
         local container = box(recv_dest_world, vmath.vector3(1, 1, 0), vmath.vector4(0,0,0,0), gui.PIVOT_CENTER)
         
         -- The Bubble graphical background
