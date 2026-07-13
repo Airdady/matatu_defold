@@ -27,9 +27,6 @@ local CELL_SIZE = 64
 local THUMB_SCALE = 1.3
 local FLY_SIZE = 96
 
--- Top-left destination synced with Godot BUBBLE_OFFSET (125 * 1.8 = ~225, 40 * 1.8 = ~72)
-local DEST_X = 225
-local DEST_Y = LOGICAL_H - 72
 
 -- The popover's sound IDs are the Godot Voice* / Sound* names; the actual sound
 -- components live on the controller object as snd_*. Without this mapping the
@@ -183,6 +180,21 @@ function M.init(self)
     self.emoji_fx = {}
 end
 
+-- Moves the popover's persistent root nodes (built once, in M.init, never
+-- recreated) back to the front of this GUI scene's render order. Needed
+-- because game.gui_script's reset_hud handler fully destroys + rebuilds the
+-- scoreboard (modules/scoreboard_ui.lua's H2H "last 5 games" strip
+-- included) on every match teardown — those freshly-created nodes render on
+-- top of everything already in the scene by default, so without this the
+-- popover silently sinks below the H2H strip starting on the second match
+-- of a session (the very first match is fine, since emoji_popover.init runs
+-- once, after the initial scoreboard.build, in game.gui_script's own init).
+function M.bring_to_front(self)
+    if self.emoji_btn then pcall(gui.move_above, self.emoji_btn, nil) end
+    if self.flight_anchor then pcall(gui.move_above, self.flight_anchor, nil) end
+    if self.popover_anchor then pcall(gui.move_above, self.popover_anchor, nil) end
+end
+
 function M.close(self)
     if not self.emoji_open and not self.emoji_closing then return end
     
@@ -305,7 +317,12 @@ local function show_emoji_anim(self, name, fly, local_start_pos, start_scale)
     self.emoji_fx = self.emoji_fx or {}
     if self.emoji_fx[key] then pcall(gui.delete_node, self.emoji_fx[key]); self.emoji_fx[key] = nil end
 
-    local dest_world = vmath.vector3(DEST_X, DEST_Y, 0)
+    -- Land right next to the emoji picker button itself (flight_anchor is
+    -- already positioned/anchored just above it — see M.init) instead of a
+    -- fixed top-left screen corner ported straight from the old Godot
+    -- layout, which sat diagonally opposite the button's actual bottom-right
+    -- position in this layout.
+    local dest_world = gui.get_position(self.flight_anchor)
     local n
 
     if fly then

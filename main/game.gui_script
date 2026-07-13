@@ -271,6 +271,11 @@ function on_message(self, message_id, message)
             end
             scoreboard.set_active(self, false)
             scoreboard.set_h2h_strip(self, nil, false)
+            -- The scoreboard rebuild above just created a batch of brand-new
+            -- nodes (H2H "last 5 games" strip included), which render on top
+            -- of everything by default — restore the emoji popover's own
+            -- top-most stacking now that it's been buried underneath.
+            emoji_popover.bring_to_front(self)
             -- Leaving the board: hide the avatar + turn-timer chrome so the
             -- current player's timer ring / square container can't persist on
             -- top of the lobby and other screens.
