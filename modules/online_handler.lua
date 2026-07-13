@@ -2,6 +2,7 @@ local ws = require "modules.websocket_manager"
 local Defs = require "modules.card_defs"
 local CV = require "modules.card_view"
 local GameMode = require "modules.game_mode"
+local BL = require "modules.board_layout"
 
 local GUI_HUD   = "#game"
 local GUI_SUIT  = "#suit_select"
@@ -889,7 +890,12 @@ function M.start_game(self, state)
                 table.insert(self.ai_hand, ac)
                 local at = vmath.vector3(a_start + (i - 1) * a_spacing, self.AI_HAND_Y, self.Z_HAND + i * 0.001)
                 go.set_position(vmath.vector3(self.CENTER.x, self.CENTER.y, self.Z_FLY), ac.id)
+                go.set(ac.id, "scale", BL.CARD_SCALE)
                 go.animate(ac.id, "position", go.PLAYBACK_ONCE_FORWARD, at, go.EASING_OUTCUBIC, 0.3, delay)
+                -- Shrink to the opponent-hand scale DURING the deal flight
+                -- itself instead of snapping every opponent card down in one
+                -- batch right after dealing ends (the source of the FPS hit).
+                go.animate(ac.id, "scale", go.PLAYBACK_ONCE_FORWARD, BL.OPPONENT_CARD_SCALE, go.EASING_OUTCUBIC, 0.3, delay)
                 timer.delay(delay, false, function() if seq == self._seq then self.play_sound("SoundDraw") end end)
                 delay = delay + deal_step
             end

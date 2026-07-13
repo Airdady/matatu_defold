@@ -125,15 +125,24 @@ echo "ℹ️  Make sure ${PACKAGE_NAME} is registered as an Android OAuth client
 echo ""
 echo "🎨 Regenerating launcher icon for $GAME_UPPER..."
 
+# These used to soft-fail and silently keep whatever icon/logo was already on
+# disk — which meant a build with missing deps would ship the PREVIOUS game's
+# branding (e.g. building matatu on a machine that last successfully
+# generated kadi's assets would silently keep showing Kadi's table-center
+# logo) with only an easy-to-miss warning as evidence. Hard-failing here
+# means the wrong branding can never ship unnoticed.
 if [ ! -f "$ICON_SVG" ]; then
-    echo "⚠️  $ICON_SVG not found — skipping icon regeneration (keeping whatever is already in bundle/android/res)."
+    echo "❌ $ICON_SVG not found — cannot regenerate the launcher icon for $GAME_UPPER."
+    exit 1
 elif ! command -v python3 >/dev/null 2>&1; then
-    echo "⚠️  python3 not found — skipping icon regeneration (keeping whatever is already in bundle/android/res)."
+    echo "❌ python3 not found — cannot regenerate the launcher icon for $GAME_UPPER. Install Python 3."
+    exit 1
 else
     if python3 tools/generate_android_icons.py "$ICON_SVG" --background "$ICON_BG" --out . ; then
         echo "✅ bundle/android/res/** -> ${ICON_SVG}"
     else
-        echo "⚠️  Icon generation failed (see error above) — keeping whatever is already in bundle/android/res. Install deps with: pip install pillow cairosvg"
+        echo "❌ Icon generation failed (see error above) — refusing to continue with a stale/wrong icon. Install deps with: pip install pillow cairosvg"
+        exit 1
     fi
 fi
 
@@ -141,14 +150,17 @@ echo ""
 echo "🎨 Regenerating bg_logo watermark for $GAME_UPPER..."
 
 if [ ! -f "$LOGO_SVG" ]; then
-    echo "⚠️  $LOGO_SVG not found — skipping bg_logo regeneration (keeping whatever is already in assets/ui/bg_logo.png)."
+    echo "❌ $LOGO_SVG not found — cannot regenerate the bg_logo watermark for $GAME_UPPER."
+    exit 1
 elif ! command -v python3 >/dev/null 2>&1; then
-    echo "⚠️  python3 not found — skipping bg_logo regeneration (keeping whatever is already in assets/ui/bg_logo.png)."
+    echo "❌ python3 not found — cannot regenerate the bg_logo watermark for $GAME_UPPER. Install Python 3."
+    exit 1
 else
     if python3 tools/generate_bg_logo.py "$LOGO_SVG" ; then
         echo "✅ assets/ui/bg_logo.png -> ${LOGO_SVG}"
     else
-        echo "⚠️  bg_logo generation failed (see error above) — keeping whatever is already in assets/ui/bg_logo.png. Install deps with: pip install pillow cairosvg"
+        echo "❌ bg_logo generation failed (see error above) — refusing to continue with a stale/wrong table-center logo. Install deps with: pip install pillow cairosvg"
+        exit 1
     fi
 fi
 
