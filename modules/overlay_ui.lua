@@ -13,8 +13,8 @@ local AI_C_ACCENT = vmath.vector4(0.949, 0.702, 0.020, 1.0)
 local AI_C_BODY   = vmath.vector4(0.788, 0.812, 0.839, 1.0)
 local AI_C_DARK   = vmath.vector4(0.082, 0.094, 0.110, 1.0)
 
-local EXIT_BTN_SIZE, EXIT_BTN_MARGIN_TOP, EXIT_BTN_MARGIN_RIGHT = 80, 10, 10
-local EXIT_POPOVER_WIDTH, EXIT_POPOVER_HEIGHT, EXIT_POPOVER_OFFSET_Y = 200, 120, -10
+local EXIT_BTN_SIZE, EXIT_BTN_MARGIN_TOP, EXIT_BTN_MARGIN_RIGHT = 140, 20, 20
+local EXIT_POPOVER_WIDTH, EXIT_POPOVER_HEIGHT, EXIT_POPOVER_OFFSET_Y = 200, 120, 0
 
 local function box(pos, size, color, pivot)
     local n = gui.new_box_node(pos, size)
