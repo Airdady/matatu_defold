@@ -78,6 +78,18 @@ function M.animate_to_pile(self, rec, is_player, on_done)
     local z = Z_PILE + #self.played_cards * 0.001
     local target = vmath.vector3(self.CENTER.x + offset.x, self.CENTER.y + offset.y, z)
     rec.pile_offset = offset
+    -- Cancel any animation still running on this card before forcing it back
+    -- to full pile scale — most importantly the opponent-hand shrink tween
+    -- (board_layout.lua's layout_hand, started when this card was drawn).
+    -- go.set does NOT cancel an in-flight go.animate on the same property;
+    -- an uncancelled shrink tween would keep overwriting the scale we set
+    -- below on every subsequent frame, silently undoing it and leaving the
+    -- card stuck at the smaller opponent-hand size once it's in the pile —
+    -- exactly the "draw and play" scale bug (drawing starts the 0.42s
+    -- shrink, and playing that same card before it finishes races it).
+    go.cancel_animations(rec.id, "scale")
+    go.cancel_animations(rec.id, "position")
+    go.cancel_animations(rec.id, "euler.z")
     go.set(rec.id, "position.z", Z_FLY)
     go.set(rec.id, "scale", CARD_SCALE)
     local seq = self._seq
