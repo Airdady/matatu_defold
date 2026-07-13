@@ -184,10 +184,6 @@ function M.layout_hand(self, hand, y, animate)
     local fan_amt = arch and math.min(8, n * 1.3) or 0
     local dir     = is_ai_hand and -1 or 1   -- mirror the curve for the top hand
 
-    if is_ai_hand then
-        for _, c in ipairs(hand) do go.set(c.id, "scale", M.OPPONENT_CARD_SCALE) end
-    end
-
     for i, c in ipairs(hand) do
         local z = Z_HAND + i * 0.001
         local t = (n > 1) and ((i - 1) / (n - 1) - 0.5) or 0
@@ -195,8 +191,22 @@ function M.layout_hand(self, hand, y, animate)
         local target = vmath.vector3(start + (i - 1) * spacing, y + by, z)
         if animate then
             go.animate(c.id, "position", go.PLAYBACK_ONCE_FORWARD, target, go.EASING_OUTSINE, 0.42)
+            -- A newly-drawn opponent card (the only flight this function
+            -- gives it — draw_to_hand has no separate position animate of
+            -- its own) shrinks to the opponent-hand scale as part of this
+            -- SAME motion. Already-dealt cards passing through here again
+            -- (e.g. after a play reflows the hand) are already at this
+            -- scale, so this is a harmless no-op tween for them rather than
+            -- a fresh visible resize.
+            if is_ai_hand then
+                go.animate(c.id, "scale", go.PLAYBACK_ONCE_FORWARD, M.OPPONENT_CARD_SCALE, go.EASING_OUTSINE, 0.42)
+            end
         else
             go.set_position(target, c.id)
+            -- No animation happening here (e.g. resuming an in-progress
+            -- game) — nothing else will ever shrink this card, so it must
+            -- be corrected instantly.
+            if is_ai_hand then go.set(c.id, "scale", M.OPPONENT_CARD_SCALE) end
         end
         go.set(c.id, "euler.z", -t * fan_amt * dir)
     end

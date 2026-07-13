@@ -131,6 +131,13 @@ function M.new(opts)
 		has_drawn = false,
 		must_continue = false,
 		awaiting_suit = false,
+		-- Persist the requested match length so the board can tell a single
+		-- Quick Play game (series == 1, true game over) apart from a
+		-- Battle-AI best-of series. Without this, callers fell through to
+		-- app.ai_series (default 3) and Quick Play wrongly showed a
+		-- "NEXT ROUND" prompt instead of a final game over.
+		series = opts.series or 1,
+		config = opts.config or opts,
 	}
 	local d = deck_mod.new_shuffled()
 

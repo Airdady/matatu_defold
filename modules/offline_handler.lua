@@ -3,6 +3,7 @@ local Defs     = require "modules.card_defs"
 local Rules    = require "modules.card_rules"
 local app      = require "modules.app_state"
 local GameMode = require "modules.game_mode"
+local BL       = require "modules.board_layout"
 
 local GUI_HUD   = "#game"
 local GUI_SUIT  = "#suit_select"
@@ -155,7 +156,13 @@ function M.build_and_deal(self)
             table.insert(self.ai_hand, ac)
             local at = vmath.vector3(a_start + (#self.ai_hand - 1) * a_spacing, self.AI_HAND_Y, self.Z_HAND + i * 0.001)
             go.set_position(vmath.vector3(self.CENTER.x, self.CENTER.y, self.Z_FLY), ac.id)
+            go.set(ac.id, "scale", BL.CARD_SCALE)
             go.animate(ac.id, "position", go.PLAYBACK_ONCE_FORWARD, at, go.EASING_OUTCUBIC, 0.3, delay)
+            -- Shrink to the opponent-hand scale DURING the deal flight itself
+            -- (the target size is already known up front) instead of snapping
+            -- every opponent card down in one batch right after dealing ends —
+            -- that one-frame mass resize was the actual source of the FPS hit.
+            go.animate(ac.id, "scale", go.PLAYBACK_ONCE_FORWARD, BL.OPPONENT_CARD_SCALE, go.EASING_OUTCUBIC, 0.3, delay)
             timer.delay(delay, false, function() if seq == self._seq then self.play_sound("SoundDraw") end end)
             delay = delay + DEAL_DELAY
         end

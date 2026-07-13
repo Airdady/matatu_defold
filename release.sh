@@ -133,29 +133,39 @@ print_success "modules/game_mode.lua -> M.GAME = \"${GAME_UPPER}\""
 # ═══════════════════════════════════════════════════════════
 print_status "Regenerating launcher icon for $GAME_UPPER..."
 
+# Hard-fail instead of soft-skipping: this used to silently keep whatever
+# icon/logo was already on disk when generation couldn't run, which for a
+# RELEASE build means shipping the wrong game's branding to the Play Store
+# with only an easy-to-miss warning as evidence.
 if [ ! -f "$ICON_SVG" ]; then
-    print_warning "$ICON_SVG not found — skipping icon regeneration (keeping whatever is already in bundle/android/res)."
+    print_error "$ICON_SVG not found — cannot regenerate the launcher icon for $GAME_UPPER."
+    exit 1
 elif ! command -v python3 >/dev/null 2>&1; then
-    print_warning "python3 not found — skipping icon regeneration (keeping whatever is already in bundle/android/res)."
+    print_error "python3 not found — cannot regenerate the launcher icon for $GAME_UPPER. Install Python 3."
+    exit 1
 else
     if python3 tools/generate_android_icons.py "$ICON_SVG" --background "$ICON_BG" --out . ; then
         print_success "bundle/android/res/** -> ${ICON_SVG}"
     else
-        print_warning "Icon generation failed (see error above) — keeping whatever is already in bundle/android/res. Install deps with: pip install pillow cairosvg"
+        print_error "Icon generation failed (see error above) — refusing to release with a stale/wrong icon. Install deps with: pip install pillow cairosvg"
+        exit 1
     fi
 fi
 
 print_status "Regenerating bg_logo watermark for $GAME_UPPER..."
 
 if [ ! -f "$LOGO_SVG" ]; then
-    print_warning "$LOGO_SVG not found — skipping bg_logo regeneration (keeping whatever is already in assets/ui/bg_logo.png)."
+    print_error "$LOGO_SVG not found — cannot regenerate the bg_logo watermark for $GAME_UPPER."
+    exit 1
 elif ! command -v python3 >/dev/null 2>&1; then
-    print_warning "python3 not found — skipping bg_logo regeneration (keeping whatever is already in assets/ui/bg_logo.png)."
+    print_error "python3 not found — cannot regenerate the bg_logo watermark for $GAME_UPPER. Install Python 3."
+    exit 1
 else
     if python3 tools/generate_bg_logo.py "$LOGO_SVG" ; then
         print_success "assets/ui/bg_logo.png -> ${LOGO_SVG}"
     else
-        print_warning "bg_logo generation failed (see error above) — keeping whatever is already in assets/ui/bg_logo.png. Install deps with: pip install pillow cairosvg"
+        print_error "bg_logo generation failed (see error above) — refusing to release with a stale/wrong table-center logo. Install deps with: pip install pillow cairosvg"
+        exit 1
     fi
 fi
 
