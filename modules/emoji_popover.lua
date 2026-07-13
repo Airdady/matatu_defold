@@ -27,6 +27,14 @@ local CELL_SIZE = 64
 local THUMB_SCALE = 1.3
 local FLY_SIZE = 96
 
+-- Top-left destination for the SENT emoji's flight animation only — synced
+-- with the original Godot BUBBLE_OFFSET (125 * 1.8 = ~225, 40 * 1.8 = ~72).
+-- The RECEIVED bubble uses a different, near-the-button destination (see
+-- show_emoji_anim) — these two were previously sharing this same constant,
+-- which broke the sent animation's intended top-left direction.
+local SEND_DEST_X = 225
+local SEND_DEST_Y = LOGICAL_H - 72
+
 
 -- The popover's sound IDs are the Godot Voice* / Sound* names; the actual sound
 -- components live on the controller object as snd_*. Without this mapping the
@@ -317,19 +325,17 @@ local function show_emoji_anim(self, name, fly, local_start_pos, start_scale)
     self.emoji_fx = self.emoji_fx or {}
     if self.emoji_fx[key] then pcall(gui.delete_node, self.emoji_fx[key]); self.emoji_fx[key] = nil end
 
-    -- Land right next to the emoji picker button itself (flight_anchor is
-    -- already positioned/anchored just above it — see M.init) instead of a
-    -- fixed top-left screen corner ported straight from the old Godot
-    -- layout, which sat diagonally opposite the button's actual bottom-right
-    -- position in this layout.
-    local dest_world = gui.get_position(self.flight_anchor)
     local n
 
     if fly then
+        -- Sent emoji flies UP AND AWAY from the button, toward the top-left
+        -- (unchanged, original direction) — this is a "sent off" gesture,
+        -- not meant to land next to the button it started at.
         local anchor_world = gui.get_position(self.flight_anchor)
+        local send_dest_world = vmath.vector3(SEND_DEST_X, SEND_DEST_Y, 0)
         local dest_local = vmath.vector3(
-            dest_world.x - anchor_world.x,
-            dest_world.y - anchor_world.y,
+            send_dest_world.x - anchor_world.x,
+            send_dest_world.y - anchor_world.y,
             0
         )
 
@@ -378,8 +384,13 @@ local function show_emoji_anim(self, name, fly, local_start_pos, start_scale)
             gui.animate(n, "color.w", 0.0, gui.EASING_INSINE, fade_duration, fade_delay, done)
         end
     else
-        -- Received emoji: Container holding the Bubble and Emoji
-        local container = box(dest_world, vmath.vector3(1, 1, 0), vmath.vector4(0,0,0,0), gui.PIVOT_CENTER)
+        -- Received emoji: lands right next to the emoji picker button
+        -- itself (flight_anchor is already positioned/anchored just above
+        -- it — see M.init), so a reaction from the opponent shows up where
+        -- the player would expect to interact with emoji, not off in a
+        -- fixed corner unrelated to the button's actual position.
+        local recv_dest_world = gui.get_position(self.flight_anchor)
+        local container = box(recv_dest_world, vmath.vector3(1, 1, 0), vmath.vector4(0,0,0,0), gui.PIVOT_CENTER)
         
         -- The Bubble graphical background
         local bubble = box(vmath.vector3(0, 0, 0), vmath.vector3(120, 120, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
