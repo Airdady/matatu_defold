@@ -55,17 +55,12 @@ local function create_flipper(parent, pos)
         gui.set_parent(half, root)
 
         local lbl = label(vmath.vector3(0, 0, 0), "00", 80, C_WHITE, gui.PIVOT_CENTER, "helvetica_bold")
-        -- PIVOT_CENTER centers the font's full ascent+descent metrics box —
-        -- but a digit has no descender ink, so its visible glyph sits above
-        -- that box's true center, reading as too high relative to `div`,
-        -- the seam these two stencil-clipped halves are split at. Nudge the
-        -- label down by half the (scaled) descent so the actual visible
-        -- ink, not the invisible descender gap, lands on y=0.
-        local ok, metrics = pcall(gui.get_text_metrics_from_node, lbl)
-        if ok and metrics and metrics.max_descent then
-            local s = gui.get_scale(lbl)
-            gui.set_position(lbl, vmath.vector3(0, -(metrics.max_descent * s.y) / 2, 0))
-        end
+        
+        -- Manual vertical offset: adjust this value (e.g., between -10 and 10) 
+        -- to visually center the digits perfectly across the split line.
+        local MANUAL_Y_OFFSET = -5.0
+        gui.set_position(lbl, vmath.vector3(0, MANUAL_Y_OFFSET, 0))
+        
         gui.set_shadow(lbl, vmath.vector4(0, 0, 0, 0.6))
         gui.set_parent(lbl, half)
 
