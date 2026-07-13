@@ -89,26 +89,20 @@ function M.draw(self, ctx, d, a)
     local timer_pos = vmath.vector3(CX, bundle_y - bundle_h/2 - 12, 0)
     track(self, ui.text(timer_pos, secs .. "s", "body", with_a(timer_col, a)))
     
-    -- Render Bordered Stake Amount strictly below the timer
+    -- Plain gold text strictly below the timer — no boxed/bordered
+    -- container, same icon-then-amount style the in-game coin pot HUD
+    -- already uses (coins.gui_script's ensure_pot), instead of a separate
+    -- bordered chip.
     local st_txt = amt == 0 and "PRACTICE" or (commas(pot_amt) .. " POT")
-    local border_w, border_h = 130, 32
-    local border_pos = vmath.vector3(CX, timer_pos.y - 30, 0)
-    
-    local border_box = track(self, gui.new_box_node(border_pos, vmath.vector3(border_w + 4, border_h + 4, 0)))
-    gui.set_color(border_box, with_a(C.COL_GOLD, a))
-    
-    local inner_box = track(self, gui.new_box_node(border_pos, vmath.vector3(border_w, border_h, 0)))
-    gui.set_color(inner_box, with_a(vmath.vector4(0.08, 0.08, 0.1, 1), a))
-    
-    local stake_node = track(self, ui.text(border_pos, st_txt, "helvetica_black", with_a(C.COL_GOLD, a)))
+    local stake_pos = vmath.vector3(CX, timer_pos.y - 30, 0)
+
+    local stake_node = track(self, ui.text(stake_pos, st_txt, "helvetica_black", with_a(C.COL_GOLD, a)))
     gui.set_scale(stake_node, vmath.vector3(0.85, 0.85, 0.85))
 
     -- Additional Status Info cleanly separated
     track(self, ui.text(vmath.vector3(CX, CY - 95, 0), "Waiting for player to accept...", "small", with_a(C.COL_MID, a)))
 
     if hv then draw_h2h_row(self, CX, CY - 118, hv, a) end
-
-    mkbtn(self, "cancel_wait", vmath.vector3(CX, CY - 162, 0), vmath.vector3(170, 48, 0), "Cancel", "secondary_btn")
 end
 
 return M
