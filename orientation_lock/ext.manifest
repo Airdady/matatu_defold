@@ -1,0 +1,21 @@
+# ext.manifest for the OrientationLock extension.
+#
+# display.dynamic_orientation = 0 in game.project only controls Defold's OWN
+# internal response to an orientation change (whether it re-adapts its
+# viewport) — it does NOT by itself force the generated AndroidManifest's
+# <activity android:screenOrientation> to a single fixed value. Without an
+# explicit override, that attribute defaults to a sensor-based value (e.g.
+# "sensorLandscape"), so Android itself still flips the activity between
+# landscape and reverse-landscape as the device is physically rotated 180°,
+# regardless of dynamic_orientation. This extension merges an explicit
+# android:screenOrientation="landscape" onto Defold's main activity so the
+# OS never rotates it at all, in either direction.
+name: "OrientationLock"
+
+platforms:
+  armv7-android:
+    context:
+      manifestMergeFiles: ["manifest/AndroidManifest.xml"]
+  arm64-android:
+    context:
+      manifestMergeFiles: ["manifest/AndroidManifest.xml"]
