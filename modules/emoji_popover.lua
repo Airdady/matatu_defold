@@ -32,9 +32,26 @@ local FLY_SIZE = 96
 -- right of the opponent's avatar (hud_ui.lua parents o_avatar_bg at local
 -- (0, 275) inside hud_root, which is anchored to world (120, LOGICAL_H/2) —
 -- avatar center is ~(120, 635)), not near the local emoji picker button.
--- Both the SENT emoji's flight and the RECEIVED bubble land here.
 local SEND_DEST_X = 225
 local SEND_DEST_Y = LOGICAL_H - 72
+
+-- ===== Received reaction bubble — manual tuning knobs =====
+-- Where the whole bubble lands on screen (defaults to the same top-left
+-- reaction-stage spot as the sent flight, above — change independently here
+-- if the bubble itself needs to sit somewhere else).
+local RECV_BUBBLE_OFFSET_X = SEND_DEST_X  -- distance from the left edge of the screen
+local RECV_BUBBLE_OFFSET_Y = SEND_DEST_Y  -- distance from the bottom edge of the screen
+
+-- The bubble graphic itself.
+local RECV_BUBBLE_SIZE = 120         -- width/height of the bubble background box
+local RECV_BUBBLE_ROTATION_DEG = -20 -- tilt of the bubble graphic
+
+-- The emoji rendered inside the bubble.
+local RECV_EMOJI_SIZE = 90       -- width/height of the emoji
+local RECV_EMOJI_OFFSET_X = 0    -- horizontal offset of the emoji within the bubble
+local RECV_EMOJI_OFFSET_Y = -9   -- vertical offset of the emoji within the bubble;
+                                  -- increase (toward 0 and beyond) to push it up toward
+                                  -- the top of the bubble, decrease to push it down
 
 
 -- The popover's sound IDs are the Godot Voice* / Sound* names; the actual sound
@@ -389,17 +406,17 @@ local function show_emoji_anim(self, name, fly, local_start_pos, start_scale)
         -- (same reaction-stage spot the sent flight animates toward) — it
         -- represents the opponent's reaction, so it belongs near them, not
         -- next to the local player's own emoji picker button.
-        local recv_dest_world = vmath.vector3(SEND_DEST_X, SEND_DEST_Y, 0)
+        local recv_dest_world = vmath.vector3(RECV_BUBBLE_OFFSET_X, RECV_BUBBLE_OFFSET_Y, 0)
         local container = box(recv_dest_world, vmath.vector3(1, 1, 0), vmath.vector4(0,0,0,0), gui.PIVOT_CENTER)
-        
+
         -- The Bubble graphical background
-        local bubble = box(vmath.vector3(0, 0, 0), vmath.vector3(120, 120, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
+        local bubble = box(vmath.vector3(0, 0, 0), vmath.vector3(RECV_BUBBLE_SIZE, RECV_BUBBLE_SIZE, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
         gui.set_parent(bubble, container)
         pcall(function() gui.set_texture(bubble, "ui"); gui.play_flipbook(bubble, hash("bubble")) end)
-        gui.set_rotation(bubble, vmath.vector3(0, 0, -20)) -- 20 degree tilt
+        gui.set_rotation(bubble, vmath.vector3(0, 0, RECV_BUBBLE_ROTATION_DEG))
 
-        -- The nested emoji payload (-9 matches the UI_SCALE_MULTIPLIER offset visually)
-        n = box(vmath.vector3(0, -9, 0), vmath.vector3(90, 90, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
+        -- The nested emoji payload
+        n = box(vmath.vector3(RECV_EMOJI_OFFSET_X, RECV_EMOJI_OFFSET_Y, 0), vmath.vector3(RECV_EMOJI_SIZE, RECV_EMOJI_SIZE, 0), vmath.vector4(1,1,1,1), gui.PIVOT_CENTER)
         gui.set_parent(n, container)
         pcall(function() gui.set_texture(n, "emojis"); gui.play_flipbook(n, hash(anim_id)) end)
         
