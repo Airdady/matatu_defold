@@ -547,7 +547,7 @@ function on_input(self, action_id, action)
                 elseif id == "nav_support" then msg.post("#controller", "goto_support")
                 elseif id == "nav_account" then msg.post("#controller", "goto_profile")
                 elseif id == "savings_info" then self.savings_info_open = true; rebuild(self)
-                elseif id == "savings_info_close" then self.savings_info_open = false; rebuild(self)
+                elseif id == "savings_info_close" or id == "savings_info_block" then self.savings_info_open = false; rebuild(self)
                 elseif id == "savings_add" then
                     if not self.savings_add then
                         -- Seed from the parked SAVINGS_STATUS payload so the
@@ -562,7 +562,7 @@ function on_input(self, action_id, action)
                         }
                     end
                     self.savings_add_open = true; rebuild(self)
-                elseif id == "savings_add_close" then self.savings_add_open = false; rebuild(self)
+                elseif id == "savings_add_close" or id == "savings_add_block" then self.savings_add_open = false; rebuild(self)
                 elseif id == "savings_exchange_minus" or id == "savings_exchange_plus" then
                     local sa = self.savings_add
                     if sa and not sa.exchanging then
