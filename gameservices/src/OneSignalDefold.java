@@ -80,12 +80,20 @@ public class OneSignalDefold {
     }
 
     private class GameNotificationDisplayListener implements INotificationLifecycleListener {
+        // OneSignal only invokes onWillDisplay while the app is in the
+        // foreground — a backgrounded/closed app never reaches this
+        // listener at all, so the OS shows the system banner normally in
+        // that case. Suppressing unconditionally here means push
+        // notifications never show as a system banner while the app is
+        // already open (the in-app UI already surfaces whatever the
+        // notification would have said), and still show normally the
+        // moment the app is backgrounded. Previously this only suppressed
+        // GAME_REQUEST-typed notifications, leaving every other push type
+        // (season reminders, promotions, etc.) banner-ing over the active
+        // app.
         @Override
         public void onWillDisplay(@NonNull INotificationWillDisplayEvent event) {
-            JSONObject data = event.getNotification().getAdditionalData();
-            if (data != null && "GAME_REQUEST".equals(data.optString("type"))) {
-                event.preventDefault(); 
-            }
+            event.preventDefault();
         }
     }
 
