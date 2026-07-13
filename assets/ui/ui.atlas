@@ -156,7 +156,7 @@ images {
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 images {
-  image: "/assets/ui/bubble.webp"
+  image: "/assets/ui/bubble.png"
   sprite_trim_mode: SPRITE_TRIM_MODE_OFF
 }
 margin: 0
