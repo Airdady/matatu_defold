@@ -122,7 +122,7 @@ function init(self)
     self.set_face         = CV.set_face
     self.set_back         = CV.set_back
     self.spawn_card       = CV.spawn_card
-    self.calc_spacing     = function(n) return BL.calc_spacing(self, n) end
+    self.calc_spacing     = function(n, scale_f) return BL.calc_spacing(self, n, scale_f) end
     self.top_played       = function() return RE.top_played(self) end
     self.is_cutting_match = function(rec) return RE.is_cutting_match(self, rec) end
     self.hand_score       = function(hand) return RE.hand_score(hand) end

@@ -315,6 +315,11 @@ function M.draw_to_hand(self, hand, is_player, count, done)
         end
 
         local c = table.remove(self.deck)
+        -- This card may have lived in a hand before (pile -> reshuffle ->
+        -- deck): wipe its remembered hand slot so layout_hand's same-slot
+        -- skip can never mistake the stale target for "already there" and
+        -- leave it sitting on the deck.
+        c._hand_target = nil
         table.insert(hand, c)
 
         if is_player and self.online_mode and self.is_player_turn() then

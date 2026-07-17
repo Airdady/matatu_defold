@@ -138,7 +138,11 @@ function M.build_and_deal(self)
         if seq ~= self._seq then return end
         local delay = 0.0
         local p_spacing = self.calc_spacing(7)
-        local a_spacing = self.calc_spacing(7)
+        -- Opponent spacing uses the SAME tightened ratio layout_hand uses
+        -- for the smaller opponent cards — dealing at full spacing and
+        -- letting the first reflow squeeze the hand afterwards read as a
+        -- visible "settle" right after the deal finished.
+        local a_spacing = self.calc_spacing(7, BL.OPPONENT_SCALE_RATIO)
         local p_start = self.CENTER.x - (6 * p_spacing) / 2.0
         local a_start = self.CENTER.x - (6 * a_spacing) / 2.0
 
@@ -147,6 +151,7 @@ function M.build_and_deal(self)
             table.insert(self.player_hand, pc)
             local pt = vmath.vector3(p_start + (#self.player_hand - 1) * p_spacing, self.PLAYER_HAND_Y, self.Z_HAND + i * 0.001)
             go.set_position(vmath.vector3(self.CENTER.x, self.CENTER.y, self.Z_FLY), pc.id)
+            pc._hand_target = vmath.vector3(pt.x, pt.y, pt.z)
             go.animate(pc.id, "position", go.PLAYBACK_ONCE_FORWARD, pt, go.EASING_OUTCUBIC, 0.3, delay)
             timer.delay(delay, false, function() if seq == self._seq then self.play_sound("SoundDraw") end end)
             timer.delay(delay + 0.15, false, function() if seq == self._seq then self.set_face(pc) end end)
@@ -157,13 +162,17 @@ function M.build_and_deal(self)
             local at = vmath.vector3(a_start + (#self.ai_hand - 1) * a_spacing, self.AI_HAND_Y, self.Z_HAND + i * 0.001)
             go.set_position(vmath.vector3(self.CENTER.x, self.CENTER.y, self.Z_FLY), ac.id)
             go.set(ac.id, "scale", BL.CARD_SCALE)
+            ac._hand_target = vmath.vector3(at.x, at.y, at.z)
             go.animate(ac.id, "position", go.PLAYBACK_ONCE_FORWARD, at, go.EASING_OUTCUBIC, 0.3, delay)
-            -- Shrink to the opponent-hand scale DURING the deal flight itself
-            -- (the target size is already known up front) instead of snapping
-            -- every opponent card down in one batch right after dealing ends —
-            -- that one-frame mass resize was the actual source of the FPS hit.
-            go.animate(ac.id, "scale", go.PLAYBACK_ONCE_FORWARD, BL.OPPONENT_CARD_SCALE, go.EASING_OUTCUBIC, 0.3, delay)
-            timer.delay(delay, false, function() if seq == self._seq then self.play_sound("SoundDraw") end end)
+            timer.delay(delay, false, function()
+                if seq ~= self._seq then return end
+                -- The opponent-hand size is known up front: the card takes
+                -- its ACTUAL final scale the instant its deal flight starts —
+                -- no shrink tween trailing the flight, and definitely no
+                -- batch resize after the whole deal has finished.
+                go.set(ac.id, "scale", BL.OPPONENT_CARD_SCALE)
+                self.play_sound("SoundDraw")
+            end)
             delay = delay + DEAL_DELAY
         end
 
