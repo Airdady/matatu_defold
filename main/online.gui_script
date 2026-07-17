@@ -394,7 +394,7 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("ws_match_found") and self.invite_search then
         local gs, me, opp = ws.get_active_game() or {}, tostring(ws.get_current_user_id() or ""), nil
         for k, pl in pairs(gs.players or {}) do if tostring((type(pl) == "table" and (pl._id or pl.id)) or k) ~= me then opp = pl end end
-        self.invite_search.found, self.invite_search.reel_ix, self.invite_search.opp_name, app_state.searching_invite = true, (type(opp) == "table" and tonumber(opp.avatar)) or self.invite_search.reel_ix, string.upper(tostring((type(opp) == "table" and (opp.username or opp.name)) or "PLAYER")), false
+        self.invite_search.found, self.invite_search.reel_ix, self.invite_search.opp_name, app_state.searching_invite = true, (type(opp) == "table" and tonumber(opp.avatar)) or self.invite_search.reel_ix, string.upper(tostring((type(opp) == "table" and opp.username ~= "" and opp.username) or "PLAYER")), false
         -- Stop the looping search cue and play a distinct "found" sting.
         stop_snd("snd_notify"); play_snd("snd_found")
         rebuild(self)

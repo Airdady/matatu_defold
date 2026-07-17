@@ -170,7 +170,17 @@ function M.draw(self, ctx)
     cy = cy - pad_top
     local b_title = txtL(self, cx - inner_pw/2 + C.INNER_PAD, cy, "SEASON BONUSES", "body", C.COL_BRIGHT)
     gui.set_scale(b_title, vmath.vector3(0.82, 0.82, 1))
-    
+
+    -- "COMING SOON" badge pill, right-aligned on the title row — the table
+    -- itself stays fully visible below so players can see what's on offer.
+    local badge_w, badge_h = 122, 26
+    local badge_cx = cx + inner_pw/2 - C.INNER_PAD - badge_w/2
+    track(self, ctx_ui.box(vmath.vector3(badge_cx, cy, 0), vmath.vector3(badge_w + 2, badge_h + 2, 0), C.COL_GOLD_BDR_D))
+    track(self, ctx_ui.box(vmath.vector3(badge_cx, cy, 0), vmath.vector3(badge_w, badge_h, 0), C.COL_BADGE_BG))
+    local b_badge = ctx_ui.text(vmath.vector3(badge_cx, cy, 0), "COMING SOON", "small", C.COL_GOLD)
+    gui.set_scale(b_badge, vmath.vector3(0.85, 0.85, 1))
+    track(self, b_badge)
+
     cy = cy - title_space
 
     track(self, ctx_ui.box(vmath.vector3(cx, cy + C.HDR_H_TABLE/2, 0), vmath.vector3(inner_pw, C.HDR_H_TABLE, 0), C.COL_GLASS))
