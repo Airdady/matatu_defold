@@ -105,11 +105,16 @@ end
 
 function M.public_player_info(p)
     p = p or {}
+    -- Display the chosen USERNAME only — never the identity-provider /
+    -- mobile-money `names` field. An unset/empty username is normalized to
+    -- nil so each display site's own placeholder ("PLAYER" / "Opponent")
+    -- kicks in instead of a blank or someone's real name.
+    local uname = p.username
+    if uname == "" then uname = nil end
     return {
         id          = p.id or p._id or "",
         _id         = p._id or p.id or "",
-        username    = p.username or p.name,
-        name        = p.name,
+        username    = uname,
         avatar      = p.avatar or 1,
         balance     = p.balance,
         winRate     = p.winRate,
@@ -181,7 +186,8 @@ local function knockout_chamber_rows(self, state)
     for pid, p in pairs((state or {}).players or {}) do
         rows[#rows + 1] = {
             slot       = (tostring(pid) == tostring(self.my_player_id)) and "bottom" or "top",
-            name       = tostring(p.username or p.name or pid),
+            -- Username only, never the `names` field.
+            name       = (p.username ~= nil and p.username ~= "" and tostring(p.username)) or "PLAYER",
             avatar     = tonumber(p.avatar) or 1,
             total      = tonumber(p.cumulativeScore) or 0,
             eliminated = p.eliminated and true or false,
@@ -202,7 +208,7 @@ local function knockout_update_chamber(self, state)
     local cap = tonumber((state or {}).scoreCap) or 200
     for pid, p in pairs((state or {}).players or {}) do
         msg.post(GUI_HUD, "t4_chamber_update", {
-            name       = tostring(p.username or p.name or pid),
+            name       = (p.username ~= nil and p.username ~= "" and tostring(p.username)) or "PLAYER",
             total      = tonumber(p.cumulativeScore) or 0,
             threshold  = cap,
             eliminated = p.eliminated and true or false,
