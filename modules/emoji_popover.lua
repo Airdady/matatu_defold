@@ -32,7 +32,7 @@ local FLY_SIZE = 96
 -- right of the opponent's avatar (hud_ui.lua parents o_avatar_bg at local
 -- (0, 275) inside hud_root, which is anchored to world (120, LOGICAL_H/2) —
 -- avatar center is ~(120, 635)), not near the local emoji picker button.
-local SEND_DEST_X = 225
+local SEND_DEST_X = 125
 local SEND_DEST_Y = LOGICAL_H - 72
 
 -- ===== Received reaction bubble — manual tuning knobs =====
@@ -49,7 +49,7 @@ local RECV_BUBBLE_ROTATION_DEG = -20 -- tilt of the bubble graphic
 -- The emoji rendered inside the bubble.
 local RECV_EMOJI_SIZE = 90       -- width/height of the emoji
 local RECV_EMOJI_OFFSET_X = 0    -- horizontal offset of the emoji within the bubble
-local RECV_EMOJI_OFFSET_Y = -9   -- vertical offset of the emoji within the bubble;
+local RECV_EMOJI_OFFSET_Y = 0   -- vertical offset of the emoji within the bubble;
                                   -- increase (toward 0 and beyond) to push it up toward
                                   -- the top of the bubble, decrease to push it down
 
