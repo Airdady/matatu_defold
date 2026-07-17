@@ -220,10 +220,23 @@ function init(self)
         if token ~= "" then api.set_auth_token(token) end
         ws.current_user_data = cached
 
-        -- We removed ws.identify() and ws.connect() from here!
-        -- We load the session into memory so the UI knows who you are,
-        -- but wait for the Play Online tap to actually trigger the network.
-        auth_debug("init: cached session found, waiting for play_online tap to connect")
+        -- Auto-identify/connect right away using the cached session, so the
+        -- player is marked online (registered in the backend's live clients
+        -- map) the instant they reach the lobby — no explicit "Play Online"
+        -- tap required just to be seen as online, and no fresh login on
+        -- every app open since the cached user id (originally resolved via
+        -- Google sign-in + this device's id) is reused as-is.
+        --
+        -- Deliberately NOT setting self._restore_pending here: that flag is
+        -- reserved for the "Play Online" tap's explicit reconnect flow
+        -- (flips the button to "CONNECTING..." and force-navigates to
+        -- "online" once identified) — this boot-time connect stays silent
+        -- and must never yank the player off the lobby screen on its own.
+        -- If it fails (no network yet, cold start race), the socket layer's
+        -- own reconnect backoff retries automatically; nothing here blocks
+        -- or gates the lobby UI on the outcome.
+        auth_debug("init: cached session found, auto-identifying to mark online")
+        identify_and_connect(cached)
     else
         -- No local session cached: do NOT attempt sign-in at boot.
         auth_debug("init: no cached session, waiting for play_online tap to trigger sign-in")
