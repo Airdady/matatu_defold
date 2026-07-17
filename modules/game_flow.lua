@@ -1000,7 +1000,10 @@ function M.end_game(self, player_won, is_cut, backend_results)
     end
 
     flip_ai_hand(function()
-        timer.delay(0.9, false, function()
+        -- Short beat so the last revealed card is readable, then straight to
+        -- the game-over resolution (was 0.9s — the flip itself is the only
+        -- intentional wait before the modal; anything more feels laggy).
+        timer.delay(0.35, false, function()
             if is_knockout then
                 sweep_played_cards(function()
                     count_next_player(1, function()
