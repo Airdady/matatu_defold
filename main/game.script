@@ -246,11 +246,12 @@ local function process_game_over_queue(self, results)
         self._final_state_locked = false
     end
     
-    -- Step 2: WAIT for Scoreboard animations to finish BEFORE flipping cards or showing round transitions
-    -- This prevents conflicting steps and FPS drops.
+    -- Step 2: Brief beat for the scoreboard flip to visibly start BEFORE
+    -- flipping cards / round transitions (was 1.2s — trimmed so game over
+    -- reads as instant; the card-reveal flip is the only intentional wait).
     local is_cut = results.isCut or (results.reason == "CUTTING_CARD")
-    
-    timer.delay(1.2, false, function()
+
+    timer.delay(0.5, false, function()
         -- Start Step 3: Flip cards and display round transitions cleanly
         self.end_game((results.winner == self.my_player_id), is_cut, results)
         
@@ -307,9 +308,14 @@ function update(self, dt)
             
             if (#self.move_queue == 0 and not self.is_processing_move and not has_active_anims) or (self._game_over_absolute_timeout > 6.0) then
                 self._game_over_settle_time = (self._game_over_settle_time or 0) + dt
-                
-                -- Wait a grace period (1.5s) for visual breathing room, or force if timeout is hit
-                if self._game_over_settle_time >= 1.5 or self._game_over_absolute_timeout > 6.0 then
+
+                -- Short grace only: the settle condition above already
+                -- guarantees the move queue is drained and no animations are
+                -- running, so this just absorbs one-frame flickers between
+                -- chained animations. Game over should feel instant — the
+                -- only intentional wait before the modal is the opponent
+                -- card-reveal flip itself (see end_game / flip_ai_hand).
+                if self._game_over_settle_time >= 0.25 or self._game_over_absolute_timeout > 6.0 then
                     print("[DEBUG] Game Over Watchdog firing! Triggering process_game_over_queue.")
                     local results = self.pending_game_over_data
                     self.pending_game_over_data = nil
