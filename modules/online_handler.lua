@@ -405,6 +405,11 @@ function M.process_opponent_actions(self, actions, chosen_suit, new_game_state, 
     local seq = self._seq
 
     local INTER  = 0.24
+    -- Gap between two consecutive PLAYs of a combo: cards overlap in flight
+    -- (matches draw_to_hand's own 0.13 stagger) instead of the fuller INTER
+    -- beat — waiting for each card to reach the pile before launching the
+    -- next reads as laggy, and the player's own flow never does that.
+    local PLAY_STAGGER = 0.13
     local SETTLE = 0.42
 
     local function finish()
@@ -428,9 +433,9 @@ function M.process_opponent_actions(self, actions, chosen_suit, new_game_state, 
         end
 
         local act = actions[idx]
-        idx = idx + 1
 
         if act.type == "PLAY" then
+            idx = idx + 1
             local v = tonumber(act.v) or 10
             local s = tostring(act.s or "H")
             local rec = nil
@@ -454,12 +459,30 @@ function M.process_opponent_actions(self, actions, chosen_suit, new_game_state, 
 
             self.animate_to_pile(rec, false)
             self.position_hands(true)
-            timer.delay(INTER, false, next_act)
+            -- Combo: the next card of a multi-card play launches after only a
+            -- small stagger, overlapping this one's flight to the pile.
+            local nxt = actions[idx]
+            local gap = (nxt and nxt.type == "PLAY") and PLAY_STAGGER or INTER
+            timer.delay(gap, false, next_act)
 
         elseif act.type == "DRAW" then
-            self.draw_to_hand(self.ai_hand, false, 1)
-            timer.delay(INTER, false, next_act)
+            -- Coalesce this and every immediately-following DRAW into ONE
+            -- staggered batch through draw_to_hand (0.13/card, all in flight
+            -- together) — exactly how the player's own multi-draw animates —
+            -- instead of one hard-coded single-card draw per action with a
+            -- fixed beat in between. Honors act.count when the server sends
+            -- a batched draw action (mirrors process_my_actions).
+            local count = tonumber(act.count) or 1
+            idx = idx + 1
+            while actions[idx] and actions[idx].type == "DRAW" do
+                count = count + (tonumber(actions[idx].count) or 1)
+                idx = idx + 1
+            end
+            self.draw_to_hand(self.ai_hand, false, count, function()
+                if seq == self._seq then next_act() end
+            end)
         else
+            idx = idx + 1
             next_act()
         end
     end
@@ -540,6 +563,9 @@ function M.process_my_actions(self, actions, done)
     local idx = 1
     local seq = self._seq
     local INTER  = 0.24
+    -- Same combo treatment as process_opponent_actions: consecutive PLAYs
+    -- overlap in flight instead of waiting a full beat between cards.
+    local PLAY_STAGGER = 0.13
     local SETTLE = 0.30
 
     local function next_act()
@@ -552,9 +578,9 @@ function M.process_my_actions(self, actions, done)
         end
 
         local act = actions[idx]
-        idx = idx + 1
 
         if act.type == "PLAY" then
+            idx = idx + 1
             local v = tonumber(act.v) or 10
             local s = tostring(act.s or "H")
             local rec = nil
@@ -577,14 +603,26 @@ function M.process_my_actions(self, actions, done)
             self.trigger_play_effects({ v = v, s = s }, #self.player_hand == 0)
             self.animate_to_pile(rec, true)
             self.position_hands(true)
-            timer.delay(INTER, false, next_act)
+            local nxt = actions[idx]
+            local gap = (nxt and nxt.type == "PLAY") and PLAY_STAGGER or INTER
+            timer.delay(gap, false, next_act)
 
         elseif act.type == "DRAW" then
+            -- Coalesce consecutive DRAW actions into one staggered batch —
+            -- own-turn draws are recorded one action per card (see
+            -- game_flow.draw_to_hand), so a +4 replay would otherwise run as
+            -- four separate single-card batches back to back.
             local count = tonumber(act.count) or 1
+            idx = idx + 1
+            while actions[idx] and actions[idx].type == "DRAW" do
+                count = count + (tonumber(actions[idx].count) or 1)
+                idx = idx + 1
+            end
             self.draw_to_hand(self.player_hand, true, count, function()
                 if seq == self._seq then next_act() end
             end)
         else
+            idx = idx + 1
             next_act()
         end
     end
