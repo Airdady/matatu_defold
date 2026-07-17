@@ -78,6 +78,10 @@ function M.animate_to_pile(self, rec, is_player, on_done)
     local z = Z_PILE + #self.played_cards * 0.001
     local target = vmath.vector3(self.CENTER.x + offset.x, self.CENTER.y + offset.y, z)
     rec.pile_offset = offset
+    -- Leaving the hand: forget the remembered hand slot so a future return
+    -- to a hand (reshuffle -> deck -> draw) always animates from scratch
+    -- instead of being skipped by layout_hand's same-slot check.
+    rec._hand_target = nil
     -- Cancel any animation still running on this card before forcing it back
     -- to full pile scale — most importantly the opponent-hand shrink tween
     -- (board_layout.lua's layout_hand, started when this card was drawn).

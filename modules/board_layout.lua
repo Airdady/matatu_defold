@@ -162,6 +162,19 @@ end
 ----------------------------------------------------------------------
 -- Hand layout
 ----------------------------------------------------------------------
+-- Cheap same-spot check against the last target this function gave a card.
+-- Lets reflows skip re-tweening cards whose slot didn't actually change —
+-- every draw/play used to restart a fresh 0.42s position tween (and an
+-- opponent scale tween) on EVERY card in BOTH hands, and that redundant
+-- tween storm is what made simultaneous animations (multi-card sequences,
+-- emoji flights) visibly drag each other's frame rate down.
+local function same_target(a, b)
+    return a and b
+        and math.abs(a.x - b.x) < 0.5
+        and math.abs(a.y - b.y) < 0.5
+        and math.abs(a.z - b.z) < 0.0005
+end
+
 function M.layout_hand(self, hand, y, animate)
     local n = #hand
     if n == 0 then return end
@@ -189,24 +202,24 @@ function M.layout_hand(self, hand, y, animate)
         local t = (n > 1) and ((i - 1) / (n - 1) - 0.5) or 0
         local by = dir * (0.25 - t * t) * arc_amt
         local target = vmath.vector3(start + (i - 1) * spacing, y + by, z)
+        -- The opponent-hand size is KNOWN up front — apply it instantly the
+        -- moment this function touches the card (for a newly-drawn card
+        -- that's the very start of its flight from the deck), never as a
+        -- visible shrink tween trailing behind the motion or, worse, after
+        -- the whole deal has finished. Instant set is also free: no scale
+        -- tween per card per reflow competing with everything else.
+        if is_ai_hand then go.set(c.id, "scale", M.OPPONENT_CARD_SCALE) end
         if animate then
-            go.animate(c.id, "position", go.PLAYBACK_ONCE_FORWARD, target, go.EASING_OUTSINE, 0.42)
-            -- A newly-drawn opponent card (the only flight this function
-            -- gives it — draw_to_hand has no separate position animate of
-            -- its own) shrinks to the opponent-hand scale as part of this
-            -- SAME motion. Already-dealt cards passing through here again
-            -- (e.g. after a play reflows the hand) are already at this
-            -- scale, so this is a harmless no-op tween for them rather than
-            -- a fresh visible resize.
-            if is_ai_hand then
-                go.animate(c.id, "scale", go.PLAYBACK_ONCE_FORWARD, M.OPPONENT_CARD_SCALE, go.EASING_OUTSINE, 0.42)
+            -- Skip the re-tween entirely when this card is already at (or
+            -- already flying toward) this exact slot — only cards whose
+            -- slot actually changed animate.
+            if not same_target(c._hand_target, target) then
+                go.animate(c.id, "position", go.PLAYBACK_ONCE_FORWARD, target, go.EASING_OUTSINE, 0.42)
+                c._hand_target = vmath.vector3(target.x, target.y, target.z)
             end
         else
             go.set_position(target, c.id)
-            -- No animation happening here (e.g. resuming an in-progress
-            -- game) — nothing else will ever shrink this card, so it must
-            -- be corrected instantly.
-            if is_ai_hand then go.set(c.id, "scale", M.OPPONENT_CARD_SCALE) end
+            c._hand_target = vmath.vector3(target.x, target.y, target.z)
         end
         go.set(c.id, "euler.z", -t * fan_amt * dir)
     end
