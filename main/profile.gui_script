@@ -52,10 +52,18 @@ end
 -- app_state.phone_required/phone_complete). Old (pre-Google) accounts were
 -- identified by Uganda phone number, matching the backend's own
 -- /auth/link-phone validation.
+--
+-- self.phone stores ONLY the 9 local digits typed AFTER the fixed "+256"
+-- chip (never the leading "0") — the display never has to guess whether a
+-- leading character is present yet, which is what made the very first
+-- digit typed invisible before (the display used to assume/strip an
+-- always-present leading "0" that hadn't actually been typed). The "0" is
+-- added back only at submit time, to match the backend's own 07XXXXXXXX
+-- storage format (be_matatu's normalizeUgPhone).
 local function validate_phone(p)
     p = p or ""
-    if not p:match("^0[73]%d%d%d%d%d%d%d%d$") then
-        return false, "Enter a valid Uganda phone number (07XXXXXXXX)."
+    if not p:match("^[73]%d%d%d%d%d%d%d%d$") then
+        return false, "Enter a valid Uganda mobile number."
     end
     return true, ""
 end
@@ -140,12 +148,13 @@ local function rebuild_phone_step(self, d_y)
     local card_w = roww + pad*2
 
     local expl_h   = 50
+    local note_h   = 34
     local input_h  = 84
     local status_h = 30
     local row_gap  = 18
     local keypad_h = kh + kg + kh -- digit row + gap + delete row
 
-    local card_h = pad + expl_h + row_gap + input_h + row_gap + status_h + row_gap + keypad_h + pad
+    local card_h = pad + expl_h + row_gap + note_h + row_gap + input_h + row_gap + status_h + row_gap + keypad_h + pad
 
     local avail_top    = d_y - 16
     local avail_bottom = EDGE_B + 16
@@ -172,6 +181,13 @@ local function rebuild_phone_step(self, d_y)
     gui.set_scale(expl2, vmath.vector3(0.52, 0.52, 1))
     cursor_y = cursor_y - expl_h - row_gap
 
+    -- Red reminder for returning players migrating an old account — the
+    -- match is by number, so the WRONG number here just links (or creates)
+    -- a different account instead of restoring theirs.
+    local note = track(self, ui.text(vmath.vector3(CX, cursor_y - note_h/2, 0), "Had an old account? Enter the SAME number you used before.", "body", P_ERROR))
+    gui.set_scale(note, vmath.vector3(0.48, 0.48, 1))
+    cursor_y = cursor_y - note_h - row_gap
+
     -- Input "pill": country-code chip + digit display, on its own raised
     -- inset row inside the card (reads as a real input field, not a bare line).
     local input_cy = cursor_y - input_h/2
@@ -185,9 +201,10 @@ local function rebuild_phone_step(self, d_y)
     gui.set_scale(chip_t, vmath.vector3(0.6, 0.6, 1))
 
     local digits_x = chip_x + chip_w/2 + 20
-    -- Grouped as the player would naturally read it: 7XX XXX XXX (the
-    -- leading "0" is dropped since the +256 chip already covers it).
-    local raw = self.phone ~= "" and self.phone:sub(2) or ""
+    -- Grouped as the player would naturally read it: 7XX XXX XXX. self.phone
+    -- holds exactly what's been typed so far (no assumed/hidden leading
+    -- character), so even a single digit shows up immediately.
+    local raw = self.phone
     local grouped = raw
     if #raw > 3 then grouped = raw:sub(1,3) .. " " .. raw:sub(4) end
     if #raw > 6 then grouped = raw:sub(1,3) .. " " .. raw:sub(4,6) .. " " .. raw:sub(7) end
@@ -509,13 +526,17 @@ local function handle(self, b)
         if ok and not self._phone_saving then
             self._phone_saving = true
             self._phone_error = nil
-            msg.post("#controller", "link_phone", { phoneNumber = self.phone })
+            -- self.phone is the 9 local digits only (no leading "0") — the
+            -- backend's own storage format is 07XXXXXXXX (be_matatu's
+            -- normalizeUgPhone), so prepend it here rather than relying on
+            -- the server to guess/normalize an ambiguous wire format.
+            msg.post("#controller", "link_phone", { phoneNumber = "0" .. self.phone })
             rebuild(self)
         end
     elseif b.id:sub(1,2) == "p_" then
         if b.id == "p_back" then
             self.phone = self.phone:sub(1,-2)
-        elseif #self.phone < 10 then
+        elseif #self.phone < 9 then
             self.phone = self.phone .. b.data
         end
         self._phone_error = nil
