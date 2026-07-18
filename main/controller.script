@@ -170,11 +170,6 @@ local function gpgs_callback(self, message_id, message)
                             identify_and_connect(user)
                             if result.data.isNewUser then
                                 msg.post("#signup_bonus", "show_signup_bonus", { amount = tonumber(user.balance) or 500 })
-                                -- Brand-new account: offer the old-account
-                                -- migration step (phone number lookup) once,
-                                -- consumed by profile.gui_script on its next
-                                -- screen_enter.
-                                app_state.offer_phone_link = true
                             end
                             app_state.auth_state = "done"
                             msg.post("#lobby", "auth_state_changed")
@@ -242,13 +237,26 @@ function init(self)
         -- or gates the lobby UI on the outcome.
         auth_debug("init: cached session found, auto-identifying to mark online")
         identify_and_connect(cached)
+
+        -- Mandatory profile fields (avatar/username, and phone number for
+        -- Matatu) are re-checked against the CACHED data immediately —
+        -- no need to wait on the network round trip above. Without this,
+        -- closing the app right after signing up and reopening it landed
+        -- back on the lobby and silently skipped the still-incomplete
+        -- profile/phone step, since the boot-time connect above
+        -- deliberately never force-navigates on its own (see the comment
+        -- above it) — this check is what makes an incomplete profile
+        -- un-bypassable across a cold restart, not just within one session.
+        if not app_state.profile_complete(cached) then
+            show(self, "profile")
+        else
+            show(self, "lobby")
+        end
     else
         -- No local session cached: do NOT attempt sign-in at boot.
         auth_debug("init: no cached session, waiting for play_online tap to trigger sign-in")
+        show(self, "lobby")
     end
-
-    msg.post("#lobby", "enable")
-    msg.post("#lobby", "screen_enter")
 
     local function forward(evt, target, notification)
         table.insert(self.tokens, ws.on(evt, function()

@@ -48,8 +48,8 @@ local function refresh_wh()
     CX, CY = m.CX, m.CY
 end
 
--- Old-account migration step (shown once, right after a brand-new Google
--- sign-up — see app_state.offer_phone_link). Old (pre-Google) accounts were
+-- Mandatory phone-verification step (Matatu only — see
+-- app_state.phone_required/phone_complete). Old (pre-Google) accounts were
 -- identified by Uganda phone number, matching the backend's own
 -- /auth/link-phone validation.
 local function validate_phone(p)
@@ -109,65 +109,132 @@ local function gold_avatar_frame(self, x, y, avatar_id, size)
     track(self, ui.avatar(vmath.vector3(x, y, 0), vmath.vector3(s_in, s_in, 0), avatar_id))
 end
 
--- Centered, simpler layout for the one-shot "got an old account?" step —
--- reuses the same box/text/keypad building blocks as the username step
--- below, just laid out around the screen center instead of a 50/50 split.
+-- Mandatory phone-verification step (Matatu only — see
+-- app_state.phone_required). No skip button: the account isn't considered
+-- complete until this is satisfied (app_state.profile_complete), so this
+-- step reliably reappears on every login/reconnect until it is. If the
+-- number matches an old (pre-Google) account it's merged in server-side;
+-- otherwise it's just attached fresh — either way this screen's job is
+-- done once the request succeeds.
 local function rebuild_phone_step(self, d_y)
     local ok, msg_txt = validate_phone(self.phone)
 
-    track(self, ui.text(vmath.vector3(CX, EDGE_T - 40, 0), "GOT AN OLD ACCOUNT?", "subtitle1", P_GOLD))
+    track(self, ui.text(vmath.vector3(CX, EDGE_T - 40, 0), "VERIFY YOUR PHONE", "subtitle1", P_GOLD))
 
-    framed(self, EDGE_L + 90, EDGE_T - 40, 140, 44, P_BORDER, 1, P_PANEL)
-    local skip_btn = track(self, ui.box(vmath.vector3(EDGE_L + 90, EDGE_T - 40, 0), vmath.vector3(140, 44, 0), vmath.vector4(0,0,0,0.001)))
-    track(self, ui.text(vmath.vector3(EDGE_L + 90, EDGE_T - 40, 0), "I'M NEW", "subtitle2", P_CREAM_DIM))
-    self.buttons[#self.buttons+1] = { node = skip_btn, id = "phone_skip" }
-
-    local link_btn = track(self, ui.box(vmath.vector3(EDGE_R - 110, EDGE_T - 40, 0), vmath.vector3(170, 48, 0),
+    local cont_btn = track(self, ui.box(vmath.vector3(EDGE_R - 110, EDGE_T - 40, 0), vmath.vector3(170, 48, 0),
         (ok and not self._phone_saving) and P_GOLD or P_BADGE_BG))
-    track(self, ui.text(vmath.vector3(EDGE_R - 110, EDGE_T - 40, 0), self._phone_saving and "LINKING..." or "LINK ACCOUNT", "subtitle2",
+    track(self, ui.text(vmath.vector3(EDGE_R - 110, EDGE_T - 40, 0), self._phone_saving and "VERIFYING..." or "CONTINUE", "subtitle2",
         (ok and not self._phone_saving) and P_DARK_TXT or P_MUTED))
-    self.buttons[#self.buttons+1] = { node = link_btn, id = "phone_link" }
+    self.buttons[#self.buttons+1] = { node = cont_btn, id = "phone_link" }
 
-    if self._phone_error then
-        track(self, ui.text(vmath.vector3(EDGE_R - 110, EDGE_T - 76, 0), tostring(self._phone_error), "small", P_ERROR))
-    end
+    -- ── Content card: explanation + input + keypad share one bordered
+    -- panel (mirrors gold_avatar_frame's layered-border elevation) instead
+    -- of floating loose on the raw background. Sized top-down first, then
+    -- the whole block is vertically centered in the space below the header
+    -- divider — clamped so it always stays fully on-screen even on an
+    -- unusually short/tall aspect ratio, rather than pinned to one edge
+    -- and leaving a lopsided gap on the other.
+    local kw, kh, kg = 62, 54, 8
+    local pad = 24
+    local roww = 10*(kw+kg) - kg
+    local card_w = roww + pad*2
 
-    local expl1 = track(self, ui.text(vmath.vector3(CX, d_y - 40, 0), "Played before on a phone number, no Google account yet?", "body", P_CREAM_DIM))
+    local expl_h   = 50
+    local input_h  = 84
+    local status_h = 30
+    local row_gap  = 18
+    local keypad_h = kh + kg + kh -- digit row + gap + delete row
+
+    local card_h = pad + expl_h + row_gap + input_h + row_gap + status_h + row_gap + keypad_h + pad
+
+    local avail_top    = d_y - 16
+    local avail_bottom = EDGE_B + 16
+    local card_cy = (avail_top + avail_bottom) / 2
+    local max_cy = avail_top - card_h/2
+    local min_cy = avail_bottom + card_h/2
+    if card_cy > max_cy then card_cy = max_cy end
+    if card_cy < min_cy then card_cy = min_cy end
+
+    local card_top    = card_cy + card_h/2
+    local card_bottom = card_cy - card_h/2
+
+    -- Layered border, same recipe as gold_avatar_frame/framed elsewhere in
+    -- this screen — a thin gold hairline outside a dark card body.
+    track(self, ui.box(vmath.vector3(CX, card_cy, 0), vmath.vector3(card_w + 4, card_h + 4, 0), P_GOLD_LINE))
+    track(self, ui.box(vmath.vector3(CX, card_cy, 0), vmath.vector3(card_w, card_h, 0), P_PANEL))
+
+    local cursor_y = card_top - pad
+
+    -- Explanation, top of the card.
+    local expl1 = track(self, ui.text(vmath.vector3(CX, cursor_y - expl_h*0.28, 0), "Secure your account and restore any old balance.", "body", P_CREAM_DIM))
     gui.set_scale(expl1, vmath.vector3(0.6, 0.6, 1))
-    local expl2 = track(self, ui.text(vmath.vector3(CX, d_y - 66, 0), "Enter it below to restore your balance and progress.", "body", P_MUTED))
-    gui.set_scale(expl2, vmath.vector3(0.55, 0.55, 1))
+    local expl2 = track(self, ui.text(vmath.vector3(CX, cursor_y - expl_h*0.72, 0), "Every player links a number — it only takes a moment.", "body", P_MUTED))
+    gui.set_scale(expl2, vmath.vector3(0.52, 0.52, 1))
+    cursor_y = cursor_y - expl_h - row_gap
 
-    local kw, kh, kg = 64, 56, 8
-    local del_ny = EDGE_B + 60
-    local dig_ny = del_ny + (kh + kg)
-    local input_y = dig_ny + 110
+    -- Input "pill": country-code chip + digit display, on its own raised
+    -- inset row inside the card (reads as a real input field, not a bare line).
+    local input_cy = cursor_y - input_h/2
+    track(self, ui.box(vmath.vector3(CX, input_cy, 0), vmath.vector3(card_w - pad, input_h, 0), P_BORDER))
+    track(self, ui.box(vmath.vector3(CX, input_cy, 0), vmath.vector3(card_w - pad - 2, input_h - 2, 0), P_B_MID))
 
-    local line_w = 360
-    local prefix = txtL(self, CX - line_w/2 + 10, input_y, "PHONE:", "subtitle2", P_MUTED)
-    gui.set_scale(prefix, vmath.vector3(0.55, 0.55, 1))
-    local shown = (self.phone ~= "") and self.phone or "07XXXXXXXX"
+    local chip_w = 78
+    local chip_x = CX - (card_w - pad)/2 + 14 + chip_w/2
+    track(self, ui.box(vmath.vector3(chip_x, input_cy, 0), vmath.vector3(chip_w, input_h - 20, 0), P_BADGE_BG))
+    local chip_t = track(self, ui.text(vmath.vector3(chip_x, input_cy, 0), "+256", "subtitle2", P_GOLD_LIGHT))
+    gui.set_scale(chip_t, vmath.vector3(0.6, 0.6, 1))
+
+    local digits_x = chip_x + chip_w/2 + 20
+    -- Grouped as the player would naturally read it: 7XX XXX XXX (the
+    -- leading "0" is dropped since the +256 chip already covers it).
+    local raw = self.phone ~= "" and self.phone:sub(2) or ""
+    local grouped = raw
+    if #raw > 3 then grouped = raw:sub(1,3) .. " " .. raw:sub(4) end
+    if #raw > 6 then grouped = raw:sub(1,3) .. " " .. raw:sub(4,6) .. " " .. raw:sub(7) end
+    local shown = (self.phone ~= "") and grouped or "7XX XXX XXX"
     local val_color = (self.phone ~= "") and P_CREAM or P_MUTED
-    local val = txtL(self, CX - line_w/2 + 110, input_y, shown, "body", val_color)
-    gui.set_scale(val, vmath.vector3(0.85, 0.85, 1))
-    local line_color = ok and P_GOLD or P_BORDER
-    track(self, ui.box(vmath.vector3(CX, input_y - 18, 0), vmath.vector3(line_w, 2, 0), line_color))
-    local status_lbl = txtL(self, CX - line_w/2 + 10, input_y - 34, ok and "Looks good!" or (self.phone ~= "" and msg_txt or ""), "body", ok and P_SUCCESS or P_ERROR)
-    gui.set_scale(status_lbl, vmath.vector3(0.40, 0.40, 1))
+    local val = txtL(self, digits_x, input_cy, shown, "body", val_color)
+    gui.set_scale(val, vmath.vector3(0.9, 0.9, 1))
+
+    -- A caret substitute: a thin gold tick at the edge of what's typed so
+    -- far, only while the field isn't yet valid/complete — a small but
+    -- real "this is an active input" affordance.
+    if self.phone ~= "" and not ok then
+        local caret_x = digits_x + gui.get_text_metrics_from_node(val).width * 0.9 + 6
+        track(self, ui.box(vmath.vector3(caret_x, input_cy, 0), vmath.vector3(2, 26, 0), P_GOLD))
+    end
+    cursor_y = cursor_y - input_h - row_gap
+
+    -- Status line beneath the input, inside the card.
+    local status_col = ok and P_SUCCESS or (self.phone ~= "" and P_ERROR or P_MUTED)
+    local status_txt = ok and "Looks good!" or (self.phone ~= "" and msg_txt or "Enter your Uganda mobile number")
+    local status_lbl = track(self, ui.text(vmath.vector3(CX, cursor_y - status_h/2, 0), status_txt, "body", status_col))
+    gui.set_scale(status_lbl, vmath.vector3(0.42, 0.42, 1))
+    cursor_y = cursor_y - status_h - row_gap
+
+    -- Keypad, inside its own inset rows at the bottom of the same card.
+    local dig_ny = cursor_y - kh/2
+    local del_ny = dig_ny - kg - kh
 
     local function pkey(px, py, w, ch, label)
-        framed(self, px, py, w, kh, P_BORDER, 1, P_BADGE_BG)
+        track(self, ui.box(vmath.vector3(px, py, 0), vmath.vector3(w, kh, 0), P_BORDER))
+        track(self, ui.box(vmath.vector3(px, py, 0), vmath.vector3(w - 2, kh - 2, 0), P_BADGE_BG))
         track(self, ui.text(vmath.vector3(px, py, 0), label or ch, "subtitle2", P_CREAM))
         local hit = track(self, ui.box(vmath.vector3(px, py, 0), vmath.vector3(w, kh, 0), vmath.vector4(0, 0, 0, 0.001)))
         self.buttons[#self.buttons+1] = { node = hit, id = "p_"..ch, data = (ch ~= "back") and ch or nil }
     end
 
     local digits = "0123456789"
-    local d_roww = 10*(kw+kg) - kg
-    local d_kx0 = CX - d_roww/2 + kw/2
+    local d_kx0 = CX - roww/2 + kw/2
     for i = 1, 10 do
         pkey(d_kx0+(i-1)*(kw+kg), dig_ny, kw, digits:sub(i, i))
     end
-    pkey(CX, del_ny, 300, "back", "DELETE")
+    pkey(CX, del_ny, roww, "back", "DELETE")
+
+    if self._phone_error then
+        local err = track(self, ui.text(vmath.vector3(CX, card_bottom - 22, 0), tostring(self._phone_error), "small", P_ERROR))
+        gui.set_scale(err, vmath.vector3(0.9, 0.9, 1))
+    end
 end
 
 local function rebuild(self)
@@ -371,20 +438,26 @@ local function load_profile_fields(self)
     if self.avatar < 1 then self.avatar = 1 end
 end
 
+-- Mandatory, state-driven: which step to show is derived from the actual
+-- account data every time, never a one-shot session flag — a flag can be
+-- lost (app restart) or raced by another screen, silently letting the
+-- phone requirement slip through. Reading it fresh off ws.current_user_data
+-- means it reliably reappears on every login/reconnect until satisfied.
+local function decide_step(self)
+    local u = ws.current_user_data or {}
+    if app_state.phone_required() and not app_state.phone_complete(u) then
+        self.step = "phone"
+    else
+        self.step = "profile"
+    end
+end
+
 function on_message(self, message_id, message, sender)
     if message_id == hash("screen_enter") then
         refresh_wh()
         msg.post(".", "acquire_input_focus")
         load_profile_fields(self)
-
-        -- One-shot: a brand-new Google account gets offered the old-account
-        -- migration step before the normal username/avatar step.
-        if app_state.offer_phone_link then
-            app_state.offer_phone_link = false
-            self.step = "phone"
-        else
-            self.step = "profile"
-        end
+        decide_step(self)
         self.phone = ""
         self._phone_saving = false
         self._phone_error = nil
@@ -406,19 +479,18 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("phone_link_result") then
         self._phone_saving = false
         if message.ok then
-            if message.merged then
-                -- Migrated onto the old account. If that account is already
-                -- profile-complete (it likely already has a username/avatar
-                -- from before), skip straight past the username/avatar step
-                -- instead of forcing them to re-pick.
-                local u = ws.current_user_data or {}
-                if app_state.profile_complete(u) then
-                    msg.post("#controller", "goto_online")
-                    return
-                end
+            -- Phone is now on file (freshly attached, or merged onto an old
+            -- account). If the account is ALREADY fully complete — most
+            -- likely a merge onto an old account that already had its own
+            -- username/avatar — skip straight past the profile step instead
+            -- of forcing them to re-pick.
+            local u = ws.current_user_data or {}
+            if app_state.profile_complete(u) then
+                msg.post("#controller", "goto_online")
+                return
             end
             load_profile_fields(self)
-            self.step = "profile"
+            decide_step(self)
         else
             self._phone_error = message.message or "Could not link phone number."
         end
@@ -432,10 +504,7 @@ function on_message(self, message_id, message, sender)
 end
 
 local function handle(self, b)
-    if b.id == "phone_skip" then
-        self.step = "profile"
-        rebuild(self)
-    elseif b.id == "phone_link" then
+    if b.id == "phone_link" then
         local ok = validate_phone(self.phone)
         if ok and not self._phone_saving then
             self._phone_saving = true

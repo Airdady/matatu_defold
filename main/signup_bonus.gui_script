@@ -117,9 +117,14 @@ end
 function update(self, dt)
     self.t = (self.t or 0) + dt
 
+    -- Also deferred while the profile screen (mandatory phone-verification
+    -- step included) is showing — this fires at the exact same moment a
+    -- brand-new account lands on that screen, and popping up over it
+    -- visually buried the phone step, letting players miss/bypass it.
     if self.pending and not self.visible
         and not app_state.season_modal_active
         and not app_state.daily_bonus_active
+        and app_state.current_screen ~= "profile"
     then
         self.visible = true
         self.alpha = 0
