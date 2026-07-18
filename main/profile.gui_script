@@ -48,6 +48,18 @@ local function refresh_wh()
     CX, CY = m.CX, m.CY
 end
 
+-- Old-account migration step (shown once, right after a brand-new Google
+-- sign-up — see app_state.offer_phone_link). Old (pre-Google) accounts were
+-- identified by Uganda phone number, matching the backend's own
+-- /auth/link-phone validation.
+local function validate_phone(p)
+    p = p or ""
+    if not p:match("^0[73]%d%d%d%d%d%d%d%d$") then
+        return false, "Enter a valid Uganda phone number (07XXXXXXXX)."
+    end
+    return true, ""
+end
+
 local BAD = { "fuck","shit","bitch","cunt","dick","pussy","admin","sex","nude" }
 local function validate(name)
     name = (name or ""):gsub("^%s*(.-)%s*$", "%1")
@@ -97,12 +109,73 @@ local function gold_avatar_frame(self, x, y, avatar_id, size)
     track(self, ui.avatar(vmath.vector3(x, y, 0), vmath.vector3(s_in, s_in, 0), avatar_id))
 end
 
+-- Centered, simpler layout for the one-shot "got an old account?" step —
+-- reuses the same box/text/keypad building blocks as the username step
+-- below, just laid out around the screen center instead of a 50/50 split.
+local function rebuild_phone_step(self, d_y)
+    local ok, msg_txt = validate_phone(self.phone)
+
+    track(self, ui.text(vmath.vector3(CX, EDGE_T - 40, 0), "GOT AN OLD ACCOUNT?", "subtitle1", P_GOLD))
+
+    framed(self, EDGE_L + 90, EDGE_T - 40, 140, 44, P_BORDER, 1, P_PANEL)
+    local skip_btn = track(self, ui.box(vmath.vector3(EDGE_L + 90, EDGE_T - 40, 0), vmath.vector3(140, 44, 0), vmath.vector4(0,0,0,0.001)))
+    track(self, ui.text(vmath.vector3(EDGE_L + 90, EDGE_T - 40, 0), "I'M NEW", "subtitle2", P_CREAM_DIM))
+    self.buttons[#self.buttons+1] = { node = skip_btn, id = "phone_skip" }
+
+    local link_btn = track(self, ui.box(vmath.vector3(EDGE_R - 110, EDGE_T - 40, 0), vmath.vector3(170, 48, 0),
+        (ok and not self._phone_saving) and P_GOLD or P_BADGE_BG))
+    track(self, ui.text(vmath.vector3(EDGE_R - 110, EDGE_T - 40, 0), self._phone_saving and "LINKING..." or "LINK ACCOUNT", "subtitle2",
+        (ok and not self._phone_saving) and P_DARK_TXT or P_MUTED))
+    self.buttons[#self.buttons+1] = { node = link_btn, id = "phone_link" }
+
+    if self._phone_error then
+        track(self, ui.text(vmath.vector3(EDGE_R - 110, EDGE_T - 76, 0), tostring(self._phone_error), "small", P_ERROR))
+    end
+
+    local expl1 = track(self, ui.text(vmath.vector3(CX, d_y - 40, 0), "Played before on a phone number, no Google account yet?", "body", P_CREAM_DIM))
+    gui.set_scale(expl1, vmath.vector3(0.6, 0.6, 1))
+    local expl2 = track(self, ui.text(vmath.vector3(CX, d_y - 66, 0), "Enter it below to restore your balance and progress.", "body", P_MUTED))
+    gui.set_scale(expl2, vmath.vector3(0.55, 0.55, 1))
+
+    local kw, kh, kg = 64, 56, 8
+    local del_ny = EDGE_B + 60
+    local dig_ny = del_ny + (kh + kg)
+    local input_y = dig_ny + 110
+
+    local line_w = 360
+    local prefix = txtL(self, CX - line_w/2 + 10, input_y, "PHONE:", "subtitle2", P_MUTED)
+    gui.set_scale(prefix, vmath.vector3(0.55, 0.55, 1))
+    local shown = (self.phone ~= "") and self.phone or "07XXXXXXXX"
+    local val_color = (self.phone ~= "") and P_CREAM or P_MUTED
+    local val = txtL(self, CX - line_w/2 + 110, input_y, shown, "body", val_color)
+    gui.set_scale(val, vmath.vector3(0.85, 0.85, 1))
+    local line_color = ok and P_GOLD or P_BORDER
+    track(self, ui.box(vmath.vector3(CX, input_y - 18, 0), vmath.vector3(line_w, 2, 0), line_color))
+    local status_lbl = txtL(self, CX - line_w/2 + 10, input_y - 34, ok and "Looks good!" or (self.phone ~= "" and msg_txt or ""), "body", ok and P_SUCCESS or P_ERROR)
+    gui.set_scale(status_lbl, vmath.vector3(0.40, 0.40, 1))
+
+    local function pkey(px, py, w, ch, label)
+        framed(self, px, py, w, kh, P_BORDER, 1, P_BADGE_BG)
+        track(self, ui.text(vmath.vector3(px, py, 0), label or ch, "subtitle2", P_CREAM))
+        local hit = track(self, ui.box(vmath.vector3(px, py, 0), vmath.vector3(w, kh, 0), vmath.vector4(0, 0, 0, 0.001)))
+        self.buttons[#self.buttons+1] = { node = hit, id = "p_"..ch, data = (ch ~= "back") and ch or nil }
+    end
+
+    local digits = "0123456789"
+    local d_roww = 10*(kw+kg) - kg
+    local d_kx0 = CX - d_roww/2 + kw/2
+    for i = 1, 10 do
+        pkey(d_kx0+(i-1)*(kw+kg), dig_ny, kw, digits:sub(i, i))
+    end
+    pkey(CX, del_ny, 300, "back", "DELETE")
+end
+
 local function rebuild(self)
     clear(self)
 
     -- Flat luxury-dark background base
     track(self, ui.cover(LOGICAL_W, LOGICAL_H, P_BG))
-    
+
     -- Overall texture background cover image
     local bg_node = track(self, gui.new_box_node(vmath.vector3(CX, CY, 0), vmath.vector3(VISIBLE_W, VISIBLE_H, 0)))
     gui.set_texture(bg_node, "ui")
@@ -117,6 +190,11 @@ local function rebuild(self)
     track(self, ui.box(vmath.vector3(CX, d_y + 7, 0), vmath.vector3(VISIBLE_W, 4, 0), STRIPE_OUTER))
     track(self, ui.box(vmath.vector3(CX, d_y,     0), vmath.vector3(VISIBLE_W, 10, 0), STRIPE_MID))
     track(self, ui.box(vmath.vector3(CX, d_y - 7, 0), vmath.vector3(VISIBLE_W, 4, 0), STRIPE_INNER))
+
+    if self.step == "phone" then
+        rebuild_phone_step(self, d_y)
+        return
+    end
 
     local ok, msg_txt = validate(self.username)
 
@@ -264,31 +342,53 @@ end
 function init(self)
     self.nodes, self.buttons = {}, {}
     self.username, self.avatar = "", 1
+    self.step = "profile"
+    self.phone = ""
     refresh_wh()
+end
+
+-- Pulls fresh username/avatar defaults from ws.current_user_data — shared
+-- by screen_enter and by a successful non-merge phone-link result (the
+-- account may have gained fields worth re-showing).
+local function load_profile_fields(self)
+    local u = ws.current_user_data or {}
+    -- Never pre-fill from `names` — like `username` before it, that field
+    -- can originate from Google Play Games / email at signup
+    -- (deriveDisplayName in auth.routes.ts), so seeding from it here
+    -- reintroduces exactly the "auto-populated from GPGS" leak that
+    -- leaving `username` itself unset was meant to fix. Only carry over
+    -- an ALREADY-SET real username (e.g. returning to this screen after
+    -- already choosing one) — leave it blank otherwise so the player
+    -- picks their own.
+    self.username = (u.username and not (u.username:sub(1,7)=="Player_")) and u.username or ""
+
+    -- Enforce capitalization on loaded username
+    if #self.username > 0 then
+        self.username = self.username:sub(1,1):upper() .. self.username:sub(2):lower()
+    end
+
+    self.avatar = tonumber(u.avatar) or 1
+    if self.avatar < 1 then self.avatar = 1 end
 end
 
 function on_message(self, message_id, message, sender)
     if message_id == hash("screen_enter") then
         refresh_wh()
         msg.post(".", "acquire_input_focus")
-        local u = ws.current_user_data or {}
-        -- Never pre-fill from `names` — like `username` before it, that field
-        -- can originate from Google Play Games / email at signup
-        -- (deriveDisplayName in auth.routes.ts), so seeding from it here
-        -- reintroduces exactly the "auto-populated from GPGS" leak that
-        -- leaving `username` itself unset was meant to fix. Only carry over
-        -- an ALREADY-SET real username (e.g. returning to this screen after
-        -- already choosing one) — leave it blank otherwise so the player
-        -- picks their own.
-        self.username = (u.username and not (u.username:sub(1,7)=="Player_")) and u.username or ""
+        load_profile_fields(self)
 
-        -- Enforce capitalization on loaded username
-        if #self.username > 0 then
-            self.username = self.username:sub(1,1):upper() .. self.username:sub(2):lower()
+        -- One-shot: a brand-new Google account gets offered the old-account
+        -- migration step before the normal username/avatar step.
+        if app_state.offer_phone_link then
+            app_state.offer_phone_link = false
+            self.step = "phone"
+        else
+            self.step = "profile"
         end
-        
-        self.avatar = tonumber(u.avatar) or 1
-        if self.avatar < 1 then self.avatar = 1 end
+        self.phone = ""
+        self._phone_saving = false
+        self._phone_error = nil
+
         self._active = true
         self._saving = false
         self._error = nil
@@ -303,6 +403,26 @@ function on_message(self, message_id, message, sender)
         if self._active then rebuild(self) end
     elseif message_id == hash("user_data_updated") then
         if self._active then rebuild(self) end
+    elseif message_id == hash("phone_link_result") then
+        self._phone_saving = false
+        if message.ok then
+            if message.merged then
+                -- Migrated onto the old account. If that account is already
+                -- profile-complete (it likely already has a username/avatar
+                -- from before), skip straight past the username/avatar step
+                -- instead of forcing them to re-pick.
+                local u = ws.current_user_data or {}
+                if app_state.profile_complete(u) then
+                    msg.post("#controller", "goto_online")
+                    return
+                end
+            end
+            load_profile_fields(self)
+            self.step = "profile"
+        else
+            self._phone_error = message.message or "Could not link phone number."
+        end
+        if self._active then rebuild(self) end
     elseif message_id == hash("profile_saved") then
         self._saving = false
         self._error = message.ok and nil or (message.message or "Save failed")
@@ -312,7 +432,26 @@ function on_message(self, message_id, message, sender)
 end
 
 local function handle(self, b)
-    if b.id == "save" then
+    if b.id == "phone_skip" then
+        self.step = "profile"
+        rebuild(self)
+    elseif b.id == "phone_link" then
+        local ok = validate_phone(self.phone)
+        if ok and not self._phone_saving then
+            self._phone_saving = true
+            self._phone_error = nil
+            msg.post("#controller", "link_phone", { phoneNumber = self.phone })
+            rebuild(self)
+        end
+    elseif b.id:sub(1,2) == "p_" then
+        if b.id == "p_back" then
+            self.phone = self.phone:sub(1,-2)
+        elseif #self.phone < 10 then
+            self.phone = self.phone .. b.data
+        end
+        self._phone_error = nil
+        rebuild(self)
+    elseif b.id == "save" then
         if validate(self.username) and not self._saving then
             self._saving = true
             self._error = nil

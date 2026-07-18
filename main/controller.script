@@ -170,6 +170,11 @@ local function gpgs_callback(self, message_id, message)
                             identify_and_connect(user)
                             if result.data.isNewUser then
                                 msg.post("#signup_bonus", "show_signup_bonus", { amount = tonumber(user.balance) or 500 })
+                                -- Brand-new account: offer the old-account
+                                -- migration step (phone number lookup) once,
+                                -- consumed by profile.gui_script on its next
+                                -- screen_enter.
+                                app_state.offer_phone_link = true
                             end
                             app_state.auth_state = "done"
                             msg.post("#lobby", "auth_state_changed")
@@ -463,6 +468,41 @@ function on_message(self, message_id, message, sender)
         app_state.auth_state = "idle"
         msg.post("#lobby", "auth_state_changed")
         show(self, "lobby")
+
+    elseif message_id == hash("link_phone") then
+        local phone = message.phoneNumber or ""
+        if phone == "" then
+            msg.post("#profile", "phone_link_result", { ok = false, message = "Enter a phone number." })
+            return
+        end
+        api.link_phone({ phoneNumber = phone }, function(result)
+            if result.success and type(result.data) == "table" then
+                local data = result.data
+                local merged_user = type(data.user) == "table" and data.user or {}
+                if data.merged then
+                    if data.token then merged_user.token = data.token end
+                    -- Account identity changed to the OLD (now-linked)
+                    -- account — cleanly drop the current socket (still
+                    -- identified server-side as the just-superseded
+                    -- duplicate) and reconnect fresh as the migrated
+                    -- account, exactly like a normal login.
+                    pcall(ws.disconnect)
+                    identify_and_connect(merged_user)
+                else
+                    -- No old account found — the phone number was just
+                    -- saved onto the current (already-authenticated)
+                    -- account; merge the returned fields in without
+                    -- touching the session identity.
+                    local u = ws.current_user_data or {}
+                    for k, v in pairs(merged_user) do u[k] = v end
+                    ws.current_user_data = u
+                    api.save_session(u)
+                end
+                msg.post("#profile", "phone_link_result", { ok = true, merged = data.merged and true or false })
+            else
+                msg.post("#profile", "phone_link_result", { ok = false, message = result.message or "Could not link phone number." })
+            end
+        end)
 
     elseif message_id == hash("profile_save") then
         local user = ws.current_user_data or {}
