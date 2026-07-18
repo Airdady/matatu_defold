@@ -36,6 +36,15 @@ M.auth_error = ""
 -- last_season_complete for the same pattern).
 M.username_suggestions = {}
 
+-- One-shot: true right after a BRAND NEW Google account is created (set by
+-- controller.script's gpgs_callback when the backend reports isNewUser).
+-- profile.gui_script consumes this on its next screen_enter to show the
+-- "got an old account? link your phone" migration step before the normal
+-- username/avatar step — old (pre-Google) accounts are matched server-side
+-- by phone number. Consumed (set back to false) the moment it's read, so a
+-- later return to the profile screen in the same session never re-offers it.
+M.offer_phone_link = false
+
 -- True while the global Half-Week Season Complete modal (main/season_results.gui_script)
 -- is open. Other global modals (e.g. the daily bonus dialog) check this before
 -- auto-opening themselves so they never fight the season modal for screen space.

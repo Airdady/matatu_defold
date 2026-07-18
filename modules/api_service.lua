@@ -149,6 +149,15 @@ function M.gpgs_login(server_auth_code, cb)
     end)
 end
 
+-- Old-account migration: link a phone number to the just-authenticated
+-- Google account. Requires the Bearer token already set via set_auth_token
+-- (build_headers attaches it automatically). Backend response shape:
+-- { success, merged, user, token? } — `token` is only present when `merged`
+-- is true (the account identity changed to the old, now-linked account).
+function M.link_phone(payload, cb)
+    request("POST", "/auth/link-phone", payload, cb)
+end
+
 function M.get_user(user_id, cb)
     if not user_id or user_id == "" then
         return cb({
