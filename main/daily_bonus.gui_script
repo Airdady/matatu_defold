@@ -280,7 +280,12 @@ function update(self, dt)
     -- season-complete overlay isn't guaranteed, so re-check every tick while a
     -- bonus is pending-but-not-yet-shown, and only open once the season modal
     -- (higher priority) isn't occupying the screen.
-    if self.pending and not self.visible and not app_state.season_modal_active then
+    -- Also deferred while the profile screen (username/avatar, and the
+    -- mandatory phone-verification step) is showing — that screen is itself
+    -- a hard gate the player can't get past otherwise, and this modal
+    -- popping up over it visually buried the phone step, letting players
+    -- miss/bypass it entirely.
+    if self.pending and not self.visible and not app_state.season_modal_active and app_state.current_screen ~= "profile" then
         self.visible = true
         self.alpha = 0
         self.opened_at = self.t

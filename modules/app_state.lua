@@ -36,15 +36,6 @@ M.auth_error = ""
 -- last_season_complete for the same pattern).
 M.username_suggestions = {}
 
--- One-shot: true right after a BRAND NEW Google account is created (set by
--- controller.script's gpgs_callback when the backend reports isNewUser).
--- profile.gui_script consumes this on its next screen_enter to show the
--- "got an old account? link your phone" migration step before the normal
--- username/avatar step — old (pre-Google) accounts are matched server-side
--- by phone number. Consumed (set back to false) the moment it's read, so a
--- later return to the profile screen in the same session never re-offers it.
-M.offer_phone_link = false
-
 -- True while the global Half-Week Season Complete modal (main/season_results.gui_script)
 -- is open. Other global modals (e.g. the daily bonus dialog) check this before
 -- auto-opening themselves so they never fight the season modal for screen space.
@@ -95,12 +86,36 @@ function M.username_complete(name)
   return true
 end
 
--- Account is "complete" when an avatar is chosen AND the username is valid.
+-- A phone number is only REQUIRED for Matatu (Uganda) accounts — the
+-- old-account migration/identity-verification path (be_matatu's
+-- POST /auth/link-phone, driven from profile.gui_script's "phone" step) is
+-- Uganda-only (mobile-money name-enquiry, +256 MSISDN format); Whot/Kadi
+-- accounts never had a phone-based predecessor and have no equivalent
+-- verification service, so they're never blocked on this.
+function M.phone_required()
+  local ok, GameMode = pcall(require, "modules.game_mode")
+  return ok and GameMode.is_matatu()
+end
+
+function M.phone_complete(user)
+  if not M.phone_required() then return true end
+  if type(user) ~= "table" then return false end
+  local p = user.phoneNumber or user.phone or ""
+  return type(p) == "string" and p ~= ""
+end
+
+-- Account is "complete" when an avatar is chosen, the username is valid,
+-- AND (Matatu only) a phone number is on file. This is re-evaluated every
+-- time route_after_auth runs — a mandatory step, not a one-shot prompt —
+-- so it reliably reappears on every login/reconnect (including a cold app
+-- restart from a cached session) until actually satisfied, and can't be
+-- silently bypassed by another modal grabbing focus first.
 function M.profile_complete(user)
   if type(user) ~= "table" then return false end
   local avatar = tonumber(user.avatar) or 0
   if avatar <= 0 then return false end
-  return M.username_complete(user.username)
+  if not M.username_complete(user.username) then return false end
+  return M.phone_complete(user)
 end
 
 function M.next_theme()
