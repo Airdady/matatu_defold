@@ -411,11 +411,13 @@ function M.process_opponent_actions(self, actions, chosen_suit, new_game_state, 
     local seq = self._seq
 
     local INTER  = 0.24
-    -- Gap between two consecutive PLAYs of a combo: cards overlap in flight
-    -- (matches draw_to_hand's own 0.13 stagger) instead of the fuller INTER
-    -- beat — waiting for each card to reach the pile before launching the
-    -- next reads as laggy, and the player's own flow never does that.
-    local PLAY_STAGGER = 0.13
+    -- Gap between two consecutive PLAYs of a combo: cards still overlap in
+    -- flight (each flight is 0.42s), but with enough daylight between
+    -- launches that every card reads clearly — 0.13 made a big combo blur
+    -- into one motion. Spreading the launches out also lowers PEAK per-frame
+    -- animation load, which is what dents the frame rate for anything else
+    -- animating at the same time (emoji reactions, most visibly).
+    local PLAY_STAGGER = 0.22
     local SETTLE = 0.42
 
     local function finish()
@@ -464,12 +466,19 @@ function M.process_opponent_actions(self, actions, chosen_suit, new_game_state, 
             self.trigger_play_effects({ v = v, s = s }, #self.ai_hand == 0)
 
             self.animate_to_pile(rec, false)
-            self.position_hands(true)
+            local nxt = actions[idx]
+            local in_combo = nxt and nxt.type == "PLAY"
+            -- Mid-combo, DON'T reflow the whole hand after every single
+            -- card — each reflow re-tweens every remaining card in both
+            -- hands, and stacking one of those per combo card was the
+            -- single biggest chunk of concurrent animation work (the thing
+            -- that starved any emoji animation running at the same time).
+            -- One reflow when the combo finishes closes all the gaps at
+            -- once, which also reads cleaner.
+            if not in_combo then self.position_hands(true) end
             -- Combo: the next card of a multi-card play launches after only a
             -- small stagger, overlapping this one's flight to the pile.
-            local nxt = actions[idx]
-            local gap = (nxt and nxt.type == "PLAY") and PLAY_STAGGER or INTER
-            timer.delay(gap, false, next_act)
+            timer.delay(in_combo and PLAY_STAGGER or INTER, false, next_act)
 
         elseif act.type == "DRAW" then
             -- Coalesce this and every immediately-following DRAW into ONE
@@ -570,8 +579,9 @@ function M.process_my_actions(self, actions, done)
     local seq = self._seq
     local INTER  = 0.24
     -- Same combo treatment as process_opponent_actions: consecutive PLAYs
-    -- overlap in flight instead of waiting a full beat between cards.
-    local PLAY_STAGGER = 0.13
+    -- overlap in flight, spaced far enough apart to read clearly and keep
+    -- peak per-frame animation load down.
+    local PLAY_STAGGER = 0.22
     local SETTLE = 0.30
 
     local function next_act()
@@ -608,10 +618,12 @@ function M.process_my_actions(self, actions, done)
             msg.post(GUI_SUIT, "suit_select", { mode = "close" })
             self.trigger_play_effects({ v = v, s = s }, #self.player_hand == 0)
             self.animate_to_pile(rec, true)
-            self.position_hands(true)
             local nxt = actions[idx]
-            local gap = (nxt and nxt.type == "PLAY") and PLAY_STAGGER or INTER
-            timer.delay(gap, false, next_act)
+            local in_combo = nxt and nxt.type == "PLAY"
+            -- Same as process_opponent_actions: one hand reflow at combo
+            -- end, not one per card — keeps peak animation load flat.
+            if not in_combo then self.position_hands(true) end
+            timer.delay(in_combo and PLAY_STAGGER or INTER, false, next_act)
 
         elseif act.type == "DRAW" then
             -- Coalesce consecutive DRAW actions into one staggered batch —
