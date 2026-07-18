@@ -270,6 +270,18 @@ function init(self)
             app_state.auth_state = "idle"
             msg.post("#lobby", "auth_state_changed")
             route_after_auth(self)
+            return
+        end
+        -- Silent boot-time identify (no explicit "Play Online" tap): still
+        -- auto-resume an in-progress game. IDENTIFY's own response already
+        -- carries the active game state when there is one (see
+        -- websocket_manager.lua, ws.active_game_state gets set from it
+        -- directly), so this needs no extra round trip — closing the app
+        -- mid-game and reopening it should drop the player straight back
+        -- into that game, never onto the lobby waiting for another tap.
+        if self.screen ~= "game" and ws.active_game_state and next(ws.active_game_state or {}) ~= nil then
+            app_state.mode = "online"
+            show(self, "game")
         end
     end))
 
