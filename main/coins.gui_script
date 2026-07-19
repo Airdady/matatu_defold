@@ -271,6 +271,67 @@ HANDLERS.coin_clear = function(self, d, done)
     done()
 end
 
+-- Deposit celebration: coins fountain up from the BOTTOM edge of the screen
+-- into the balance display, coin sound per landing, "+amount" counting up at
+-- the target — and, crucially, the REAL balance figure ticks upward as each
+-- coin lands: every (other) landing bumps ws.current_user_data.balance one
+-- step closer to the final total and nudges the online screen to re-render,
+-- so the BAL label itself counts up in sync with the arriving coins instead
+-- of snapping. { amount, from_balance, to_balance, to = {x,y}? }
+HANDLERS.coin_deposit = function(self, d, done)
+    local ws = require("modules.websocket_manager")
+    local app_state = require("modules.app_state")
+
+    -- online_right.lua records where it last drew the BAL figure.
+    local target = d.to or app_state.bal_display_pos or { x = LOGICAL_W - 150, y = LOGICAL_H - 120 }
+    local tx, ty = target.x, target.y
+
+    local amount = tonumber(d.amount) or 0
+    if amount <= 0 then done(); return end
+
+    local from_bal = tonumber(d.from_balance) or (tonumber((ws.current_user_data or {}).balance) or 0)
+    local to_bal   = tonumber(d.to_balance) or (from_bal + amount)
+
+    local n = math.min(16, math.max(8, math.floor(amount / 100)))
+    local landed = 0
+
+    local function tick_balance()
+        landed = landed + 1
+        local stepped = math.floor(from_bal + (to_bal - from_bal) * (landed / n))
+        if landed >= n then stepped = to_bal end
+        if type(ws.current_user_data) == "table" then
+            ws.current_user_data.balance = stepped
+        end
+        -- Re-render at every OTHER landing (and always the last) — visibly
+        -- counting without paying a full online-screen rebuild per coin.
+        if landed % 2 == 0 or landed >= n then
+            pcall(msg.post, "#online", "user_data_updated")
+        end
+        if landed >= n then
+            -- Final, exact balance: let every other screen catch up too.
+            for _, s in ipairs({ "themes", "payments", "tournaments", "profile", "lobby" }) do
+                pcall(msg.post, "#" .. s, "user_data_updated")
+            end
+        end
+    end
+
+    for i = 1, n do
+        local sx = LOGICAL_W / 2 + rnd(-LOGICAL_W * 0.32, LOGICAL_W * 0.32)
+        local sy = -COIN -- just below the visible bottom edge
+        local c = track(self, new_coin(sx, sy, (i % 2 == 0) and "spin_vertical" or "spin_horizontal"))
+        fly(self, c, sx, sy, tx, ty, (i - 1) * 0.07, function()
+            play("coin")
+            gui.set_scale(c, vmath.vector3(1.3, 1.3, 1))
+            gui.animate(c, "scale", vmath.vector3(0.1, 0.1, 1), gui.EASING_INSINE, 0.18, 0, function() pcall(gui.delete_node, c) end)
+            tick_balance()
+        end)
+    end
+
+    add_counter(self, tx, ty - 40, 0, amount, n * 0.07 + 0.5, vmath.vector4(0.2, 1, 0.4, 1), "+")
+    local seq = self._seq
+    timer.delay(n * 0.07 + 1.1, false, function() if seq == self._seq then done() end end)
+end
+
 -- Like coin_settle but with no winner to fly to (e.g. the gameover modal
 -- opened on a free/zero-stake game): just dissolve any sitting pot in place
 -- instead of leaving it lingering behind the modal.
@@ -337,6 +398,8 @@ function on_message(self, message_id, message)
         enqueue(self, "coin_dissolve", message)
     elseif message_id == hash("coin_delta") then
         enqueue(self, "coin_delta", message)
+    elseif message_id == hash("coin_deposit") then
+        enqueue(self, "coin_deposit", message)
     elseif message_id == hash("coin_clear") then
         -- a clear jumps the queue: wipe everything immediately
         self.queue = {}

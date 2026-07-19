@@ -1,6 +1,7 @@
 local ws            = require("modules.websocket_manager")
 local dialog_search = require("modules.dialog_search")
 local GameMode      = require("modules.game_mode")
+local app_state     = require("modules.app_state")
 
 local M = {}
 
@@ -520,6 +521,9 @@ function M.draw(self, ctx, left_M)
     track(self, ui.box(vmath.vector3(bal_cx, r1_y, 0), vmath.vector3(bal_w, stat_h, 0), C.COL_NAMEID_BG))
     txtL(self, info_l + 8, r1_y, "BAL.", "small", COL_ORANGE)
     txtR(self, bal_cx + bal_w/2 - 8, r1_y, commas(u.balance or 0), "body", COL_ORANGE)
+    -- Remember where the BAL figure sits so the deposit coin shower
+    -- (main/coins.gui_script's coin_deposit) can fly coins right into it.
+    app_state.bal_display_pos = { x = bal_cx, y = r1_y }
 
     track(self, ui.box(vmath.vector3(pts_cx, r1_y, 0), vmath.vector3(pts_w, stat_h, 0), C.COL_NAMEID_BG))
     txtL(self, inner_r - pts_w + 8, r1_y, "PTS.", "small", C.COL_CYAN)
