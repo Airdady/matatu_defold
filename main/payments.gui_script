@@ -158,8 +158,21 @@ local function saved_numbers()
 	return {}
 end
 
--- The cached validated name for a number among the user's saved numbers, or nil.
+-- The cached validated name for a number that's already known on this
+-- account, or nil if it's genuinely never been seen before.
+--
+-- Checks TWO sources, not just the phoneNumbers array: the account's own
+-- default/legacy `phoneNumber` field (paired with its validated `names`)
+-- counts as already-known too — every account created before the
+-- phoneNumbers array existed (essentially every migrated/old account) has
+-- its number there and NEVER got a matching phoneNumbers entry, so relying
+-- on the array alone missed this whole population and re-validated their
+-- own already-used number on every single dialog open.
 local function cached_name(phone)
+	local u = ws.current_user_data or {}
+	if u.phoneNumber and (u.names or "") ~= "" and phone_key(u.phoneNumber) == phone_key(phone) then
+		return u.names
+	end
 	for _, p in ipairs(saved_numbers()) do
 		if phone_key(p.number) == phone_key(phone) then return p.names or "" end
 	end
@@ -541,6 +554,23 @@ function on_message(self, message_id, message, sender)
 				self.phone_name, self.phone_status = "", "error"
 				self.phone_msg = message.message ~= "" and message.message or "Could not verify this number"
 			end
+
+			-- A PAY tap that arrived while this validation was still in
+			-- flight was queued (see handle()'s "verifying" branch) instead
+			-- of dropped — fire it now instead of making the player tap PAY
+			-- a second time.
+			local pending = self._pending_pay
+			self._pending_pay = nil
+			if pending and self.phone_status == "ok" then
+				self._msg = "Processing..."; self._msg_ok = true; self._msg_proc = true
+				msg.post("#controller", "submit_payment", {
+					phone = self.phone, amount = pending.amount + pending.fee, ptype = pending.ptype,
+				})
+			elseif pending then
+				-- Validation resolved to invalid — the error message set
+				-- above already explains why; nothing to submit.
+			end
+
 			if self._active then rebuild(self) end
 		end
 	elseif message_id == hash("payment_result") then
@@ -596,6 +626,7 @@ local function handle(self, b)
 		if k == "<" then
 			if self.field == "phone" then
 				self.phone = self.phone:sub(1,-2)
+				self._pending_pay = nil
 				schedule_validation(self)
 			else self.amount = self.amount:sub(1,-2) end
 			rebuild(self)
@@ -605,22 +636,33 @@ local function handle(self, b)
 			local amount = tonumber(self.amount) or 0
 			local fee = calc_fee(method, amount)
 			if amount >= (tonumber(method.min) or 0) and amount > 0 and self.phone ~= "" and self.phone_status == "ok" then
+				self._pending_pay = nil
 				self._msg = "Processing..."; self._msg_ok = true; self._msg_proc = true
 				msg.post("#controller", "submit_payment", {
 					phone = self.phone, amount = amount + fee, ptype = method.type or "",
 				})
 				rebuild(self)
+			elseif self.phone_status == "verifying" and amount >= (tonumber(method.min) or 0) and amount > 0 then
+				-- Don't just bounce the tap back with a message that forces a
+				-- second manual tap once validation catches up — queue the
+				-- payment and fire it automatically the instant phone_validated
+				-- resolves (see on_message), so PAY only ever needs one tap.
+				self._pending_pay = { amount = amount, fee = fee, ptype = method.type or "" }
+				self._msg = "Confirming number, then paying..."; self._msg_ok = true; self._msg_proc = true
+				rebuild(self)
 			elseif self.phone_status ~= "ok" and self.phone ~= "" then
-				-- Nudge the user to wait for / fix verification.
-				self._msg = (self.phone_status == "verifying") and "Verifying number..." or "Please enter a valid number first."
+				-- Genuinely invalid/unresolved number — nudge and retry.
+				self._pending_pay = nil
+				self._msg = "Please enter a valid number first."
 				self._msg_ok = false; self._msg_proc = false
-				if self.phone_status ~= "verifying" then schedule_validation(self) end
+				schedule_validation(self)
 				rebuild(self)
 			end
 		else
 			if self.field == "phone" then
 				if #self.phone < 13 then
 					self.phone = self.phone..k
+					self._pending_pay = nil
 					schedule_validation(self)
 				end
 			else
