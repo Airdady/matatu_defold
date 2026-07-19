@@ -36,6 +36,7 @@ default_texture_mag_filter = linear
 [android]
 package = com.matatu.champ
 input_method = INPUT_METHOD_HIDDEN
+minimum_sdk_version = 23
 
 [gpgs]
 app_id = 413944711733
