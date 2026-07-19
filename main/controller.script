@@ -344,7 +344,34 @@ function init(self)
         end))
     end
     broadcast("user_updated")
-    broadcast("transaction_completed")
+
+    -- Successful DEPOSIT gets the full celebration instead of a silent
+    -- refresh: close the payments dialog, then shower coins up from the
+    -- bottom of the screen into the BAL display (coin sound per landing)
+    -- while the balance figure itself counts up coin by coin — the coins
+    -- overlay owns that stepped count-up and fires the final
+    -- user_data_updated broadcast itself once the exact total lands (see
+    -- coin_deposit in main/coins.gui_script). Everything else (withdrawals,
+    -- failed/refunded transactions) keeps the plain instant refresh.
+    table.insert(self.tokens, ws.on("transaction_completed", function(d)
+        d = type(d) == "table" and d or {}
+        local new_bal = tonumber(d.newBalance)
+        local on_money_screens = (self.screen == "payments" or self.screen == "online")
+        if tostring(d.type or "") == "buy" and new_bal and on_money_screens then
+            local old_bal = tonumber((ws.current_user_data or {}).balance) or 0
+            local gained = new_bal - old_bal
+            if self.screen == "payments" then show(self, "online") end
+            if gained > 0 then
+                pcall(msg.post, "#coins", "coin_deposit", {
+                    amount = gained, from_balance = old_bal, to_balance = new_bal,
+                })
+                return
+            end
+        end
+        for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile" }) do
+            msg.post("#" .. s, "user_data_updated")
+        end
+    end))
 
     table.insert(self.tokens, ws.on("tournament_no_opponents", function(d)
         pcall(msg.post, "#snd_suspense", "stop_sound")
