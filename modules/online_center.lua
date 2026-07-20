@@ -53,7 +53,22 @@ function M.draw(self, ctx)
     local title_l = content_l
     txtL(self, title_l, hcy + 16,  "AVAILABLE PLAYERS", "body", C.COL_BRIGHT)
 
-    local helper = txtL(self, title_l, hcy - 12, "Tap a player to request a game. If they decline, try another!", "small", C.COL_GOLD)
+    -- First-time visitor this session: type the hint out character by
+    -- character (self._tap_hint_active/_t driven by online.gui_script's
+    -- init()/update()) so it visibly draws the eye instead of just being
+    -- one more static line of text on a screen they've never seen before.
+    local HINT_TEXT = "Tap a player to request a game. If they decline, try another!"
+    local hint_shown = HINT_TEXT
+    if self._tap_hint_active then
+        local n = math.floor((self._tap_hint_t or 0) / 0.035)
+        if n >= #HINT_TEXT then
+            self._tap_hint_active = false
+        else
+            hint_shown = string.sub(HINT_TEXT, 1, n) .. "_"
+        end
+    end
+
+    local helper = txtL(self, title_l, hcy - 12, hint_shown, "small", C.COL_GOLD)
     gui.set_scale(helper, vmath.vector3(1.1, 1.1, 1))
 
     local cy = top - hdr_h

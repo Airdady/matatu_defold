@@ -217,18 +217,14 @@ function M.draw(self, ctx)
 
     -- ── Back to Lobby ────────────────────────────────────────────────────────
     -- Moved here from the ONLINE screen's center header (modules/
-    -- online_center.lua used to draw a bare "<" icon button there) — a full
-    -- labeled row below Season Bonuses instead, mirroring the Tournaments
-    -- entry's container-button styling in modules/online_right.lua.
-    cy = cy - C.BLOCK_GAP - 24
+    -- online_center.lua used to draw a bare "<" icon button there) — pinned
+    -- to the extreme bottom of the panel instead of stacking right under
+    -- Season Bonuses, with a centered text label and no icon glyph.
     local back_h  = 56
-    local back_cy = cy - back_h / 2
+    local back_cy = ctx.EDGE_B + 20 + back_h / 2
     track(self, ctx_ui.box(vmath.vector3(cx, back_cy, 0), vmath.vector3(pw, back_h, 0), C.COL_BG))
     mkbtn(self, "nav_lobby", vmath.vector3(cx, back_cy, 0), vmath.vector3(pw, back_h, 0), nil, "container_bg")
-
-    local back_icon_x = cx - pw / 2 + 34
-    track(self, ctx_ui.text(vmath.vector3(back_icon_x, back_cy, 0), "<", "btn_lg", C.COL_WHITE))
-    txtL(self, back_icon_x + 22, back_cy, "BACK TO LOBBY", "btn_lg", C.COL_WHITE)
+    track(self, ctx_ui.text(vmath.vector3(cx, back_cy, 0), "BACK TO LOBBY", "btn_lg", C.COL_WHITE))
 end
 
 return M
