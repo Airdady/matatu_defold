@@ -83,21 +83,19 @@ function M.draw(self, ctx, d, a)
         pcall(function() gui.set_texture(bundle, "coins"); gui.play_flipbook(bundle, hash(img)) end)
     end
 
-    -- Simple text countdown timer directly under the coin bundle
-    local secs      = math.max(0, math.ceil(d.time_left or 0))
-    local timer_col = ((d.time_left or 0) <= 3) and C.COL_RED or C.COL_GOLD
-    local timer_pos = vmath.vector3(CX, bundle_y - bundle_h/2 - 12, 0)
-    track(self, ui.text(timer_pos, secs .. "s", "body", with_a(timer_col, a)))
-    
-    -- Plain gold text strictly below the timer — no boxed/bordered
-    -- container, same icon-then-amount style the in-game coin pot HUD
-    -- already uses (coins.gui_script's ensure_pot), instead of a separate
-    -- bordered chip.
-    local st_txt = amt == 0 and "PRACTICE" or (commas(pot_amt) .. " POT")
-    local stake_pos = vmath.vector3(CX, timer_pos.y - 30, 0)
+    -- Order: coin bundle image, then the bold amount label pulled in 10px
+    -- closer to the image, then the countdown seconds below that.
+    local st_txt = amt == 0 and "PRACTICE" or commas(pot_amt)
+    local stake_pos = vmath.vector3(CX, bundle_y - bundle_h/2 - 2, 0)
 
     local stake_node = track(self, ui.text(stake_pos, st_txt, "helvetica_black", with_a(C.COL_GOLD, a)))
     gui.set_scale(stake_node, vmath.vector3(0.85, 0.85, 0.85))
+    pcall(function() gui.set_outline(stake_node, with_a(vmath.vector4(0, 0, 0, 1), a)) end)
+
+    local secs      = math.max(0, math.ceil(d.time_left or 0))
+    local timer_col = ((d.time_left or 0) <= 3) and C.COL_RED or C.COL_GOLD
+    local timer_pos = vmath.vector3(CX, stake_pos.y - 30, 0)
+    track(self, ui.text(timer_pos, secs .. "s", "body", with_a(timer_col, a)))
 
     -- Additional Status Info cleanly separated
     track(self, ui.text(vmath.vector3(CX, CY - 95, 0), "Waiting for player to accept...", "small", with_a(C.COL_MID, a)))

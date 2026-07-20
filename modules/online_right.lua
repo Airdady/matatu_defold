@@ -786,7 +786,7 @@ function M.start_invite_search(self, app_state, rebuild_cb, battle_type)
         return false
     end
 
-    self.invite_search = { active = true, t = 0, reel_ix = math.random(INVITE_AVATAR_MAX), spin_t = 0 }
+    self.invite_search = { active = true, t = 0, reel_ix = math.random(INVITE_AVATAR_MAX), spin_t = 0, stake = stake }
     app_state.searching_invite = true
 
     ws.send_game_request({}, stake, {

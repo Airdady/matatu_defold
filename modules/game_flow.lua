@@ -772,6 +772,11 @@ function M.end_game(self, player_won, is_cut, backend_results)
                 timer.delay(1.5, false, function()
                     M.finish_round_transition(self, true)
 
+                    -- This round just settled — reorder the standings board
+                    -- once, here, rather than on every mid-round score sync
+                    -- (see online_handler.lua's knockout_update_chamber).
+                    notify_gui(self.gui_hud, "t4_chamber_reflow", {})
+
                     -- Trigger History List Expansion
                     notify_gui(self.gui_hud, "t4_chamber_expand", {
                         history = story.history,

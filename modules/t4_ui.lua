@@ -362,7 +362,8 @@ function M.chamber_init(self, message)
         local threshold = message.threshold or 100
         local rows = message.rows or {}
         local n = #rows
-        local height = 66 + n * T4_CHAMBER_ROW_GAP
+        local HELPER_H = 26
+        local height = 66 + n * T4_CHAMBER_ROW_GAP + HELPER_H
         
         local gap_left = 40
         local width = 235
@@ -417,7 +418,22 @@ function M.chamber_init(self, message)
             self.t4_chamber.rows[entry.key] = entry
             self.t4_chamber.list[i] = entry
         end
+
+        -- Explain the rule at a glance — it's the opposite of most scoring
+        -- displays (lower is safer here), so spell it out under the rows.
+        local helper_y = -58 - n * T4_CHAMBER_ROW_GAP + 4
+        local helper = label(vmath.vector3(width/2, helper_y, 0), "Highest score gets eliminated", 12, vmath.vector4(0.65, 0.68, 0.72, 1), gui.PIVOT_CENTER, "body")
+        gui.set_parent(helper, root)
+        self.t4_chamber.helper = helper
     end)
+end
+
+-- Re-sort the standings board (lowest total on top). Called explicitly, once
+-- per round transition — NOT from every chamber_update — so the board only
+-- ever reorders when a new round is actually being initialized, instead of
+-- shuffling positions mid-round on every incidental score-sync tick.
+function M.chamber_reflow(self)
+    t4_chamber_reflow(self)
 end
 
 function M.chamber_update(self, message)
@@ -465,7 +481,6 @@ function M.chamber_update(self, message)
             gui.set_color(row.nm, vmath.vector4(0.5, 0.5, 0.55, 1))
             gui.set_color(row.val, vmath.vector4(0.95, 0.32, 0.32, 1))
         end
-        t4_chamber_reflow(self)
     end)
 end
 
