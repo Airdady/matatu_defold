@@ -11,6 +11,7 @@ local ui        = require("modules.ui")
 local ws        = require("modules.websocket_manager")
 local screen    = require("modules.screen")
 local GameMode  = require("modules.game_mode")
+local app_state = require("modules.app_state")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local VISIBLE_W, VISIBLE_H = 1280, 720
@@ -503,6 +504,20 @@ function on_message(self, message_id, message, sender)
 		self._active = true
 		self._msg = nil
 		self.method_index = 1
+		-- A caller (e.g. the Savings explainer's "GET STARTED" flow) can ask
+		-- to land straight on a specific tab instead of always defaulting to
+		-- the first one — consumed once so it doesn't stick on a later,
+		-- unrelated visit to this screen.
+		if app_state.open_payments_tab then
+			local want = tostring(app_state.open_payments_tab):upper()
+			app_state.open_payments_tab = nil
+			for i, m in ipairs(methods()) do
+				if tostring(m.type or ""):upper() == want then
+					self.method_index = i
+					break
+				end
+			end
+		end
 		local u = ws.current_user_data or {}
 		-- Default to the user's default saved number (falls back to legacy field).
 		local default_num = u.phoneNumber or u.phone or ""

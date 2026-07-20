@@ -255,6 +255,18 @@ local function draw_battle_modal(self, ctx)
     track(self, ui.text(vmath.vector3(CX, sub_y, 0), sub_label, "btn_lg", C_BTN_TEXT))
 end
 
+-- ── Savings helpers (backend-driven config, with a safe fallback while the
+-- first SAVINGS_STATUS round-trip hasn't landed yet) ────────────────────────
+-- Must be defined before draw_savings_info/draw_savings_plans below, which
+-- call format_redemption_date — Lua doesn't hoist locals within a chunk, so
+-- a forward reference here would resolve to an undefined global and error.
+local MONTH_NAMES = {"January","February","March","April","May","June","July","August","September","October","November","December"}
+local function format_redemption_date(iso)
+    local y, m, d = tostring(iso or ""):match("(%d+)-(%d+)-(%d+)")
+    if not y then return "" end
+    return string.format("%s %d, %s", MONTH_NAMES[tonumber(m)] or m, tonumber(d), y)
+end
+
 -- ── Savings Info Modal Drawing ────────────────────────────────────────────────
 -- Deliberately more of a promo/explainer than a plain info popup — a first-
 -- time player has never heard of Savings, so this leads with a big coin
@@ -379,16 +391,79 @@ local function draw_savings_info(self, ctx)
     if typing and budget > 0 then self._savings_type_done = true end
 
     local by = CY - panel_h / 2 + 46
-    mkbtn(self, "savings_info_close", vmath.vector3(CX, by, 0), vmath.vector3(260, 56, 0), "I UNDERSTAND", "primary_btn")
+    local btn_gap = 12
+    local btn_w = (panel_w - 64 - btn_gap) / 2
+    mkbtn(self, "savings_try_it", vmath.vector3(CX - btn_w/2 - btn_gap/2, by, 0), vmath.vector3(btn_w, 56, 0), "TRY IT", "primary_btn")
+    mkbtn(self, "savings_info_close", vmath.vector3(CX + btn_w/2 + btn_gap/2, by, 0), vmath.vector3(btn_w, 56, 0), "I UNDERSTAND", "secondary_btn")
 end
 
--- ── Savings helpers (backend-driven config, with a safe fallback while the
--- first SAVINGS_STATUS round-trip hasn't landed yet) ────────────────────────
-local MONTH_NAMES = {"January","February","March","April","May","June","July","August","September","October","November","December"}
-local function format_redemption_date(iso)
-    local y, m, d = tostring(iso or ""):match("(%d+)-(%d+)-(%d+)")
-    if not y then return "" end
-    return string.format("%s %d, %s", MONTH_NAMES[tonumber(m)] or m, tonumber(d), y)
+-- ── Savings Plans Modal Drawing ───────────────────────────────────────────────
+-- Reached via the info modal's "TRY IT" button. Where draw_savings_info leads
+-- with the coin bundle and the "why", this one continues the story into the
+-- concrete "how": the two actual paths into Savings (auto-charge per game,
+-- or exchange coins now), each illustrated with its own payoff, before a
+-- single "GET STARTED" CTA that hands off to the real controls already
+-- built on the payments SAVE COINS tab.
+local function draw_savings_plans(self, ctx)
+    if not self.savings_plans_open then return end
+
+    local track = ctx.track
+    local ui    = ctx.ui
+    local txtL  = ctx.txtL
+    local mkbtn = ctx.mkbtn
+    local C     = ctx.C
+    local CX, CY = ctx.CX, ctx.CY
+    local COL_SAVINGS = vmath.vector4(0.20, 0.75, 0.55, 1.0)
+
+    local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.78)))
+    self.buttons[#self.buttons+1] = { node = dim, id = "savings_plans_block" }
+    track(self, ui.grad_backdrop(ctx.LOGICAL_W, ctx.LOGICAL_H))
+
+    local panel_w, panel_h = 480, 560
+    track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
+
+    local top = CY + panel_h / 2
+    local cy = top - 44
+    track(self, ui.text(vmath.vector3(CX, cy, 0), "START SAVING", "title", C.COL_GOLD))
+    cy = cy - 30
+    track(self, ui.text(vmath.vector3(CX, cy, 0), "Two ways in - pick one, or both.", "small", C.COL_WHITE))
+    cy = cy - 34
+
+    local card_w, card_h = panel_w - 48, 150
+    local card_x = CX
+
+    local function plan_card(headline, lines, cy_top)
+        local card_cy = cy_top - card_h / 2
+        track(self, ui.box(vmath.vector3(card_x, card_cy, 0), vmath.vector3(card_w, card_h, 0), vmath.vector4(1, 1, 1, 0.05)))
+        track(self, ui.box(vmath.vector3(card_x - card_w/2 + 3, card_cy, 0), vmath.vector3(6, card_h, 0), COL_SAVINGS))
+        local inner_x = card_x - card_w/2 + 26
+        txtL(self, inner_x, cy_top - 24, headline, "body", C.COL_WHITE)
+        local ly = cy_top - 52
+        for _, line in ipairs(lines) do
+            txtL(self, inner_x, ly, line, "small", C.COL_DIM)
+            ly = ly - 20
+        end
+        return cy_top - card_h
+    end
+
+    cy = plan_card("EVERY GAME YOU PLAY", {
+        "Turn on auto-charge and a small amount",
+        "saves itself each game - no extra taps,",
+        "it just quietly builds up over time.",
+    }, cy)
+    cy = cy - 18
+
+    cy = plan_card("RIGHT NOW, IN ONE GO", {
+        "Exchange some of today's balance into",
+        "Savings whenever you're ahead - lock in",
+        "a win before you're tempted to spend it.",
+    }, cy)
+    cy = cy - 26
+
+    track(self, ui.text(vmath.vector3(CX, cy, 0), "Either way, it's yours whenever redemption opens.", "small", C.COL_GOLD))
+
+    local by = CY - panel_h / 2 + 46
+    mkbtn(self, "savings_plans_start", vmath.vector3(CX, by, 0), vmath.vector3(260, 56, 0), "GET STARTED", "primary_btn")
 end
 
 local function exchange_bounds()
@@ -751,6 +826,7 @@ function M.draw(self, ctx, left_M)
     draw_battle_modal(self, ctx)
     draw_invite_search(self, ctx)
     draw_savings_info(self, ctx)
+    draw_savings_plans(self, ctx)
     draw_savings_add(self, ctx)
 end
 
