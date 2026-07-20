@@ -321,6 +321,10 @@ function init(self)
     end
     self.nodes, self.buttons, self.stake_index, self.tab, self.list_scroll, self._tick = {}, {}, default_idx, TAB_QUICK, 0, 0
     app_state.selected_stake = app_state.selected_stake or config.STAKE_LEVELS[self.stake_index]
+    -- Plays the "Tap a player..." helper text out as a one-shot typing
+    -- animation the first time this screen is shown this session, so a
+    -- first-time visitor's eye is drawn to it (see update()/online_center.lua).
+    self._tap_hint_active, self._tap_hint_t = true, 0
     refresh_wh(); update_season(self)
 end
 
@@ -346,6 +350,12 @@ function update(self, dt)
             for i = #self.banners, 1, -1 do if self.banners[i].request_id == b.request_id then table.remove(self.banners, i) end end
             if #self.banners == 0 then self.banners = nil end
         end
+        need_rebuild = true
+    end
+
+    -- ── First-time "Tap a player..." typing hint (see init()) ─────────────
+    if self._tap_hint_active then
+        self._tap_hint_t = (self._tap_hint_t or 0) + dt
         need_rebuild = true
     end
 
