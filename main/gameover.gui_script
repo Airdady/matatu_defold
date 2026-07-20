@@ -817,8 +817,12 @@ function on_message(self, message_id, message)
 		apply_layout(self, has_score, subtitle ~= "", has_stats)
 
 		-- Set independently of score_nodes/apply_layout (see note above): only
-		-- visible when this game actually deducted into Savings.
-		local show_savings = has_score and my_savings_deducted > 0
+		-- visible when this game actually deducted into Savings. Must NOT also
+		-- require has_score — that's forced false for 4-player bracket results
+		-- (t4_champion/t4_human_out), which would silently hide a real Savings
+		-- deduction on exactly the result screens where the player most needs
+		-- to see where their coins went.
+		local show_savings = my_savings_deducted > 0
 		gui.set_enabled(self.n_you_savings, show_savings)
 		if show_savings then
 			gui.set_text(self.n_you_savings, "🏦 -" .. commas(my_savings_deducted) .. " to Savings")
