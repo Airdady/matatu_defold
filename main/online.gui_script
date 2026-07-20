@@ -401,7 +401,7 @@ end
 
 function on_message(self, message_id, message, sender)
     if message_id == hash("screen_enter") then
-        msg.post(".", "acquire_input_focus"); self._active, self.dialog, self.banners, self.list_scroll, self.battle_modal, self.invite_search, app_state.searching_invite, self.savings_info_open, self.savings_add_open = true, nil, nil, 0, nil, nil, false, nil, nil
+        msg.post(".", "acquire_input_focus"); self._active, self.dialog, self.banners, self.list_scroll, self.battle_modal, self.invite_search, app_state.searching_invite, self.savings_info_open, self.savings_add_open, self.savings_plans_open = true, nil, nil, 0, nil, nil, false, nil, nil, nil
         -- Auto-open the Savings explainer (modules/online_right.lua's
         -- draw_savings_info, normally only reached via a small "i" icon a
         -- first-time player would likely never notice) once per session,
@@ -574,6 +574,21 @@ function on_input(self, action_id, action)
                 elseif id == "nav_account" then msg.post("#controller", "goto_profile")
                 elseif id == "savings_info" then self.savings_info_open = true; rebuild(self)
                 elseif id == "savings_info_close" or id == "savings_info_block" then self.savings_info_open = false; rebuild(self)
+                elseif id == "savings_try_it" then
+                    -- Continue the same story into the "how" instead of just
+                    -- closing the explainer — see draw_savings_plans.
+                    self.savings_info_open = false
+                    self.savings_plans_open = true
+                    rebuild(self)
+                elseif id == "savings_plans_close" or id == "savings_plans_block" then
+                    self.savings_plans_open = false; rebuild(self)
+                elseif id == "savings_plans_start" then
+                    self.savings_plans_open = false
+                    -- Hand off to the real controls already built on the
+                    -- payments SAVE COINS tab (screen_enter there consumes
+                    -- this once) instead of duplicating them in the promo.
+                    app_state.open_payments_tab = "SAVE COINS"
+                    msg.post("#controller", "goto_payments")
                 elseif id == "savings_add" then
                     if not self.savings_add then
                         -- Seed from the parked SAVINGS_STATUS payload so the
