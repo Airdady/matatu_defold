@@ -5,6 +5,7 @@ local ui        = require("modules.ui")
 local config    = require("modules.config")
 local app_state = require("modules.app_state")
 local ws        = require("modules.websocket_manager")
+local api       = require("modules.api_service")
 local screen    = require("modules.screen")
 local GameMode  = require("modules.game_mode")
 
@@ -100,6 +101,20 @@ local function refresh_wh()
 end
 
 local function commas(n) return (tostring(math.floor(tonumber(n) or 0)):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")) end
+
+-- Every player must go through the Savings explainer exactly once (ever, not
+-- just once per app session) — persisted server-side so it survives a
+-- restart. Called the instant the player leaves it any way (a button tap or
+-- the background scrim), not just on an explicit "done" action.
+local function mark_savings_promo_seen()
+    local u = ws.current_user_data
+    if not u or u.savingsPromoSeen == true then return end
+    u.savingsPromoSeen = true
+    local uid = ws.get_current_user_id()
+    if uid and uid ~= "" then
+        pcall(api.update_profile, uid, { savingsPromoSeen = true }, function() end)
+    end
+end
 local function clear(self) for _, n in ipairs(self.nodes) do pcall(gui.delete_node, n) end; self.nodes, self.buttons = {}, {} end
 local function track(self, n) self.nodes[#self.nodes+1] = n; return n end
 local function txtL(self, x, y, str, font, color) local t = track(self, ui.text(vmath.vector3(x, y, 0), str, font, color)); gui.set_pivot(t, gui.PIVOT_W); return t end
@@ -404,11 +419,13 @@ function on_message(self, message_id, message, sender)
         msg.post(".", "acquire_input_focus"); self._active, self.dialog, self.banners, self.list_scroll, self.battle_modal, self.invite_search, app_state.searching_invite, self.savings_info_open, self.savings_add_open, self.savings_plans_open = true, nil, nil, 0, nil, nil, false, nil, nil, nil
         -- Auto-open the Savings explainer (modules/online_right.lua's
         -- draw_savings_info, normally only reached via a small "i" icon a
-        -- first-time player would likely never notice) once per session,
-        -- so new users actually learn what Savings is. It already has a
-        -- clear CLOSE button (savings_info_close) to dismiss.
-        if not self._savings_promo_shown then
-            self._savings_promo_shown = true
+        -- first-time player would likely never notice) exactly once EVER —
+        -- savingsPromoSeen is persisted server-side (see mark_savings_promo_
+        -- seen), not just tracked for this app session, so every player goes
+        -- through this step once and it never comes back uninvited after
+        -- that. It already has a clear CLOSE button (savings_info_close).
+        local u = ws.current_user_data or {}
+        if u.savingsPromoSeen ~= true then
             self.savings_info_open = true
         end
         refresh_wh(); rebuild(self)
@@ -573,10 +590,13 @@ function on_input(self, action_id, action)
                 elseif id == "nav_support" then msg.post("#controller", "goto_support")
                 elseif id == "nav_account" then msg.post("#controller", "goto_profile")
                 elseif id == "savings_info" then self.savings_info_open = true; rebuild(self)
-                elseif id == "savings_info_close" or id == "savings_info_block" then self.savings_info_open = false; rebuild(self)
+                elseif id == "savings_info_close" or id == "savings_info_block" then
+                    mark_savings_promo_seen()
+                    self.savings_info_open = false; rebuild(self)
                 elseif id == "savings_try_it" then
                     -- Continue the same story into the "how" instead of just
                     -- closing the explainer — see draw_savings_plans.
+                    mark_savings_promo_seen()
                     self.savings_info_open = false
                     self.savings_plans_open = true
                     rebuild(self)
