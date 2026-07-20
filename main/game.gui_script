@@ -89,6 +89,9 @@ function on_message(self, message_id, message)
     elseif message_id == hash("t4_chamber_update") then
         t4.chamber_update(self, message)
 
+    elseif message_id == hash("t4_chamber_reflow") then
+        t4.chamber_reflow(self)
+
     elseif message_id == hash("t4_flash") then
         t4.flash(self, message)
 

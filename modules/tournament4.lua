@@ -850,6 +850,9 @@ function M.chamber_resolve(self, finisher)
             eliminated = (s.total >= self.t4.threshold),
         })
     end
+    -- This round's totals are now final — reorder the board once, here,
+    -- rather than on every incidental score update.
+    notify(GUI_HUD, "t4_chamber_reflow", {})
 
     local seq = self._seq
     timer.delay(2.0, false, function()

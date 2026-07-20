@@ -200,7 +200,7 @@ local function build(self)
 	self.n_divider = box(vmath.vector3(0, 0, 0), vmath.vector3(220, 2, 0), C_DIVIDER, gui.PIVOT_CENTER)
 	attach(self.n_divider, 0, 145)
 
-	self.n_reason = label(vmath.vector3(0, 0, 0), "Game Over", 22, C_PRIMARY, gui.PIVOT_CENTER, "helvetica_bold")
+	self.n_reason = label(vmath.vector3(0, 0, 0), "Game Over", 24, C_PRIMARY, gui.PIVOT_CENTER, "helvetica_bold")
 	attach(self.n_reason, 0, 120)
 
 	-- Avatars placed in the top center
@@ -247,7 +247,7 @@ local function build(self)
 	-- Savings auto-charge deduction (this player only — never the opponent's,
 	-- gameOverState.savingsDeducted is keyed by userId for exactly this
 	-- reason). Hidden unless a deduction actually happened this game.
-	self.n_you_savings = label(vmath.vector3(0, 0, 0), "", 13, vmath.vector4(0.20, 0.75, 0.55, 1.0), gui.PIVOT_CENTER, "helvetica_bold")
+	self.n_you_savings = label(vmath.vector3(0, 0, 0), "", 15, vmath.vector4(0.20, 0.75, 0.55, 1.0), gui.PIVOT_CENTER, "helvetica_bold")
 	attach(self.n_you_savings, -180, -115)
 	gui.set_enabled(self.n_you_savings, false)
 
@@ -279,9 +279,9 @@ local function build(self)
 
 	self.stats = {}
 	for i = 1, 3 do
-		local cap = label(vmath.vector3(0, 0, 0), "", 14, C_SECONDARY, gui.PIVOT_CENTER, "helvetica_bold")
+		local cap = label(vmath.vector3(0, 0, 0), "", 16, C_SECONDARY, gui.PIVOT_CENTER, "helvetica_bold")
 		attach(cap, 0, 0)
-		local val = label(vmath.vector3(0, 0, 0), "", 28, C_PRIMARY, gui.PIVOT_CENTER, "helvetica_bold")
+		local val = label(vmath.vector3(0, 0, 0), "", 31, C_PRIMARY, gui.PIVOT_CENTER, "helvetica_bold")
 		attach(val, 0, 0)
 		gui.set_enabled(cap, false)
 		gui.set_enabled(val, false)
@@ -682,7 +682,6 @@ function on_message(self, message_id, message)
 			elseif is_lowest_paid_stake then
 				if not has_backend_reward then balance_change = -(amount + charge) end
 				points = 3
-				win_bonus = 3
 			else
 				if not has_backend_reward then balance_change = amount end
 			end
