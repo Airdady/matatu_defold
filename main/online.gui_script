@@ -359,6 +359,12 @@ function update(self, dt)
         need_rebuild = true
     end
 
+    -- ── Savings modal typing effect (see draw_savings_info in online_right.lua) ──
+    if self.savings_info_open and not self._savings_type_done then
+        self._savings_type_t = (self._savings_type_t or 0) + dt
+        need_rebuild = true
+    end
+
     -- ── Lottery opponent-search reel ──────────────────────────────────────
     if self.invite_search and not self.invite_search.found then
         local sr = self.invite_search; sr.t, sr.spin_t, sr.dots_t = (sr.t or 0) + dt, (sr.spin_t or 0) + dt, (sr.dots_t or 0) + dt

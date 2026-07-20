@@ -272,6 +272,26 @@ local function draw_savings_info(self, ctx)
     local CX, CY = ctx.CX, ctx.CY
     local COL_SAVINGS = vmath.vector4(0.20, 0.75, 0.55, 1.0)
 
+    -- Type the copy out character by character the first time this dialog is
+    -- shown (self._savings_type_t is ticked in online.gui_script's update())
+    -- so a first-time reader's eye is pulled through it instead of it
+    -- landing as one wall of text. Every typed string here is plain ASCII —
+    -- string.sub() slices by byte, and a multi-byte UTF-8 char (✓, —) cut
+    -- mid-sequence would render as garbage, so those stay outside the budget.
+    local CHAR_INTERVAL = 0.015
+    local typing = not self._savings_type_done
+    local budget = typing and math.floor((self._savings_type_t or 0) / CHAR_INTERVAL) or math.huge
+    local function typed(full)
+        if not typing then return full end
+        if budget >= #full then
+            budget = budget - #full
+            return full
+        end
+        local shown = string.sub(full, 1, math.max(0, budget))
+        budget = 0
+        return shown
+    end
+
     local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.78)))
     self.buttons[#self.buttons+1] = { node = dim, id = "savings_info_block" }
     track(self, ui.grad_backdrop(ctx.LOGICAL_W, ctx.LOGICAL_H))
@@ -290,7 +310,7 @@ local function draw_savings_info(self, ctx)
     pcall(function() gui.set_texture(bundle, "coins"); gui.play_flipbook(bundle, hash("1000")) end)
 
     local cy = top - 66
-    track(self, ui.text(vmath.vector3(CX, cy, 0), "SAVINGS", "title", C.COL_GOLD))
+    track(self, ui.text(vmath.vector3(CX, cy, 0), typed("SAVINGS"), "title", C.COL_GOLD))
     cy = cy - 34
 
     local body_lines = {
@@ -300,7 +320,7 @@ local function draw_savings_info(self, ctx)
         "build up over time.",
     }
     for _, line in ipairs(body_lines) do
-        track(self, ui.text(vmath.vector3(CX, cy, 0), line, "small", C.COL_WHITE))
+        track(self, ui.text(vmath.vector3(CX, cy, 0), typed(line), "small", C.COL_WHITE))
         cy = cy - 22
     end
 
@@ -308,19 +328,25 @@ local function draw_savings_info(self, ctx)
     track(self, ui.box(vmath.vector3(CX, cy, 0), vmath.vector3(panel_w - 64, 1, 0), vmath.vector4(1, 1, 1, 0.14)))
     cy = cy - 26
 
-    track(self, ui.text(vmath.vector3(CX, cy, 0), "WHY IT'S WORTH IT", "small", C.COL_DIM))
+    track(self, ui.text(vmath.vector3(CX, cy, 0), typed("WHY IT'S WORTH IT"), "small", C.COL_DIM))
     cy = cy - 28
 
     local advantages = {
-        "Never resets or expires — it only grows",
+        "Never resets or expires, it only grows",
         "Turn on auto-charge to save a little every game",
         "A safety net of coins for later, built up passively",
         "Rewards you just for playing through the Season",
     }
     local bullet_x = CX - panel_w / 2 + 32
     for _, line in ipairs(advantages) do
-        txtL(self, bullet_x, cy, "✓", "small", COL_SAVINGS)
-        txtL(self, bullet_x + 22, cy, line, "small", C.COL_WHITE)
+        -- The checkmark glyph is multi-byte UTF-8, so it's shown in full
+        -- immediately (as soon as this row's turn comes up) rather than
+        -- being subject to the same byte-sliced typing as the ASCII text.
+        local line_text = typed(line)
+        if line_text ~= "" then
+            txtL(self, bullet_x, cy, "✓", "small", COL_SAVINGS)
+        end
+        txtL(self, bullet_x + 22, cy, line_text, "small", C.COL_WHITE)
         cy = cy - 24
     end
 
@@ -332,12 +358,12 @@ local function draw_savings_info(self, ctx)
     local st = ws.current_savings_status or {}
     local redemption_str = format_redemption_date(st.nextRedemptionDate)
     if redemption_str ~= "" then
-        track(self, ui.text(vmath.vector3(CX, cy, 0), "Next redemption: " .. redemption_str, "small", C.COL_GOLD))
+        track(self, ui.text(vmath.vector3(CX, cy, 0), typed("Next redemption: " .. redemption_str), "small", C.COL_GOLD))
         cy = cy - 26
     end
 
     local pct = math.max(0, math.min(100, tonumber(st.periodProgressPercent) or 0))
-    track(self, ui.text(vmath.vector3(CX, cy, 0), "SAVINGS PERIOD PROGRESS", "small", C.COL_DIM))
+    track(self, ui.text(vmath.vector3(CX, cy, 0), typed("SAVINGS PERIOD PROGRESS"), "small", C.COL_DIM))
     cy = cy - 22
     local bar_w, bar_h = panel_w - 64, 14
     track(self, ui.box(vmath.vector3(CX, cy, 0), vmath.vector3(bar_w, bar_h, 0), vmath.vector4(1, 1, 1, 0.08)))
@@ -346,7 +372,11 @@ local function draw_savings_info(self, ctx)
         track(self, ui.box(vmath.vector3(CX - bar_w/2 + fill_w/2, cy, 0), vmath.vector3(fill_w, bar_h, 0), COL_SAVINGS))
     end
     cy = cy - 22
-    track(self, ui.text(vmath.vector3(CX, cy, 0), pct .. "% complete", "small", C.COL_WHITE))
+    track(self, ui.text(vmath.vector3(CX, cy, 0), typed(pct .. "% complete"), "small", C.COL_WHITE))
+
+    -- Every line above has now had its turn — once the budget outlasts the
+    -- last one, the typing pass is complete; stop ticking it in update().
+    if typing and budget > 0 then self._savings_type_done = true end
 
     local by = CY - panel_h / 2 + 46
     mkbtn(self, "savings_info_close", vmath.vector3(CX, by, 0), vmath.vector3(260, 56, 0), "I UNDERSTAND", "primary_btn")
