@@ -758,25 +758,31 @@ function M.end_game(self, player_won, is_cut, backend_results)
                 self.round_story_active = true
                 if story then notify_gui(self.gui_hud, "round_story", story) end
                 
-                -- Wait for ROUND WON text to settle
+                -- Wait for ROUND WON text to settle, then tell the backend to
+                -- start the next round right away. The chamber history
+                -- expand/hold/collapse below is a purely local visual
+                -- flourish — it used to gate the backend request behind its
+                -- own ~3s tail (hold + collapse), making the server (and the
+                -- opponent) wait far longer than the round-status banner
+                -- itself implied. start_new_online_game already defers the
+                -- actual board rebuild until round_story_active clears
+                -- (round_story_ui.lua's banner finishing), so firing the
+                -- request here is safe: the new round still can't visually
+                -- start until that banner is gone.
                 timer.delay(1.5, false, function()
+                    M.finish_round_transition(self, true)
+
                     -- Trigger History List Expansion
-                    notify_gui(self.gui_hud, "t4_chamber_expand", { 
-                        history = story.history, 
-                        players = story.players, 
-                        my_id = self.my_player_id 
+                    notify_gui(self.gui_hud, "t4_chamber_expand", {
+                        history = story.history,
+                        players = story.players,
+                        my_id = self.my_player_id
                     })
-                    
+
                     -- Hold table open for exactly 2 seconds (+0.5 for animation)
                     timer.delay(2.5, false, function()
                         -- Trigger Table Collapse back to minimal
                         notify_gui(self.gui_hud, "t4_chamber_collapse", {})
-                        
-                        -- Wait for Collapse animation to finish
-                        timer.delay(0.5, false, function()
-                            -- NOW safely accept and transition!
-                            M.finish_round_transition(self, true)
-                        end)
                     end)
                 end)
             else

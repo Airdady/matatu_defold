@@ -337,9 +337,20 @@ function init(self)
     end))
 
     local function broadcast(evt)
-        table.insert(self.tokens, ws.on(evt, function()
+        table.insert(self.tokens, ws.on(evt, function(user)
             for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile" }) do
                 msg.post("#" .. s, "user_data_updated")
+            end
+            -- The game screen has no generic user_data_updated handler (it's
+            -- driven message-by-message, not a full refresh-on-demand like
+            -- the others) — forward just the balance/rank fields it does
+            -- understand so the on-board balance goes live the moment the
+            -- backend pushes a fresh one (e.g. right after a new game's
+            -- stake is deducted), instead of only updating at screen_enter
+            -- or when the round/match ends.
+            user = user or ws.current_user_data or {}
+            if user.balance ~= nil or user.rank ~= nil then
+                msg.post("#game_logic", "ws_user_data_updated", { balance = user.balance, rank = user.rank })
             end
         end))
     end
@@ -370,6 +381,9 @@ function init(self)
         end
         for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile" }) do
             msg.post("#" .. s, "user_data_updated")
+        end
+        if new_bal then
+            msg.post("#game_logic", "ws_user_data_updated", { balance = new_bal })
         end
     end))
 
