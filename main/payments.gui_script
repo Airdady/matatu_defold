@@ -90,8 +90,12 @@ local function methods()
 		list = u.payments
 	else
 		list = {
-			{ type = "DEPOSIT",  min = 500,  charges = { { min = 0, fee = 0 } } },
-			{ type = "WITHDRAW", min = 1000, charges = { { min = 0, fee = 200 } } },
+			{ type = "BUY COINS",  min = 500,  charges = { { min = 0, fee = 0 } } },
+			{ type = "SELL COINS", min = 5000, charges = {
+				{ min = 3000,  max = 25000, fee = 800 },
+				{ min = 25001, max = 50000, fee = 1000 },
+				{ min = 50001, fee = 1500 },
+			} },
 		}
 	end
 
@@ -104,7 +108,7 @@ local function methods()
 		end
 		-- Always leave at least a deposit option so the dialog stays usable.
 		if #filtered == 0 then
-			filtered = { { type = "DEPOSIT", min = 500, charges = { { min = 0, fee = 0 } } } }
+			filtered = { { type = "BUY COINS", min = 500, charges = { { min = 0, fee = 0 } } } }
 		end
 		return filtered
 	end
