@@ -341,7 +341,14 @@ function M.begin_turn(self)
         self.t4.turn_timer_seq = (self.t4.turn_timer_seq or 0) + 1
         local seq = self.t4.turn_timer_seq
         timer.delay(30.0, false, function()
-            if seq == self.t4.turn_timer_seq and not self.game_over and self.t4.human_alive then
+            -- Belt-and-suspenders alongside game.script's t4_cancel_afk_timer
+            -- (called the instant a tap is accepted, before turn_timer_seq
+            -- would otherwise only bump once the play's animation/resolution
+            -- fully lands): also refuse to fire while an action is already
+            -- mid-flight, so a legal last-second play can never still get
+            -- force-eliminated regardless of which path missed the bump.
+            if seq == self.t4.turn_timer_seq and not self.game_over and self.t4.human_alive
+                and not self.is_local_action_locked and not self.is_animating then
                 notify(GUI_HUD, "t4_flash", { text = "TIME OUT!" })
                 timer.delay(1.0, false, function()
                     if not self.game_over then 
