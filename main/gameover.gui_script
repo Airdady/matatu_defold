@@ -4,6 +4,19 @@ local app_state = require("modules.app_state")
 local ws_ok, ws = pcall(require, "modules.websocket_manager")
 local confetti_fx = require("modules.confetti_fx")
 local sound = require("modules.sound")
+local config = require("modules.config")
+
+-- Lowest real-money (non-Free) stake tier for the active game — Matatu moved
+-- this from 50 to 100 (Whot/Kadi keep their own lowest tier), so the bonus-
+-- points fallback below must track config.STAKE_LEVELS instead of a hardcoded
+-- amount, or it silently goes dead the moment a game's tier list changes.
+local LOWEST_PAID_STAKE = nil
+for _, tier in ipairs(config.STAKE_LEVELS) do
+	local amt = tonumber(tier.amount) or 0
+	if amt > 0 and (not LOWEST_PAID_STAKE or amt < LOWEST_PAID_STAKE) then
+		LOWEST_PAID_STAKE = amt
+	end
+end
 
 local LOGICAL_W = 1280
 local LOGICAL_H = 720
@@ -30,6 +43,11 @@ local C_BTN_TEXT  = vmath.vector4(0.020, 0.090, 0.110, 1.0) -- dark text on cyan
 
 local AVATAR_SIZE = 100
 local AVATAR_IMG  = 84
+
+-- Mirrors game.script's REPLAY_TIMEOUT — how long we wait for the opponent
+-- to accept a rematch before game.script gives up and returns to the lobby.
+-- Shown here as a visible countdown so a "WAITING..." tap doesn't look stuck.
+local REPLAY_WAIT_SECONDS = 10
 
 local GRADIENT_ID = "go_radial_gradient"
 
@@ -484,6 +502,15 @@ function update(self, dt)
 
 	confetti_fx.update(self, dt)
 	if self.confetti_running then confetti_fx.bring_to_front(self) end
+
+	if self.replay_countdown then
+		self.replay_countdown = math.max(0, self.replay_countdown - dt)
+		local shown = math.ceil(self.replay_countdown)
+		if shown ~= self.replay_countdown_shown then
+			self.replay_countdown_shown = shown
+			gui.set_text(self.n_again_lbl, "WAITING... " .. shown .. "s")
+		end
+	end
 end
 
 -- INPUT
@@ -512,7 +539,13 @@ function on_input(self, action_id, action)
 		self.locked = true
 
 		-- UPDATE button to show "waiting" status instead of instantly closing out!
-		gui.set_text(self.n_again_lbl, "WAITING...")
+		-- The countdown (ticked in update()) mirrors game.script's REPLAY_TIMEOUT
+		-- so the player can see how long they're waiting instead of the button
+		-- just looking stuck until it either starts a new game or bounces them
+		-- back to the lobby.
+		self.replay_countdown = REPLAY_WAIT_SECONDS
+		self.replay_countdown_shown = nil
+		gui.set_text(self.n_again_lbl, "WAITING... " .. REPLAY_WAIT_SECONDS .. "s")
 		gui.set_color(self.n_again_bg, C_SECONDARY)
 
 		msg.post(GAME, "replay")
@@ -553,6 +586,7 @@ function on_message(self, message_id, message)
 		set_visible(self, true)
 
 		-- Revert visual style of the button every time we appear
+		self.replay_countdown = nil
 		gui.set_text(self.n_again_lbl, "PLAY AGAIN")
 		gui.set_color(self.n_again_bg, C_VICTORY)
 
@@ -609,7 +643,7 @@ function on_message(self, message_id, message)
 
 		local balance_change = 0
 		local win_bonus      = 0
-		local is_50_stake    = (amount == 50)
+		local is_lowest_paid_stake    = (LOWEST_PAID_STAKE ~= nil and amount == LOWEST_PAID_STAKE)
 
 		local rewards = res.rewards or {}
 		local has_backend_reward = false
@@ -645,7 +679,7 @@ function on_message(self, message_id, message)
 				points = 0
 			elseif game_type == "TOURNAMENT" then
 				if not has_backend_reward then balance_change = 0 end
-			elseif is_50_stake then
+			elseif is_lowest_paid_stake then
 				if not has_backend_reward then balance_change = -(amount + charge) end
 				points = 3
 				win_bonus = 3
@@ -654,7 +688,7 @@ function on_message(self, message_id, message)
 			end
 		else
 			if not has_backend_reward then balance_change = -(amount + charge) end
-			if is_50_stake then points = 3 end
+			if is_lowest_paid_stake then points = 3 end
 			if is_no_show then points = 0 end
 		end
 
@@ -802,6 +836,7 @@ function on_message(self, message_id, message)
 
 	elseif message_id == hash("reset_hud") then
 		self.locked = false
+		self.replay_countdown = nil
 		clear_confetti(self)
 		set_visible(self, false)
 

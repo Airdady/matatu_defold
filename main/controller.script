@@ -424,7 +424,12 @@ function init(self)
         msg.post("#game_logic", "ws_player_dc", { grace = info.grace or 30, player_id = info.player_id or "" })
     end))
     table.insert(self.tokens, ws.on("player_reconnected", function(info)
-        msg.post("#game_logic", "ws_player_rc", { player_id = (info or {}).player_id or "" })
+        info = info or {}
+        -- Carry the fresh gameState PLAYER_RECONNECTED delivers along with it —
+        -- without it game.script falls back to its own stale pre-disconnect
+        -- game_state (expired turnExpiresAt), which is why the turn-timer pie
+        -- ends up stuck invisible after a reconnect (see ws_player_rc there).
+        msg.post("#game_logic", "ws_player_rc", { player_id = info.player_id or "", state = info.state })
     end))
 
     table.insert(self.tokens, ws.on("disconnected",      function() msg.post("#game_logic", "ws_net_down") end))

@@ -676,7 +676,7 @@ end
 ----------------------------------------------------------------------
 -- Replay (rematch) request lifecycle
 ----------------------------------------------------------------------
-local REPLAY_TIMEOUT = 12.0
+local REPLAY_TIMEOUT = 10.0
 
 local function replay_failed(self, reason)
     if not self.awaiting_replay then return end
@@ -1048,7 +1048,16 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("ws_player_rc") then
         notify_gui(self.gui_hud, "conn_overlay", { show = false })
         -- Opponent reconnected: refresh the turn rings so the active player shows.
+        -- self.game_state is whatever we last had BEFORE the disconnect, so its
+        -- turnExpiresAt is already in the past — sync_timers would clamp the
+        -- remaining time to 0 and the pie would come back enabled but empty
+        -- (invisible) instead of showing whose turn it actually is. Prefer the
+        -- fresh state PLAYER_RECONNECTED carried, falling back to whatever
+        -- ws.active_game_state was last updated to (IDENTIFY/GAME_STATE_SYNC).
         if self.online_mode and not self.game_over then
+            local fresh = (type(message.state) == "table" and next(message.state) ~= nil and message.state)
+                or (type(ws.active_game_state) == "table" and next(ws.active_game_state) ~= nil and ws.active_game_state)
+            if fresh then self.game_state = fresh end
             OnlineHandler.sync_timers(self, self.game_state or {})
         end
 
@@ -1087,10 +1096,16 @@ function on_message(self, message_id, message, sender)
 
     elseif message_id == hash("ws_net_up") then
         notify_gui(self.gui_hud, "conn_overlay", { show = false })
-        -- Reconnected: re-assert the turn timer from the last known state so the
-        -- active player's pie ring reappears. A silent reconnect delivers no
-        -- fresh timer update, so without this the rings stay blank.
+        -- Reconnected: re-assert the turn timer from the freshest known state so
+        -- the active player's pie ring reappears. self.game_state is whatever
+        -- we had BEFORE this client dropped offline, so its turnExpiresAt is
+        -- already in the past — sync_timers would clamp remaining time to 0
+        -- and the pie would come back enabled but empty (invisible) on both
+        -- avatars instead of showing whose turn it is. IDENTIFY (which every
+        -- reconnect runs) keeps ws.active_game_state current, so prefer that.
         if self.online_mode and not self.game_over then
+            local fresh = type(ws.active_game_state) == "table" and next(ws.active_game_state) ~= nil and ws.active_game_state
+            if fresh then self.game_state = fresh end
             OnlineHandler.sync_timers(self, self.game_state or {})
         end
 
