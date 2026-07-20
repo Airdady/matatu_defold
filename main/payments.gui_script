@@ -445,6 +445,12 @@ rebuild = function(self)
 		ktext(self, vmath.vector3(lx, info_cy - 30, 0), self._msg, 16, col)
 	end
 
+	-- "Powered by" payment-provider badge, bottom of the left column, below
+	-- every input/status element above it.
+	local pb_h = 48
+	local pb_w = pb_h * (548 / 108) -- assets/ui/payments.png's native aspect ratio
+	track(self, ui.image(vmath.vector3(lx, info_cy - 30 - pb_h/2 - 20, 0), vmath.vector3(pb_w, pb_h, 0), "payments"))
+
 	-- ── RIGHT COLUMN: numpad ─────────────────────────────────────────────────
 	local np_x0 = lx_left + left_w + CG
 	local kw = numpad_w / 3
