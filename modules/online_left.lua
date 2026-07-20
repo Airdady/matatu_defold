@@ -74,6 +74,7 @@ function M.draw(self, ctx)
     local txtR      = ctx.txtR
     local glass     = ctx.glass
     local commas    = ctx.commas
+    local mkbtn     = ctx.mkbtn
     local get_layout = ctx.get_layout
 
     local _, _, div_lx = get_layout()
@@ -82,12 +83,12 @@ function M.draw(self, ctx)
     local cy = ctx.EDGE_T - 16
     local ctx_ui = ctx.ui
 
-    -- The back button (nav_lobby) and the "SEASON ENDS IN" countdown that
-    -- used to share a row here have both moved off this panel — the back
-    -- button now lives in the ONLINE screen's center header
-    -- (modules/online_center.lua) and the countdown lives in the lobby
-    -- header (main/lobby.gui_script) — so the Standings container starts
-    -- right at the top of the panel with no reserved row above it.
+    -- The "SEASON ENDS IN" countdown that used to share a row here now
+    -- lives in the lobby header (main/lobby.gui_script) — so the Standings
+    -- container starts right at the top of the panel with no reserved row
+    -- above it. The back-to-lobby button (nav_lobby) lives at the BOTTOM of
+    -- this panel instead, below Season Bonuses — see the end of this
+    -- function — rather than as a bare "<" icon in the center header.
 
     -- Global Container Padding/Spacing Logic
     -- pad_top increased and title_space decreased to push title down toward the table
@@ -213,6 +214,21 @@ function M.draw(self, ctx)
     cy = cy - pad_bot - C.BLOCK_GAP
     -- Updated footer text
     track(self, ctx_ui.text(vmath.vector3(cx, cy, 0), "Get more points to rank high", "small", C.COL_DIM))
+
+    -- ── Back to Lobby ────────────────────────────────────────────────────────
+    -- Moved here from the ONLINE screen's center header (modules/
+    -- online_center.lua used to draw a bare "<" icon button there) — a full
+    -- labeled row below Season Bonuses instead, mirroring the Tournaments
+    -- entry's container-button styling in modules/online_right.lua.
+    cy = cy - C.BLOCK_GAP - 24
+    local back_h  = 56
+    local back_cy = cy - back_h / 2
+    track(self, ctx_ui.box(vmath.vector3(cx, back_cy, 0), vmath.vector3(pw, back_h, 0), C.COL_BG))
+    mkbtn(self, "nav_lobby", vmath.vector3(cx, back_cy, 0), vmath.vector3(pw, back_h, 0), nil, "container_bg")
+
+    local back_icon_x = cx - pw / 2 + 34
+    track(self, ctx_ui.text(vmath.vector3(back_icon_x, back_cy, 0), "<", "btn_lg", C.COL_WHITE))
+    txtL(self, back_icon_x + 22, back_cy, "BACK TO LOBBY", "btn_lg", C.COL_WHITE)
 end
 
 return M
