@@ -420,9 +420,11 @@ function M.chamber_init(self, message)
         end
 
         -- Explain the rule at a glance — it's the opposite of most scoring
-        -- displays (lower is safer here), so spell it out under the rows.
+        -- displays (lower is safer here), so spell it out under the rows,
+        -- naming the actual cap so it's clear WHAT triggers elimination.
         local helper_y = -58 - n * T4_CHAMBER_ROW_GAP + 4
-        local helper = label(vmath.vector3(width/2, helper_y, 0), "Highest score gets eliminated", 12, vmath.vector4(0.65, 0.68, 0.72, 1), gui.PIVOT_CENTER, "body")
+        local helper_text = "Hit " .. tostring(threshold) .. " = eliminated"
+        local helper = label(vmath.vector3(width/2, helper_y, 0), helper_text, 12, vmath.vector4(0.65, 0.68, 0.72, 1), gui.PIVOT_CENTER, "body")
         gui.set_parent(helper, root)
         self.t4_chamber.helper = helper
     end)
