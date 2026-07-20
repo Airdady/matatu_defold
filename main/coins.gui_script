@@ -23,11 +23,18 @@ local COIN  = 40
 local GOLD  = vmath.vector4(1.0, 0.84, 0.30, 1)
 
 -- Tweaks for the bundle transition and sizing
-local POT_REST_RATIO_X = 0.2 -- 20% of screen width — further left, away from center
 local BUNDLE_SCALE = 1.0     -- Sitting bundle size (was 1.45 — way too large on screen)
+-- The pot's resting X position, on the left side next to the scoreboard
+-- (modules/scoreboard_ui.lua's flippers sit around hud_root's x=120, ~65px
+-- half-width). Was a screen-width ratio (0.2 * 1280 = 256) that left a much
+-- bigger gap than intended; tune this directly to whatever gap looks right
+-- next to the scoreboard on your build.
+local POT_REST_X = 220
+-- Gap (px) between the bundle image and its amount label underneath it.
+local POT_LABEL_GAP = 17
 -- The amount label sits clear BELOW the scaled bundle (118 * BUNDLE_SCALE) so it
 -- never overlays the coins. Half the scaled height + the label height + a margin.
-local POT_LABEL_DY = math.floor(118 * BUNDLE_SCALE / 2) + 17
+local POT_LABEL_DY = math.floor(118 * BUNDLE_SCALE / 2) + POT_LABEL_GAP
 -- How long the sitting bundle takes to dissolve (shrink + fade out) once it
 -- bursts into flying coins toward the winner — see coin_settle/dissolve_pot.
 local POT_DISSOLVE_DUR = 0.4
@@ -172,8 +179,8 @@ HANDLERS.coin_collect_pot = function(self, d, done)
     local cx = (d.center and d.center.x) or LOGICAL_W / 2
     local cy = (d.center and d.center.y) or LOGICAL_H / 2
     
-    -- Calculate target directly based on screen width so coins fly straight to the final left position
-    local target_x = LOGICAL_W * POT_REST_RATIO_X
+    -- Coins fly straight to the pot's resting spot next to the scoreboard.
+    local target_x = POT_REST_X
     
     -- [CRITICAL FIX]: ROUND CONTINUATION CHECK
     -- The backend sends `isContinuation = true` on round transitions,
@@ -223,7 +230,7 @@ end
 HANDLERS.coin_settle = function(self, d, done)
     local tx = (d.to and d.to.x) or LOGICAL_W - 120
     local ty = (d.to and d.to.y) or LOGICAL_H - 60
-    local px = self.pot and self.pot.x or (LOGICAL_W * POT_REST_RATIO_X)
+    local px = self.pot and self.pot.x or POT_REST_X
     local py = self.pot and self.pot.y or LOGICAL_H / 2
     local amount = (self.pot and self.pot.amount) or d.amount or 0
     dissolve_pot(self, POT_DISSOLVE_DUR)

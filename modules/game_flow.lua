@@ -1072,7 +1072,19 @@ function M.start_game(self)
     apply_stake_background(self)
     BL.update_layout(self)
 
-    notify_gui(self.gui_hud, "reset_hud", { keep_scoreboard = true })
+    -- An OFFLINE elimination-chamber/quick-bracket session (self.t4) can
+    -- never legitimately be "continued" by whatever start_game is about to
+    -- load next — that next game is either a fresh offline game or (the
+    -- reported bug) an ONLINE game the player just accepted mid-offline-
+    -- session. keep_scoreboard=true below exists so an ONLINE knockout's
+    -- own next round can preserve its chamber board, but it was applied
+    -- unconditionally, so a leftover offline self.t4/t4_chamber bled
+    -- straight into the new game's board instead of being torn down. Force
+    -- a full teardown whenever we're leaving offline t4 mode.
+    local leaving_offline_t4 = (self.t4 ~= nil) and (app.mode ~= "tournament4" and app.mode ~= "chamber4")
+    if leaving_offline_t4 then self.t4 = nil end
+
+    notify_gui(self.gui_hud, "reset_hud", { keep_scoreboard = not leaving_offline_t4 })
     notify_gui(self.gui_suit, "reset_hud")
     notify_gui(self.gui_over, "reset_hud")
 
