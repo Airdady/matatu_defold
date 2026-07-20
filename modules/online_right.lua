@@ -256,55 +256,100 @@ local function draw_battle_modal(self, ctx)
 end
 
 -- ── Savings Info Modal Drawing ────────────────────────────────────────────────
+-- Deliberately more of a promo/explainer than a plain info popup — a first-
+-- time player has never heard of Savings, so this leads with a big coin
+-- bundle to grab the eye, then spells out what it is, why it's worth caring
+-- about, and how much of the current period is left, before a single clear
+-- "I UNDERSTAND" dismiss button (same gradient-card treatment as gameover.gui_script).
 local function draw_savings_info(self, ctx)
     if not self.savings_info_open then return end
 
     local track = ctx.track
     local ui    = ctx.ui
+    local txtL  = ctx.txtL
     local mkbtn = ctx.mkbtn
     local C     = ctx.C
     local CX, CY = ctx.CX, ctx.CY
+    local COL_SAVINGS = vmath.vector4(0.20, 0.75, 0.55, 1.0)
 
-    local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.75)))
+    local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.78)))
     self.buttons[#self.buttons+1] = { node = dim, id = "savings_info_block" }
+    track(self, ui.grad_backdrop(ctx.LOGICAL_W, ctx.LOGICAL_H))
 
-    local panel_w, panel_h = 440, 380
+    local panel_w, panel_h = 460, 600
     track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
 
     local top = CY + panel_h / 2
-    track(self, ui.text(vmath.vector3(CX, top - 40, 0), "Savings", "title", C.COL_GOLD))
+
+    -- A big coin bundle peeking out the top of the card — the same "grab
+    -- attention first" treatment the game-request dialogs use for their pot.
+    -- Kept small enough (+ only a slight peek above the panel) to stay clear
+    -- of the top of a 720-tall logical screen.
+    local bundle = track(self, gui.new_box_node(vmath.vector3(CX, top + 4, 0), vmath.vector3(100, 100, 0)))
+    gui.set_color(bundle, vmath.vector4(1, 1, 1, 1))
+    pcall(function() gui.set_texture(bundle, "coins"); gui.play_flipbook(bundle, hash("1000")) end)
+
+    local cy = top - 66
+    track(self, ui.text(vmath.vector3(CX, cy, 0), "SAVINGS", "title", C.COL_GOLD))
+    cy = cy - 34
 
     local body_lines = {
         "Savings are long-term coins earned from",
         "Half-Week Season rewards. Unlike your",
         "regular balance, Savings never reset and",
-        "build up over time — cash them in during",
-        "special redemption events.",
+        "build up over time.",
     }
-    for i, line in ipairs(body_lines) do
-        track(self, ui.text(vmath.vector3(CX, top - 96 - (i - 1) * 26, 0), line, "small", C.COL_WHITE))
+    for _, line in ipairs(body_lines) do
+        track(self, ui.text(vmath.vector3(CX, cy, 0), line, "small", C.COL_WHITE))
+        cy = cy - 22
     end
 
+    cy = cy - 12
+    track(self, ui.box(vmath.vector3(CX, cy, 0), vmath.vector3(panel_w - 64, 1, 0), vmath.vector4(1, 1, 1, 0.14)))
+    cy = cy - 26
+
+    track(self, ui.text(vmath.vector3(CX, cy, 0), "WHY IT'S WORTH IT", "small", C.COL_DIM))
+    cy = cy - 28
+
+    local advantages = {
+        "Never resets or expires — it only grows",
+        "Turn on auto-charge to save a little every game",
+        "A safety net of coins for later, built up passively",
+        "Rewards you just for playing through the Season",
+    }
+    local bullet_x = CX - panel_w / 2 + 32
+    for _, line in ipairs(advantages) do
+        txtL(self, bullet_x, cy, "✓", "small", COL_SAVINGS)
+        txtL(self, bullet_x + 22, cy, line, "small", C.COL_WHITE)
+        cy = cy - 24
+    end
+
+    cy = cy - 14
+    track(self, ui.box(vmath.vector3(CX, cy, 0), vmath.vector3(panel_w - 64, 1, 0), vmath.vector4(1, 1, 1, 0.14)))
+    cy = cy - 26
+
+    -- Time-bound: this Season's Savings period, and how far through it we are.
     local st = ws.current_savings_status or {}
     local redemption_str = format_redemption_date(st.nextRedemptionDate)
     if redemption_str ~= "" then
-        track(self, ui.text(vmath.vector3(CX, top - 226, 0), "Next redemption: " .. redemption_str, "small", C.COL_GOLD))
+        track(self, ui.text(vmath.vector3(CX, cy, 0), "Next redemption: " .. redemption_str, "small", C.COL_GOLD))
+        cy = cy - 26
     end
 
-    -- Compact period-progress bar (how far through the current 6-month cycle).
     local pct = math.max(0, math.min(100, tonumber(st.periodProgressPercent) or 0))
-    track(self, ui.text(vmath.vector3(CX, top - 252, 0), "SAVINGS PERIOD PROGRESS", "small", C.COL_DIM))
-    local bar_w, bar_h, bar_y = panel_w - 64, 14, top - 274
-    local COL_SAVINGS = vmath.vector4(0.20, 0.75, 0.55, 1.0)
-    track(self, ui.box(vmath.vector3(CX, bar_y, 0), vmath.vector3(bar_w, bar_h, 0), vmath.vector4(1, 1, 1, 0.08)))
+    track(self, ui.text(vmath.vector3(CX, cy, 0), "SAVINGS PERIOD PROGRESS", "small", C.COL_DIM))
+    cy = cy - 22
+    local bar_w, bar_h = panel_w - 64, 14
+    track(self, ui.box(vmath.vector3(CX, cy, 0), vmath.vector3(bar_w, bar_h, 0), vmath.vector4(1, 1, 1, 0.08)))
     if pct > 0 then
         local fill_w = bar_w * (pct / 100)
-        track(self, ui.box(vmath.vector3(CX - bar_w/2 + fill_w/2, bar_y, 0), vmath.vector3(fill_w, bar_h, 0), COL_SAVINGS))
+        track(self, ui.box(vmath.vector3(CX - bar_w/2 + fill_w/2, cy, 0), vmath.vector3(fill_w, bar_h, 0), COL_SAVINGS))
     end
-    track(self, ui.text(vmath.vector3(CX, top - 296, 0), pct .. "% complete", "small", C.COL_WHITE))
+    cy = cy - 22
+    track(self, ui.text(vmath.vector3(CX, cy, 0), pct .. "% complete", "small", C.COL_WHITE))
 
     local by = CY - panel_h / 2 + 46
-    mkbtn(self, "savings_info_close", vmath.vector3(CX, by, 0), vmath.vector3(220, 56, 0), "CLOSE", "primary_btn")
+    mkbtn(self, "savings_info_close", vmath.vector3(CX, by, 0), vmath.vector3(260, 56, 0), "I UNDERSTAND", "primary_btn")
 end
 
 -- ── Savings helpers (backend-driven config, with a safe fallback while the
