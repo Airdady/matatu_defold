@@ -395,7 +395,17 @@ end
 
 function on_message(self, message_id, message, sender)
     if message_id == hash("screen_enter") then
-        msg.post(".", "acquire_input_focus"); self._active, self.dialog, self.banners, self.list_scroll, self.battle_modal, self.invite_search, app_state.searching_invite, self.savings_info_open, self.savings_add_open = true, nil, nil, 0, nil, nil, false, nil, nil; refresh_wh(); rebuild(self)
+        msg.post(".", "acquire_input_focus"); self._active, self.dialog, self.banners, self.list_scroll, self.battle_modal, self.invite_search, app_state.searching_invite, self.savings_info_open, self.savings_add_open = true, nil, nil, 0, nil, nil, false, nil, nil
+        -- Auto-open the Savings explainer (modules/online_right.lua's
+        -- draw_savings_info, normally only reached via a small "i" icon a
+        -- first-time player would likely never notice) once per session,
+        -- so new users actually learn what Savings is. It already has a
+        -- clear CLOSE button (savings_info_close) to dismiss.
+        if not self._savings_promo_shown then
+            self._savings_promo_shown = true
+            self.savings_info_open = true
+        end
+        refresh_wh(); rebuild(self)
         -- Actively ask for a fresh online-players list every time this
         -- screen is entered — don't just trust whatever's cached from the
         -- last (debounced, purely event-driven) server broadcast, which may

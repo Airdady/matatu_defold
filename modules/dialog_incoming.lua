@@ -92,7 +92,7 @@ function M.draw(self, ctx, d, a)
     -- Plain gold text below the timer — no boxed/bordered container, same
     -- icon-then-amount style the in-game coin pot HUD already uses
     -- (coins.gui_script's ensure_pot), instead of a separate bordered chip.
-    local st_txt = amt == 0 and "PRACTICE" or (commas(pot_amt) .. " POT")
+    local st_txt = amt == 0 and "PRACTICE" or commas(pot_amt)
     local stake_pos = vmath.vector3(CX, timer_pos.y - 30, 0)
 
     local stake_node = track(self, ui.text(stake_pos, st_txt, "helvetica_black", with_a(C.COL_GOLD, a)))

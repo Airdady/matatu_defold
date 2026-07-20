@@ -83,7 +83,7 @@ function M.draw(self, ctx, sr, reel_key)
         local bundle = track(self, gui.new_box_node(vmath.vector3(CX, ay - 18, 0), vmath.vector3(88, 88, 0)))
         gui.set_color(bundle, vmath.vector4(1, 1, 1, 1))
         pcall(function() gui.set_texture(bundle, "coins"); gui.play_flipbook(bundle, hash(img)) end)
-        track(self, ui.text(vmath.vector3(CX, ay - 74, 0), ctx.commas(pot) .. " POT", "small", C.COL_GOLD))
+        track(self, ui.text(vmath.vector3(CX, ay - 74, 0), ctx.commas(pot), "helvetica_black", C.COL_GOLD))
     else
         track(self, ui.text(vmath.vector3(CX, ay, 0), "VS", "title", vmath.vector4(1, 0.4, 0.4, 1)))
     end
