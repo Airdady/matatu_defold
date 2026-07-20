@@ -31,7 +31,7 @@ local BUNDLE_SCALE = 1.0     -- Sitting bundle size (was 1.45 — way too large 
 -- next to the scoreboard on your build.
 local POT_REST_X = 220
 -- Gap (px) between the bundle image and its amount label underneath it.
-local POT_LABEL_GAP = 17
+local POT_LABEL_GAP = -5
 -- The amount label sits clear BELOW the scaled bundle (118 * BUNDLE_SCALE) so it
 -- never overlays the coins. Half the scaled height + the label height + a margin.
 local POT_LABEL_DY = math.floor(118 * BUNDLE_SCALE / 2) + POT_LABEL_GAP
