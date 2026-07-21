@@ -628,10 +628,12 @@ local function rebuild_body(self)
     -- Coin icon positioned on the left edge of the balance box
     self.top_left_coin_node = track(self, ui.image(vmath.vector3(bal_cx - bal_w/2 + 26, bal_cy, 0), vmath.vector3(44, 44, 0), "coin_icon"))
 
-    -- ── LEFT DOCK: Global Championship Title ──
-    track(self, ui.box(vmath.vector3(EDGE_L + 22, CY, 0), vmath.vector3(45, VISIBLE_H * 2, 0), vmath.vector4(0, 0, 0, 1)))
-
-    local vtitle = track(self, ui.text(vmath.vector3(EDGE_L + 76, CY, 0), (t.name or "Global Championship"):upper(), "title", vmath.vector4(1, 1, 1, 0.9)))
+    -- ── LEFT DOCK: Global Championship Title (watermark) ──
+    -- Shares the same left margin as the BACK button and the pro-tip box
+    -- (LEFT_TEXT_X), faded to 40% opacity so it reads as a watermark. The
+    -- solid black side bar that used to back it at the extreme left edge was
+    -- removed along with the old placement.
+    local vtitle = track(self, ui.text(vmath.vector3(LEFT_TEXT_X, CY, 0), (t.name or "Global Championship"):upper(), "title", vmath.vector4(1, 1, 1, 0.4)))
     gui.set_rotation(vtitle, vmath.quat_rotation_z(math.pi / 2))
 
     -- ── LEFT-ALIGNED TOURNAMENT INFO (Timer, Description, Progress Note) ──
