@@ -29,7 +29,7 @@ local BUNDLE_SCALE = 1.0     -- Sitting bundle size (was 1.45 — way too large 
 -- half-width). Was a screen-width ratio (0.2 * 1280 = 256) that left a much
 -- bigger gap than intended; tune this directly to whatever gap looks right
 -- next to the scoreboard on your build.
-local POT_REST_X = 220
+local POT_REST_X = 180
 -- Gap (px) between the bundle image and its amount label underneath it.
 local POT_LABEL_GAP = -5
 -- The amount label sits clear BELOW the scaled bundle (118 * BUNDLE_SCALE) so it
