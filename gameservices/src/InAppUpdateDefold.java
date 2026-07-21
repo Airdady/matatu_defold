@@ -38,14 +38,38 @@ public class InAppUpdateDefold implements InstallStateUpdatedListener {
 
     public void checkForUpdate() {
         if (activity == null || appUpdateManager == null) return;
-        
+
         nativeLog(0, "Querying Google Play API for application metadata updates...");
         Task<AppUpdateInfo> appUpdateInfoTask = appUpdateManager.getAppUpdateInfo();
         appUpdateInfoTask.addOnSuccessListener(info -> {
             this.appUpdateInfo = info;
             boolean available = info.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE;
+            boolean resuming = info.updateAvailability() == UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS;
             nativeLog(0, "Google Play task response parsed. Update Availability matches: " + available);
             onUpdateAvailable(available);
+
+            // Force the player through the update the instant they open the
+            // app — no prompt, no skip, no Lua round-trip. IMMEDIATE shows
+            // Play's own full-screen blocking UI; if Play won't allow
+            // IMMEDIATE for this update (e.g. rollout/eligibility rules),
+            // fall back to FLEXIBLE and auto-restart the moment the download
+            // finishes (see onStateUpdate) so the player still can't keep
+            // playing on the old version.
+            if (available) {
+                if (info.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE)) {
+                    nativeLog(0, "Update available: forcing IMMEDIATE update flow.");
+                    startImmediateUpdate();
+                } else if (info.isUpdateTypeAllowed(AppUpdateType.FLEXIBLE)) {
+                    nativeLog(0, "IMMEDIATE not allowed for this update; forcing FLEXIBLE with auto-restart instead.");
+                    startFlexibleUpdate();
+                } else {
+                    nativeLog(1, "Update available but Play disallows both IMMEDIATE and FLEXIBLE for it.");
+                }
+            } else if (resuming) {
+                // An immediate update was already in progress (app was killed
+                // or backgrounded mid-flow) — resume forcing it right away.
+                resumeUpdate();
+            }
         }).addOnFailureListener(e -> {
             nativeLog(2, "Google Play version collection skipped or rejected: " + e.getMessage());
             onUpdateFailed("Check Failed: " + e.getMessage());
@@ -99,9 +123,14 @@ public class InAppUpdateDefold implements InstallStateUpdatedListener {
     @Override
     public void onStateUpdate(InstallState state) {
         if (state.installStatus() == InstallStatus.DOWNLOADED) {
-            nativeLog(0, "Local asset compilation caching successfully closed. Package ready.");
+            // This listener only ever runs for the FLEXIBLE forced-fallback
+            // path (registered solely in startUpdate() for AppUpdateType.FLEXIBLE),
+            // so the download finishing means it's time to force the restart
+            // immediately — there's no "tap to restart" prompt to wait on.
+            nativeLog(0, "Local asset compilation caching successfully closed. Package ready. Forcing restart to install.");
             onUpdateDownloaded();
             unregisterListenerSafely();
+            completeUpdate();
         } else if (state.installStatus() == InstallStatus.CANCELED || state.installStatus() == InstallStatus.FAILED) {
             nativeLog(2, "Update step ended or dropped: " + state.installStatus());
             unregisterListenerSafely();
@@ -110,9 +139,12 @@ public class InAppUpdateDefold implements InstallStateUpdatedListener {
 
     public void onActivityResult(int resultCode) {
         if (resultCode != Activity.RESULT_OK) {
-            nativeLog(2, "Active player rejected update dialogue challenge window.");
+            nativeLog(2, "Active player rejected/backed out of the forced update flow. Re-triggering.");
             unregisterListenerSafely();
             onUpdateFailed("Flow Cancelled or Failed");
+            // Force means force: don't let the player slip past a
+            // cancelled/back-pressed update — immediately show it again.
+            checkForUpdate();
         }
     }
 
