@@ -844,6 +844,46 @@ function update(self, dt)
     end
 end
 
+-- Deferred "advance to next level" hop: set by the gameover dialog's NEXT
+-- LEVEL button (app_state.tournament_level_up_target = the owner's new backend
+-- level). Once the map's data reflects that level, animate the pin jumping
+-- from the previous step to the new one. Waits silently while the user-data
+-- refresh is still in flight (user_data_updated re-attempts), and drops the
+-- flag if the data is already past the target (nothing sensible to animate).
+local function try_level_up_jump(self)
+    local target = tonumber(app_state.tournament_level_up_target)
+    if not target then return end
+    if self.is_moving or self.search then return end
+
+    local target_idx = math.max(0, target - 1)
+    if target_idx < 1 then app_state.tournament_level_up_target = nil return end -- invalid target
+    local cur = self.current_level_index or 0
+    if cur > target_idx then app_state.tournament_level_up_target = nil return end -- already past it
+    if cur ~= target_idx then return end -- data not fresh yet; retried on user_data_updated
+
+    app_state.tournament_level_up_target = nil
+
+    local s = self.scale_factor or 1
+    local ox = CX - (MAP_W * s) / 2
+    local oy = CY - (MAP_H * s) / 2
+    local prev = target_idx - 1
+    local start_coord = (prev == 0) and LANDING or MAP_COORDS[prev]
+    local end_coord = MAP_COORDS[target_idx] or MAP_COORDS[self.final_index]
+    if not (start_coord and end_coord) then return end
+
+    self.is_moving = true
+    self.animating_from = prev
+    rebuild(self) -- draws the rig back at the previous step
+
+    local start_pos = vmath.vector3(ox + start_coord.x * s, oy + (MAP_H - start_coord.y) * s, 0)
+    local end_pos = vmath.vector3(ox + end_coord.x * s, oy + (MAP_H - end_coord.y) * s, 0)
+    animate_jump(self, start_pos, end_pos, function()
+        self.is_moving = false
+        self.animating_from = nil
+        if self._active then rebuild(self) end
+    end)
+end
+
 function on_message(self, message_id, message, sender)
     if message_id == hash("screen_enter") then
         refresh_wh()
@@ -855,6 +895,7 @@ function on_message(self, message_id, message, sender)
         self.is_moving = false
         app_state.searching_tournament = false
         rebuild(self)
+        try_level_up_jump(self)
     elseif message_id == hash("enable") then
         self._active = true
         -- Without this, re-showing the screen while a search overlay was active
@@ -868,7 +909,13 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("layout_changed") or message_id == hash("user_data_updated") then
         refresh_wh()
         -- CRITICAL: Prevent structural rebuilds if animations are playing!
-        if self._active and not self.is_moving then rebuild(self) end
+        if self._active and not self.is_moving then
+            rebuild(self)
+            -- Re-attempt the deferred NEXT LEVEL pin hop — the user-data
+            -- refresh carrying the new tournament level may only land here,
+            -- after the screen was already entered.
+            try_level_up_jump(self)
+        end
     elseif message_id == hash("ws_match_found") then
         self.is_moving = false
         if self.search then
