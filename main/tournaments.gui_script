@@ -885,7 +885,9 @@ proceed_with_play = function(self, d)
         stake    = d.stake,
         max_time = 30,
         modal    = true,                 -- scrim swallows taps to the map behind
-        cancel_id = "cancel_search",
+        -- No cancel_id: the backend has no way to actually withdraw a
+        -- tournament request once sent, so a Cancel button here would lie —
+        -- the opponent could still accept it after the player "cancelled".
         subtitle = "finding you an opponent",
     }
     self.is_moving = false
@@ -977,9 +979,6 @@ local function handle(self, b)
         else
             execute_jump_and_play(self, d)
         end
-    elseif b.id == "cancel_search" then
-        pcall(msg.post, "#snd_suspense", "stop_sound")
-        stop_search(self)
     end
 end
 

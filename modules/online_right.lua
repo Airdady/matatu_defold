@@ -939,7 +939,10 @@ function M.start_invite_search(self, app_state, rebuild_cb, battle_type)
 
     self.invite_search = {
         active = true, t = 0, reel_ix = math.random(INVITE_AVATAR_MAX), spin_t = 0, stake = stake,
-        modal = true, cancel_id = "cancel_invite", -- Same look/feel as the tournament search dialog.
+        -- No cancel_id: the backend has no way to actually withdraw a game
+        -- request once sent, so a Cancel button here would lie — the opponent
+        -- could still accept it after the player "cancelled".
+        modal = true,
     }
     app_state.searching_invite = true
 
