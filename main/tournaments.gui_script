@@ -144,6 +144,7 @@ local function stop_search(self)
     self.search_reel_node = nil
     self.is_moving = false
     self.play_disabled = false
+    self.pending_stake_deduction = nil
     app_state.searching_tournament = false
     if self._active then rebuild(self) end
 end
@@ -530,8 +531,8 @@ rebuild = function(self)
     for i = 1, n do
         local cp = map_pos(MAP_COORDS[i])
         if i == self.final_index and grand > 0 then
-            track(self, ui.text(vmath.vector3(cp.x + 3, cp.y - 3 + 7, 0), commas(grand), "helvetica_bold", vmath.vector4(0, 0, 0, 1), 2.3))
-            track(self, ui.text(vmath.vector3(cp.x, cp.y + 7, 0), commas(grand), "helvetica_bold", vmath.vector4(1, 0.85, 0.1, 1), 2.3))
+            track(self, ui.text(vmath.vector3(cp.x + 3, cp.y - 3 + 2, 0), commas(grand), "helvetica_bold", vmath.vector4(0, 0, 0, 1), 2.3))
+            track(self, ui.text(vmath.vector3(cp.x, cp.y + 2, 0), commas(grand), "helvetica_bold", vmath.vector4(1, 0.85, 0.1, 1), 2.3))
         end
     end
 
@@ -577,13 +578,12 @@ rebuild = function(self)
 
     -- ── TOP LEFT BALANCE (moved into the slot the removed EXIT button used to
     -- occupy, so BACK is now the last/only button anchored to the left edge) ──
-    local bal_w, bal_h = 150, 48
-    local BACK_TO_BALANCE_GAP = 140
+    local bal_w, bal_h = 190, 48
+    local BACK_TO_BALANCE_GAP = 20
     local bal_cx = back_cx + back_w / 2 + BACK_TO_BALANCE_GAP + bal_w / 2
     local bal_cy = top_bar_cy
 
     track(self, ui.panel9(vmath.vector3(bal_cx, bal_cy, 0), vmath.vector3(bal_w, bal_h, 0), "container_bg"))
-    track(self, ui.box(vmath.vector3(bal_cx - bal_w/2 + 2, bal_cy, 0), vmath.vector3(3, bal_h - 12, 0), vmath.vector4(1, 0.84, 0, 0.8)))
 
     local bal_lbl = track(self, ui.text(vmath.vector3(bal_cx + 18, bal_cy, 0), commas(balance), "body", ui.GOLD))
     self.top_left_balance_lbl = bal_lbl
@@ -829,6 +829,16 @@ function on_message(self, message_id, message, sender)
             pcall(msg.post, "#snd_suspense", "stop_sound")
             pcall(msg.post, "#snd_win", "play_sound")
             rebuild(self)
+
+            -- Only now, with an opponent actually found, animate the stake
+            -- leaving the balance.
+            if self.pending_stake_deduction then
+                local d_cost = self.pending_stake_deduction
+                self.pending_stake_deduction = nil
+                local bal_now = tonumber((ws.current_user_data or {}).balance) or 0
+                if self.top_left_balance_lbl then gui.set_text(self.top_left_balance_lbl, commas(bal_now - d_cost)) end
+                play_deduction_animation(self)
+            end
         end
     elseif message_id == hash("ws_search_failed") then
         self.is_moving = false
@@ -938,15 +948,15 @@ local function handle(self, b)
                 msg.post("main:/controller", "show_transaction_modal")
                 return
             end
-            
-            -- Deduct visually right away
-            if self.top_left_balance_lbl then gui.set_text(self.top_left_balance_lbl, commas(balance - cost)) end
+
+            -- Defer the visual coin deduction until an opponent is actually
+            -- found (ws_match_found) instead of playing it up front — a failed
+            -- search shouldn't have already animated coins leaving the balance.
+            self.pending_stake_deduction = cost
             self.play_disabled = true
             self.is_moving = true -- Lock UI inputs
-            
-            play_deduction_animation(self, function()
-                execute_jump_and_play(self, d)
-            end)
+
+            execute_jump_and_play(self, d)
         else
             execute_jump_and_play(self, d)
         end
