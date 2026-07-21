@@ -28,15 +28,13 @@ local TOURNAMENT_END_MINUTE   = 59
 -- PLAYER LOCATOR (RIG) CONFIGURATION - tune the map marker here
 -- ═══════════════════════════════════════════════════════════════════════════════
 local RIG_SCALE        = 1.6                                  -- overall size multiplier for the whole rig
-local PIN_W,  PIN_H    = 78, 104                              -- base size of the background pin holder (bigger than avatar)
+local PIN_W,  PIN_H    = 78, 84                               -- base size of the background pin holder (bigger than avatar)
 local PIN_OFFSET_X     = 0                                    -- pin position relative to rig origin
-local PIN_OFFSET_Y     = 52                                   -- lift so the pin's tip touches the map point
+local PIN_OFFSET_Y     = 42                                   -- lift so the pin's tip touches the map point
 local PIN_COLOR        = vmath.vector4(0.55, 0.55, 0.58, 1)   -- grey pin holder
 local AVATAR_SIZE      = 56                                   -- base avatar diameter
 local AVATAR_OFFSET_X  = 0                                    -- avatar position relative to rig origin
-local AVATAR_OFFSET_Y  = 62                                   -- centers avatar on the pin's round head
-local SHADOW_RADIUS    = 26                                   -- ground shadow under the rig
-local SHADOW_OFFSET_Y  = 8
+local AVATAR_OFFSET_Y  = 50                                   -- centers avatar on the pin's round head
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local VISIBLE_W, VISIBLE_H = 1280, 720
@@ -573,19 +571,13 @@ local function rebuild_body(self)
     local rp = map_pos(here_coord)
 
     -- Group player components into a Rig, drawn back-to-front:
-    -- shadow → pin holder (grey, oversized backdrop) → avatar on top.
+    -- pin holder (grey backdrop) → avatar on top (no ground shadow).
     -- Defold GUI renders same-parent nodes in creation order, so the pin
     -- MUST be created before the avatar for the avatar to sit on top of it.
     -- All sizing/positioning is driven by the PLAYER LOCATOR CONFIGURATION
     -- block at the top of this file.
     local rig = track(self, gui.new_box_node(rp, vmath.vector3(1, 1, 0)))
     self.player_rig_node = rig
-
-    -- Ground shadow (drawn first = furthest back)
-    local pshad = ui.pie(
-        vmath.vector3(0, SHADOW_OFFSET_Y * RIG_SCALE, 0),
-        SHADOW_RADIUS * RIG_SCALE,
-        vmath.vector4(0, 0, 0, 0.45))
 
     -- Grey pin holder — oversized so it frames the avatar and visibly reads
     -- as the backdrop, not a marker floating on top of it.
@@ -601,7 +593,6 @@ local function rebuild_body(self)
         vmath.vector3(AVATAR_SIZE * RIG_SCALE, AVATAR_SIZE * RIG_SCALE, 0),
         u.avatar or 1)
 
-    gui.set_parent(pshad, rig); track(self, pshad)
     gui.set_parent(ppin, rig);  track(self, ppin)
     gui.set_parent(pava, rig);  track(self, pava)
 
