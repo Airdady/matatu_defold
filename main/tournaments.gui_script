@@ -890,7 +890,9 @@ function on_message(self, message_id, message, sender)
             self.search.opp_name = string.upper((type(opp) == "table" and (opp.username or opp.name)) or "PLAYER")
             app_state.searching_tournament = false
             pcall(msg.post, "#snd_suspense", "stop_sound")
-            pcall(msg.post, "#snd_win", "play_sound")
+            -- Same "opponent found" sting battles/knockouts use, not the
+            -- victory sound — finding an opponent isn't a win yet.
+            pcall(msg.post, "#snd_found", "play_sound")
             rebuild(self)
 
             -- Only now, with an opponent actually found, animate the stake
@@ -923,7 +925,9 @@ proceed_with_play = function(self, d)
         t        = 0,
         reel_ix  = math.random(AVATAR_MAX),
         spin_t   = 0,
-        stake    = d.stake,
+        -- No stake: the shared dialog only shows a coin pot when sr.stake.amount
+        -- is set, and the tournament owner isn't paid per match (only the final
+        -- grand prize matters), so a "pot" here would be misleading.
         max_time = 10,
         modal    = true,                 -- scrim swallows taps to the map behind
         -- No cancel_id: the backend has no way to actually withdraw a
