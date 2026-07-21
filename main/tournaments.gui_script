@@ -468,7 +468,7 @@ update_play_button = function(self)
     end
     
     local btn_tex = self.play_disabled and "default_btn" or "primary_btn"
-    gui.set_texture(self.play_btn_node, btn_tex)
+    pcall(gui.play_flipbook, self.play_btn_node, btn_tex)
 end
 
 -- ── Main Rebuild ─────────────────────────────────────────────────────────────
