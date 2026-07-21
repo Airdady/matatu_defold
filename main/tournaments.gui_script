@@ -479,6 +479,7 @@ rebuild = function(self)
 
     local t = pick_tournament()
     if not t then
+        self.has_tournament = false
         track(self, ui.cover_image(LOGICAL_W, LOGICAL_H, "texture_bg"))
         track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.45)))
         local bb0 = track(self, ui.btn9(vmath.vector3(EDGE_L + 90, EDGE_T - 48, 0), vmath.vector3(120, 48, 0), "default_btn"))
@@ -487,8 +488,13 @@ rebuild = function(self)
         track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(520, 120, 0), "container_bg"))
         track(self, ui.text(vmath.vector3(CX, CY+22, 0), "No active tournaments right now.", "body", ui.MUTED))
         track(self, ui.text(vmath.vector3(CX, CY-14, 0), "Check back during a live season.", "small", ui.MUTED))
+        -- A search kicked off before the tournament data momentarily dropped out of
+        -- pick_tournament()'s result must still show — otherwise the player is left
+        -- staring at "no active tournaments" while a match request is in flight.
+        draw_search_overlay(self)
         return
     end
+    self.has_tournament = true
 
     local u = ws.current_user_data or {}
     local balance = u.balance or 0
@@ -524,8 +530,8 @@ rebuild = function(self)
     for i = 1, n do
         local cp = map_pos(MAP_COORDS[i])
         if i == self.final_index and grand > 0 then
-            track(self, ui.text(vmath.vector3(cp.x + 2, cp.y - 2 + 7, 0), commas(grand), "helvetica_bold", vmath.vector4(0, 0, 0, 1), 1.7))
-            track(self, ui.text(vmath.vector3(cp.x, cp.y + 7, 0), commas(grand), "helvetica_bold", vmath.vector4(1, 0.85, 0.1, 1), 1.7))
+            track(self, ui.text(vmath.vector3(cp.x + 3, cp.y - 3 + 7, 0), commas(grand), "helvetica_bold", vmath.vector4(0, 0, 0, 1), 2.3))
+            track(self, ui.text(vmath.vector3(cp.x, cp.y + 7, 0), commas(grand), "helvetica_bold", vmath.vector4(1, 0.85, 0.1, 1), 2.3))
         end
     end
 
@@ -560,31 +566,30 @@ rebuild = function(self)
     local LEFT_MARGIN = 100
     local LEFT_TEXT_X = EDGE_L + LEFT_MARGIN  -- Consistent left alignment for all text in left column
 
-    -- ── TOP LEFT BALANCE ──
-    local bal_w, bal_h = 135, 46
-    local bal_cx = LEFT_TEXT_X + bal_w / 2
-    local bal_cy = EDGE_T - 40
-    
-    track(self, ui.box(vmath.vector3(bal_cx, bal_cy, 0), vmath.vector3(bal_w+4, bal_h+4, 0), vmath.vector4(1, 0.84, 0, 0.6)))
-    track(self, ui.box(vmath.vector3(bal_cx, bal_cy, 0), vmath.vector3(bal_w, bal_h, 0), vmath.vector4(0.08, 0.08, 0.1, 0.9)))
-    
-    local bal_lbl = track(self, ui.text(vmath.vector3(bal_cx + 16, bal_cy, 0), commas(balance), "body", ui.GOLD))
-    self.top_left_balance_lbl = bal_lbl
-    
-    -- Coin icon positioned on the left edge of the balance box
-    self.top_left_coin_node = track(self, ui.image(vmath.vector3(bal_cx - bal_w/2 + 22, bal_cy, 0), vmath.vector3(44, 44, 0), "coin_icon"))
+    -- ── TOP BAR: BACK (leftmost, sole nav button) ──
+    local back_w, back_h = 120, 46
+    local back_cx = LEFT_TEXT_X + back_w / 2
+    local top_bar_cy = EDGE_T - 40
 
-    -- ── TOP BAR BUTTONS ──
-    local btn_x = LEFT_TEXT_X + bal_w + 20  -- Position buttons after the balance box
-    
-    local back_btn = track(self, ui.btn9(vmath.vector3(btn_x, EDGE_T - 40, 0), vmath.vector3(120, 46, 0), "default_btn"))
-    track(self, ui.text(vmath.vector3(btn_x, EDGE_T - 40, 0), "BACK", "btn_md", ui.WHITE))
+    local back_btn = track(self, ui.btn9(vmath.vector3(back_cx, top_bar_cy, 0), vmath.vector3(back_w, back_h, 0), "default_btn"))
+    track(self, ui.text(vmath.vector3(back_cx, top_bar_cy, 0), "BACK", "btn_md", ui.WHITE))
     self.buttons[#self.buttons+1] = { node = back_btn, id = "back" }
 
-    local exit_btn = track(self, ui.btn9(vmath.vector3(btn_x + 140, EDGE_T - 40, 0), vmath.vector3(120, 46, 0), "primary_btn"))
-    gui.set_color(exit_btn, vmath.vector4(0.85, 0.25, 0.25, 1))
-    track(self, ui.text(vmath.vector3(btn_x + 140, EDGE_T - 40, 0), "EXIT", "btn_md", ui.WHITE))
-    self.buttons[#self.buttons+1] = { node = exit_btn, id = "exit" }
+    -- ── TOP LEFT BALANCE (moved into the slot the removed EXIT button used to
+    -- occupy, so BACK is now the last/only button anchored to the left edge) ──
+    local bal_w, bal_h = 150, 48
+    local BACK_TO_BALANCE_GAP = 140
+    local bal_cx = back_cx + back_w / 2 + BACK_TO_BALANCE_GAP + bal_w / 2
+    local bal_cy = top_bar_cy
+
+    track(self, ui.panel9(vmath.vector3(bal_cx, bal_cy, 0), vmath.vector3(bal_w, bal_h, 0), "container_bg"))
+    track(self, ui.box(vmath.vector3(bal_cx - bal_w/2 + 2, bal_cy, 0), vmath.vector3(3, bal_h - 12, 0), vmath.vector4(1, 0.84, 0, 0.8)))
+
+    local bal_lbl = track(self, ui.text(vmath.vector3(bal_cx + 18, bal_cy, 0), commas(balance), "body", ui.GOLD))
+    self.top_left_balance_lbl = bal_lbl
+
+    -- Coin icon positioned on the left edge of the balance box
+    self.top_left_coin_node = track(self, ui.image(vmath.vector3(bal_cx - bal_w/2 + 26, bal_cy, 0), vmath.vector3(44, 44, 0), "coin_icon"))
 
     -- ── LEFT DOCK: Global Championship Title ──
     track(self, ui.box(vmath.vector3(EDGE_L + 22, CY, 0), vmath.vector3(45, VISIBLE_H * 2, 0), vmath.vector4(0, 0, 0, 1)))
@@ -795,6 +800,11 @@ function on_message(self, message_id, message, sender)
         rebuild(self)
     elseif message_id == hash("enable") then
         self._active = true
+        -- Without this, re-showing the screen while a search overlay was active
+        -- (its nodes wiped by the preceding "disable"'s clear(self)) left the
+        -- player staring at a blank/stale frame until some other event happened
+        -- to trigger a rebuild.
+        rebuild(self)
     elseif message_id == hash("disable") then
         self._active = false
         clear(self)
@@ -898,13 +908,16 @@ end
 
 local function handle(self, b)
     if b.id == "back" then
-        msg.post("#controller", "goto_online")
-    elseif b.id == "exit" then
-        if self.current_level_index == 0 then
-            msg.post("#controller", "goto_online")
-        else
+        -- BACK is now the only way out of this screen (EXIT was removed), so it
+        -- inherits EXIT's old "confirm before forfeiting progress" guard. Only
+        -- applies when there's an actual tournament with progress on screen —
+        -- the "no active tournaments" fallback has nothing to forfeit and must
+        -- always leave immediately.
+        if self.has_tournament and (self.current_level_index or 0) > 0 then
             self.show_exit = true
             rebuild(self)
+        else
+            msg.post("#controller", "goto_online")
         end
     elseif b.id == "exit_cancel" then
         self.show_exit = false
