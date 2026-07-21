@@ -24,6 +24,20 @@ local TOURNAMENT_START_MINUTE = 0
 local TOURNAMENT_END_HOUR     = 23    -- 23:59 (24-hour format)
 local TOURNAMENT_END_MINUTE   = 59
 
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- PLAYER LOCATOR (RIG) CONFIGURATION - tune the map marker here
+-- ═══════════════════════════════════════════════════════════════════════════════
+local RIG_SCALE        = 1.6                                  -- overall size multiplier for the whole rig
+local PIN_W,  PIN_H    = 78, 104                              -- base size of the background pin holder (bigger than avatar)
+local PIN_OFFSET_X     = 0                                    -- pin position relative to rig origin
+local PIN_OFFSET_Y     = 52                                   -- lift so the pin's tip touches the map point
+local PIN_COLOR        = vmath.vector4(0.55, 0.55, 0.58, 1)   -- grey pin holder
+local AVATAR_SIZE      = 56                                   -- base avatar diameter
+local AVATAR_OFFSET_X  = 0                                    -- avatar position relative to rig origin
+local AVATAR_OFFSET_Y  = 62                                   -- centers avatar on the pin's round head
+local SHADOW_RADIUS    = 26                                   -- ground shadow under the rig
+local SHADOW_OFFSET_Y  = 8
+
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local VISIBLE_W, VISIBLE_H = 1280, 720
 local EDGE_L, EDGE_R = 0, 1280
@@ -540,25 +554,38 @@ local function rebuild_body(self)
     local here_coord = (here_idx >= 1 and MAP_COORDS[here_idx]) or LANDING
     local rp = map_pos(here_coord)
 
-    -- Group player components into a Rig. (There used to also be a standalone
-    -- orange "landing pin" drawn separately at here_idx == 0, on top of this
-    -- same rig's own pin below — a visible duplicate marker at the landing
-    -- spot. The rig alone already marks the player's position at every level,
-    -- landing included, so that extra pin was removed rather than kept.)
+    -- Group player components into a Rig, drawn back-to-front:
+    -- shadow → pin holder (grey, oversized backdrop) → avatar on top.
+    -- Defold GUI renders same-parent nodes in creation order, so the pin
+    -- MUST be created before the avatar for the avatar to sit on top of it.
+    -- All sizing/positioning is driven by the PLAYER LOCATOR CONFIGURATION
+    -- block at the top of this file.
     local rig = track(self, gui.new_box_node(rp, vmath.vector3(1, 1, 0)))
     self.player_rig_node = rig
 
-    -- Sized up from the original 56 / 26 / 22x30 so the player marker reads
-    -- clearly against the map art. Keep these proportional if tuning further.
-    local RIG_SCALE = 1.35
-    local pshad = ui.pie(vmath.vector3(0, 8 * RIG_SCALE, 0), 26 * RIG_SCALE, vmath.vector4(0, 0, 0, 0.45))
-    local pava = ui.avatar(vmath.vector3(0, 36 * RIG_SCALE, 0), vmath.vector3(56 * RIG_SCALE, 56 * RIG_SCALE, 0), u.avatar or 1)
-    local ppin = ui.image(vmath.vector3(0, 80 * RIG_SCALE, 0), vmath.vector3(22 * RIG_SCALE, 30 * RIG_SCALE, 0), "pin")
-    gui.set_color(ppin, vmath.vector4(0.129, 0.588, 0.953, 1))
+    -- Ground shadow (drawn first = furthest back)
+    local pshad = ui.pie(
+        vmath.vector3(0, SHADOW_OFFSET_Y * RIG_SCALE, 0),
+        SHADOW_RADIUS * RIG_SCALE,
+        vmath.vector4(0, 0, 0, 0.45))
+
+    -- Grey pin holder — oversized so it frames the avatar and visibly reads
+    -- as the backdrop, not a marker floating on top of it.
+    local ppin = ui.image(
+        vmath.vector3(PIN_OFFSET_X * RIG_SCALE, PIN_OFFSET_Y * RIG_SCALE, 0),
+        vmath.vector3(PIN_W * RIG_SCALE, PIN_H * RIG_SCALE, 0),
+        "pin")
+    gui.set_color(ppin, PIN_COLOR)
+
+    -- Avatar (drawn last = on top of the pin holder)
+    local pava = ui.avatar(
+        vmath.vector3(AVATAR_OFFSET_X * RIG_SCALE, AVATAR_OFFSET_Y * RIG_SCALE, 0),
+        vmath.vector3(AVATAR_SIZE * RIG_SCALE, AVATAR_SIZE * RIG_SCALE, 0),
+        u.avatar or 1)
 
     gui.set_parent(pshad, rig); track(self, pshad)
-    gui.set_parent(pava, rig); track(self, pava)
-    gui.set_parent(ppin, rig); track(self, ppin)
+    gui.set_parent(ppin, rig);  track(self, ppin)
+    gui.set_parent(pava, rig);  track(self, pava)
 
     if not self.is_moving then
         gui.animate(rig, "scale", vmath.vector3(1.05, 1.05, 1), gui.EASING_INOUTSINE, 0.8, 0, nil, gui.PLAYBACK_LOOP_PINGPONG)
