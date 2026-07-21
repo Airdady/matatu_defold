@@ -472,10 +472,13 @@ update_play_button = function(self)
 end
 
 -- ── Main Rebuild ─────────────────────────────────────────────────────────────
-rebuild = function(self)
-    clear(self)
-    check_timer_states(self)
-
+-- rebuild_body does all the actual node construction. It is always invoked
+-- through pcall by the `rebuild` wrapper below so that ANY error anywhere in
+-- here (a bad map/level data shape, whatever) can never again silently abort
+-- before the search overlay gets its chance to draw — that exact failure mode
+-- (hear the search sound, see the map frozen with no dialog) is what repeatedly
+-- broke the "searching for opponent" dialog on the tournament screen.
+local function rebuild_body(self)
     track(self, ui.cover(LOGICAL_W, LOGICAL_H, ui.BLACK))
 
     local t = pick_tournament()
@@ -489,10 +492,6 @@ rebuild = function(self)
         track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(520, 120, 0), "container_bg"))
         track(self, ui.text(vmath.vector3(CX, CY+22, 0), "No active tournaments right now.", "body", ui.MUTED))
         track(self, ui.text(vmath.vector3(CX, CY-14, 0), "Check back during a live season.", "small", ui.MUTED))
-        -- A search kicked off before the tournament data momentarily dropped out of
-        -- pick_tournament()'s result must still show — otherwise the player is left
-        -- staring at "no active tournaments" while a match request is in flight.
-        draw_search_overlay(self)
         return
     end
     self.has_tournament = true
@@ -740,10 +739,28 @@ rebuild = function(self)
     update_play_button(self)
 
     if self.show_exit then draw_exit_popup(self, t, levels, self.current_level_index) end
-    draw_search_overlay(self)
 end
 
-function init(self) 
+rebuild = function(self)
+    if self._rebuilding then return end
+    self._rebuilding = true
+
+    clear(self)
+    check_timer_states(self)
+
+    local ok, err = pcall(rebuild_body, self)
+    if not ok then
+        print("[tournaments] rebuild_body error (search overlay still shown if active): " .. tostring(err))
+    end
+
+    -- Always attempt the search overlay last, regardless of whether
+    -- rebuild_body above succeeded or threw partway through.
+    draw_search_overlay(self)
+
+    self._rebuilding = false
+end
+
+function init(self)
     self.nodes, self.buttons = {}, {}
     self.scale_factor = 1.0
     refresh_wh() 
