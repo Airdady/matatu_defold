@@ -154,6 +154,9 @@ draw_search_overlay = function(self)
 end
 
 local function stop_search(self)
+    if self.search and self.search.timeout_handle then
+        pcall(timer.cancel, self.search.timeout_handle)
+    end
     self.search = nil
     self.search_reel_node = nil
     self.is_moving = false
@@ -161,6 +164,21 @@ local function stop_search(self)
     self.pending_stake_deduction = nil
     app_state.searching_tournament = false
     if self._active then rebuild(self) end
+end
+
+-- Shared failure path for BOTH the backend "no eligible opponents" push and the
+-- local 10s countdown expiring. Shows the failed state briefly, then always
+-- auto-closes — the dialog must never sit open spinning forever.
+local function fail_search(self, reason)
+    local sr = self.search
+    if not sr or sr.found or sr.failed then return end
+    if sr.timeout_handle then pcall(timer.cancel, sr.timeout_handle); sr.timeout_handle = nil end
+    sr.failed = true
+    sr.fail_msg = reason or "No opponents available right now"
+    app_state.searching_tournament = false
+    pcall(msg.post, "#snd_suspense", "stop_sound")
+    if self._active then rebuild(self) end
+    timer.delay(2.4, false, function() if self.search == sr then stop_search(self) end end)
 end
 
 -- ── Exit confirmation popup ──────────────────────────────────────────────────
@@ -868,6 +886,7 @@ function on_message(self, message_id, message, sender)
                 local pid = tostring((type(pl) == "table" and (pl._id or pl.id)) or k)
                 if pid ~= me then opp = pl end
             end
+            if self.search.timeout_handle then pcall(timer.cancel, self.search.timeout_handle); self.search.timeout_handle = nil end
             self.search.found = true
             self.search.reel_ix = (type(opp) == "table" and tonumber(opp.avatar)) or self.search.reel_ix
             self.search.opp_name = string.upper((type(opp) == "table" and (opp.username or opp.name)) or "PLAYER")
@@ -887,16 +906,11 @@ function on_message(self, message_id, message, sender)
             end
         end
     elseif message_id == hash("ws_search_failed") then
+        -- Backend reported no eligible opponents — close immediately even if
+        -- the 10s countdown hasn't finished yet.
         self.is_moving = false
         pcall(msg.post, "#snd_suspense", "stop_sound")
-        if self.search and not self.search.found then
-            self.search.failed = true
-            self.search.fail_msg = (message and message.reason) or "No opponents available right now"
-            app_state.searching_tournament = false
-            rebuild(self)
-            local seq = self.search
-            timer.delay(2.4, false, function() if self.search == seq then stop_search(self) end end)
-        end
+        fail_search(self, message and message.reason)
     end
 end
 
@@ -912,7 +926,7 @@ proceed_with_play = function(self, d)
         reel_ix  = math.random(AVATAR_MAX),
         spin_t   = 0,
         stake    = d.stake,
-        max_time = 30,
+        max_time = 10,
         modal    = true,                 -- scrim swallows taps to the map behind
         -- No cancel_id: the backend has no way to actually withdraw a
         -- tournament request once sent, so a Cancel button here would lie —
@@ -923,6 +937,14 @@ proceed_with_play = function(self, d)
     self.animating_from = nil
     app_state.searching_tournament = true
     pcall(msg.post, "#snd_suspense", "play_sound")
+
+    -- Local 10s failsafe matching the countdown ring: if neither a match nor a
+    -- backend "no opponents" push has arrived by the time the ring empties, the
+    -- dialog fails and auto-closes itself instead of spinning forever.
+    local sr = self.search
+    sr.timeout_handle = timer.delay(sr.max_time, false, function()
+        if self.search == sr then fail_search(self, "No opponents available right now") end
+    end)
 
     -- Send the request to the controller FIRST. msg.post is async (the backend
     -- only sees it next frame), so the dialog still "opens" this same frame — but
