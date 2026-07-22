@@ -981,35 +981,33 @@ function M.end_game(self, player_won, is_cut, backend_results)
         self.played_cards = {}
     end
 
+    -- Same reveal style/speed as the 4-player mode's reveal_seat_faceup
+    -- (tournament4.lua) — used everywhere now (offline, online, and T4) so
+    -- the "flip" reads identically across every game mode: one quick
+    -- single-phase OUTBACK pop instead of a slower shrink/swap/grow with a
+    -- position hop, staggered tightly (0.03s) to match.
     local function flip_ai_hand(on_complete)
         if #self.ai_hand == 0 then on_complete(); return end
         local flipped = 0
         local total = #self.ai_hand
-        
+
         for i, c in ipairs(self.ai_hand) do
             local cc = c
-            timer.delay((i - 1) * 0.18 + 0.5, false, function()
+            timer.delay((i - 1) * 0.03 + 0.5, false, function()
                 if not pcall(go.get_position, cc.id) then
                     flipped = flipped + 1; if flipped == total then on_complete() end
                     return
                 end
-                
-                local start_y = go.get_position(cc.id).y
-                go.animate(cc.id, "position.y", go.PLAYBACK_ONCE_PINGPONG, start_y + 26, go.EASING_INOUTSINE, 0.35)
-                go.animate(cc.id, "scale.x", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_INSINE, 0.18, 0, function()
-                    if pcall(go.get_position, cc.id) then
-                        self.set_face(cc)
-                        -- Opponent cards render smaller while face-down (scale.y
-                        -- shrunk in layout_hand); snap y back to full before
-                        -- animating x back up so the revealed card isn't stretched.
-                        go.set(cc.id, "scale.y", CARD_SCALE_F)
-                        go.animate(cc.id, "scale.x", go.PLAYBACK_ONCE_FORWARD, CARD_SCALE_F, go.EASING_OUTSINE, 0.18, 0, function()
-                            flipped = flipped + 1
-                            if flipped == total then on_complete() end
-                        end)
-                    else
-                        flipped = flipped + 1; if flipped == total then on_complete() end
-                    end
+
+                -- Opponent cards render smaller while face-down (scale.y
+                -- shrunk in layout_hand); snap y to full and pinch x to
+                -- near-zero, then pop it back out to full width with the
+                -- face already showing — matches reveal_seat_faceup exactly.
+                go.set(cc.id, "scale", vmath.vector3(0.01, CARD_SCALE_F, 1))
+                self.set_face(cc)
+                go.animate(cc.id, "scale.x", go.PLAYBACK_ONCE_FORWARD, CARD_SCALE_F, go.EASING_OUTBACK, 0.3, 0, function()
+                    flipped = flipped + 1
+                    if flipped == total then on_complete() end
                 end)
             end)
         end
