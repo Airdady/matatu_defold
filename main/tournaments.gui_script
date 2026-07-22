@@ -837,9 +837,13 @@ local function try_level_up_jump(self)
     local start_pos = vmath.vector3(ox + start_coord.x * s, oy + (MAP_H - start_coord.y) * s, 0)
     local end_pos = vmath.vector3(ox + end_coord.x * s, oy + (MAP_H - end_coord.y) * s, 0)
     animate_jump(self, start_pos, end_pos, function()
-        self.is_moving = false
         self.animating_from = nil
-        if self._active then rebuild(self) end
+        -- Mirror execute_jump_and_play's manual-tap path: once the pin has
+        -- finished hopping to the new step, immediately open the shared
+        -- random-opponent search dialog instead of leaving the player to
+        -- tap the level node again themselves.
+        local t = pick_tournament() or {}
+        proceed_with_play(self, { id = t._id, name = t.name, stake = t.stake or { amount = 0 } })
     end)
 end
 
