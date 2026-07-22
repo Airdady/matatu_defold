@@ -307,11 +307,22 @@ function M.draw_to_hand(self, hand, is_player, count, done)
         if seq ~= self._seq then finish(); return end
 
         if #self.deck == 0 then
-            if #self.played_cards <= 1 then
-                finish(); return
-            end
+            -- Check "a reshuffle is already in flight" BEFORE "is there
+            -- nothing left to reshuffle" — reshuffle_deck drains
+            -- self.played_cards down to just the top card on its very first
+            -- line, long before its ~1.1-1.3s of animation actually finishes
+            -- and refills self.deck. Every OTHER staggered place_one() call
+            -- that lands while that reshuffle is still animating (near-
+            -- guaranteed, since draws are staggered only 0.13s apart) used to
+            -- see that temporarily-drained played_cards and mistake it for
+            -- "genuinely nothing left to recycle," finishing the draw early
+            -- with fewer cards than requested instead of waiting for the
+            -- reshuffle already in progress to deliver them.
             if reshuffling then
                 timer.delay(0.05, false, place_one); return
+            end
+            if #self.played_cards <= 1 then
+                finish(); return
             end
             reshuffling = true
             M.reshuffle_deck(self, function()
