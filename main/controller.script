@@ -339,6 +339,21 @@ function init(self)
 
     local function broadcast(evt)
         table.insert(self.tokens, ws.on(evt, function(user)
+            -- Persist the freshest server data to the local session cache
+            -- every time it changes, not just at the 4 explicit action
+            -- points (login, phone-link, profile save, logout) that used to
+            -- be the only callers of api.save_session. Without this, a game
+            -- result, coin purchase, or any other backend-driven balance/
+            -- points/rank change only ever updated the in-memory
+            -- ws.current_user_data — the on-disk cache kept whatever was
+            -- last explicitly saved, so the next cold start's silent
+            -- auto-identify re-seeded ws.current_user_data from that same
+            -- increasingly stale snapshot instead of the real current state.
+            local fresh = user or ws.current_user_data
+            if type(fresh) == "table" and (fresh._id or "") ~= "" then
+                pcall(api.save_session, fresh)
+            end
+
             for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile" }) do
                 msg.post("#" .. s, "user_data_updated")
             end
