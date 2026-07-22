@@ -449,6 +449,19 @@ function on_message(self, message_id, message, sender)
         right_panel.fail_invite_search(self, app_state, function() rebuild(self) end, message and message.reason)
     elseif message_id == hash("enable") then refresh_wh(); self._active = true
     elseif message_id == hash("disable") then self._active = false; clear(self)
+    elseif message_id == hash("ws_identify") then
+        -- The screen_enter request is gated on ws.is_identified already being
+        -- true at that exact moment — if IDENTIFY was still in flight (or the
+        -- socket reconnected) when this screen was entered, that request was
+        -- silently skipped and nothing ever retried it, leaving the online
+        -- users list permanently empty even once identify actually completed.
+        -- controller.script already forwards identify_success here as
+        -- ws_identify; this was previously unhandled.
+        if self._active then
+            pcall(ws.request_online_users)
+            pcall(ws.request_rank)
+            rebuild(self)
+        end
     elseif message_id == hash("layout_changed") or message_id == hash("user_data_updated") or message_id == hash("ws_online_users") or message_id == hash("ws_connected") or message_id == hash("ws_disconnected") then
         if self._active then rebuild(self) end
         -- A change in who's online (someone joining/leaving, e.g. a brand-new
