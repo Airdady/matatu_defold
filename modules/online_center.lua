@@ -248,7 +248,12 @@ function M.draw(self, ctx)
     if #rows == 0 then
         local msg = "Connecting..."
         if not ws.is_identified then
-            msg = "Sign in to see online players"
+            -- Reaching this screen at all already requires being signed in
+            -- (sign-in is always silent — see controller.script) — this branch
+            -- means the websocket IDENTIFY handshake hasn't completed yet, not
+            -- that the player needs to sign in, so say so instead of
+            -- misleadingly asking them to do something they already did.
+            msg = "Loading online users..."
         elseif ws.socket_connected then
             msg = self.tab == TAB_BATTLES and "No open battles right now" or "No opponents online right now"
         end
