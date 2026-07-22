@@ -43,7 +43,11 @@ M.TURN_SECONDS = 30
 local STAKE_LEVELS_BY_GAME = {
   MATATU = {
     { amount = 0, charge = 0, points = 0, label = "Free" },
-    { amount = 100, charge = 10, points = 10, label = "100" },
+    -- Was charge=10 while the backend's real settlement charge for this
+    -- tier was actually 0 (nobody paid the platform's running cost) — now
+    -- 25, matching the fixed SETTLEMENT_STAKE_LEVELS_BY_GAME charge so what
+    -- this button shows is what both players actually get charged.
+    { amount = 100, charge = 25, points = 25, label = "100" },
     { amount = 200, charge = 20, points = 20, label = "200" },
     { amount = 500, charge = 50, points = 50, label = "500" },
     { amount = 1000, charge = 100, points = 100, label = "1000" },
