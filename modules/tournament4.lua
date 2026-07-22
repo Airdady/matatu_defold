@@ -178,12 +178,34 @@ local function clear_cards(self, seat)
     seat.cards = {}
 end
 
-local function layout_seat(self, seat, animate)
+-- Cheap same-slot check (mirrors board_layout.lua's same_target) so a
+-- redundant reflow — one whose cards haven't actually moved — skips
+-- restarting an in-flight tween.
+local function same_seat_target(a, b)
+    return a and b
+        and math.abs(a.x - b.x) < 0.5
+        and math.abs(a.y - b.y) < 0.5
+        and math.abs(a.rot - b.rot) < 0.5
+end
+
+-- geometry_n, when given, is the seat's FINAL card count for an in-progress
+-- multi-card draw (see ai_draw) — arch_slots' spacing/fan/arc all depend on
+-- card count, so without this, each new card arriving mid-draw recomputed a
+-- shifted arch and restarted every ALREADY-PLACED card's position/rotation/
+-- scale go.animate before its previous tween finished (go.animate replaces
+-- an in-flight tween on the same object+property rather than queuing behind
+-- it), producing a visible jitter/fight between the cards' animations for
+-- the whole draw. Laying every card out against the batch's final geometry
+-- from the first card onward — while still only spawning/animating cards as
+-- they actually arrive — means already-placed cards' slots don't shift
+-- again as more cards land, so the same_seat_target guard below can skip
+-- re-issuing their tweens entirely.
+local function layout_seat(self, seat, animate, geometry_n)
     if seat.is_human and self.t4.human_alive then return end
     local is_hu = self.t4.is_heads_up
     local n = is_hu and #seat.hand or math.min(#seat.hand, MAX_BACKS)
     local scale_f = is_hu and BL.CARD_SCALE_F or (BL.CARD_SCALE_F * 0.85)
-    
+
     while #seat.cards > n do local c = table.remove(seat.cards); pcall(go.delete, c.id) end
     while #seat.cards < n do
         local a = anchor_for(self, seat.slot)
@@ -192,19 +214,23 @@ local function layout_seat(self, seat, animate)
         self.set_back(rec)
         seat.cards[#seat.cards + 1] = rec
     end
-    local slots = get_seat_slots(self, seat, n)
+    local slots = get_seat_slots(self, seat, math.max(geometry_n or 0, n))
     for i, c in ipairs(seat.cards) do
         local s = slots[i]
         if s then
             local tp = vmath.vector3(s.x, s.y, s.z)
             if animate then
-                go.animate(c.id, "position", go.PLAYBACK_ONCE_FORWARD, tp, go.EASING_OUTCUBIC, 0.25)
-                go.animate(c.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, s.rot, go.EASING_OUTCUBIC, 0.25)
-                go.animate(c.id, "scale", go.PLAYBACK_ONCE_FORWARD, vmath.vector3(scale_f, scale_f, 1), go.EASING_OUTCUBIC, 0.25)
+                if not same_seat_target(c._seat_target, s) then
+                    go.animate(c.id, "position", go.PLAYBACK_ONCE_FORWARD, tp, go.EASING_OUTCUBIC, 0.25)
+                    go.animate(c.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, s.rot, go.EASING_OUTCUBIC, 0.25)
+                    go.animate(c.id, "scale", go.PLAYBACK_ONCE_FORWARD, vmath.vector3(scale_f, scale_f, 1), go.EASING_OUTCUBIC, 0.25)
+                    c._seat_target = { x = s.x, y = s.y, rot = s.rot }
+                end
             else
                 go.set_position(tp, c.id)
                 go.set(c.id, "euler.z", s.rot)
                 go.set(c.id, "scale", vmath.vector3(scale_f, scale_f, 1))
+                c._seat_target = { x = s.x, y = s.y, rot = s.rot }
             end
         end
     end
@@ -279,6 +305,8 @@ local function ai_draw(self, seat, n, done)
     local seq = self._seq
     local is_hu = self.t4.is_heads_up
     local scale_f = is_hu and BL.CARD_SCALE_F or (BL.CARD_SCALE_F * 0.85)
+    -- Fixed for the whole batch — see layout_seat's geometry_n note above.
+    local final_n = #seat.hand + n
 
     for i = 1, n do
         local delay = (i - 1) * DEAL_STAGGER
@@ -304,13 +332,13 @@ local function ai_draw(self, seat, n, done)
             local cap = is_hu and #seat.hand or MAX_BACKS
             if #seat.cards < cap then
                 seat.cards[#seat.cards + 1] = d
-                layout_seat(self, seat, true)
+                layout_seat(self, seat, true, final_n)
             else
                 local a = anchor_for(self, seat.slot)
                 go.animate(d.id, "position", go.PLAYBACK_ONCE_FORWARD, vmath.vector3(a.x, a.y, BL.Z_FLY), go.EASING_OUTCUBIC, 0.3, 0, function()
                     if seq ~= self._seq then return end
                     pcall(go.delete, d.id)
-                    layout_seat(self, seat, true)
+                    layout_seat(self, seat, true, final_n)
                 end)
             end
             push_seat_hud(self, seat)
