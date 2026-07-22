@@ -492,10 +492,23 @@ function on_message(self, message_id, message, sender)
             tostring(ws.is_identified), tostring(self._silent_login_inflight))
             
         if ws.current_user_data and (ws.current_user_data._id or "") ~= "" then
-            if ws.socket_connected then 
-                route_after_auth(self) 
-            else 
-                self._restore_pending = true 
+            if ws.socket_connected and ws.is_identified then
+                route_after_auth(self)
+            elseif ws.socket_connected then
+                -- Socket is up but the IDENTIFY round-trip that just got
+                -- queued/sent in on_connected() hasn't come back yet (a real
+                -- window seen in device logs: "connected" then a tap ~700ms
+                -- later still shows is_identified=false). Routing to "online"
+                -- on socket_connected alone would drop the player into the
+                -- lobby before the server has actually registered them,
+                -- making the game look "connected" while requests/matches
+                -- silently fail. Wait for the same identify_success signal
+                -- the not-yet-connected branch below already waits on.
+                self._restore_pending = true
+                app_state.auth_state = "verifying"
+                msg.post("#lobby", "auth_state_changed")
+            else
+                self._restore_pending = true
                 -- Visually switch the lobby button to "CONNECTING..."
                 app_state.auth_state = "verifying"
                 msg.post("#lobby", "auth_state_changed")
