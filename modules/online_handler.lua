@@ -788,7 +788,13 @@ function M.start_game(self, state)
     local series_key = ""
     local t_id = tostring(state.tournamentId or "")
     if t_id ~= "" then
-        series_key = "t:" .. t_id
+        -- Include the opponent id: tournamentId alone stays identical across
+        -- different freelancer opponents at the same level (a level can be
+        -- replayed against someone new after the previous match was
+        -- abandoned/unfinished), which previously made is_continuation below
+        -- wrongly true and kept rendering the stale scoreboard from the old
+        -- opponent instead of resetting for the new pairing.
+        series_key = "t:" .. t_id .. ":" .. tostring(self.opponent_id)
     elseif fmt then
         series_key = "b:" .. tostring(self.opponent_id) .. ":" .. tostring(fmt)
     end

@@ -697,19 +697,24 @@ end
 local REPLAY_TIMEOUT = 10.0
 
 local function replay_failed(self, reason)
-    if not self.awaiting_replay then return end
+    if not self.awaiting_replay and not self._awaiting_round_continuation then return end
     self.awaiting_replay = false
-    log("Replay not answered (" .. tostring(reason) .. ") — returning to lobby")
+    self._awaiting_round_continuation = false
+    log("Replay/continuation not answered (" .. tostring(reason) .. ") — returning to lobby")
     notify_gui(self.gui_over, "reset_hud")
     msg.post("#controller", "goto_online")
 end
 
 local function start_new_online_game(self, state, is_explicit_start_event)
     print("[DEBUG] start_new_online_game triggered! explicit_start=" .. tostring(is_explicit_start_event))
-    if type(state) ~= "table" or next(state) == nil then 
+    if type(state) ~= "table" or next(state) == nil then
         print("[DEBUG] Aborting start_new_online_game: Invalid state.")
-        return 
+        return
     end
+    -- The next round's real state actually arrived — whatever continuation
+    -- accept we were waiting on clearly succeeded, so any later stray
+    -- GAME_REQUEST_DECLINED can't be about this transition anymore.
+    self._awaiting_round_continuation = false
     if self.round_story_active then
         print("[DEBUG] start_new_online_game deferred due to round_story_active")
         ws.active_game_state = state
@@ -1048,7 +1053,7 @@ function on_message(self, message_id, message, sender)
         end
 
     elseif message_id == hash("ws_replay_declined") then
-        if self.online_mode and self.awaiting_replay then
+        if self.online_mode and (self.awaiting_replay or self._awaiting_round_continuation) then
             replay_failed(self, (message and message.reason) or "declined")
         end
 

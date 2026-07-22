@@ -607,6 +607,13 @@ function M.finish_round_transition(self, force)
         log("Sending GAME_REQUEST_ACCEPTED for continuation: " .. tostring(self._continuation_request_id))
         ws.accept_game_request(self._continuation_request_id)
         self._continuation_request_id = nil
+        -- Mirror awaiting_replay's role for the manual-rematch flow: if the
+        -- opponent never mutually accepts (they disconnected mid-transition
+        -- and the backend's 45s continuation window expires), a
+        -- GAME_REQUEST_DECLINED notice can now arrive for this too — without
+        -- this flag it would be silently ignored and we'd wait forever with
+        -- no further server message ever coming.
+        self._awaiting_round_continuation = true
         return -- Do NOT call M.start_game here. Wait for the server's START event.
     end
 
@@ -809,11 +816,23 @@ function M.end_game(self, player_won, is_cut, backend_results)
                     end)
                 end)
             else
-                if story then 
+                if story then
                     self.round_story_active = true
-                    notify_gui(self.gui_hud, "round_story", story) 
+                    notify_gui(self.gui_hud, "round_story", story)
                 end
-                timer.delay(8.0, false, function() M.finish_round_transition(self) end)
+                -- Same reasoning as the knockout branch above: round_story_ui's
+                -- own banner (0.42s in + 1.35s hold + 0.30s out ~= 2.1s) already
+                -- posts "round_story_done" -> game.script's handler -> this same
+                -- finish_round_transition, and finish_round_transition is
+                -- idempotent (is_transitioning_round guards it), so this is only
+                -- a safety net for the odd case that message never arrives. For
+                -- online continuations this only sends GAME_REQUEST_ACCEPTED —
+                -- it does NOT render the next round (that waits on the server's
+                -- own START push) — so firing it promptly can't show anything
+                -- before the banner is actually done. The previous flat 8.0s
+                -- had no such requirement behind it; it just made the backend
+                -- (and the opponent) wait ~6s longer than the banner needed.
+                timer.delay(1.5, false, function() M.finish_round_transition(self) end)
             end
             
         else
