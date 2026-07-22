@@ -124,14 +124,37 @@ local function inv_shift_rows(state)
 	s[4], s[8], s[12], s[16] = s[8], s[12], s[16], s[4]
 end
 
+-- Precomputed GF(2^8) multiplication tables for the 4 constants inv_mix_columns
+-- needs (0x9, 0xb, 0xd, 0xe). This is the actual hot spot in decrypt_block: 16
+-- gmul() calls per round (each an 8-iteration bit-shift loop) times 14 rounds
+-- times however many 16-byte blocks are in the payload — for a realistic ~1KB
+-- online game-state message (~68 blocks), that's tens of thousands of gmul
+-- loop-iterations on the main thread in a single synchronous call, long
+-- enough on its own to blow a frame budget (measured ~57ms for a 68-block
+-- payload with PUC Lua 5.3 on a dev machine, before this table). Offline mode
+-- never runs any of this — there's no server, so no encrypted state to
+-- decrypt — which is the actual structural reason online-only animation
+-- hitches happen: this decrypt cost, not any GUI/tween contention with the
+-- emoji system. Built once at module load by exhaustively calling the
+-- (still-present, unmodified) gmul() below for every byte value, so
+-- correctness is inherited directly from it — this only replaces repeated
+-- runtime multiplication with a one-time lookup.
+local GMUL9, GMULB, GMULD, GMULE = {}, {}, {}, {}
+for x = 0, 255 do
+	GMUL9[x] = gmul(x, 0x09)
+	GMULB[x] = gmul(x, 0x0b)
+	GMULD[x] = gmul(x, 0x0d)
+	GMULE[x] = gmul(x, 0x0e)
+end
+
 local function inv_mix_columns(state)
 	for c = 0, 3 do
 		local i = c * 4
 		local s0, s1, s2, s3 = state[i + 1], state[i + 2], state[i + 3], state[i + 4]
-		state[i + 1] = bxor(bxor(gmul(s0, 0x0e), gmul(s1, 0x0b)), bxor(gmul(s2, 0x0d), gmul(s3, 0x09)))
-		state[i + 2] = bxor(bxor(gmul(s0, 0x09), gmul(s1, 0x0e)), bxor(gmul(s2, 0x0b), gmul(s3, 0x0d)))
-		state[i + 3] = bxor(bxor(gmul(s0, 0x0d), gmul(s1, 0x09)), bxor(gmul(s2, 0x0e), gmul(s3, 0x0b)))
-		state[i + 4] = bxor(bxor(gmul(s0, 0x0b), gmul(s1, 0x0d)), bxor(gmul(s2, 0x09), gmul(s3, 0x0e)))
+		state[i + 1] = bxor(bxor(GMULE[s0], GMULB[s1]), bxor(GMULD[s2], GMUL9[s3]))
+		state[i + 2] = bxor(bxor(GMUL9[s0], GMULE[s1]), bxor(GMULB[s2], GMULD[s3]))
+		state[i + 3] = bxor(bxor(GMULD[s0], GMUL9[s1]), bxor(GMULE[s2], GMULB[s3]))
+		state[i + 4] = bxor(bxor(GMULB[s0], GMULD[s1]), bxor(GMUL9[s2], GMULE[s3]))
 	end
 end
 
@@ -153,10 +176,30 @@ local function decrypt_block(block, w)
 	return state
 end
 
+-- expand_key's 60-round-key schedule never changes for a given key, and
+-- every caller in this app passes the same module-level KEY_BYTES table
+-- (see websocket_manager.lua) — but decrypt_cbc used to re-run the full
+-- expansion (S-box lookups + table allocations for all 60 words) on EVERY
+-- single call, i.e. on every online MOVE/RESHUFFLING message, purely to
+-- recompute an identical result. That's real, avoidable CPU work landing
+-- synchronously in the same frame as whatever else is animating (an
+-- opponent's card play, a concurrent emoji tween) — exactly the kind of
+-- spike offline mode never pays since it never touches this file at all.
+-- Cached by reference identity: cheap, correct as long as callers keep
+-- reusing the same key table (they do), and self-invalidates if a caller
+-- ever passes a different one.
+local cached_key_ref, cached_schedule = nil, nil
+local function get_schedule(key)
+	if cached_key_ref == key then return cached_schedule end
+	cached_schedule = expand_key(key)
+	cached_key_ref = key
+	return cached_schedule
+end
+
 --- AES-256-CBC decrypt. key/iv/ciphertext are byte tables. Returns byte table
 --- with PKCS7 padding removed.
 function M.decrypt_cbc(key, iv, ciphertext)
-	local w = expand_key(key)
+	local w = get_schedule(key)
 	local out = {}
 	local prev = {}
 	for i = 1, 16 do
