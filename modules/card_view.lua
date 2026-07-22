@@ -293,31 +293,4 @@ function M.end_history_view(self)
     self.history_restore = {}
 end
 
-----------------------------------------------------------------------
--- Invalid-play shake: horizontal jolt only.
-----------------------------------------------------------------------
-function M.shake_card(self, rec)
-    if not rec or not rec.id then return end
-    local id     = rec.id
-    local seq    = self._seq
-    local anchor = go.get_position(id)
-
-    self.play_sound("SoundInvalid")
-
-    local function step(x, dur, easing, nxt)
-        go.animate(id, "position.x", go.PLAYBACK_ONCE_FORWARD, x, easing, dur, 0, function()
-            if seq ~= self._seq then return end
-            if nxt then nxt() end
-        end)
-    end
-
-    step(anchor.x + 14, 0.05, go.EASING_OUTSINE, function()
-        step(anchor.x - 14, 0.06, go.EASING_INOUTSINE, function()
-            step(anchor.x + 8,  0.05, go.EASING_INOUTSINE, function()
-                step(anchor.x,   0.05, go.EASING_OUTSINE, nil)
-            end)
-        end)
-    end)
-end
-
 return M
