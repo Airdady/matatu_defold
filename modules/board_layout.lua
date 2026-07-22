@@ -175,9 +175,20 @@ local function same_target(a, b)
         and math.abs(a.z - b.z) < 0.0005
 end
 
-function M.layout_hand(self, hand, y, animate)
+-- geometry_n, when given, is the hand's FINAL size for an in-progress
+-- multi-card draw (see game_flow.lua's draw_to_hand) — calc_spacing and the
+-- arch's arc/fan amounts all depend on hand size, so without this, each new
+-- card arriving mid-draw recomputed a shifted layout and restarted every
+-- ALREADY-PLACED card's position tween before its previous one finished
+-- (same mechanism the PLAY-side combo fix in online_handler.lua already
+-- addresses for played cards — this closes the equivalent gap on the DRAW
+-- side). Laying every card out against the batch's final size from the
+-- first card onward means already-placed cards' slots don't shift again as
+-- more arrive, so the same_target guard below can skip their tweens.
+function M.layout_hand(self, hand, y, animate, geometry_n)
     local n = #hand
     if n == 0 then return end
+    local gn = geometry_n or n
 
     -- Flat, evenly-spaced layout everywhere EXCEPT the 4-player tournament,
     -- which keeps the gentle arch + fan (the live human's hand only).
@@ -189,17 +200,17 @@ function M.layout_hand(self, hand, y, animate)
     -- The opponent's cards render smaller (see OPPONENT_CARD_SCALE above) —
     -- tighten the gap between them by the same ratio so the hand shrinks
     -- proportionally instead of just the cards themselves.
-    local spacing = M.calc_spacing(self, n, is_ai_hand and M.OPPONENT_SCALE_RATIO or 1.0)
-    local start = self.CENTER.x - ((n - 1) * spacing) / 2.0
+    local spacing = M.calc_spacing(self, gn, is_ai_hand and M.OPPONENT_SCALE_RATIO or 1.0)
+    local start = self.CENTER.x - ((gn - 1) * spacing) / 2.0
 
     local arch = self.t4 ~= nil and is_player_hand and self.t4.human_alive
-    local arc_amt = arch and math.min(34, n * 5.0) or 0
-    local fan_amt = arch and math.min(8, n * 1.3) or 0
+    local arc_amt = arch and math.min(34, gn * 5.0) or 0
+    local fan_amt = arch and math.min(8, gn * 1.3) or 0
     local dir     = is_ai_hand and -1 or 1   -- mirror the curve for the top hand
 
     for i, c in ipairs(hand) do
         local z = Z_HAND + i * 0.001
-        local t = (n > 1) and ((i - 1) / (n - 1) - 0.5) or 0
+        local t = (gn > 1) and ((i - 1) / (gn - 1) - 0.5) or 0
         local by = dir * (0.25 - t * t) * arc_amt
         local target = vmath.vector3(start + (i - 1) * spacing, y + by, z)
         -- The opponent-hand size is KNOWN up front — apply it instantly the
