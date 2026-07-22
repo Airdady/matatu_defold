@@ -283,6 +283,13 @@ function M.draw_to_hand(self, hand, is_player, count, done)
     local launched    = 0
     local finished    = false
     local reshuffling = false
+    -- Fixed for the whole batch — see layout_hand's geometry_n note. Without
+    -- this, a multi-card draw (e.g. a stacked penalty) reflowed the WHOLE
+    -- hand's spacing/arc on every single card, restarting every
+    -- already-placed card's tween mid-flight — the concurrent-animation
+    -- jitter this was most noticeable during (a card draw landing while an
+    -- emoji reaction is also animating).
+    local final_n = #hand + count
 
     local function finish()
         if finished then return end
@@ -340,7 +347,7 @@ function M.draw_to_hand(self, hand, is_player, count, done)
             self.set_back(c)
         end
 
-        BL.layout_hand(self, hand, y, true)
+        BL.layout_hand(self, hand, y, true, final_n)
 
         placed = placed + 1
         if placed >= count then
