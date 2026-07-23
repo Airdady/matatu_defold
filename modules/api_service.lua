@@ -56,6 +56,14 @@ function M.save_session(user)
         points      = user.points or 0,
         phoneNumber = user.phoneNumber or user.phone or "",
         idToken     = user.idToken or user.token or _auth_token or "",
+        -- Whether the live login that produced this session was resolved by
+        -- an actual Google identity match (see auth.routes.ts's /google
+        -- response) — app_state.phone_complete() uses this to skip the
+        -- mandatory phone-migration step for already-fully-identified
+        -- accounts. Persisted here (not just held in memory) so a cold app
+        -- restart using this cached session doesn't lose the signal and
+        -- re-prompt for a phone number before the next fresh login even runs.
+        matchedByGoogleId = user.matchedByGoogleId and true or false,
     }
     sys.save(SESSION_FILE, data)
 end

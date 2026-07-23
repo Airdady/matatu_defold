@@ -100,6 +100,15 @@ end
 function M.phone_complete(user)
   if not M.phone_required() then return true end
   if type(user) ~= "table" then return false end
+  -- The phone step exists ONLY to catch pre-Google, phone-only accounts
+  -- that need migrating onto a Google identity (see auth.routes.ts's
+  -- /google handler). A user this login actually matched by their real
+  -- Google identity (googleId/gpgsPlayerId, not the deviceId/email
+  -- fallback, and not a brand-new signup) has nothing left to migrate, so
+  -- there's no reason to make them provide a phone number just to get past
+  -- this screen — set on login in controller.script, persisted with the
+  -- session in api_service.lua so a cold restart doesn't lose it.
+  if user.matchedByGoogleId then return true end
   local p = user.phoneNumber or user.phone or ""
   return type(p) == "string" and p ~= ""
 end
