@@ -9,6 +9,7 @@ local ui        = require("modules.ui")
 local app_state = require("modules.app_state")
 local ws        = require("modules.websocket_manager")
 local screen    = require("modules.screen")
+local toast     = require("modules.toast")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local VISIBLE_W, VISIBLE_H = 1280, 720
@@ -264,10 +265,8 @@ local function rebuild_phone_step(self, d_y)
     pkey(d_kx0 + (kw+kg), last_py, kw, "0", "0", 1.4)
     pkey(d_kx0 + 2*(kw+kg), last_py, kw, "back", "<-", 1.0)
 
-    if self._phone_error then
-        local err = track(self, ui.text(vmath.vector3(CX, card_bottom - 22, 0), tostring(self._phone_error), "small", P_ERROR))
-        gui.set_scale(err, vmath.vector3(0.9, 0.9, 1))
-    end
+    -- self._phone_error now surfaces as a bottom-left toast (see the
+    -- phone_link_result handler below) instead of inline card text.
 end
 
 local function rebuild(self)
@@ -312,10 +311,8 @@ local function rebuild(self)
         (ok and not self._saving) and P_DARK_TXT or P_MUTED))
     self.buttons[#self.buttons+1] = { node = save_btn, id = "save" }
 
-    -- Save feedback (failures were previously swallowed silently).
-    if self._error then
-        track(self, ui.text(vmath.vector3(EDGE_R - 110, EDGE_T - 76, 0), tostring(self._error), "small", P_ERROR))
-    end
+    -- Save feedback now surfaces as a bottom-left toast (see the
+    -- profile_saved handler below) instead of inline text here.
 
     -- Username-taken suggestions — tap one to fill it into the input.
     if self._suggestions and #self._suggestions > 0 then
@@ -526,11 +523,13 @@ function on_message(self, message_id, message, sender)
             decide_step(self)
         else
             self._phone_error = message.message or "Could not link phone number."
+            toast.error(self._phone_error)
         end
         if self._active then rebuild(self) end
     elseif message_id == hash("profile_saved") then
         self._saving = false
         self._error = message.ok and nil or (message.message or "Save failed")
+        if self._error then toast.error(self._error) end
         self._suggestions = (not message.ok) and app_state.username_suggestions or nil
         if self._active then rebuild(self) end
     end

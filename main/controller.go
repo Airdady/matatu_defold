@@ -82,6 +82,10 @@ components {
   id: "announcement"
   component: "/main/announcement.gui"
 }
+components {
+  id: "toast"
+  component: "/main/toast.gui"
+}
 embedded_components {
   id: "background"
   type: "sprite"

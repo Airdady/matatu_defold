@@ -12,6 +12,7 @@ local ws        = require("modules.websocket_manager")
 local screen    = require("modules.screen")
 local GameMode  = require("modules.game_mode")
 local app_state = require("modules.app_state")
+local toast     = require("modules.toast")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local VISIBLE_W, VISIBLE_H = 1280, 720
@@ -362,8 +363,11 @@ rebuild = function(self)
 		local confirm_hit = track(self, ui.box(vmath.vector3(lcx, confirm_y, 0), vmath.vector3(220, 48, 0), vmath.vector4(0,0,0,0)))
 		self.buttons[#self.buttons+1] = { node = confirm_hit, id = "save_exchange_confirm" }
 
-		if self._save_msg then
-			ktext(self, vmath.vector3(lcx, confirm_y - 34, 0), self._save_msg, 14, self._save_msg_ok and M_OKC or M_ERR)
+		-- Failures now surface as a bottom-left toast instead of inline red
+		-- text (see the ws_savings_exchange_result handler below) — only the
+		-- success case still renders here.
+		if self._save_msg and self._save_msg_ok then
+			ktext(self, vmath.vector3(lcx, confirm_y - 34, 0), self._save_msg, 14, M_OKC)
 		end
 
 		-- ── RIGHT column: Auto-charge per game ──────────────────────────────
@@ -406,8 +410,10 @@ rebuild = function(self)
 		local plan_hit = track(self, ui.box(vmath.vector3(rcx, save_y, 0), vmath.vector3(220, 48, 0), vmath.vector4(0,0,0,0)))
 		self.buttons[#self.buttons+1] = { node = plan_hit, id = "save_autocharge_plan_save" }
 
-		if self._plan_msg then
-			ktext(self, vmath.vector3(rcx, save_y - 34, 0), self._plan_msg, 14, self._plan_msg_ok and M_OKC or M_ERR)
+		-- Failures now surface as a bottom-left toast instead of inline red
+		-- text (see the ws_savings_settings_updated handler below).
+		if self._plan_msg and self._plan_msg_ok then
+			ktext(self, vmath.vector3(rcx, save_y - 34, 0), self._plan_msg, 14, M_OKC)
 		end
 
 		return
@@ -439,9 +445,11 @@ rebuild = function(self)
 	ktext(self, vmath.vector3(lx, info_cy, 0), "Fee: " .. commas(fee) .. " " .. GameMode.CURRENCY_SYMBOL, 16, M_FEE)
 	ktext(self, vmath.vector3(lx_left + left_w, info_cy, 0), "Total: " .. commas(total) .. " " .. GameMode.CURRENCY_SYMBOL, 16, M_TOTAL, gui.PIVOT_E)
 
-	-- Status line.
-	if self._msg then
-		local col = self._msg_ok and (self._msg_proc and M_PROC or M_OKC) or M_ERR
+	-- Status line. Failures now surface as a bottom-left toast instead
+	-- (see the payment_result/PAY-tap handlers below) — only processing/
+	-- success still render inline here, next to the button that triggered it.
+	if self._msg and self._msg_ok then
+		local col = self._msg_proc and M_PROC or M_OKC
 		ktext(self, vmath.vector3(lx, info_cy - 30, 0), self._msg, 16, col)
 	end
 
@@ -602,6 +610,7 @@ function on_message(self, message_id, message, sender)
 		self._msg = message.ok and "Request sent - check your phone." or (message.message or "Failed")
 		self._msg_ok = message.ok
 		self._msg_proc = false
+		if not message.ok then toast.error(self._msg) end
 		if message.ok then self.amount = "" end
 		if self._active then rebuild(self) end
 	elseif message_id == hash("ws_savings_exchange_result") then
@@ -620,6 +629,7 @@ function on_message(self, message_id, message, sender)
 			end
 		else
 			self._save_msg, self._save_msg_ok = d.message or "Exchange failed", false
+			toast.error(self._save_msg)
 		end
 		if self._active then rebuild(self) end
 	elseif message_id == hash("ws_savings_settings_updated") then
@@ -629,6 +639,7 @@ function on_message(self, message_id, message, sender)
 			self._plan_msg, self._plan_msg_ok = "Auto-charge plan saved.", true
 		else
 			self._plan_msg, self._plan_msg_ok = d.message or "Save failed", false
+			toast.error(self._plan_msg)
 		end
 		if self._active then rebuild(self) end
 	elseif message_id == hash("ws_savings_status") then
@@ -680,6 +691,7 @@ local function handle(self, b)
 				self._pending_pay = nil
 				self._msg = "Please enter a valid number first."
 				self._msg_ok = false; self._msg_proc = false
+				toast.error(self._msg)
 				schedule_validation(self)
 				rebuild(self)
 			end
