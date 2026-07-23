@@ -142,17 +142,25 @@ local function rebuild_phone_step(self, d_y)
     -- divider — clamped so it always stays fully on-screen even on an
     -- unusually short/tall aspect ratio, rather than pinned to one edge
     -- and leaving a lopsided gap on the other.
-    local kw, kh, kg = 62, 54, 8
-    local pad = 24
-    local roww = 10*(kw+kg) - kg
-    local card_w = roww + pad*2
+    -- Dialer-style keypad: 1-2-3 / 4-5-6 / 7-8-9 / (blank)-0-DEL, like a
+    -- real phone dial pad, instead of the old single cramped row of 10 tiny
+    -- keys — bigger touch targets and room for a noticeably bigger digit
+    -- font (see pkey()'s scale param below).
+    local kw, kh, kg = 100, 60, 14
+    local pad = 20
+    local roww = 3*(kw+kg) - kg
+    -- Card width is driven by whichever needs more room: the dialer grid
+    -- (narrower now that it's 3 columns instead of 10) or the explanation/
+    -- input rows above it, which were sized for the old wide card and would
+    -- overflow a card shrunk down to just fit the dial pad.
+    local card_w = math.max(roww + pad*2, 620)
 
     local expl_h   = 50
     local note_h   = 34
     local input_h  = 84
     local status_h = 30
-    local row_gap  = 18
-    local keypad_h = kh + kg + kh -- digit row + gap + delete row
+    local row_gap  = 16
+    local keypad_h = 4*kh + 3*kg -- 4 dialer rows
 
     local card_h = pad + expl_h + row_gap + note_h + row_gap + input_h + row_gap + status_h + row_gap + keypad_h + pad
 
@@ -211,13 +219,13 @@ local function rebuild_phone_step(self, d_y)
     local shown = (self.phone ~= "") and grouped or "7XX XXX XXX"
     local val_color = (self.phone ~= "") and P_CREAM or P_MUTED
     local val = txtL(self, digits_x, input_cy, shown, "body", val_color)
-    gui.set_scale(val, vmath.vector3(0.9, 0.9, 1))
+    gui.set_scale(val, vmath.vector3(1.15, 1.15, 1))
 
     -- A caret substitute: a thin gold tick at the edge of what's typed so
     -- far, only while the field isn't yet valid/complete — a small but
     -- real "this is an active input" affordance.
     if self.phone ~= "" and not ok then
-        local caret_x = digits_x + gui.get_text_metrics_from_node(val).width * 0.9 + 6
+        local caret_x = digits_x + gui.get_text_metrics_from_node(val).width * 1.15 + 6
         track(self, ui.box(vmath.vector3(caret_x, input_cy, 0), vmath.vector3(2, 26, 0), P_GOLD))
     end
     cursor_y = cursor_y - input_h - row_gap
@@ -230,23 +238,31 @@ local function rebuild_phone_step(self, d_y)
     cursor_y = cursor_y - status_h - row_gap
 
     -- Keypad, inside its own inset rows at the bottom of the same card.
-    local dig_ny = cursor_y - kh/2
-    local del_ny = dig_ny - kg - kh
-
-    local function pkey(px, py, w, ch, label)
+    -- Real phone-dialer layout (1-2-3 / 4-5-6 / 7-8-9 / blank-0-DEL) instead
+    -- of one cramped row — bigger keys, and digit labels get an explicit
+    -- upscale on top of that (bigger than the button box alone would give)
+    -- since they're the single most important thing to read on this screen.
+    local function pkey(px, py, w, id_suffix, label, font_scale)
         track(self, ui.box(vmath.vector3(px, py, 0), vmath.vector3(w, kh, 0), P_BORDER))
         track(self, ui.box(vmath.vector3(px, py, 0), vmath.vector3(w - 2, kh - 2, 0), P_BADGE_BG))
-        track(self, ui.text(vmath.vector3(px, py, 0), label or ch, "subtitle2", P_CREAM))
+        local lbl = track(self, ui.text(vmath.vector3(px, py, 0), label, "subtitle2", P_CREAM))
+        if font_scale then gui.set_scale(lbl, vmath.vector3(font_scale, font_scale, 1)) end
         local hit = track(self, ui.box(vmath.vector3(px, py, 0), vmath.vector3(w, kh, 0), vmath.vector4(0, 0, 0, 0.001)))
-        self.buttons[#self.buttons+1] = { node = hit, id = "p_"..ch, data = (ch ~= "back") and ch or nil }
+        self.buttons[#self.buttons+1] = { node = hit, id = "p_"..id_suffix, data = (id_suffix ~= "back") and id_suffix or nil }
     end
 
-    local digits = "0123456789"
     local d_kx0 = CX - roww/2 + kw/2
-    for i = 1, 10 do
-        pkey(d_kx0+(i-1)*(kw+kg), dig_ny, kw, digits:sub(i, i))
+    local dial_rows = { "123", "456", "789" }
+    for r, row in ipairs(dial_rows) do
+        local py = cursor_y - kh/2 - (r-1)*(kh+kg)
+        for c = 1, 3 do
+            local d = row:sub(c, c)
+            pkey(d_kx0 + (c-1)*(kw+kg), py, kw, d, d, 1.4)
+        end
     end
-    pkey(CX, del_ny, roww, "back", "DELETE")
+    local last_py = cursor_y - kh/2 - 3*(kh+kg)
+    pkey(d_kx0 + (kw+kg), last_py, kw, "0", "0", 1.4)
+    pkey(d_kx0 + 2*(kw+kg), last_py, kw, "back", "<-", 1.0)
 
     if self._phone_error then
         local err = track(self, ui.text(vmath.vector3(CX, card_bottom - 22, 0), tostring(self._phone_error), "small", P_ERROR))
