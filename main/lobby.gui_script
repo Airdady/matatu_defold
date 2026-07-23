@@ -74,6 +74,7 @@ local STATE_LOBBY     = "lobby"
 local STATE_AI_SELECT = "ai_select"
 local STATE_TOURNEY   = "tournament"
 local STATE_TEAM_JOIN = "team_join"
+local STATE_TEAM_MENU = "team_menu"
 
 -- ---------------------------------------------------------------------------
 -- Tutorial data
@@ -551,6 +552,45 @@ local function draw_tournament(self)
     self.buttons[#self.buttons + 1] = { node = bkb, id = "back_to_lobby" }
 end
 
+-- Small 2-option menu opened from the TEAM TOURNAMENTS banner: any
+-- signed-in player can create one (funding its grand prize from their own
+-- balance) or join an existing one by invitation code.
+local function draw_team_menu(self)
+    local scrim = track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.85)))
+    self.buttons[#self.buttons + 1] = { node = scrim, id = "dialog_block" }
+
+    local pw, ph = 520, 320
+    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), C_BORDER))
+    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw - 2, ph - 2, 0), C_TILE))
+    track(self, ui.box(vmath.vector3(CX, CY + ph / 2 - 2, 0), vmath.vector3(pw, 4, 0), C_U_TEAM))
+
+    text_sh(self, vmath.vector3(CX, CY + ph / 2 - 40, 0), "TEAM TOURNAMENTS", "title", C_CREAM, 2, -2)
+    track(self, ui.text(vmath.vector3(CX, CY + ph / 2 - 70, 0), "Any player can create one, or join with a code", "small", C_MUTED))
+
+    local opt_w, opt_h = 220, 96
+    local create_x = CX - opt_w/2 - 12
+    local join_x   = CX + opt_w/2 + 12
+    local opt_y = CY - 10
+
+    track(self, ui.box(vmath.vector3(create_x, opt_y, 0), vmath.vector3(opt_w, opt_h, 0), C_BORDER))
+    track(self, ui.box(vmath.vector3(create_x, opt_y, 0), vmath.vector3(opt_w - 2, opt_h - 2, 0), C_TILE))
+    text_sh(self, vmath.vector3(create_x, opt_y + 12, 0), "CREATE", "body", C_CREAM, 1, -1)
+    track(self, ui.text(vmath.vector3(create_x, opt_y - 16, 0), "Fund a prize, invite your team", "small", C_MUTED))
+    local create_hit = track(self, ui.box(vmath.vector3(create_x, opt_y, 0), vmath.vector3(opt_w, opt_h, 0), C_TRANSP))
+    self.buttons[#self.buttons + 1] = { node = create_hit, id = "team_menu_create" }
+
+    track(self, ui.box(vmath.vector3(join_x, opt_y, 0), vmath.vector3(opt_w, opt_h, 0), C_BORDER))
+    track(self, ui.box(vmath.vector3(join_x, opt_y, 0), vmath.vector3(opt_w - 2, opt_h - 2, 0), C_TILE))
+    text_sh(self, vmath.vector3(join_x, opt_y + 12, 0), "JOIN BY CODE", "body", C_CREAM, 1, -1)
+    track(self, ui.text(vmath.vector3(join_x, opt_y - 16, 0), "Enter a code your owner shared", "small", C_MUTED))
+    local join_hit = track(self, ui.box(vmath.vector3(join_x, opt_y, 0), vmath.vector3(opt_w, opt_h, 0), C_TRANSP))
+    self.buttons[#self.buttons + 1] = { node = join_hit, id = "team_menu_join" }
+
+    local bkb = track(self, ui.btn9(vmath.vector3(CX - pw / 2 + 50, CY + ph / 2 - 24, 0), vmath.vector3(78, 32, 0), "secondary_btn"))
+    track(self, ui.text(vmath.vector3(CX - pw / 2 + 50, CY + ph / 2 - 26, 0), "< BACK", "small", C_CREAM))
+    self.buttons[#self.buttons + 1] = { node = bkb, id = "back_to_lobby" }
+end
+
 -- Join a player-created Team Tournament by the invitation code its owner
 -- shared. Codes are alphanumeric (see be_matatu's createTeamTournament,
 -- which uppercases/strips them to 3-16 [A-Z0-9] chars), so this needs a
@@ -643,7 +683,11 @@ local function rebuild(self)
     local grid_r = EDGE_R - PADDING
     
     local util_h = 56
-    local grid_b = EDGE_B + PADDING + util_h + GUTTER
+    -- Slim banner reserved just above the utility strip (RULES/SHARE/etc) —
+    -- prominent and easy to find under the main tile grid, rather than
+    -- buried as one more small icon among those minor utility actions.
+    local team_banner_h = 52
+    local grid_b = EDGE_B + PADDING + util_h + GUTTER + team_banner_h + GUTTER
     local grid_t = EDGE_T - PADDING - HEADER_H
     
     local grid_w = grid_r - grid_l
@@ -789,12 +833,6 @@ local function rebuild(self)
         { id = "share",        label = "SHARE",   acc = C_U_SHARE  },
         { id = "help_open",    label = "HELP",    acc = C_U_HELP   },
         { id = "contact_open", label = "CONTACT", acc = C_U_CONTACT },
-        -- Join a player-created Team Tournament by its invitation code.
-        -- Gated the same way THEME already is: locked with a "SIGN IN" hint
-        -- until there's a real account, since joining needs an authenticated
-        -- userId — no separate sign-in-then-continue flow to coordinate.
-        { id = "team_join_open", label = "TEAM", acc = C_U_TEAM,
-            disabled = not has_account, locked_hint = "SIGN IN" },
     }
     -- Card themes (Dragon/Batman/etc. skins) are a Matatu-only customization;
     -- Whot ships a single fixed card set, so the button has nothing to open.
@@ -819,12 +857,29 @@ local function rebuild(self)
     gui.set_color(deco, vmath.vector4(0.5, 0.5, 0.5, 1))
 
     -- -----------------------------------------------------------------------
+    -- TEAM TOURNAMENTS banner — a prominent full-width button just under the
+    -- main tile grid (not squeezed into the small utility strip below it).
+    -- Opens a 2-option menu: create one (any signed-in player can, funding
+    -- the grand prize from their own balance) or join one by invitation code.
+    -- -----------------------------------------------------------------------
+    local team_banner_cy = EDGE_B + PADDING + util_h + GUTTER + team_banner_h / 2
+    local team_banner_box = track(self, ui.box(vmath.vector3(CX, team_banner_cy, 0), vmath.vector3(grid_w, team_banner_h, 0), C_BORDER))
+    track(self, ui.box(vmath.vector3(CX, team_banner_cy, 0), vmath.vector3(grid_w - 2, team_banner_h - 2, 0), C_TILE))
+    track(self, ui.box(vmath.vector3(grid_l + 6, team_banner_cy, 0), vmath.vector3(4, team_banner_h - 16, 0), C_U_TEAM))
+    text_sh(self, vmath.vector3(CX, team_banner_cy + 3, 0), "TEAM TOURNAMENTS", "body", C_CREAM, 1, -1)
+    track(self, ui.text(vmath.vector3(CX, team_banner_cy - 15, 0), "Create or join by invitation code", "small", C_MUTED))
+    local team_banner_hit = track(self, ui.box(vmath.vector3(CX, team_banner_cy, 0), vmath.vector3(grid_w, team_banner_h, 0), C_TRANSP))
+    self.buttons[#self.buttons + 1] = { node = team_banner_hit, id = "team_action_open" }
+
+    -- -----------------------------------------------------------------------
     -- Draw Active Overlays on top of the main Lobby UI
     -- -----------------------------------------------------------------------
     if self.state == STATE_AI_SELECT then
         draw_ai_select(self)
     elseif self.state == STATE_TOURNEY then
         draw_tournament(self)
+    elseif self.state == STATE_TEAM_MENU then
+        draw_team_menu(self)
     elseif self.state == STATE_TEAM_JOIN then
         draw_team_join(self)
     end
@@ -839,6 +894,27 @@ end
 local function set_state(self, new_state)
     self.state = new_state
     rebuild(self)
+end
+
+-- Shared by the "play_online" tile tap and the TEAM TOURNAMENTS menu's
+-- "CREATE" option, both of which need the same sign-in-if-needed-then-
+-- route-to-online dance before anything else can happen.
+local function go_online(self)
+    if app_state.auth_state == "sending" or app_state.auth_state == "verifying" then
+        return -- Block multiple taps whilst already attempting connection
+    end
+
+    local has_account = ws.current_user_data and ws.current_user_data.username and ws.current_user_data.username ~= ""
+
+    -- If they are a guest AND the auth state hasn't succeeded, trigger the Google Play sign in.
+    if not has_account and app_state.auth_state ~= "done" then
+        app_state.auth_state = "sending"
+        msg.post("#controller", "auth_retry_silent_login") -- Re-uses controller's native login routing
+        rebuild(self)
+    else
+        -- Already have an account/authenticated, proceed immediately
+        msg.post("#controller", "play_online")
+    end
 end
 
 local function handle(self, b)
@@ -868,22 +944,8 @@ local function handle(self, b)
     elseif b.id == "theme_open" then msg.post("#controller", "goto_themes"); return end
 
     if b.id == "play_online" then
-        if app_state.auth_state == "sending" or app_state.auth_state == "verifying" then
-            return -- Block multiple taps whilst already attempting connection
-        end
-        
-        local has_account = ws.current_user_data and ws.current_user_data.username and ws.current_user_data.username ~= ""
-        
-        -- If they are a guest AND the auth state hasn't succeeded, trigger the Google Play sign in.
-        if not has_account and app_state.auth_state ~= "done" then
-            app_state.auth_state = "sending"
-            msg.post("#controller", "auth_retry_silent_login") -- Re-uses controller's native login routing
-            rebuild(self)
-        else
-            -- Already have an account/authenticated, proceed immediately
-            msg.post("#controller", "play_online")
-        end
-        
+        go_online(self)
+
     elseif b.id == "quick_play" then
         app_state.mode = "offline"
         local me = ws.current_user_data or {}
@@ -913,7 +975,21 @@ local function handle(self, b)
         app_state.mode = ((app_state.t4_mode or "bracket") == "chamber") and "chamber4" or "tournament4"
         msg.post("#controller", "goto_game")
 
-    elseif b.id == "team_join_open" then
+    elseif b.id == "team_action_open" then
+        set_state(self, STATE_TEAM_MENU)
+    elseif b.id == "team_menu_create" then
+        -- Any signed-in player can create one — same sign-in-then-route-to-
+        -- online dance as PLAY ONLINE, then online.gui_script's screen_enter
+        -- opens the creation dialog once actually there (see
+        -- app_state.pending_team_action).
+        app_state.pending_team_action = "create"
+        go_online(self)
+    elseif b.id == "team_menu_join" then
+        local has_account = ws.current_user_data and ws.current_user_data.username and ws.current_user_data.username ~= ""
+        if not has_account then
+            toast.error("Sign in first — tap PLAY ONLINE.")
+            return
+        end
         self.team_join = { code = "" }
         set_state(self, STATE_TEAM_JOIN)
     elseif b.id:sub(1, 3) == "tj_" then
