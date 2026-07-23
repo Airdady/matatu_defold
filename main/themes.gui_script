@@ -291,6 +291,7 @@ local function handle(self, b)
 end
 
 function on_input(self, action_id, action)
+    if not self._active then return false end
     if action_id == hash("touch") and action.pressed then
         for i = #self.buttons, 1, -1 do
             local b = self.buttons[i]
@@ -298,6 +299,12 @@ function on_input(self, action_id, action)
                 handle(self, b); return true
             end
         end
+        -- The full-screen scrim (registered first in rebuild(), id "back")
+        -- should already catch every tap here, but that made background-tap
+        -- blocking entirely dependent on the scrim always covering 100% of
+        -- the screen with no gaps — swallow unconditionally as a hard
+        -- guarantee instead of relying on that alone.
+        return true
     end
     return false
 end

@@ -244,8 +244,9 @@ function on_input(self, action_id, action)
             apply_mode(self, "reconnecting")
             ws.connect()
         end
-        -- Modal: swallow everything while visible.
-        return true
     end
-    return false
+    -- Modal: swallow EVERYTHING while visible, not just touch+pressed — a
+    -- release/drag/other action used to fall through to `return false` here,
+    -- reaching the background even with "CONNECTION LOST" on screen.
+    return true
 end
