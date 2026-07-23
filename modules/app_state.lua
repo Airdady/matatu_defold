@@ -28,6 +28,12 @@ M.theme = "default"
 M.auth_state = "idle"
 M.auth_error = ""
 
+-- Set by the main lobby's TEAM TOURNAMENTS menu ("CREATE" child button)
+-- right before triggering the same sign-in-then-route-to-online dance as
+-- PLAY ONLINE — nil | "create". Consumed once by online.gui_script's
+-- screen_enter handler, which opens the creation dialog and clears it.
+M.pending_team_action = nil
+
 -- Available-username alternatives returned alongside a USERNAME_TAKEN save
 -- failure (e.g. "scovia" -> "scovia7"/"scovia23"/"scovia1993"). Parked here
 -- rather than riding through msg.post's "profile_saved" payload — this

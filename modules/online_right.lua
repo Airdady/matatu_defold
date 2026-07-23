@@ -124,10 +124,15 @@ local function draw_battle_modal(self, ctx)
     local ui    = ctx.ui
     local mkbtn = ctx.mkbtn
     local commas = ctx.commas
-    local CX, CY = ctx.CX, ctx.CY
+    local SCREEN_CX, CY = ctx.CX, ctx.CY
 
-    -- Fullscreen intercept block and radial gradient backdrop
-    local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.85)))
+    -- Fullscreen intercept block and radial gradient backdrop — these stay
+    -- centered on the whole screen (the dim/backdrop should always cover
+    -- everything); only the panel itself below is re-centered onto the
+    -- right panel's own column (see CX below) so this dialog reads as part
+    -- of the right panel it was opened from, not floating dead-center of
+    -- the whole screen.
+    local dim = track(self, ui.box(vmath.vector3(SCREEN_CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.85)))
     self.buttons[#self.buttons+1] = { node = dim, id = "bm_block" }
     track(self, ui.grad_backdrop(ctx.LOGICAL_W, ctx.LOGICAL_H))
 
@@ -142,6 +147,9 @@ local function draw_battle_modal(self, ctx)
     local title     = (bm.editing and "UPDATE " or "CREATE ") .. type_word
 
     local panel_w, panel_h = 420, 480
+    local _, _, _, div_rx = ctx.get_layout()
+    local CX = math.max(ctx.EDGE_L + panel_w/2 + 10,
+        math.min((div_rx + ctx.EDGE_R) / 2, ctx.EDGE_R - panel_w/2 - 10))
     track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
 
     local step_w = 210
@@ -306,14 +314,20 @@ local function draw_team_create_modal(self, ctx)
     local ui     = ctx.ui
     local mkbtn  = ctx.mkbtn
     local commas = ctx.commas
-    local CX, CY = ctx.CX, ctx.CY
+    local SCREEN_CX, CY = ctx.CX, ctx.CY
     local C      = ctx.C
 
-    local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.85)))
+    local dim = track(self, ui.box(vmath.vector3(SCREEN_CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.85)))
     self.buttons[#self.buttons+1] = { node = dim, id = "tm_block" }
     track(self, ui.grad_backdrop(ctx.LOGICAL_W, ctx.LOGICAL_H))
 
     local panel_w, panel_h = 480, 660
+    -- Re-centered onto the right panel's own column (see draw_battle_modal's
+    -- comment) rather than the whole screen, clamped so it never clips off
+    -- the physical screen edge on a narrower device.
+    local _, _, _, div_rx = ctx.get_layout()
+    local CX = math.max(ctx.EDGE_L + panel_w/2 + 10,
+        math.min((div_rx + ctx.EDGE_R) / 2, ctx.EDGE_R - panel_w/2 - 10))
     track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
 
     local step_w = 220
@@ -429,15 +443,20 @@ local function draw_team_bracket_modal(self, ctx)
     local mkbtn = ctx.mkbtn
     local txtL  = ctx.txtL
     local commas = ctx.commas
-    local CX, CY = ctx.CX, ctx.CY
+    local SCREEN_CX, CY = ctx.CX, ctx.CY
     local C     = ctx.C
     local NOTE_C = vmath.vector4(0.6, 0.6, 0.6, 1)
 
-    local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.85)))
+    local dim = track(self, ui.box(vmath.vector3(SCREEN_CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.85)))
     self.buttons[#self.buttons+1] = { node = dim, id = "tbr_block" }
     track(self, ui.grad_backdrop(ctx.LOGICAL_W, ctx.LOGICAL_H))
 
     local panel_w, panel_h = 520, 560
+    -- Re-centered onto the right panel's own column (see draw_battle_modal's
+    -- comment), clamped so it never clips off the physical screen edge.
+    local _, _, _, div_rx = ctx.get_layout()
+    local CX = math.max(ctx.EDGE_L + panel_w/2 + 10,
+        math.min((div_rx + ctx.EDGE_R) / 2, ctx.EDGE_R - panel_w/2 - 10))
     track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
 
     local cursor_y = CY + panel_h/2 - 18
