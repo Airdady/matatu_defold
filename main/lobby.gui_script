@@ -946,6 +946,13 @@ local function handle(self, b)
                 if result.success then
                     cur.msg, cur.msg_ok = "Joined! Good luck.", true
                     toast.success("Joined the team tournament!")
+                    local joined = result.data and result.data.tournament
+                    if joined and joined._id then
+                        local u = ws.current_user_data or {}
+                        u.myTeamTournamentId = joined._id
+                        u.myTeamTournamentIsOwner = false
+                        ws.current_user_data = u
+                    end
                     if self._active then rebuild(self) end
                     timer.delay(1.0, false, function()
                         if self.team_join == cur then set_state(self, STATE_LOBBY) end
