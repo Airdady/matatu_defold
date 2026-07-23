@@ -11,6 +11,8 @@ local ws         = require("modules.websocket_manager")
 local screen     = require("modules.screen")
 local akira      = require("modules.akira")
 local GameMode   = require("modules.game_mode")
+local api        = require("modules.api_service")
+local toast      = require("modules.toast")
 
 -- ---------------------------------------------------------------------------
 -- Canvas — refreshed from screen.metrics() before every rebuild
@@ -43,6 +45,7 @@ local C_U_SHARE = vmath.vector4(0.500, 0.400, 0.300, 1.00)
 local C_U_HELP  = vmath.vector4(0.300, 0.300, 0.300, 1.00)
 local C_U_THEME = vmath.vector4(0.800, 0.600, 0.200, 1.00)
 local C_U_CONTACT = vmath.vector4(0.300, 0.700, 0.500, 1.00)
+local C_U_TEAM    = vmath.vector4(0.596, 0.298, 0.796, 1.00)
 local C_DISABLED  = vmath.vector4(0.380, 0.380, 0.380, 1.00)
 
 -- Akira / consent palette
@@ -70,6 +73,7 @@ local HEADER_H = 65
 local STATE_LOBBY     = "lobby"
 local STATE_AI_SELECT = "ai_select"
 local STATE_TOURNEY   = "tournament"
+local STATE_TEAM_JOIN = "team_join"
 
 -- ---------------------------------------------------------------------------
 -- Tutorial data
@@ -547,6 +551,80 @@ local function draw_tournament(self)
     self.buttons[#self.buttons + 1] = { node = bkb, id = "back_to_lobby" }
 end
 
+-- Join a player-created Team Tournament by the invitation code its owner
+-- shared. Codes are alphanumeric (see be_matatu's createTeamTournament,
+-- which uppercases/strips them to 3-16 [A-Z0-9] chars), so this needs a
+-- real QWERTY+digits keyboard, not just a numeric pad.
+local TEAM_KB = { "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM" }
+
+local function draw_team_join(self)
+    local tj = self.team_join or { code = "" }
+    self.team_join = tj
+
+    local scrim = track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.85)))
+    self.buttons[#self.buttons + 1] = { node = scrim, id = "dialog_block" }
+
+    local pw, ph = 720, 500
+    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), C_BORDER))
+    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw - 2, ph - 2, 0), C_TILE))
+    track(self, ui.box(vmath.vector3(CX, CY + ph / 2 - 2, 0), vmath.vector3(pw, 4, 0), C_U_TEAM))
+
+    text_sh(self, vmath.vector3(CX, CY + ph / 2 - 40, 0), "JOIN TEAM TOURNAMENT", "title", C_CREAM, 2, -2)
+    track(self, ui.text(vmath.vector3(CX, CY + ph / 2 - 70, 0), "Enter the invitation code your team owner shared", "small", C_MUTED))
+
+    -- Code display pill
+    local code_y = CY + 118
+    track(self, ui.box(vmath.vector3(CX, code_y, 0), vmath.vector3(440, 56, 0), C_BORDER))
+    track(self, ui.box(vmath.vector3(CX, code_y, 0), vmath.vector3(436, 52, 0), C_DARK))
+    local shown = (tj.code ~= "") and tj.code or "CODE"
+    track(self, ui.text(vmath.vector3(CX, code_y, 0), shown, "subtitle2", (tj.code ~= "") and C_CREAM or C_MUTED))
+
+    if tj.msg then
+        track(self, ui.text(vmath.vector3(CX, code_y - 40, 0), tj.msg, "small", tj.msg_ok and vmath.vector4(0.3, 0.9, 0.4, 1) or vmath.vector4(1, 0.35, 0.35, 1)))
+    end
+
+    -- Compact QWERTY + digits + delete keyboard
+    local kw, kh, kg = 54, 42, 6
+    local row_y0 = code_y - 84
+    local rows_y = { row_y0, row_y0 - (kh + kg), row_y0 - 2 * (kh + kg) }
+
+    local function key(px, py, w, ch, label)
+        track(self, ui.box(vmath.vector3(px, py, 0), vmath.vector3(w, kh, 0), C_BORDER))
+        track(self, ui.box(vmath.vector3(px, py, 0), vmath.vector3(w - 2, kh - 2, 0), C_DARK))
+        track(self, ui.text(vmath.vector3(px, py, 0), label or ch, "small", C_CREAM))
+        local hit = track(self, ui.box(vmath.vector3(px, py, 0), vmath.vector3(w, kh, 0), C_TRANSP))
+        self.buttons[#self.buttons + 1] = { node = hit, id = "tj_" .. ch, data = (ch ~= "back") and ch or nil }
+    end
+
+    for r, row in ipairs(TEAM_KB) do
+        local n = #row
+        local roww = n * (kw + kg) - kg
+        local kx0 = CX - roww / 2 + kw / 2
+        for i = 1, n do
+            key(kx0 + (i - 1) * (kw + kg), rows_y[r], kw, row:sub(i, i))
+        end
+    end
+
+    local digit_y = row_y0 - 3 * (kh + kg)
+    local digits = "0123456789"
+    local d_roww = 10 * (kw + kg) - kg
+    local d_kx0 = CX - d_roww / 2 + kw / 2
+    for i = 1, 10 do
+        key(d_kx0 + (i - 1) * (kw + kg), digit_y, kw, digits:sub(i, i))
+    end
+    key(CX, digit_y - (kh + kg), 300, "back", "DELETE")
+
+    local jb_y = CY - ph / 2 + 40
+    local jb_label = tj.submitting and "JOINING..." or "JOIN"
+    local jb = track(self, ui.btn9(vmath.vector3(CX, jb_y, 0), vmath.vector3(260, 56, 0), "primary_btn"))
+    text_sh(self, vmath.vector3(CX, jb_y + 2, 0), jb_label, "body", C_CREAM, 2, -2)
+    self.buttons[#self.buttons + 1] = { node = jb, id = "team_join_submit" }
+
+    local bkb = track(self, ui.btn9(vmath.vector3(CX - pw / 2 + 50, CY + ph / 2 - 24, 0), vmath.vector3(78, 32, 0), "secondary_btn"))
+    track(self, ui.text(vmath.vector3(CX - pw / 2 + 50, CY + ph / 2 - 26, 0), "< BACK", "small", C_CREAM))
+    self.buttons[#self.buttons + 1] = { node = bkb, id = "back_to_lobby" }
+end
+
 -- ---------------------------------------------------------------------------
 -- Main Rebuild
 -- ---------------------------------------------------------------------------
@@ -711,6 +789,12 @@ local function rebuild(self)
         { id = "share",        label = "SHARE",   acc = C_U_SHARE  },
         { id = "help_open",    label = "HELP",    acc = C_U_HELP   },
         { id = "contact_open", label = "CONTACT", acc = C_U_CONTACT },
+        -- Join a player-created Team Tournament by its invitation code.
+        -- Gated the same way THEME already is: locked with a "SIGN IN" hint
+        -- until there's a real account, since joining needs an authenticated
+        -- userId — no separate sign-in-then-continue flow to coordinate.
+        { id = "team_join_open", label = "TEAM", acc = C_U_TEAM,
+            disabled = not has_account, locked_hint = "SIGN IN" },
     }
     -- Card themes (Dragon/Batman/etc. skins) are a Matatu-only customization;
     -- Whot ships a single fixed card set, so the button has nothing to open.
@@ -741,6 +825,8 @@ local function rebuild(self)
         draw_ai_select(self)
     elseif self.state == STATE_TOURNEY then
         draw_tournament(self)
+    elseif self.state == STATE_TEAM_JOIN then
+        draw_team_join(self)
     end
 
     draw_tutorial(self)
@@ -826,6 +912,52 @@ local function handle(self, b)
         app_state.tournament_size = 4
         app_state.mode = ((app_state.t4_mode or "bracket") == "chamber") and "chamber4" or "tournament4"
         msg.post("#controller", "goto_game")
+
+    elseif b.id == "team_join_open" then
+        self.team_join = { code = "" }
+        set_state(self, STATE_TEAM_JOIN)
+    elseif b.id:sub(1, 3) == "tj_" then
+        local tj = self.team_join or { code = "" }
+        self.team_join = tj
+        if b.id == "tj_back" then
+            tj.code = tj.code:sub(1, -2)
+        elseif #tj.code < 16 then
+            tj.code = tj.code .. tostring(b.data or ""):upper()
+        end
+        tj.msg = nil
+        rebuild(self)
+    elseif b.id == "team_join_submit" then
+        local tj = self.team_join or { code = "" }
+        self.team_join = tj
+        local uid = (ws.current_user_data or {})._id
+        if not uid or uid == "" then
+            tj.msg, tj.msg_ok = "Sign in first.", false
+            rebuild(self)
+        elseif tj.code == "" then
+            tj.msg, tj.msg_ok = "Enter an invitation code.", false
+            rebuild(self)
+        elseif not tj.submitting then
+            tj.submitting = true
+            rebuild(self)
+            api.join_team_tournament({ userId = uid, code = tj.code }, function(result)
+                local cur = self.team_join
+                if not cur then return end
+                cur.submitting = false
+                if result.success then
+                    cur.msg, cur.msg_ok = "Joined! Good luck.", true
+                    toast.success("Joined the team tournament!")
+                    if self._active then rebuild(self) end
+                    timer.delay(1.0, false, function()
+                        if self.team_join == cur then set_state(self, STATE_LOBBY) end
+                    end)
+                else
+                    local err = (result.data and result.data.error) or result.message or "Could not join. Check the code and try again."
+                    cur.msg, cur.msg_ok = err, false
+                    toast.error(err)
+                    if self._active then rebuild(self) end
+                end
+            end)
+        end
     end
 end
 

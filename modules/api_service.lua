@@ -112,6 +112,14 @@ local function parse_response(response)
             message = data.message
         elseif type(data) == "table" and data.reason then
             message = data.reason
+        -- Several controllers (tournament.controller.js's createTournament/
+        -- createTeamTournament/etc.) respond with { error: "..." } instead
+        -- of { message }/{ reason } — last-resort fallback so those human-
+        -- readable strings ("Insufficient balance...", "That invitation
+        -- code is already taken.") actually reach the player instead of a
+        -- generic "Server Error: 400".
+        elseif type(data) == "table" and type(data.error) == "string" then
+            message = data.error
         else
             message = "Server Error: " .. tostring(code)
         end
@@ -224,6 +232,23 @@ end
 
 function M.update_tournament(tournament_id, payload, cb)
     request("PUT", "/tournaments/" .. tournament_id, payload, cb)
+end
+
+-- Team Tournaments — player-created, owner-funded multi-level brackets.
+-- payload = { userId, name?, grandPrizeCoins, maxPlayers, gamesPerLevel,
+--             invitationCode?, inviteUsernames? }
+function M.create_team_tournament(payload, cb)
+    request("POST", "/tournaments/team", payload, cb)
+end
+
+-- payload = { userId, usernames = {...} }
+function M.invite_team_tournament(tournament_id, payload, cb)
+    request("POST", "/tournaments/team/" .. tournament_id .. "/invite", payload, cb)
+end
+
+-- payload = { userId, code }
+function M.join_team_tournament(payload, cb)
+    request("POST", "/tournaments/team/join", payload, cb)
 end
 
 return M
