@@ -287,8 +287,7 @@ local function draw_team_create_modal(self, ctx)
     -- Anchored to the full screen, not the right panel's own (narrower)
     -- column — this dialog's content (wide steppers + a full keyboard) is
     -- wider than the right panel itself, so forcing it into that column
-    -- only starved it of room. draw_battle_modal's simpler card still
-    -- anchors to the right panel; this one doesn't need to.
+    -- only starved it of room.
     local CX, CY = ctx.CX, ctx.CY
     local C      = ctx.C
     local NOTE_C = vmath.vector4(0.6, 0.6, 0.6, 1)
@@ -324,9 +323,11 @@ local function draw_team_create_modal(self, ctx)
 
     local content_h = header_block + grand_prize_block + max_players_block
         + games_level_block + invite_code_block + keyboard_block + msg_reserve + submit_block
+    -- panel_w/panel_h are kept as layout reference values only (divider
+    -- width, close/submit button placement) — no bordered container_bg card
+    -- is drawn. Matches draw_battle_modal's plain floating-on-backdrop style,
+    -- which has proven the more reliable of the two across several passes.
     local panel_w, panel_h = 560, content_h + PAD * 2
-
-    track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
 
     local step_w = 220
     local cursor_y = CY + panel_h/2 - PAD
