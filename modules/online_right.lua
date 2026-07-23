@@ -2,6 +2,7 @@ local ws            = require("modules.websocket_manager")
 local dialog_search = require("modules.dialog_search")
 local GameMode      = require("modules.game_mode")
 local app_state     = require("modules.app_state")
+local toast         = require("modules.toast")
 
 local M = {}
 
@@ -275,6 +276,139 @@ local function draw_battle_modal(self, ctx)
     local sub_y = CY - panel_h/2 + 40
     local s_btn = track(self, ui.box(vmath.vector3(CX, sub_y, 0), vmath.vector3(panel_w - 60, 58, 0), C_VICTORY))
     self.buttons[#self.buttons+1] = { node = s_btn, id = "bm_submit" }
+    track(self, ui.text(vmath.vector3(CX, sub_y, 0), sub_label, "btn_lg", C_BTN_TEXT))
+end
+
+-- "Cup rules": mirrors computeSuggestedLevels in be_matatu's
+-- tournament.controller.js exactly (ceil(log2(players)) clamped to 3-7) so
+-- the number shown here while the owner is still choosing maxPlayers always
+-- matches what the server will actually create.
+local function suggested_levels(max_players)
+    local n = math.max(2, tonumber(max_players) or 2)
+    local lv = math.ceil(math.log(n) / math.log(2))
+    if lv < 3 then lv = 3 end
+    if lv > 7 then lv = 7 end
+    return lv
+end
+
+local TEAM_KB = { "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM" }
+
+-- ── Team Tournament Creation Modal ───────────────────────────────────────────
+-- A team owner funds a multi-level bracket's grand prize out of their own
+-- balance (escrowed at creation, see be_matatu's createTeamTournament) and
+-- can optionally reserve a custom invitation code here; players are invited
+-- separately afterward by username or by sharing the code.
+local function draw_team_create_modal(self, ctx)
+    local tm = self.team_create_modal
+    if not tm then return end
+
+    local track  = ctx.track
+    local ui     = ctx.ui
+    local mkbtn  = ctx.mkbtn
+    local commas = ctx.commas
+    local CX, CY = ctx.CX, ctx.CY
+    local C      = ctx.C
+
+    local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.85)))
+    self.buttons[#self.buttons+1] = { node = dim, id = "tm_block" }
+    track(self, ui.grad_backdrop(ctx.LOGICAL_W, ctx.LOGICAL_H))
+
+    local panel_w, panel_h = 480, 660
+    track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
+
+    local step_w = 220
+    local NOTE_C = vmath.vector4(0.6, 0.6, 0.6, 1)
+    local cursor_y = CY + panel_h/2 - 18
+
+    track(self, ui.text(vmath.vector3(CX, cursor_y - 10, 0), "CREATE TEAM TOURNAMENT", "subtitle2", C.COL_WHITE))
+    mkbtn(self, "tm_close", vmath.vector3(CX + panel_w/2 - 32, cursor_y - 10, 0), vmath.vector3(40, 40, 0), "X", "secondary_btn")
+    cursor_y = cursor_y - 34
+
+    track(self, ui.box(vmath.vector3(CX, cursor_y, 0), vmath.vector3(panel_w - 48, 1, 0), vmath.vector4(1, 1, 1, 0.14)))
+    cursor_y = cursor_y - 26
+
+    -- GRAND PRIZE
+    track(self, ui.text(vmath.vector3(CX, cursor_y, 0), "GRAND PRIZE (from your balance)", "small", C_NEUTRAL))
+    cursor_y = cursor_y - 30
+    mkbtn(self, "tm_prize_minus", vmath.vector3(CX - step_w/2 - 28, cursor_y, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
+    track(self, ui.box(vmath.vector3(CX, cursor_y, 0), vmath.vector3(step_w, 40, 0), C.COL_NAMEID_BG))
+    track(self, ui.text(vmath.vector3(CX, cursor_y, 0), commas(tm.prize) .. " COINS", "body", C_CHAMPION))
+    mkbtn(self, "tm_prize_plus", vmath.vector3(CX + step_w/2 + 28, cursor_y, 0), vmath.vector3(40, 40, 0), "+", "secondary_btn")
+    cursor_y = cursor_y - 40
+
+    -- MAX PLAYERS + auto-suggested level count
+    track(self, ui.text(vmath.vector3(CX, cursor_y, 0), "MAX PLAYERS", "small", C_NEUTRAL))
+    cursor_y = cursor_y - 30
+    mkbtn(self, "tm_players_minus", vmath.vector3(CX - step_w/2 - 28, cursor_y, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
+    track(self, ui.box(vmath.vector3(CX, cursor_y, 0), vmath.vector3(step_w, 40, 0), C.COL_NAMEID_BG))
+    track(self, ui.text(vmath.vector3(CX, cursor_y, 0), tostring(tm.max_players), "body", C.COL_WHITE))
+    mkbtn(self, "tm_players_plus", vmath.vector3(CX + step_w/2 + 28, cursor_y, 0), vmath.vector3(40, 40, 0), "+", "secondary_btn")
+    cursor_y = cursor_y - 26
+    track(self, ui.text(vmath.vector3(CX, cursor_y, 0),
+        string.format("-> %d levels (cup rules, 3-7)", suggested_levels(tm.max_players)), "small", NOTE_C))
+    cursor_y = cursor_y - 34
+
+    -- GAMES PER LEVEL
+    track(self, ui.text(vmath.vector3(CX, cursor_y, 0), "GAMES PER LEVEL (to advance)", "small", C_NEUTRAL))
+    cursor_y = cursor_y - 30
+    local gpl_opts = { 1, 3, 5 }
+    local seg_w, seg_gap = 100, 10
+    local seg_n = #gpl_opts
+    for i, v in ipairs(gpl_opts) do
+        local sx = CX + (i - (seg_n+1)/2) * (seg_w + seg_gap)
+        local on = (tm.gpl_i or 2) == i
+        local box = track(self, ui.box(vmath.vector3(sx, cursor_y, 0), vmath.vector3(seg_w, 40, 0), on and C_VICTORY or vmath.vector4(0.16,0.16,0.18,1)))
+        self.buttons[#self.buttons+1] = { node = box, id = "tm_gpl", data = i }
+        track(self, ui.text(vmath.vector3(sx, cursor_y, 0), "Best of " .. v, "small", on and C_BTN_TEXT or C.COL_WHITE))
+    end
+    cursor_y = cursor_y - 40
+
+    -- INVITE CODE (optional custom word — blank means auto-generated)
+    track(self, ui.text(vmath.vector3(CX, cursor_y, 0), "INVITE CODE (optional, leave blank to auto-generate)", "small", C_NEUTRAL))
+    cursor_y = cursor_y - 28
+    track(self, ui.box(vmath.vector3(CX, cursor_y, 0), vmath.vector3(300, 36, 0), C.COL_NAMEID_BG))
+    local code_shown = (tm.code ~= "") and tm.code or "AUTO"
+    track(self, ui.text(vmath.vector3(CX, cursor_y, 0), code_shown, "small", (tm.code ~= "") and C.COL_WHITE or NOTE_C))
+    cursor_y = cursor_y - 30
+
+    -- Compact keyboard, writes into tm.code
+    local kw, kh, kg = 38, 30, 3
+    local function key(px, py, w, ch, label)
+        track(self, ui.box(vmath.vector3(px, py, 0), vmath.vector3(w, kh, 0), vmath.vector4(0.16,0.16,0.18,1)))
+        track(self, ui.text(vmath.vector3(px, py, 0), label or ch, "small", C.COL_WHITE))
+        local hit = track(self, ui.box(vmath.vector3(px, py, 0), vmath.vector3(w, kh, 0), vmath.vector4(0,0,0,0.001)))
+        self.buttons[#self.buttons+1] = { node = hit, id = "tm_key_" .. ch, data = (ch ~= "back") and ch or nil }
+    end
+    for r, row in ipairs(TEAM_KB) do
+        local n = #row
+        local roww = n * (kw + kg) - kg
+        local kx0 = CX - roww/2 + kw/2
+        local py = cursor_y - (r-1) * (kh + kg)
+        for i = 1, n do
+            key(kx0 + (i-1) * (kw + kg), py, kw, row:sub(i, i))
+        end
+    end
+    cursor_y = cursor_y - 3 * (kh + kg)
+    local digits = "0123456789"
+    local d_roww = 10 * (kw + kg) - kg
+    local d_kx0 = CX - d_roww/2 + kw/2
+    for i = 1, 10 do
+        key(d_kx0 + (i-1) * (kw + kg), cursor_y, kw, digits:sub(i, i))
+    end
+    cursor_y = cursor_y - (kh + kg)
+    key(CX, cursor_y, 300, "back", "DELETE")
+    cursor_y = cursor_y - (kh + kg) - 14
+
+    if tm.msg then
+        track(self, ui.text(vmath.vector3(CX, cursor_y, 0), tm.msg, "small",
+            tm.msg_ok and vmath.vector4(0.3, 1.0, 0.3, 1) or vmath.vector4(1, 0.3, 0.3, 1)))
+        cursor_y = cursor_y - 24
+    end
+
+    local sub_label = tm.submitting and "CREATING..." or "CREATE"
+    local sub_y = CY - panel_h/2 + 34
+    local s_btn = track(self, ui.box(vmath.vector3(CX, sub_y, 0), vmath.vector3(panel_w - 60, 52, 0), C_VICTORY))
+    self.buttons[#self.buttons+1] = { node = s_btn, id = "tm_submit" }
     track(self, ui.text(vmath.vector3(CX, sub_y, 0), sub_label, "btn_lg", C_BTN_TEXT))
 end
 
@@ -845,8 +979,23 @@ function M.draw(self, ctx, left_M)
     track(self, ui.text(vmath.vector3(nx, ny, 0), "NEW", "btn_sm", C.COL_WHITE))
     cy = cy - t_h - C.BLOCK_GAP
 
+    -- ── Team Tournaments panel — a player funds a multi-level bracket's
+    -- grand prize out of their own balance and invites specific players by
+    -- username/invitation code (see createTeamTournament on the backend).
+    local team_h  = 72
+    local team_cy = cy - team_h/2
+    track(self, ui.box(vmath.vector3(cx, team_cy, 0), vmath.vector3(pw, team_h, 0), C.COL_BG))
+    mkbtn(self, "nav_team_tournament", vmath.vector3(cx, team_cy, 0), vmath.vector3(pw, team_h, 0), nil, "container_bg")
+
+    local team_icon_x = cx - 80
+    local team_icon = track(self, ui.image(vmath.vector3(team_icon_x, team_cy, 0), vmath.vector3(32, 32, 0), "tournament_icon"))
+    gui.set_color(team_icon, C.COL_WHITE)
+    txtL(self, team_icon_x + 28, team_cy, "TEAM TOURNAMENTS", "btn_lg", C.COL_WHITE)
+    cy = cy - team_h - C.BLOCK_GAP
+
     -- ── Draw Extracted Modals on Top ──────────────────────────────────────
     draw_battle_modal(self, ctx)
+    draw_team_create_modal(self, ctx)
     draw_invite_search(self, ctx)
     draw_savings_info(self, ctx)
     draw_savings_plans(self, ctx)
@@ -944,6 +1093,54 @@ function M.bm_submit(self, rebuild_cb)
     else
         api.create_tournament(payload, on_result)
     end
+end
+
+function M.tm_submit(self, rebuild_cb)
+    local tm = self.team_create_modal
+    if not tm or tm.submitting then return end
+
+    local uid = ws.get_current_user_id()
+    if uid == "" then
+        tm.msg, tm.msg_ok = "User ID missing. Please log in.", false
+        rebuild_cb(); return
+    end
+
+    tm.submitting = true; tm.msg, tm.msg_ok = nil, nil; rebuild_cb()
+
+    local gpl_opts = { 1, 3, 5 }
+    local payload = {
+        userId = uid,
+        grandPrizeCoins = tm.prize,
+        maxPlayers = tm.max_players,
+        gamesPerLevel = gpl_opts[tm.gpl_i or 2] or 3,
+    }
+    if tm.code ~= "" then payload.invitationCode = tm.code end
+
+    local api = require("modules.api_service")
+    api.create_team_tournament(payload, function(result)
+        local cur = self.team_create_modal
+        if not cur then return end
+        cur.submitting = false
+        if result.success then
+            local data = result.data or {}
+            local created = data.tournament or {}
+            local code = created.invitationCode or "?"
+            cur.msg, cur.msg_ok = "Created! Invitation code: " .. tostring(code), true
+            toast.success("Team tournament created — code: " .. tostring(code))
+            if self._active then rebuild_cb() end
+            timer.delay(2.5, false, function()
+                if self.team_create_modal == cur then
+                    self.team_create_modal = nil
+                    if self._active then rebuild_cb() end
+                end
+            end)
+        else
+            local err = result.message or "Could not create the team tournament."
+            cur.msg, cur.msg_ok = err, false
+            toast.error(err)
+            if self._active then rebuild_cb() end
+        end
+    end)
 end
 
 function M.start_invite_search(self, app_state, rebuild_cb, battle_type)
