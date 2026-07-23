@@ -571,8 +571,11 @@ local function rebuild(self)
     local grid_w = grid_r - grid_l
     local grid_h = grid_t - grid_b
 
-    -- Split 50/50 exactly
-    local left_w  = math.floor((grid_w - GUTTER) * 0.5)
+    -- PLAY ONLINE gets the bigger share; the three offline modes on the
+    -- right (Quick Play/Battle AI/Tournament-vs-AI) are secondary to the
+    -- real-money online modes, so they're given less overall space than the
+    -- previous even 50/50 split.
+    local left_w  = math.floor((grid_w - GUTTER) * 0.58)
     local right_w = grid_w - left_w - GUTTER
 
     local left_cx = grid_l + left_w / 2
@@ -675,10 +678,10 @@ local function rebuild(self)
     mode_tile(self, {
         x = tr_2_cx, y = top_cy, w = tr_2_w, h = top_h,
         accent   = C_GOLD,
-        top_left = "BEST OF",
+        top_left = "OFFLINE",
         numeral  = "03",
         title    = "BATTLE AI",
-        sub      = "Play a series",
+        sub      = "Best-of series vs the bot",
         btn_id   = "battle_ai",
     })
 
@@ -688,7 +691,7 @@ local function rebuild(self)
     mode_tile(self, {
         x = right_cx, y = bot_cy, w = right_w, h = bot_h,
         accent   = C_GOLD,
-        top_left = "4-PLAYER TABLE",
+        top_left = "OFFLINE",
         numeral  = "04",
         title    = "TOURNAMENT",
         sub      = "One human • three AI • bracket",
