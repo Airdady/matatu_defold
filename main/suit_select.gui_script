@@ -154,28 +154,38 @@ end
 function on_input(self, action_id, action)
     if action_id ~= hash("touch") or not action.pressed then return false end
 
-    if self.ss_overlay and gui.is_enabled(self.ss_overlay) and not self.ss_locked then
-        for s, btn in pairs(self.ss_buttons) do
-            if hit(btn.bg, action) then
-                self.ss_locked = true
-                gui.animate(self.ss_overlay, "color.w", 0.0, gui.EASING_OUTSINE, 0.3)
-                
-                for os, obtn in pairs(self.ss_buttons) do
-                    if os == s then
-                        gui.animate(obtn.bg, "position", vmath.vector3(0, 0, 0), gui.EASING_OUTCUBIC, 0.3)
-                        gui.animate(obtn.bg, "scale", vmath.vector3(1.5, 1.5, 1.0), gui.EASING_OUTBACK, 0.3)
-                    else
-                        gui.animate(obtn.bg, "scale", vmath.vector3(0.5, 0.5, 1.0), gui.EASING_OUTSINE, 0.2)
-                        gui.animate(obtn.bg, "color.w", 0.0, gui.EASING_OUTSINE, 0.2)
-                        gui.animate(obtn.img, "color.w", 0.0, gui.EASING_OUTSINE, 0.2)
-                        gui.animate(obtn.txt, "color.w", 0.0, gui.EASING_OUTSINE, 0.2)
+    if self.ss_overlay and gui.is_enabled(self.ss_overlay) then
+        -- ss_locked flips true the instant a suit is tapped (below) or when
+        -- opened in "preview" mode, but the overlay itself stays visibly
+        -- enabled for the ~0.3s fade-out that follows (or indefinitely in
+        -- preview mode) — this used to fall through the `and not
+        -- self.ss_locked` guard straight to `return false`, letting taps
+        -- reach the card-play input underneath a still-visible suit wheel.
+        -- Now the overlay always swallows input while enabled; only NEW
+        -- suit selections are additionally gated on not already being locked.
+        if not self.ss_locked then
+            for s, btn in pairs(self.ss_buttons) do
+                if hit(btn.bg, action) then
+                    self.ss_locked = true
+                    gui.animate(self.ss_overlay, "color.w", 0.0, gui.EASING_OUTSINE, 0.3)
+
+                    for os, obtn in pairs(self.ss_buttons) do
+                        if os == s then
+                            gui.animate(obtn.bg, "position", vmath.vector3(0, 0, 0), gui.EASING_OUTCUBIC, 0.3)
+                            gui.animate(obtn.bg, "scale", vmath.vector3(1.5, 1.5, 1.0), gui.EASING_OUTBACK, 0.3)
+                        else
+                            gui.animate(obtn.bg, "scale", vmath.vector3(0.5, 0.5, 1.0), gui.EASING_OUTSINE, 0.2)
+                            gui.animate(obtn.bg, "color.w", 0.0, gui.EASING_OUTSINE, 0.2)
+                            gui.animate(obtn.img, "color.w", 0.0, gui.EASING_OUTSINE, 0.2)
+                            gui.animate(obtn.txt, "color.w", 0.0, gui.EASING_OUTSINE, 0.2)
+                        end
                     end
+
+                    timer.delay(0.3, false, function()
+                        msg.post(GAME, "suit_selected", { suit = s })
+                    end)
+                    return true
                 end
-                
-                timer.delay(0.3, false, function()
-                    msg.post(GAME, "suit_selected", { suit = s })
-                end)
-                return true
             end
         end
         return true

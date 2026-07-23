@@ -305,6 +305,16 @@ local function hit(node, action)
 end
 
 function M.on_input(self, action)
+    -- RECONNECTING/OFFLINE overlay: no buttons on it, just swallow every tap
+    -- while it's up. This was previously missing entirely — M.set_conn_overlay
+    -- enables self.conn_scrim, but nothing here ever checked it, so a tap
+    -- during a "RECONNECTING…"/"OFFLINE" state fell straight through the
+    -- checks below to the unconditional `return false` at the bottom, all
+    -- the way to game.script's own card-play input underneath.
+    if self.conn_scrim and gui.is_enabled(self.conn_scrim) then
+        return true
+    end
+
     if self.ai_scrim and gui.is_enabled(self.ai_scrim) then
         if hit(self.ai_ok_btn, action) then
             gui.set_enabled(self.ai_scrim, false)
