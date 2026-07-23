@@ -552,7 +552,12 @@ local function handle(self, b)
         if b.id == "p_back" then
             self.phone = self.phone:sub(1,-2)
         elseif #self.phone < 9 then
-            self.phone = self.phone .. b.data
+            -- The +256 chip already implies the leading "0" — ignore a "0"
+            -- tapped as the very first digit instead of letting the player
+            -- type a number that can never pass validate_phone().
+            if not (self.phone == "" and b.data == "0") then
+                self.phone = self.phone .. b.data
+            end
         end
         self._phone_error = nil
         rebuild(self)

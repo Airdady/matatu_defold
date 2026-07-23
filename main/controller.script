@@ -165,6 +165,12 @@ local function gpgs_callback(self, message_id, message)
                         local user = result.data.user or result.data
                         -- Map the backend JWT token so identify_and_connect can save it
                         if result.data.token then user.token = result.data.token end
+                        -- See app_state.phone_complete(): a user matched by
+                        -- their actual Google identity (not the deviceId/
+                        -- email fallback, not a brand-new account) has no
+                        -- legacy phone-only account left to migrate, so the
+                        -- mandatory phone step can skip them entirely.
+                        user.matchedByGoogleId = result.data.matchedByGoogleId and true or false
 
                         if type(user) == "table" and (user._id or user.localId) then
                             identify_and_connect(user)
