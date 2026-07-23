@@ -119,6 +119,19 @@ local function text_sh(self, pos, str, font, color, ox, oy)
     return track(self, ui.text(pos, str, font, color))
 end
 
+-- Percent-encodes a string for safe use inside a mailto: URL's query
+-- string (subject=/body=) — spaces, newlines and punctuation all need
+-- escaping there, unlike a plain wa.me/share URL elsewhere in this file.
+local function url_encode(str)
+    str = tostring(str or "")
+    str = str:gsub("\r?\n", "\r\n")
+    str = str:gsub("([^%w %-%_%.%~])", function(c)
+        return string.format("%%%02X", string.byte(c))
+    end)
+    str = str:gsub(" ", "%%20")
+    return str
+end
+
 -- ---------------------------------------------------------------------------
 -- Season countdown (header, middle)
 -- ---------------------------------------------------------------------------
@@ -940,7 +953,17 @@ local function handle(self, b)
     elseif b.id == "rules_open" then self.state = STATE_LOBBY; self.tut_page, self.tutorial_active = 3, true; rebuild(self); return
     elseif b.id == "support" then pcall(function() local config = require("modules.config"); sys.open_url(config.BASE_URL .. "/support") end); return
     elseif b.id == "share" then pcall(function() local config = require("modules.config"); sys.open_url("https://wa.me/?text=Play%20" .. GameMode.BRAND .. "%20with%20me!%20https%3A%2F%2F" .. config.DOMAIN) end); return
-    elseif b.id == "contact_open" then pcall(function() sys.open_url("mailto:matatu.league@gmail.com?subject=" .. GameMode.BRAND .. "%20Support") end); return
+    elseif b.id == "contact_open" then pcall(function()
+        local me = ws.current_user_data or {}
+        local uname = (me.username and me.username ~= "") and me.username or "Not set"
+        local phone = (me.phoneNumber and me.phoneNumber ~= "") and me.phoneNumber or "Not set"
+        local acct  = (me._id and me._id ~= "") and me._id or "Unknown"
+        local subject = GameMode.BRAND .. " Support"
+        local body = "Please describe your issue below:\r\n\r\n\r\n\r\n---\r\nUsername: " .. uname
+            .. "\r\nPhone: " .. phone
+            .. "\r\nAccount ID: " .. acct
+        sys.open_url("mailto:matatu.league@gmail.com?subject=" .. url_encode(subject) .. "&body=" .. url_encode(body))
+    end); return
     elseif b.id == "theme_open" then msg.post("#controller", "goto_themes"); return end
 
     if b.id == "play_online" then
