@@ -111,13 +111,11 @@ local C_BTN_TEXT = vmath.vector4(0.020, 0.090, 0.110, 1.0) -- Dark Cyan
 local C_NEUTRAL  = vmath.vector4(0.812, 0.847, 0.863, 1.0) -- Light Grey
 
 -- ── Battle Modal Drawing ──────────────────────────────────────────────────────
--- Compact bordered card, laid out top-down from a single cursor. Anchored to
--- the full screen (not the right panel's own ~384px column) — at 420px wide
--- this card is wider than that column, so clamping it in there (as an
--- earlier pass did) pushed it visibly past the panel's own edge instead of
--- reading as a clean centered dialog. panel_h is derived from a summed row
--- budget (not a hand-picked constant) so it's always exactly as tall as what
--- gets drawn, with no leftover dead space at the bottom.
+-- Reverted to the original pre-"compact card" layout: plain text/steppers
+-- floating directly on the dim backdrop, no bordered container_bg panel.
+-- The compact-card redesign (and its several anchoring follow-up fixes) kept
+-- causing regressions, so this goes back to the last version that was
+-- reliably stable.
 local function draw_battle_modal(self, ctx)
     local bm = self.battle_modal
     if not bm then return end
@@ -128,6 +126,7 @@ local function draw_battle_modal(self, ctx)
     local commas = ctx.commas
     local CX, CY = ctx.CX, ctx.CY
 
+    -- Fullscreen intercept block and radial gradient backdrop
     local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.85)))
     self.buttons[#self.buttons+1] = { node = dim, id = "bm_block" }
     track(self, ui.grad_backdrop(ctx.LOGICAL_W, ctx.LOGICAL_H))
@@ -142,47 +141,14 @@ local function draw_battle_modal(self, ctx)
     local type_word = M.BATTLE_TYPE_LABELS[btype] or "BATTLE"
     local title     = (bm.editing and "UPDATE " or "CREATE ") .. type_word
 
-    -- Row-height budget, summed in code (mirrors draw_team_create_modal) —
-    -- BATTLE TYPE, the fee/stake row, and the format/cap/players row all
-    -- share the same label+stepper(+note) shape, so one constant covers all
-    -- three variants of the third row.
-    local PAD        = 18
-    local ROW_LABEL  = 18
-    local ROW_GAP    = 8
-    local STEP_ROW   = 40
-    local SEC_GAP    = 12
-    local NOTE_H     = 16
-    local step_w = 210
-    local UNSEL_C = vmath.vector4(0.16, 0.16, 0.18, 1)
-    local NOTE_C  = vmath.vector4(0.6, 0.6, 0.6, 1)
-
-    local header_block = 28 + 8 + 1 + 12               -- title row + gap + divider + gap
-    local type_block    = ROW_LABEL + ROW_GAP + STEP_ROW + SEC_GAP
-    local fee_block      = ROW_LABEL + ROW_GAP + STEP_ROW + ROW_GAP + NOTE_H + SEC_GAP
-    local mid_block      = ROW_LABEL + ROW_GAP + STEP_ROW + ROW_GAP + NOTE_H + SEC_GAP
-    local msg_reserve    = 22
-    local submit_block   = 50
-
-    local content_h = header_block + type_block + fee_block + mid_block + msg_reserve + submit_block
-    local panel_w, panel_h = 420, content_h + PAD * 2
-
-    track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
-
-    local cursor_y = CY + panel_h/2 - PAD
-
-    -- Header: title + close, sharing one row
-    track(self, ui.text(vmath.vector3(CX, cursor_y - 8, 0), title, "subtitle1", ctx.C.COL_WHITE))
-    mkbtn(self, "bm_close", vmath.vector3(CX + panel_w/2 - 30, cursor_y - 8, 0), vmath.vector3(36, 36, 0), "X", "secondary_btn")
-    cursor_y = cursor_y - 28 - 8
-
-    track(self, ui.box(vmath.vector3(CX, cursor_y, 0), vmath.vector3(panel_w - 48, 1, 0), vmath.vector4(1, 1, 1, 0.14)))
-    cursor_y = cursor_y - 1 - 12
+    track(self, ui.text(vmath.vector3(CX, CY + 260, 0), title, "title", ctx.C.COL_WHITE))
+    mkbtn(self, "bm_close", vmath.vector3(CX + 340, CY + 260, 0), vmath.vector3(56, 56, 0), "X", "secondary_btn")
 
     -- BATTLE TYPE
-    track(self, ui.text(vmath.vector3(CX, cursor_y, 0), "BATTLE TYPE", "small", C_NEUTRAL))
-    cursor_y = cursor_y - ROW_LABEL - ROW_GAP
-    local seg_w   = 128
-    local seg_gap = 8
+    local type_y  = CY + 150
+    track(self, ui.text(vmath.vector3(CX, type_y + 46, 0), "BATTLE TYPE", "small", C_NEUTRAL))
+    local seg_w   = 170
+    local seg_gap = 14
     local SEG_META = {
         NORMAL   = { id = "bm_type_normal", label = "BATTLE"   },
         KNOCKOUT = { id = "bm_type_knock",  label = "KNOCKOUT" },
@@ -193,14 +159,14 @@ local function draw_battle_modal(self, ctx)
         local meta = SEG_META[T]
         if meta then seg_specs[#seg_specs+1] = { id = meta.id, label = meta.label, on = (btype == T) } end
     end
+    local UNSEL_C = vmath.vector4(0.16, 0.16, 0.18, 1)
     local seg_n = #seg_specs
     for i, s in ipairs(seg_specs) do
         local sx  = CX + (i - (seg_n + 1) / 2) * (seg_w + seg_gap)
-        local box = track(self, ui.box(vmath.vector3(sx, cursor_y - STEP_ROW/2, 0), vmath.vector3(seg_w, STEP_ROW, 0), s.on and C_VICTORY or UNSEL_C))
+        local box = track(self, ui.box(vmath.vector3(sx, type_y, 0), vmath.vector3(seg_w, 52, 0), s.on and C_VICTORY or UNSEL_C))
         self.buttons[#self.buttons+1] = { node = box, id = s.id }
-        track(self, ui.text(vmath.vector3(sx, cursor_y - STEP_ROW/2, 0), s.label, "btn_md", s.on and C_BTN_TEXT or ctx.C.COL_WHITE))
+        track(self, ui.text(vmath.vector3(sx, type_y, 0), s.label, "btn_md", s.on and C_BTN_TEXT or ctx.C.COL_WHITE))
     end
-    cursor_y = cursor_y - STEP_ROW - SEC_GAP
 
     -- DATA GATHERING
     local amount, fmt, winner_takes, estake, cap
@@ -228,72 +194,65 @@ local function draw_battle_modal(self, ctx)
     end
 
     -- ENTRY FEE / STAKE
-    track(self, ui.text(vmath.vector3(CX, cursor_y, 0), is_knock and "STAKE" or "ENTRY FEE", "small", C_NEUTRAL))
-    cursor_y = cursor_y - ROW_LABEL - ROW_GAP
-    mkbtn(self, "bm_fee_minus", vmath.vector3(CX - step_w/2 - 26, cursor_y - STEP_ROW/2, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
-    track(self, ui.box(vmath.vector3(CX, cursor_y - STEP_ROW/2, 0), vmath.vector3(step_w, STEP_ROW, 0), ctx.C.COL_NAMEID_BG))
-    track(self, ui.text(vmath.vector3(CX, cursor_y - STEP_ROW/2, 0),
+    local fee_y = CY + 10
+    track(self, ui.text(vmath.vector3(CX, fee_y + 46, 0), is_knock and "STAKE" or "ENTRY FEE", "small", C_NEUTRAL))
+    local step_w = 280
+    mkbtn(self, "bm_fee_minus", vmath.vector3(CX - step_w/2 - 34, fee_y, 0), vmath.vector3(52, 52, 0), "-", "secondary_btn")
+    track(self, ui.box(vmath.vector3(CX, fee_y, 0), vmath.vector3(step_w, 52, 0), ctx.C.COL_NAMEID_BG))
+    track(self, ui.text(vmath.vector3(CX, fee_y, 0),
         is_knock and (commas(estake) .. " COINS") or (commas(amount) .. " COINS"), "body", C_CHAMPION))
-    mkbtn(self, "bm_fee_plus", vmath.vector3(CX + step_w/2 + 26, cursor_y - STEP_ROW/2, 0), vmath.vector3(40, 40, 0), "+", "secondary_btn")
-    cursor_y = cursor_y - STEP_ROW - ROW_GAP
+    mkbtn(self, "bm_fee_plus", vmath.vector3(CX + step_w/2 + 34, fee_y, 0), vmath.vector3(52, 52, 0), "+", "secondary_btn")
 
     if is_norm then
-        track(self, ui.text(vmath.vector3(CX, cursor_y - NOTE_H/2, 0),
-            string.format("Winner Takes: %s + %d Pts", commas(winner_takes), fmt.points), "small", NOTE_C))
+        track(self, ui.text(vmath.vector3(CX, fee_y - 42, 0),
+            string.format("Winner Takes: %s + %d Pts", commas(winner_takes), fmt.points), "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
     elseif is_party then
-        track(self, ui.text(vmath.vector3(CX, cursor_y - NOTE_H/2, 0),
-            "Pooled prize · last player standing wins", "small", NOTE_C))
+        track(self, ui.text(vmath.vector3(CX, fee_y - 42, 0),
+            "Pooled prize · last player standing wins", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
     else
-        track(self, ui.text(vmath.vector3(CX, cursor_y - NOTE_H/2, 0),
-            "Staked score chamber · charge from the cap", "small", NOTE_C))
+        track(self, ui.text(vmath.vector3(CX, fee_y - 42, 0),
+            "Staked score chamber · charge from the cap", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
     end
-    cursor_y = cursor_y - NOTE_H - SEC_GAP
 
     -- FORMAT / PLAYERS / CAP
+    local fmt_y = CY - 120
     if is_party then
         local players = bm.players or "AUTO"
-        track(self, ui.text(vmath.vector3(CX, cursor_y, 0), "PLAYER COUNT", "small", C_NEUTRAL))
-        cursor_y = cursor_y - ROW_LABEL - ROW_GAP
-        mkbtn(self, "bm_players_minus", vmath.vector3(CX - step_w/2 - 26, cursor_y - STEP_ROW/2, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
-        track(self, ui.box(vmath.vector3(CX, cursor_y - STEP_ROW/2, 0), vmath.vector3(step_w, STEP_ROW, 0), ctx.C.COL_NAMEID_BG))
+        track(self, ui.text(vmath.vector3(CX, fmt_y + 46, 0), "PLAYER COUNT", "small", C_NEUTRAL))
+        mkbtn(self, "bm_players_minus", vmath.vector3(CX - step_w/2 - 34, fmt_y, 0), vmath.vector3(52, 52, 0), "-", "secondary_btn")
+        track(self, ui.box(vmath.vector3(CX, fmt_y, 0), vmath.vector3(step_w, 52, 0), ctx.C.COL_NAMEID_BG))
         local p_txt = (players == "AUTO") and "AUTO" or (tostring(players) .. " PLAYERS")
-        track(self, ui.text(vmath.vector3(CX, cursor_y - STEP_ROW/2, 0), p_txt, "body", ctx.C.COL_WHITE))
-        mkbtn(self, "bm_players_plus", vmath.vector3(CX + step_w/2 + 26, cursor_y - STEP_ROW/2, 0), vmath.vector3(40, 40, 0), "+", "secondary_btn")
-        cursor_y = cursor_y - STEP_ROW - ROW_GAP
-        track(self, ui.text(vmath.vector3(CX, cursor_y - NOTE_H/2, 0),
-            (players == "AUTO") and "Auto-fill the table as players join" or "Starts once the table is full", "small", NOTE_C))
+        track(self, ui.text(vmath.vector3(CX, fmt_y, 0), p_txt, "body", ctx.C.COL_WHITE))
+        mkbtn(self, "bm_players_plus", vmath.vector3(CX + step_w/2 + 34, fmt_y, 0), vmath.vector3(52, 52, 0), "+", "secondary_btn")
+        track(self, ui.text(vmath.vector3(CX, fmt_y - 42, 0),
+            (players == "AUTO") and "Auto-fill the table as players join" or "Starts once the table is full",
+            "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
     elseif is_knock then
-        track(self, ui.text(vmath.vector3(CX, cursor_y, 0), "SCORE CAP", "small", C_NEUTRAL))
-        cursor_y = cursor_y - ROW_LABEL - ROW_GAP
-        mkbtn(self, "bm_cap_minus", vmath.vector3(CX - step_w/2 - 26, cursor_y - STEP_ROW/2, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
-        track(self, ui.box(vmath.vector3(CX, cursor_y - STEP_ROW/2, 0), vmath.vector3(step_w, STEP_ROW, 0), ctx.C.COL_NAMEID_BG))
-        track(self, ui.text(vmath.vector3(CX, cursor_y - STEP_ROW/2, 0), tostring(cap), "body", ctx.C.COL_WHITE))
-        mkbtn(self, "bm_cap_plus", vmath.vector3(CX + step_w/2 + 26, cursor_y - STEP_ROW/2, 0), vmath.vector3(40, 40, 0), "+", "secondary_btn")
-        cursor_y = cursor_y - STEP_ROW - ROW_GAP
-        track(self, ui.text(vmath.vector3(CX, cursor_y - NOTE_H/2, 0),
-            string.format("Charge: %d  ·  reach the cap and you're out", math.floor(cap / 2)), "small", NOTE_C))
+        track(self, ui.text(vmath.vector3(CX, fmt_y + 46, 0), "SCORE CAP", "small", C_NEUTRAL))
+        mkbtn(self, "bm_cap_minus", vmath.vector3(CX - step_w/2 - 34, fmt_y, 0), vmath.vector3(52, 52, 0), "-", "secondary_btn")
+        track(self, ui.box(vmath.vector3(CX, fmt_y, 0), vmath.vector3(step_w, 52, 0), ctx.C.COL_NAMEID_BG))
+        track(self, ui.text(vmath.vector3(CX, fmt_y, 0), tostring(cap), "body", ctx.C.COL_WHITE))
+        mkbtn(self, "bm_cap_plus", vmath.vector3(CX + step_w/2 + 34, fmt_y, 0), vmath.vector3(52, 52, 0), "+", "secondary_btn")
+        track(self, ui.text(vmath.vector3(CX, fmt_y - 42, 0),
+            string.format("Charge: %d  ·  reach the cap and you're out", math.floor(cap / 2)), "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
     else
-        track(self, ui.text(vmath.vector3(CX, cursor_y, 0), "GAME FORMAT", "small", C_NEUTRAL))
-        cursor_y = cursor_y - ROW_LABEL - ROW_GAP
-        mkbtn(self, "bm_fmt_minus", vmath.vector3(CX - step_w/2 - 26, cursor_y - STEP_ROW/2, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
-        track(self, ui.box(vmath.vector3(CX, cursor_y - STEP_ROW/2, 0), vmath.vector3(step_w, STEP_ROW, 0), ctx.C.COL_NAMEID_BG))
-        track(self, ui.text(vmath.vector3(CX, cursor_y - STEP_ROW/2, 0), "BEST OF " .. fmt.games, "body", ctx.C.COL_WHITE))
-        mkbtn(self, "bm_fmt_plus", vmath.vector3(CX + step_w/2 + 26, cursor_y - STEP_ROW/2, 0), vmath.vector3(40, 40, 0), "+", "secondary_btn")
-        cursor_y = cursor_y - STEP_ROW - ROW_GAP
-        track(self, ui.text(vmath.vector3(CX, cursor_y - NOTE_H/2, 0),
-            string.format("Charge: %s  ·  %d Pts to the winner", commas(fmt.charge), fmt.points), "small", NOTE_C))
+        track(self, ui.text(vmath.vector3(CX, fmt_y + 46, 0), "GAME FORMAT", "small", C_NEUTRAL))
+        mkbtn(self, "bm_fmt_minus", vmath.vector3(CX - step_w/2 - 34, fmt_y, 0), vmath.vector3(52, 52, 0), "-", "secondary_btn")
+        track(self, ui.box(vmath.vector3(CX, fmt_y, 0), vmath.vector3(step_w, 52, 0), ctx.C.COL_NAMEID_BG))
+        track(self, ui.text(vmath.vector3(CX, fmt_y, 0), "BEST OF " .. fmt.games, "body", ctx.C.COL_WHITE))
+        mkbtn(self, "bm_fmt_plus", vmath.vector3(CX + step_w/2 + 34, fmt_y, 0), vmath.vector3(52, 52, 0), "+", "secondary_btn")
+        track(self, ui.text(vmath.vector3(CX, fmt_y - 42, 0),
+            string.format("Charge: %s  ·  %d Pts to the winner", commas(fmt.charge), fmt.points), "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
     end
-    cursor_y = cursor_y - NOTE_H - SEC_GAP
 
     if bm.msg then
-        track(self, ui.text(vmath.vector3(CX, cursor_y, 0), bm.msg, "small",
+        track(self, ui.text(vmath.vector3(CX, CY - 200, 0), bm.msg, "small",
             bm.msg_ok and vmath.vector4(0.3, 1.0, 0.3, 1) or vmath.vector4(1, 0.3, 0.3, 1)))
     end
 
-    -- Submit button, pinned to the bottom of the card
     local sub_label = bm.submitting and "WAITING..." or title
-    local sub_y = CY - panel_h/2 + PAD + submit_block/2
-    local s_btn = track(self, ui.box(vmath.vector3(CX, sub_y, 0), vmath.vector3(panel_w - 60, submit_block, 0), C_VICTORY))
+    local sub_y = CY - 260
+    local s_btn = track(self, ui.box(vmath.vector3(CX, sub_y, 0), vmath.vector3(380, 68, 0), C_VICTORY))
     self.buttons[#self.buttons+1] = { node = s_btn, id = "bm_submit" }
     track(self, ui.text(vmath.vector3(CX, sub_y, 0), sub_label, "btn_lg", C_BTN_TEXT))
 end
