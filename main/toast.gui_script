@@ -1,0 +1,112 @@
+-- toast.gui_script - Global bottom-left toast notifications.
+--
+-- Purely a notification layer: never registered in controller.script's
+-- SCREENS list, so it's never enable/disable'd by screen navigation and
+-- stays live across every screen and dialog. Renders above everything else
+-- (highest render order in the app) but never calls acquire_input_focus and
+-- has no on_input — a toast can never block a tap to whatever's underneath.
+--
+-- Call via modules/toast.lua (toast.error/success/info) from any script.
+
+local ui     = require("modules.ui")
+local screen = require("modules.screen")
+
+local EDGE_L, EDGE_B = 0, 0
+
+-- Matches the app's dark-gold luxury palette (see profile.gui_script/
+-- themes.gui_script) so a toast reads as part of the design system, not a
+-- generic OS-style banner.
+local P_BG      = vmath.vector4(0.082, 0.063, 0.051, 1) -- #151010
+local P_BORDER  = vmath.vector4(0.165, 0.129, 0.102, 1) -- #2A2119
+local P_CREAM   = vmath.vector4(0.957, 0.925, 0.843, 1) -- #F4EDD7
+local P_ERROR   = vmath.vector4(0.820, 0.231, 0.231, 1) -- #D13B3B
+local P_SUCCESS = vmath.vector4(0.275, 0.624, 0.388, 1) -- #469F63
+local P_INFO    = vmath.vector4(0.784, 0.573, 0.165, 1) -- #C79229 (gold)
+
+local KIND_ACCENT = { error = P_ERROR, success = P_SUCCESS, info = P_INFO }
+
+local LIFETIME = 3.0
+local TOAST_W, TOAST_H, TOAST_GAP = 420, 70, 10
+local MARGIN_X, MARGIN_Y = 20, 20
+-- Only the most recent MAX_VISIBLE are drawn; a burst of errors queues
+-- behind them (still timing out on schedule) instead of covering the
+-- screen in stacked cards.
+local MAX_VISIBLE = 4
+
+local function refresh_wh()
+    local m = screen.metrics()
+    EDGE_L, EDGE_B = m.L, m.B
+end
+
+local function clear(self)
+    for _, n in ipairs(self.nodes) do pcall(gui.delete_node, n) end
+    self.nodes = {}
+end
+local function track(self, n) self.nodes[#self.nodes+1] = n return n end
+
+local function rebuild(self)
+    clear(self)
+
+    local first = math.max(1, #self.toasts - MAX_VISIBLE + 1)
+    for i = first, #self.toasts do
+        local t = self.toasts[i]
+        local slot = i - first -- 0-based position in the visible stack
+        local cy = EDGE_B + MARGIN_Y + slot * (TOAST_H + TOAST_GAP) + TOAST_H / 2
+        local cx = EDGE_L + MARGIN_X + TOAST_W / 2
+        local accent = KIND_ACCENT[t.kind] or P_INFO
+
+        track(self, ui.box(vmath.vector3(cx, cy, 0), vmath.vector3(TOAST_W + 2, TOAST_H + 2, 0), P_BORDER))
+        track(self, ui.box(vmath.vector3(cx, cy, 0), vmath.vector3(TOAST_W, TOAST_H, 0), P_BG))
+        -- Left accent bar signals severity at a glance without reading the text
+        track(self, ui.box(vmath.vector3(EDGE_L + MARGIN_X + 5, cy, 0), vmath.vector3(6, TOAST_H - 10, 0), accent))
+
+        local txt = track(self, gui.new_text_node(vmath.vector3(EDGE_L + MARGIN_X + 20, cy, 0), t.text))
+        gui.set_font(txt, "body")
+        gui.set_color(txt, P_CREAM)
+        gui.set_pivot(txt, gui.PIVOT_W)
+        gui.set_scale(txt, vmath.vector3(0.5, 0.5, 1))
+        pcall(gui.set_size_mode, txt, gui.SIZE_MODE_MANUAL)
+        pcall(gui.set_size, txt, vmath.vector3((TOAST_W - 40) / 0.5, (TOAST_H - 12) / 0.5, 0))
+        pcall(gui.set_line_break, txt, true)
+    end
+end
+
+local function dismiss(self, id)
+    for i, t in ipairs(self.toasts) do
+        if t.id == id then
+            table.remove(self.toasts, i)
+            break
+        end
+    end
+    rebuild(self)
+end
+
+function init(self)
+    self.nodes = {}
+    self.toasts = {}
+    self._next_id = 1
+    gui.set_render_order(20)
+    refresh_wh()
+end
+
+function final(self)
+    for _, t in ipairs(self.toasts) do
+        if t.timer then timer.cancel(t.timer) end
+    end
+end
+
+function on_message(self, message_id, message, sender)
+    if message_id == hash("show") then
+        local id = self._next_id
+        self._next_id = self._next_id + 1
+        local entry = { id = id, text = tostring(message.text or ""), kind = message.kind or "error" }
+        entry.timer = timer.delay(LIFETIME, false, function()
+            dismiss(self, id)
+        end)
+        table.insert(self.toasts, entry)
+        rebuild(self)
+    elseif message_id == hash("layout_changed") then
+        refresh_wh()
+        rebuild(self)
+    end
+end

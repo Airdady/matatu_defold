@@ -7,6 +7,7 @@ local ui        = require("modules.ui")
 local app_state = require("modules.app_state")
 local ws        = require("modules.websocket_manager")
 local screen    = require("modules.screen")
+local toast     = require("modules.toast")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local VISIBLE_W, VISIBLE_H = 1280, 720
@@ -132,9 +133,11 @@ local function rebuild(self)
     local u = ws.current_user_data or {}
     local balance = tonumber(u.balance) or 0
 
-    if self._msg then
-        track(self, ui.text(vmath.vector3(CX, EDGE_B + 30, 0), self._msg, "body",
-            self._msg_ok and vmath.vector4(0.3, 0.8, 0.4, 1) or P_ERROR))
+    -- Failures now surface as a bottom-left toast instead (see
+    -- theme_action_result below) — only "Purchasing.../Done!/Activated"
+    -- status still renders inline here.
+    if self._msg and self._msg_ok then
+        track(self, ui.text(vmath.vector3(CX, EDGE_B + 30, 0), self._msg, "body", vmath.vector4(0.3, 0.8, 0.4, 1)))
     end
 
     -- Compact Theme Cards Grid
@@ -254,7 +257,8 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("theme_action_result") then
         self._msg = message.ok and "Done!" or (message.message or "Failed")
         self._msg_ok = message.ok
-        if self._active then 
+        if not message.ok then toast.error(self._msg) end
+        if self._active then
             rebuild(self) 
             if message.ok then
                 if self._close_timer then timer.cancel(self._close_timer) end

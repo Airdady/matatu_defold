@@ -14,6 +14,7 @@ local center_panel    = require("modules.online_center")
 local right_panel     = require("modules.online_right")
 local dialog_incoming = require("modules.dialog_incoming")
 local dialog_outgoing = require("modules.dialog_outgoing")
+local toast           = require("modules.toast")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local VISIBLE_W, VISIBLE_H = 1280, 720
@@ -518,6 +519,7 @@ function on_message(self, message_id, message, sender)
                 end
             else
                 sa.msg, sa.msg_ok = d.message or "Exchange failed", false
+                toast.error(sa.msg)
             end
         end
         if self._active then rebuild(self) end
@@ -530,6 +532,7 @@ function on_message(self, message_id, message, sender)
                 sa.settings_msg, sa.settings_msg_ok = "Auto-charge settings saved.", true
             else
                 sa.settings_msg, sa.settings_msg_ok = d.message or "Save failed", false
+                toast.error(sa.settings_msg)
             end
         end
         if self._active then rebuild(self) end

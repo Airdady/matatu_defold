@@ -16,6 +16,7 @@ local ui        = require("modules.ui")
 local ws        = require("modules.websocket_manager")
 local screen    = require("modules.screen")
 local app_state = require("modules.app_state")
+local toast     = require("modules.toast")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local CX, CY = 640, 360
@@ -346,7 +347,10 @@ function on_message(self, message_id, message)
             end)
         else
             -- Per product ask: user presses accept then the dialog closes,
-            -- regardless of success/failure.
+            -- regardless of success/failure — the failure itself still
+            -- needs to reach the player somehow, so it's now a toast
+            -- (previously just silently closed with no explanation at all).
+            toast.error(d.message or "Could not claim bonus. Please try again.")
             self.visible = false
             self.pending = false
             self.claim_result = nil
