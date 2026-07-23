@@ -51,12 +51,6 @@ local function clear(self)
 end
 local function track(self, n) self.nodes[#self.nodes+1] = n return n end
 
--- Helper for framed boxes
-local function framed(self, x, y, w, h, border_col, bw, bg_col)
-    track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), border_col))
-    track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w - bw*2, h - bw*2, 0), bg_col))
-end
-
 -- Helper to draw left-aligned text
 local function txtL(self, x, y, str, font, color)
     local t = track(self, ui.text(vmath.vector3(x, y, 0), str, font, color))
@@ -106,35 +100,40 @@ end
 local function rebuild(self)
     clear(self)
 
-    -- ── DIALOG shell
-    local scrim = track(self, ui.box(vmath.vector3(CX, CY, 0),
-        vmath.vector3(LOGICAL_W * 2, LOGICAL_H * 2, 0), vmath.vector4(0, 0, 0, 0.8)))
+    -- ── Screen shell, matching the profile/phone-verification screen's
+    -- design language: flat dark base + the app's own textured background
+    -- (sized to exactly VISIBLE_W x VISIBLE_H, never oversized — the old
+    -- scrim here was a 2x-logical-size translucent box that let the
+    -- underlying lobby background bleed through at a visibly magnified
+    -- scale, which read as "zoomed"). Fully opaque, so it also doubles as
+    -- the full-screen tap target for closing back to the lobby.
+    track(self, ui.cover(LOGICAL_W, LOGICAL_H, P_BG))
+    local bg_node = track(self, gui.new_box_node(vmath.vector3(CX, CY, 0), vmath.vector3(VISIBLE_W, VISIBLE_H, 0)))
+    gui.set_texture(bg_node, "ui")
+    gui.play_flipbook(bg_node, "texture_bg")
+    local scrim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(VISIBLE_W, VISIBLE_H, 0), vmath.vector4(0, 0, 0, 0.001)))
     self.buttons[#self.buttons+1] = { node = scrim, id = "back" }
 
-    local pw, ph = 1160, 700
-    framed(self, CX, CY, pw, ph, vmath.vector4(0.549, 0.404, 0.141, 0.6), 1, P_BG)
-    local blocker = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), vmath.vector4(0, 0, 0, 0.001)))
-    self.buttons[#self.buttons+1] = { node = blocker, id = "tm_block" }
+    -- Header dark overlay, matching every other screen's top bar treatment
+    local hdr_h = 80
+    track(self, ui.box(vmath.vector3(CX, EDGE_T - hdr_h/2, 0), vmath.vector3(VISIBLE_W, hdr_h, 0), vmath.vector4(0, 0, 0, 0.45)))
+    track(self, ui.text(vmath.vector3(CX, EDGE_T - 40, 0), "THEMES", "subtitle1", P_GOLD))
 
-    local panel_t = CY + ph/2
+    local close_btn = track(self, ui.box(vmath.vector3(EDGE_R - 44, EDGE_T - 40, 0), vmath.vector3(44, 44, 0), vmath.vector4(0, 0, 0, 0.001)))
+    track(self, ui.text(vmath.vector3(EDGE_R - 44, EDGE_T - 40, 0), "X", "body", P_CREAM_DIM))
+    self.buttons[#self.buttons+1] = { node = close_btn, id = "back" }
 
-    -- Header row inside the panel
-    local hdr = track(self, ui.text(vmath.vector3(CX - pw/2 + 110, panel_t - 36, 0), "THEMES", "body", P_GOLD))
-    gui.set_scale(hdr, vmath.vector3(0.85, 0.85, 1))
+    -- Header UI: 3-stripe divider separating header from content
+    local d_y = EDGE_T - hdr_h - 9
+    track(self, ui.box(vmath.vector3(CX, d_y + 7, 0), vmath.vector3(VISIBLE_W, 4, 0), vmath.vector4(0.169, 0.153, 0.141, 1)))
+    track(self, ui.box(vmath.vector3(CX, d_y,     0), vmath.vector3(VISIBLE_W, 10, 0), vmath.vector4(0.039, 0.031, 0.027, 1)))
+    track(self, ui.box(vmath.vector3(CX, d_y - 7, 0), vmath.vector3(VISIBLE_W, 4, 0), vmath.vector4(0.337, 0.333, 0.314, 1)))
 
     local u = ws.current_user_data or {}
     local balance = tonumber(u.balance) or 0
 
-    local close_btn = track(self, ui.box(vmath.vector3(CX + pw/2 - 36, panel_t - 36, 0), vmath.vector3(44, 44, 0), vmath.vector4(0, 0, 0, 0.001)))
-    track(self, ui.text(vmath.vector3(CX + pw/2 - 36, panel_t - 36, 0), "X", "body", P_CREAM_DIM))
-    self.buttons[#self.buttons+1] = { node = close_btn, id = "back" }
-
-    -- Thin gold separator
-    track(self, ui.box(vmath.vector3(CX, panel_t - 64, 0), vmath.vector3(pw - 40, 1, 0), vmath.vector4(0.549, 0.404, 0.141, 0.35)))
-
     if self._msg then
-        -- Pushed to the very bottom of the modal panel, away from cards
-        track(self, ui.text(vmath.vector3(CX, CY - ph/2 + 30, 0), self._msg, "body",
+        track(self, ui.text(vmath.vector3(CX, EDGE_B + 30, 0), self._msg, "body",
             self._msg_ok and vmath.vector4(0.3, 0.8, 0.4, 1) or P_ERROR))
     end
 
@@ -144,7 +143,7 @@ local function rebuild(self)
     local cw, ch, gap = 340, 210, 20
     local gridw = cols * cw + (cols-1) * gap
     local x0 = CX - gridw / 2 + cw / 2
-    local y0 = panel_t - 90 - ch / 2
+    local y0 = d_y - 16 - 90 - ch / 2
 
     for i, t in ipairs(themes) do
         local c  = (i-1) % cols
