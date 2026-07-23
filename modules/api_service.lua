@@ -251,4 +251,19 @@ function M.join_team_tournament(payload, cb)
     request("POST", "/tournaments/team/join", payload, cb)
 end
 
+-- Populated bracket view (every player's level/status + the owner) —
+-- viewable by the owner (playing or not) and by any joined player.
+function M.get_team_tournament_bracket(tournament_id, cb)
+    request("GET", "/tournaments/team/" .. tournament_id .. "/bracket", nil, cb)
+end
+
+-- Owner-only admin overrides. payload = { userId, playerId }
+function M.advance_team_tournament_player(tournament_id, payload, cb)
+    request("POST", "/tournaments/team/" .. tournament_id .. "/advance", payload, cb)
+end
+
+function M.drop_team_tournament_player(tournament_id, payload, cb)
+    request("POST", "/tournaments/team/" .. tournament_id .. "/drop", payload, cb)
+end
+
 return M

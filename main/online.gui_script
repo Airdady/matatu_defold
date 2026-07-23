@@ -787,6 +787,11 @@ function on_input(self, action_id, action)
                         rebuild(self)
                     end
                 elseif id == "tm_submit" then right_panel.tm_submit(self, function() rebuild(self) end)
+
+                elseif id == "nav_team_bracket" then right_panel.open_team_bracket(self, function() rebuild(self) end)
+                elseif id == "tbr_close" then self.team_bracket_modal = nil; rebuild(self)
+                elseif id == "tbr_advance" then right_panel.tbr_advance(self, b.data, function() rebuild(self) end)
+                elseif id == "tbr_drop" then right_panel.tbr_drop(self, b.data, function() rebuild(self) end)
                 end
                 return true
             end

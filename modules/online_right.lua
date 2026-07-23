@@ -412,6 +412,96 @@ local function draw_team_create_modal(self, ctx)
     track(self, ui.text(vmath.vector3(CX, sub_y, 0), sub_label, "btn_lg", C_BTN_TEXT))
 end
 
+-- ── Team Tournament Bracket View ─────────────────────────────────────────────
+-- Every joined player, and the owner whether or not they're playing, can
+-- see who's on which level and how they're doing. The owner additionally
+-- gets ADVANCE/DROP overrides per row (see advanceTeamTournamentPlayer/
+-- dropTeamTournamentPlayer on the backend — neither can mint the grand
+-- prize; that's still only ever awarded through real gameplay).
+local MAX_BRACKET_ROWS = 8
+
+local function draw_team_bracket_modal(self, ctx)
+    local br = self.team_bracket_modal
+    if not br then return end
+
+    local track = ctx.track
+    local ui    = ctx.ui
+    local mkbtn = ctx.mkbtn
+    local txtL  = ctx.txtL
+    local commas = ctx.commas
+    local CX, CY = ctx.CX, ctx.CY
+    local C     = ctx.C
+    local NOTE_C = vmath.vector4(0.6, 0.6, 0.6, 1)
+
+    local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.85)))
+    self.buttons[#self.buttons+1] = { node = dim, id = "tbr_block" }
+    track(self, ui.grad_backdrop(ctx.LOGICAL_W, ctx.LOGICAL_H))
+
+    local panel_w, panel_h = 520, 560
+    track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
+
+    local cursor_y = CY + panel_h/2 - 18
+    track(self, ui.text(vmath.vector3(CX, cursor_y - 10, 0), "TEAM TOURNAMENT BRACKET", "subtitle2", C.COL_WHITE))
+    mkbtn(self, "tbr_close", vmath.vector3(CX + panel_w/2 - 32, cursor_y - 10, 0), vmath.vector3(40, 40, 0), "X", "secondary_btn")
+    cursor_y = cursor_y - 34
+    track(self, ui.box(vmath.vector3(CX, cursor_y, 0), vmath.vector3(panel_w - 48, 1, 0), vmath.vector4(1, 1, 1, 0.14)))
+    cursor_y = cursor_y - 24
+
+    if br.loading then
+        track(self, ui.text(vmath.vector3(CX, cursor_y, 0), "Loading...", "small", C_NEUTRAL))
+        return
+    end
+    if br.error then
+        track(self, ui.text(vmath.vector3(CX, cursor_y, 0), br.error, "small", vmath.vector4(1, 0.35, 0.35, 1)))
+        return
+    end
+
+    local data = br.data or {}
+    local totalLevels = #(data.levels or {})
+    track(self, ui.text(vmath.vector3(CX, cursor_y, 0),
+        string.format("%s  ·  %s coins  ·  code %s", data.name or "Team Tournament",
+            commas((data.grandPrize or {}).value or 0), data.invitationCode or "?"), "small", C_NEUTRAL))
+    cursor_y = cursor_y - 30
+
+    local players = data.players or {}
+    -- Highest level first — the closest to winning are the most interesting
+    -- to see at a glance.
+    table.sort(players, function(a, b) return (a.currentLevel or 1) > (b.currentLevel or 1) end)
+
+    if #players == 0 then
+        track(self, ui.text(vmath.vector3(CX, cursor_y, 0), "No players have joined yet.", "small", NOTE_C))
+    end
+
+    local row_h = 52
+    local is_owner = br.is_owner
+    for i = 1, math.min(#players, MAX_BRACKET_ROWS) do
+        local p = players[i]
+        local py = cursor_y - (i - 0.5) * row_h
+        track(self, ui.box(vmath.vector3(CX, py, 0), vmath.vector3(panel_w - 40, row_h - 6, 0), vmath.vector4(1,1,1,0.04)))
+
+        local status_col = (p.status == "completed") and vmath.vector4(1.0, 0.843, 0.0, 1) or C.COL_WHITE
+        txtL(self, CX - panel_w/2 + 30, py + 8, tostring(p.username or "Player"), "body", status_col)
+        txtL(self, CX - panel_w/2 + 30, py - 12, string.format("Level %d/%d  ·  %s", p.currentLevel or 1, totalLevels, tostring(p.status or "active")), "small", NOTE_C)
+
+        if is_owner then
+            local adv_x = CX + panel_w/2 - 130
+            local drop_x = CX + panel_w/2 - 60
+            mkbtn(self, "tbr_advance", vmath.vector3(adv_x, py, 0), vmath.vector3(60, 34, 0), "ADV", "secondary_btn", p.playerId, "btn_sm")
+            mkbtn(self, "tbr_drop", vmath.vector3(drop_x, py, 0), vmath.vector3(60, 34, 0), "DROP", "secondary_btn", p.playerId, "btn_sm")
+        end
+    end
+
+    if #players > MAX_BRACKET_ROWS then
+        track(self, ui.text(vmath.vector3(CX, cursor_y - (MAX_BRACKET_ROWS + 0.5) * row_h, 0),
+            string.format("+ %d more player(s)", #players - MAX_BRACKET_ROWS), "small", NOTE_C))
+    end
+
+    if br.msg then
+        track(self, ui.text(vmath.vector3(CX, CY - panel_h/2 + 30, 0), br.msg, "small",
+            br.msg_ok and vmath.vector4(0.3, 1.0, 0.3, 1) or vmath.vector4(1, 0.3, 0.3, 1)))
+    end
+end
+
 -- ── Savings helpers (backend-driven config, with a safe fallback while the
 -- first SAVINGS_STATUS round-trip hasn't landed yet) ────────────────────────
 -- Must be defined before draw_savings_info/draw_savings_plans below, which
@@ -985,17 +1075,33 @@ function M.draw(self, ctx, left_M)
     local team_h  = 72
     local team_cy = cy - team_h/2
     track(self, ui.box(vmath.vector3(cx, team_cy, 0), vmath.vector3(pw, team_h, 0), C.COL_BG))
-    mkbtn(self, "nav_team_tournament", vmath.vector3(cx, team_cy, 0), vmath.vector3(pw, team_h, 0), nil, "container_bg")
 
     local team_icon_x = cx - 80
     local team_icon = track(self, ui.image(vmath.vector3(team_icon_x, team_cy, 0), vmath.vector3(32, 32, 0), "tournament_icon"))
     gui.set_color(team_icon, C.COL_WHITE)
     txtL(self, team_icon_x + 28, team_cy, "TEAM TOURNAMENTS", "btn_lg", C.COL_WHITE)
+
+    -- Once this account has created or joined one (tracked client-side
+    -- since last create/join — see M.tm_submit / lobby.gui_script's
+    -- team_join_submit), the row's action switches from "+ CREATE" to
+    -- "VIEW BRACKET" for quick return access instead of always reopening
+    -- the creation form.
+    local has_team = u.myTeamTournamentId and tostring(u.myTeamTournamentId) ~= ""
+    local team_btn_w = has_team and 180 or 160
+    local team_bx = cx + pw/2 - team_btn_w/2 - 20
+    if has_team then
+        txtL(self, team_icon_x + 28, team_cy - 14, "Your team tournament", "small", C.COL_DIM)
+        mkbtn(self, "nav_team_bracket", vmath.vector3(team_bx, team_cy, 0), vmath.vector3(team_btn_w, 48, 0), "VIEW BRACKET", "primary_btn", nil, "btn_md")
+    else
+        txtL(self, team_icon_x + 28, team_cy - 14, "Fund a prize, invite your team", "small", C.COL_DIM)
+        mkbtn(self, "nav_team_tournament", vmath.vector3(team_bx, team_cy, 0), vmath.vector3(team_btn_w, 48, 0), "+ CREATE", "primary_btn", nil, "btn_md")
+    end
     cy = cy - team_h - C.BLOCK_GAP
 
     -- ── Draw Extracted Modals on Top ──────────────────────────────────────
     draw_battle_modal(self, ctx)
     draw_team_create_modal(self, ctx)
+    draw_team_bracket_modal(self, ctx)
     draw_invite_search(self, ctx)
     draw_savings_info(self, ctx)
     draw_savings_plans(self, ctx)
@@ -1127,6 +1233,10 @@ function M.tm_submit(self, rebuild_cb)
             local code = created.invitationCode or "?"
             cur.msg, cur.msg_ok = "Created! Invitation code: " .. tostring(code), true
             toast.success("Team tournament created — code: " .. tostring(code))
+            local u = ws.current_user_data or {}
+            u.myTeamTournamentId = created._id
+            u.myTeamTournamentIsOwner = true
+            ws.current_user_data = u
             if self._active then rebuild_cb() end
             timer.delay(2.5, false, function()
                 if self.team_create_modal == cur then
@@ -1136,6 +1246,85 @@ function M.tm_submit(self, rebuild_cb)
             end)
         else
             local err = result.message or "Could not create the team tournament."
+            cur.msg, cur.msg_ok = err, false
+            toast.error(err)
+            if self._active then rebuild_cb() end
+        end
+    end)
+end
+
+function M.open_team_bracket(self, rebuild_cb)
+    local u = ws.current_user_data or {}
+    local tid = u.myTeamTournamentId
+    if not tid or tostring(tid) == "" then return end
+
+    self.team_bracket_modal = { loading = true, is_owner = u.myTeamTournamentIsOwner and true or false }
+    rebuild_cb()
+
+    local api = require("modules.api_service")
+    api.get_team_tournament_bracket(tid, function(result)
+        local cur = self.team_bracket_modal
+        if not cur then return end
+        cur.loading = false
+        if result.success then
+            cur.data = result.data
+        else
+            cur.error = result.message or "Could not load the bracket."
+        end
+        if self._active then rebuild_cb() end
+    end)
+end
+
+local function refresh_team_bracket(self, rebuild_cb)
+    local br = self.team_bracket_modal
+    if not br then return end
+    local u = ws.current_user_data or {}
+    local tid = u.myTeamTournamentId
+    if not tid or tostring(tid) == "" then return end
+    local api = require("modules.api_service")
+    api.get_team_tournament_bracket(tid, function(result)
+        local cur = self.team_bracket_modal
+        if not cur then return end
+        if result.success then cur.data = result.data end
+        if self._active then rebuild_cb() end
+    end)
+end
+
+function M.tbr_advance(self, player_id, rebuild_cb)
+    local br = self.team_bracket_modal
+    local u = ws.current_user_data or {}
+    local tid = u.myTeamTournamentId
+    if not br or not tid or not player_id then return end
+    local api = require("modules.api_service")
+    api.advance_team_tournament_player(tid, { userId = u._id, playerId = player_id }, function(result)
+        local cur = self.team_bracket_modal
+        if not cur then return end
+        if result.success then
+            cur.msg, cur.msg_ok = "Player advanced.", true
+            refresh_team_bracket(self, rebuild_cb)
+        else
+            local err = result.message or "Could not advance this player."
+            cur.msg, cur.msg_ok = err, false
+            toast.error(err)
+            if self._active then rebuild_cb() end
+        end
+    end)
+end
+
+function M.tbr_drop(self, player_id, rebuild_cb)
+    local br = self.team_bracket_modal
+    local u = ws.current_user_data or {}
+    local tid = u.myTeamTournamentId
+    if not br or not tid or not player_id then return end
+    local api = require("modules.api_service")
+    api.drop_team_tournament_player(tid, { userId = u._id, playerId = player_id }, function(result)
+        local cur = self.team_bracket_modal
+        if not cur then return end
+        if result.success then
+            cur.msg, cur.msg_ok = "Player dropped.", true
+            refresh_team_bracket(self, rebuild_cb)
+        else
+            local err = result.message or "Could not drop this player."
             cur.msg, cur.msg_ok = err, false
             toast.error(err)
             if self._active then rebuild_cb() end
