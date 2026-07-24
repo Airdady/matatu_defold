@@ -74,7 +74,6 @@ local STATE_LOBBY     = "lobby"
 local STATE_AI_SELECT = "ai_select"
 local STATE_TOURNEY   = "tournament"
 local STATE_TEAM_JOIN = "team_join"
-local STATE_TEAM_MENU = "team_menu"
 local STATE_TEAM_CREATE = "team_create"
 
 -- ---------------------------------------------------------------------------
@@ -267,7 +266,7 @@ local function mode_tile(self, cfg)
     pcall(gui.set_scale, n_num, vmath.vector3(1.4, 1.4, 1))
 
     -- Center Text (Anchored slightly below center or dynamic based on CTA)
-    local title_y = (cfg.cta_label or cfg.badge_label) and (y + 15) or (y + 8)
+    local title_y = (cfg.cta_label or cfg.badge_label or cfg.dual_cta) and (y + 15) or (y + 8)
     
     local n_title = track(self, ui.text(vmath.vector3(acc_x + 16, title_y, 0), cfg.title, "title", C_CREAM))
     set_pivot(n_title, gui.PIVOT_W)
@@ -296,8 +295,25 @@ local function mode_tile(self, cfg)
         end
     end
 
-    -- CTA Button (PLAY NOW) or Badge (COMING SOON)
-    if cfg.cta_label then
+    -- CTA Button (PLAY NOW), a pair of child buttons (e.g. CREATE / JOIN),
+    -- or a non-clickable Badge (COMING SOON)
+    if cfg.dual_cta then
+        -- Two smaller buttons side by side, each its own tappable hit node —
+        -- unlike the single-CTA/badge cases, the tile itself has no whole-
+        -- tile hit box (no cfg.btn_id below applies here), so only these two
+        -- buttons are actually clickable, not the tile background.
+        local gap = 10
+        local btn_w, btn_h = 140, 44
+        local start_x = acc_x + 16
+        local cta_y = y - h/2 + 50
+        for i, d in ipairs(cfg.dual_cta) do
+            local bx = start_x + (i - 1) * (btn_w + gap) + btn_w/2
+            track(self, ui.box(vmath.vector3(bx, cta_y, 0), vmath.vector3(btn_w, btn_h, 0), C_RED))
+            track(self, ui.text(vmath.vector3(bx, cta_y, 0), d.label, "body", vmath.vector4(0.05, 0.05, 0.05, 1)))
+            local hit = track(self, ui.box(vmath.vector3(bx, cta_y, 0), vmath.vector3(btn_w, btn_h, 0), C_TRANSP))
+            self.buttons[#self.buttons + 1] = { node = hit, id = d.id }
+        end
+    elseif cfg.cta_label then
         local cta_w, cta_h = 160, 46
         local cta_x = acc_x + 16 + cta_w/2
         local cta_y = y - h/2 + 50
@@ -593,45 +609,6 @@ local function draw_tournament(self)
     self.buttons[#self.buttons + 1] = { node = bkb, id = "back_to_lobby" }
 end
 
--- Small 2-option menu opened from the TEAM TOURNAMENTS banner: any
--- signed-in player can create one (funding its grand prize from their own
--- balance) or join an existing one by invitation code.
-local function draw_team_menu(self)
-    local scrim = track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.85)))
-    self.buttons[#self.buttons + 1] = { node = scrim, id = "dialog_block" }
-
-    local pw, ph = 520, 320
-    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), C_BORDER))
-    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw - 2, ph - 2, 0), C_TILE))
-    track(self, ui.box(vmath.vector3(CX, CY + ph / 2 - 2, 0), vmath.vector3(pw, 4, 0), C_U_TEAM))
-
-    text_sh(self, vmath.vector3(CX, CY + ph / 2 - 40, 0), "TEAM TOURNAMENTS", "title", C_CREAM, 2, -2)
-    track(self, ui.text(vmath.vector3(CX, CY + ph / 2 - 70, 0), "Any player can create one, or join with a code", "small", C_MUTED))
-
-    local opt_w, opt_h = 220, 96
-    local create_x = CX - opt_w/2 - 12
-    local join_x   = CX + opt_w/2 + 12
-    local opt_y = CY - 10
-
-    track(self, ui.box(vmath.vector3(create_x, opt_y, 0), vmath.vector3(opt_w, opt_h, 0), C_BORDER))
-    track(self, ui.box(vmath.vector3(create_x, opt_y, 0), vmath.vector3(opt_w - 2, opt_h - 2, 0), C_TILE))
-    text_sh(self, vmath.vector3(create_x, opt_y + 12, 0), "CREATE", "body", C_CREAM, 1, -1)
-    track(self, ui.text(vmath.vector3(create_x, opt_y - 16, 0), "Fund a prize, invite your team", "small", C_MUTED))
-    local create_hit = track(self, ui.box(vmath.vector3(create_x, opt_y, 0), vmath.vector3(opt_w, opt_h, 0), C_TRANSP))
-    self.buttons[#self.buttons + 1] = { node = create_hit, id = "team_menu_create" }
-
-    track(self, ui.box(vmath.vector3(join_x, opt_y, 0), vmath.vector3(opt_w, opt_h, 0), C_BORDER))
-    track(self, ui.box(vmath.vector3(join_x, opt_y, 0), vmath.vector3(opt_w - 2, opt_h - 2, 0), C_TILE))
-    text_sh(self, vmath.vector3(join_x, opt_y + 12, 0), "JOIN BY CODE", "body", C_CREAM, 1, -1)
-    track(self, ui.text(vmath.vector3(join_x, opt_y - 16, 0), "Enter a code your owner shared", "small", C_MUTED))
-    local join_hit = track(self, ui.box(vmath.vector3(join_x, opt_y, 0), vmath.vector3(opt_w, opt_h, 0), C_TRANSP))
-    self.buttons[#self.buttons + 1] = { node = join_hit, id = "team_menu_join" }
-
-    local bkb = track(self, ui.btn9(vmath.vector3(CX - pw / 2 + 50, CY + ph / 2 - 24, 0), vmath.vector3(78, 32, 0), "secondary_btn"))
-    track(self, ui.text(vmath.vector3(CX - pw / 2 + 50, CY + ph / 2 - 26, 0), "< BACK", "small", C_CREAM))
-    self.buttons[#self.buttons + 1] = { node = bkb, id = "back_to_lobby" }
-end
-
 -- Join a player-created Team Tournament by the invitation code its owner
 -- shared. Codes are alphanumeric (see be_matatu's createTeamTournament,
 -- which uppercases/strips them to 3-16 [A-Z0-9] chars), so this needs a
@@ -877,7 +854,7 @@ local function rebuild(self)
     -- Row A (top, bigger): PLAY ONLINE + TEAM TOURNAMENTS — the two
     -- real-money/online modes, both prominent. Row B (bottom, smaller): the
     -- three offline-vs-AI modes, secondary to both tiles above them.
-    local row_a_h  = math.floor((grid_h - GUTTER) * 0.62)
+    local row_a_h  = math.floor((grid_h - GUTTER) * 0.68)
     local row_b_h  = grid_h - row_a_h - GUTTER
     local row_a_cy = grid_b + row_b_h + GUTTER + row_a_h / 2
     local row_b_cy = grid_b + row_b_h / 2
@@ -964,10 +941,10 @@ local function rebuild(self)
 
     -- -----------------------------------------------------------------------
     -- Tile 2: TEAM TOURNAMENTS — second-biggest, right beside PLAY ONLINE
-    -- and above the offline modes. Opens the CREATE/JOIN BY CODE menu;
-    -- CREATE itself now lives entirely on this screen (STATE_TEAM_CREATE),
-    -- no more routing through the online-users screen just to fill out the
-    -- form.
+    -- and above the offline modes. No secondary popup menu — CREATE and
+    -- JOIN sit right on the tile as its own child buttons. Both handlers
+    -- already do their own sign-in check and jump straight to the right
+    -- screen (STATE_TEAM_CREATE / STATE_TEAM_JOIN), no dialog in between.
     -- -----------------------------------------------------------------------
     local has_team_tournament = ws.current_user_data and ws.current_user_data.myTeamTournamentId
         and tostring(ws.current_user_data.myTeamTournamentId) ~= ""
@@ -979,8 +956,10 @@ local function rebuild(self)
         numeral     = "02",
         title       = "TEAM TOURNAMENTS",
         sub         = has_team_tournament and "You're in one — manage it" or "Fund a prize, invite your team",
-        cta_label   = "OPEN",
-        btn_id      = "team_action_open",
+        dual_cta    = {
+            { label = "CREATE", id = "team_menu_create" },
+            { label = "JOIN",   id = "team_menu_join" },
+        },
     })
 
     -- -----------------------------------------------------------------------
@@ -1065,8 +1044,6 @@ local function rebuild(self)
         draw_ai_select(self)
     elseif self.state == STATE_TOURNEY then
         draw_tournament(self)
-    elseif self.state == STATE_TEAM_MENU then
-        draw_team_menu(self)
     elseif self.state == STATE_TEAM_JOIN then
         draw_team_join(self)
     elseif self.state == STATE_TEAM_CREATE then
@@ -1174,12 +1151,11 @@ local function handle(self, b)
         app_state.mode = ((app_state.t4_mode or "bracket") == "chamber") and "chamber4" or "tournament4"
         msg.post("#controller", "goto_game")
 
-    elseif b.id == "team_action_open" then
-        set_state(self, STATE_TEAM_MENU)
     elseif b.id == "team_menu_create" then
         -- Any signed-in player can create one. The form itself lives right
         -- here on the lobby screen (STATE_TEAM_CREATE) — no more routing
-        -- through the online-users screen just to open it.
+        -- through the online-users screen (or a secondary popup) just to
+        -- open it; CREATE is a direct child button on the tile itself.
         local has_account = ws.current_user_data and ws.current_user_data.username and ws.current_user_data.username ~= ""
         if not has_account then
             toast.error("Sign in first — tap PLAY ONLINE.")
