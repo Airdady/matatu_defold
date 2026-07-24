@@ -158,7 +158,15 @@ function M.update(self, dt)
         local active_pie = self.is_player_turn and self.p_timer or self.o_timer
 
         if active_pie then
-            gui.set_fill_angle(active_pie, progress * 360)
+            -- Never let the ring drain all the way to nothing right at 0 —
+            -- a fully-empty pie reads as "broken/gone" rather than "time's
+            -- up, game still running". Hold a small steady sliver instead
+            -- once the timer actually expires (a static amount, not an
+            -- animated blink — the goal is calm visibility, not alarm).
+            local MIN_FILL_DEG = 12
+            local fill_deg = progress * 360
+            if self.timer_remaining <= 0 then fill_deg = MIN_FILL_DEG end
+            gui.set_fill_angle(active_pie, fill_deg)
             local c = C_T_RED
             if self.timer_remaining > self.total_duration / 2.0 then
                 c = C_T_GREEN
