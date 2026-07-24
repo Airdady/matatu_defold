@@ -685,14 +685,16 @@ end
 
 -- Create a Team Tournament — owner funds the grand prize from their own
 -- balance, picks a max player count (which auto-suggests a bracket depth via
--- cup rules) and games-per-level, and can optionally reserve a custom
--- invitation code. Lives entirely on the lobby screen now (no more routing
--- through the online screen just to open this form) — the row-height budget
--- below is computed from summed constants, not hand-picked, ported from the
--- version of this dialog that was already verified (via a mocked Defold GUI
--- harness) to lay out every row without overlap.
+-- cup rules) and games-per-level. The invitation code is always server-
+-- generated (shown back in the success message) — an earlier version let the
+-- owner type a custom one via an on-screen keyboard, but that was the single
+-- most complex, most cramped part of this dialog (5 extra keyboard rows,
+-- barely any vertical margin left in a 720-tall logical screen) for a
+-- rarely-used option, so it's gone: three simple, generously-spaced rows
+-- (steppers + one segmented control) that fit with comfortable margin on
+-- every side instead of packing the screen edge to edge.
 local function draw_team_create(self)
-    local tc = self.team_create or { prize = 1000, max_players = 8, gpl_i = 2, code = "", submitting = false }
+    local tc = self.team_create or { prize = 1000, max_players = 8, gpl_i = 2, submitting = false }
     self.team_create = tc
 
     local scrim = track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.85)))
@@ -700,27 +702,23 @@ local function draw_team_create(self)
 
     local NOTE_C = C_MUTED
 
-    local PAD        = 20
-    local ROW_LABEL  = 20
-    local ROW_GAP    = 8
-    local STEP_ROW   = 40
-    local SEC_GAP    = 14
-    local KB_ROW     = 32
-    local KB_GAP     = 5
-    local SUB_H      = 18 -- the "-> N levels" subtitle line
+    local PAD       = 24
+    local ROW_LABEL = 20
+    local ROW_GAP   = 10
+    local STEP_ROW  = 44
+    local SEC_GAP   = 22
+    local SUB_H     = 18 -- the "-> N levels" subtitle line
 
     local grand_prize_block = ROW_LABEL + ROW_GAP + STEP_ROW + SEC_GAP
     local max_players_block = ROW_LABEL + ROW_GAP + STEP_ROW + ROW_GAP + SUB_H + SEC_GAP
     local games_level_block = ROW_LABEL + ROW_GAP + STEP_ROW + SEC_GAP
-    local invite_code_block = ROW_LABEL + ROW_GAP + STEP_ROW + ROW_GAP
-    local keyboard_block    = 5 * (KB_ROW + KB_GAP) -- 3 letter rows + digit row + delete row
-    local msg_reserve       = 26
-    local submit_block      = 50
-    local header_block      = 30 + 10 + 1 + 14 -- title + gap + divider + gap
+    local msg_reserve       = 30
+    local submit_block      = 56
+    local header_block      = 30 + 12 + 1 + 18 -- title + gap + divider + gap
 
     local content_h = header_block + grand_prize_block + max_players_block
-        + games_level_block + invite_code_block + keyboard_block + msg_reserve + submit_block
-    local pw, ph = 560, content_h + PAD * 2
+        + games_level_block + msg_reserve + submit_block
+    local pw, ph = 520, content_h + PAD * 2
 
     track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), C_BORDER))
     track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw - 2, ph - 2, 0), C_TILE))
@@ -729,28 +727,28 @@ local function draw_team_create(self)
     local step_w = 220
     local cursor_y = CY + ph/2 - PAD
 
-    text_sh(self, vmath.vector3(CX, cursor_y - 10, 0), "CREATE TEAM TOURNAMENT", "subtitle2", C_CREAM, 1, -1)
-    cursor_y = cursor_y - 30 - 10
+    text_sh(self, vmath.vector3(CX, cursor_y - 12, 0), "CREATE TEAM TOURNAMENT", "subtitle2", C_CREAM, 1, -1)
+    cursor_y = cursor_y - 30 - 12
 
     track(self, ui.box(vmath.vector3(CX, cursor_y, 0), vmath.vector3(pw - 48, 1, 0), vmath.vector4(1, 1, 1, 0.14)))
-    cursor_y = cursor_y - 1 - 14
+    cursor_y = cursor_y - 1 - 18
 
     -- GRAND PRIZE
     track(self, ui.text(vmath.vector3(CX, cursor_y, 0), "GRAND PRIZE (from your balance)", "small", NOTE_C))
     cursor_y = cursor_y - ROW_LABEL - ROW_GAP
-    mkbtn(self, "tc_prize_minus", vmath.vector3(CX - step_w/2 - 28, cursor_y - STEP_ROW/2, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
+    mkbtn(self, "tc_prize_minus", vmath.vector3(CX - step_w/2 - 30, cursor_y - STEP_ROW/2, 0), vmath.vector3(44, 44, 0), "-", "secondary_btn")
     track(self, ui.box(vmath.vector3(CX, cursor_y - STEP_ROW/2, 0), vmath.vector3(step_w, STEP_ROW, 0), C_DARK))
     track(self, ui.text(vmath.vector3(CX, cursor_y - STEP_ROW/2, 0), commas(tc.prize) .. " COINS", "body", C_GOLD))
-    mkbtn(self, "tc_prize_plus", vmath.vector3(CX + step_w/2 + 28, cursor_y - STEP_ROW/2, 0), vmath.vector3(40, 40, 0), "+", "secondary_btn")
+    mkbtn(self, "tc_prize_plus", vmath.vector3(CX + step_w/2 + 30, cursor_y - STEP_ROW/2, 0), vmath.vector3(44, 44, 0), "+", "secondary_btn")
     cursor_y = cursor_y - STEP_ROW - SEC_GAP
 
     -- MAX PLAYERS + auto-suggested level count
     track(self, ui.text(vmath.vector3(CX, cursor_y, 0), "MAX PLAYERS", "small", NOTE_C))
     cursor_y = cursor_y - ROW_LABEL - ROW_GAP
-    mkbtn(self, "tc_players_minus", vmath.vector3(CX - step_w/2 - 28, cursor_y - STEP_ROW/2, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
+    mkbtn(self, "tc_players_minus", vmath.vector3(CX - step_w/2 - 30, cursor_y - STEP_ROW/2, 0), vmath.vector3(44, 44, 0), "-", "secondary_btn")
     track(self, ui.box(vmath.vector3(CX, cursor_y - STEP_ROW/2, 0), vmath.vector3(step_w, STEP_ROW, 0), C_DARK))
     track(self, ui.text(vmath.vector3(CX, cursor_y - STEP_ROW/2, 0), tostring(tc.max_players), "body", C_CREAM))
-    mkbtn(self, "tc_players_plus", vmath.vector3(CX + step_w/2 + 28, cursor_y - STEP_ROW/2, 0), vmath.vector3(40, 40, 0), "+", "secondary_btn")
+    mkbtn(self, "tc_players_plus", vmath.vector3(CX + step_w/2 + 30, cursor_y - STEP_ROW/2, 0), vmath.vector3(44, 44, 0), "+", "secondary_btn")
     cursor_y = cursor_y - STEP_ROW - ROW_GAP
     track(self, ui.text(vmath.vector3(CX, cursor_y - SUB_H/2, 0),
         string.format("-> %d levels (cup rules, 3-7)", suggested_levels(tc.max_players)), "small", NOTE_C))
@@ -760,7 +758,7 @@ local function draw_team_create(self)
     track(self, ui.text(vmath.vector3(CX, cursor_y, 0), "GAMES PER LEVEL (to advance)", "small", NOTE_C))
     cursor_y = cursor_y - ROW_LABEL - ROW_GAP
     local gpl_opts = { 1, 3, 5 }
-    local seg_w, seg_gap = 120, 12
+    local seg_w, seg_gap = 130, 14
     local seg_n = #gpl_opts
     for i, v in ipairs(gpl_opts) do
         local sx = CX + (i - (seg_n+1)/2) * (seg_w + seg_gap)
@@ -770,46 +768,6 @@ local function draw_team_create(self)
         track(self, ui.text(vmath.vector3(sx, cursor_y - STEP_ROW/2, 0), "Best of " .. v, "small", C_CREAM))
     end
     cursor_y = cursor_y - STEP_ROW - SEC_GAP
-
-    -- INVITE CODE (optional custom word — blank means auto-generated)
-    track(self, ui.text(vmath.vector3(CX, cursor_y, 0), "INVITE CODE (optional, leave blank to auto-generate)", "small", NOTE_C))
-    cursor_y = cursor_y - ROW_LABEL - ROW_GAP
-    track(self, ui.box(vmath.vector3(CX, cursor_y - STEP_ROW/2, 0), vmath.vector3(300, STEP_ROW, 0), C_DARK))
-    local code_shown = (tc.code ~= "") and tc.code or "AUTO"
-    track(self, ui.text(vmath.vector3(CX, cursor_y - STEP_ROW/2, 0), code_shown, "small", (tc.code ~= "") and C_CREAM or NOTE_C))
-    cursor_y = cursor_y - STEP_ROW - ROW_GAP
-
-    -- Keyboard, writes into tc.code — reuses the same TEAM_KB layout as
-    -- draw_team_join, with a distinct "tc_key_" id prefix so the two
-    -- keyboards' button handlers never collide.
-    local kw, kh, kg = 44, KB_ROW, 6
-    local function key(px, py, w, ch, label)
-        track(self, ui.box(vmath.vector3(px, py, 0), vmath.vector3(w, kh, 0), C_BORDER))
-        track(self, ui.box(vmath.vector3(px, py, 0), vmath.vector3(w - 2, kh - 2, 0), C_DARK))
-        track(self, ui.text(vmath.vector3(px, py, 0), label or ch, "small", C_CREAM))
-        local hit = track(self, ui.box(vmath.vector3(px, py, 0), vmath.vector3(w, kh, 0), C_TRANSP))
-        self.buttons[#self.buttons+1] = { node = hit, id = "tc_key_" .. ch, data = (ch ~= "back") and ch or nil }
-    end
-    local row_py = cursor_y - kh/2
-    for r, row in ipairs(TEAM_KB) do
-        local n = #row
-        local roww = n * (kw + kg) - kg
-        local kx0 = CX - roww/2 + kw/2
-        local py = row_py - (r-1) * (KB_ROW + KB_GAP)
-        for i = 1, n do
-            key(kx0 + (i-1) * (kw + kg), py, kw, row:sub(i, i))
-        end
-    end
-    local digit_py = row_py - 3 * (KB_ROW + KB_GAP)
-    local digits = "0123456789"
-    local d_roww = 10 * (kw + kg) - kg
-    local d_kx0 = CX - d_roww/2 + kw/2
-    for i = 1, 10 do
-        key(d_kx0 + (i-1) * (kw + kg), digit_py, kw, digits:sub(i, i))
-    end
-    local delete_py = digit_py - (KB_ROW + KB_GAP)
-    key(CX, delete_py, 300, "back", "DELETE")
-    cursor_y = delete_py - KB_ROW/2 - ROW_GAP
 
     if tc.msg then
         track(self, ui.text(vmath.vector3(CX, cursor_y, 0), tc.msg, "small",
@@ -1161,7 +1119,7 @@ local function handle(self, b)
             toast.error("Sign in first — tap PLAY ONLINE.")
             return
         end
-        self.team_create = { prize = 1000, max_players = 8, gpl_i = 2, code = "", submitting = false }
+        self.team_create = { prize = 1000, max_players = 8, gpl_i = 2, submitting = false }
         set_state(self, STATE_TEAM_CREATE)
     elseif b.id == "team_menu_join" then
         local has_account = ws.current_user_data and ws.current_user_data.username and ws.current_user_data.username ~= ""
@@ -1238,17 +1196,6 @@ local function handle(self, b)
     elseif b.id == "tc_gpl" then
         local tc = self.team_create
         if tc and not tc.submitting then tc.gpl_i = b.data; rebuild(self) end
-    elseif b.id:sub(1, 7) == "tc_key_" then
-        local tc = self.team_create
-        if tc and not tc.submitting then
-            local ch = b.id:sub(8)
-            if ch == "back" then
-                tc.code = tc.code:sub(1, -2)
-            elseif #tc.code < 16 then
-                tc.code = tc.code .. tostring(b.data or ""):upper()
-            end
-            rebuild(self)
-        end
     elseif b.id == "tc_submit" then
         local tc = self.team_create
         if not tc or tc.submitting then return end
@@ -1268,7 +1215,6 @@ local function handle(self, b)
             maxPlayers = tc.max_players,
             gamesPerLevel = gpl_opts[tc.gpl_i or 2] or 3,
         }
-        if tc.code ~= "" then payload.invitationCode = tc.code end
         api.create_team_tournament(payload, function(result)
             local cur = self.team_create
             if not cur then return end
