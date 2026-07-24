@@ -429,15 +429,6 @@ function on_message(self, message_id, message, sender)
         if u.savingsPromoSeen ~= true then
             self.savings_info_open = true
         end
-        -- Deferred from the main lobby's TEAM TOURNAMENTS banner: tapping
-        -- "CREATE" there has to sign in and route here first (same dance as
-        -- PLAY ONLINE) before the creation dialog itself, which only makes
-        -- sense once actually on this screen — see lobby.gui_script's
-        -- go_online()/"team_menu_create" handler.
-        if app_state.pending_team_action == "create" then
-            app_state.pending_team_action = nil
-            self.team_create_modal = { prize = 1000, max_players = 8, gpl_i = 2, code = "", submitting = false }
-        end
         refresh_wh(); rebuild(self)
         -- Actively ask for a fresh online-players list every time this
         -- screen is entered — don't just trust whatever's cached from the
@@ -762,40 +753,6 @@ function on_input(self, action_id, action)
                         bm.players = opts[cur]; rebuild(self)
                     end
                 elseif id == "bm_submit" then right_panel.bm_submit(self, function() rebuild(self) end)
-
-                elseif id == "nav_team_tournament" then
-                    self.team_create_modal = { prize = 1000, max_players = 8, gpl_i = 2, code = "", submitting = false }
-                    rebuild(self)
-                elseif id == "tm_close" then self.team_create_modal = nil; rebuild(self)
-                elseif id == "tm_prize_minus" or id == "tm_prize_plus" then
-                    local tm = self.team_create_modal
-                    if tm and not tm.submitting then
-                        local step = (id == "tm_prize_plus") and 500 or -500
-                        tm.prize = math.max(500, math.min(50000, (tm.prize or 1000) + step))
-                        rebuild(self)
-                    end
-                elseif id == "tm_players_minus" or id == "tm_players_plus" then
-                    local tm = self.team_create_modal
-                    if tm and not tm.submitting then
-                        local step = (id == "tm_players_plus") and 2 or -2
-                        tm.max_players = math.max(4, math.min(64, (tm.max_players or 8) + step))
-                        rebuild(self)
-                    end
-                elseif id == "tm_gpl" then
-                    local tm = self.team_create_modal
-                    if tm and not tm.submitting then tm.gpl_i = b.data; rebuild(self) end
-                elseif id:sub(1, 7) == "tm_key_" then
-                    local tm = self.team_create_modal
-                    if tm and not tm.submitting then
-                        local ch = id:sub(8)
-                        if ch == "back" then
-                            tm.code = tm.code:sub(1, -2)
-                        elseif #tm.code < 16 then
-                            tm.code = tm.code .. tostring(b.data or ""):upper()
-                        end
-                        rebuild(self)
-                    end
-                elseif id == "tm_submit" then right_panel.tm_submit(self, function() rebuild(self) end)
 
                 elseif id == "nav_team_bracket" then right_panel.open_team_bracket(self, function() rebuild(self) end)
                 elseif id == "tbr_close" then self.team_bracket_modal = nil; rebuild(self)
