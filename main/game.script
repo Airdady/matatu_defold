@@ -17,6 +17,7 @@ local GF    = require "modules.game_flow"
 
 local OnlineHandler = require "modules.online_handler"
 local Tut   = require "modules.tutorial"
+local Toast = require "modules.toast"
 
 -- Tutorial hooks are always pcall-guarded so a walkthrough bug can never break play.
 local function tut(name, ...)
@@ -406,6 +407,20 @@ function update(self, dt)
             self.waiting = false
             self.current_turn_actions = {}
             RE.pre_validate_hand(self)
+
+            -- Whot: a pending Pick Two/Three penalty gives no other on-screen
+            -- cue that the player must respond (draw the stacked total, or
+            -- play a matching Pick card to keep stacking it onto the
+            -- opponent) — without this, a player who doesn't already know to
+            -- tap the deck just sits on a turn that looks like nothing
+            -- happened until it times out. Fires once per turn-start edge,
+            -- same as the lock-reset above.
+            local pending_penalty = RE.get_active_penalty and RE.get_active_penalty(self) or 0
+            if pending_penalty > 0 then
+                Toast.info(string.format(
+                    "Pending penalty: draw %d cards or play a matching card to stack it back!",
+                    pending_penalty))
+            end
         end
         self._was_my_turn = now_my_turn
     end
