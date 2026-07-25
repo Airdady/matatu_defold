@@ -715,7 +715,18 @@ function M.handle_single_move(self, move_data, new_state, done)
         local suit = move_data.chosenSuit
         if (not suit or suit == "") and new_state then suit = new_state.chosenSuit end
         M.process_opponent_actions(self, actions, suit or "", new_state, function()
-            M.finalize_state_sync(self, new_state, function() done() end)
+            -- Reconcile the human's own hand against server truth too, not
+            -- just the opponent's — an opponent's move can change OUR hand
+            -- server-side (Whot's General Market/14 forces the human to
+            -- draw as a side effect of the OPPONENT'S play), and until now
+            -- only the ai_for_me branch below ever called sync_my_hand.
+            -- Left uncorrected here, the client's local player_hand quietly
+            -- drifts from the server's authoritative hand and stays wrong
+            -- until some later, unrelated resync happens to catch it.
+            M.finalize_state_sync(self, new_state, function()
+                sync_my_hand(self, new_state or {})
+                done()
+            end)
         end)
     elseif ai_for_me and has_actions then
         -- Akira consumed our turn: anything we half-did before timing out
