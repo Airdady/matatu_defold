@@ -418,7 +418,7 @@ function update(self, dt)
             local pending_penalty = RE.get_active_penalty and RE.get_active_penalty(self) or 0
             if pending_penalty > 0 then
                 Toast.info(string.format(
-                    "Pending penalty: draw %d cards or play a matching card to stack it back!",
+                    "Pending penalty: draw %d cards, or play a matching card to cancel it!",
                     pending_penalty))
             end
         end

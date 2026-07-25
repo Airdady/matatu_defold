@@ -163,19 +163,19 @@ end
 --------------------------------------------------------------------
 
 function M.calculate_penalty_action(played_card, prev_card, current_penalty)
-    local played_penalty = M.get_card_penalty_value(played_card)
-
     if played_card.v == prev_card.v then
-        -- Real Whot rules stack matching Pick cards cumulatively — e.g. a
-        -- Pick Two defended with another 2 becomes Pick Four for the
-        -- opponent, not a fresh Pick Two — so the accumulated total keeps
-        -- rising with every defend instead of resetting each time.
-        local total = (current_penalty or 0) + played_penalty
+        -- House rule: defending a pending Pick card with a matching Pick card
+        -- CONDENSES it — the penalty is cancelled outright and NOBODY draws.
+        -- It does not accumulate into a bigger penalty for the opponent, and
+        -- it does not pass the original penalty back at them either. The turn
+        -- then proceeds normally (END_TURN => opponent plays next, no
+        -- penalty). Must stay in lockstep with calculatePenaltyAction in
+        -- be_matatu's src/whot/rules/rules.ts.
         return {
-            type = M.NextActionType.TRANSFER_PENALTY,
-            next_player_penalty_count = total,
+            type = M.NextActionType.END_TURN,
+            next_player_penalty_count = 0,
             current_penalty_count = 0,
-            message = string.format("Penalty transferred (%d cards)", total),
+            message = "Penalty cancelled",
         }
     end
 
