@@ -40,10 +40,16 @@ M.BATTLE_TIERS = BATTLE_TIERS_BY_GAME[GameMode.GAME] or BATTLE_TIERS_BY_GAME.MAT
 -- KNOCKOUT uses a flat low-stake ladder as its SCORE CAP (charge = cap/2).
 local KNOCKOUT_CAPS_BY_GAME = {
     MATATU = { 100, 200, 300, 500 },
-    WHOT   = { 50,  100, 150, 250 },
+    WHOT   = { 100, 150, 200 },
     KADI   = { 5,   10,  15,  25  },
 }
 M.KNOCKOUT_CAPS = KNOCKOUT_CAPS_BY_GAME[GameMode.GAME] or KNOCKOUT_CAPS_BY_GAME.MATATU
+
+-- Which entry of the ladder above a fresh KNOCKOUT starts on. Whot opens at
+-- its lowest cap (100); matatu keeps its long-standing 200. Callers must use
+-- this rather than a hardcoded index, or Whot would default to 150.
+local KNOCKOUT_DEFAULT_CAP_I_BY_GAME = { MATATU = 2, WHOT = 1, KADI = 2 }
+M.KNOCKOUT_DEFAULT_CAP_I = KNOCKOUT_DEFAULT_CAP_I_BY_GAME[GameMode.GAME] or 2
 
 -- KNOCKOUT is a STAKED score-cap chamber: players put up one of these stake
 -- amounts, and the charge is derived from the score cap (cap/2).
@@ -182,7 +188,7 @@ local function draw_battle_modal(self, ctx)
         if si < 1 then si = 1 elseif si > #M.KNOCKOUT_STAKES then si = #M.KNOCKOUT_STAKES end
         bm.estake_i = si
         estake = M.KNOCKOUT_STAKES[si]
-        local ci = bm.cap_i or 2
+        local ci = bm.cap_i or M.KNOCKOUT_DEFAULT_CAP_I
         if ci < 1 then ci = 1 elseif ci > #M.KNOCKOUT_CAPS then ci = #M.KNOCKOUT_CAPS end
         bm.cap_i = ci
         cap = M.KNOCKOUT_CAPS[ci]
@@ -996,7 +1002,8 @@ function M.bm_submit(self, rebuild_cb)
     elseif btype == "KNOCKOUT" then
         match_format = 1
         amount       = M.KNOCKOUT_STAKES[bm.estake_i or 1] or M.KNOCKOUT_STAKES[1]
-        score_cap    = M.KNOCKOUT_CAPS[bm.cap_i or 2] or M.KNOCKOUT_CAPS[2]
+        score_cap    = M.KNOCKOUT_CAPS[bm.cap_i or M.KNOCKOUT_DEFAULT_CAP_I]
+                        or M.KNOCKOUT_CAPS[M.KNOCKOUT_DEFAULT_CAP_I]
     else
         local ei = bm.elim_i or 1
         if ei < 1 then ei = 1 elseif ei > #M.PARTY_TIERS then ei = #M.PARTY_TIERS end

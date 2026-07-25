@@ -679,7 +679,7 @@ function on_input(self, action_id, action)
                     local ct = (b.data or "NORMAL")
                     if tostring(ct):upper() == "ELIMINATION" then ct = "KNOCKOUT" end
                     self.battle_modal = { editing = false, type = ct, stake_i = 1, fmt_i = 1, elim_i = 1, players = "AUTO" }
-                    if tostring(ct):upper() == "KNOCKOUT" then self.battle_modal.estake_i = 1; self.battle_modal.cap_i = 2 end
+                    if tostring(ct):upper() == "KNOCKOUT" then self.battle_modal.estake_i = 1; self.battle_modal.cap_i = right_panel.KNOCKOUT_DEFAULT_CAP_I end
                     rebuild(self)
                 elseif id == "update_battle" then
                     local T  = b.data or "NORMAL"
@@ -688,7 +688,7 @@ function on_input(self, action_id, action)
                     if btype == "ELIMINATION" then btype = "KNOCKOUT" end
                     local amt = tonumber(mb.stakeAmount) or tonumber((mb.stake or {}).amount) or 0
                     local fmtv = tonumber(mb.matchFormat) or 3
-                    local s_i, f_i, elim_i, estake_i, cap_i = 1, 1, 1, 1, 2
+                    local s_i, f_i, elim_i, estake_i, cap_i = 1, 1, 1, 1, right_panel.KNOCKOUT_DEFAULT_CAP_I
                     if btype == "NORMAL" then
                         for j, t in ipairs(right_panel.BATTLE_TIERS) do if t.amount == amt then s_i = j; break end end
                         for j, fdef in ipairs(right_panel.BATTLE_TIERS[s_i].formats) do if fdef.games == fmtv then f_i = j; break end end
@@ -710,7 +710,7 @@ function on_input(self, action_id, action)
                     if bm and not bm.submitting then
                         bm.type = (id == "bm_type_party") and "PARTY" or (id == "bm_type_knock") and "KNOCKOUT" or "NORMAL"
                         bm.stake_i = bm.stake_i or 1; bm.fmt_i = bm.fmt_i or 1; bm.elim_i = bm.elim_i or 1; bm.players = bm.players or "AUTO"
-                        bm.estake_i = bm.estake_i or 1; bm.cap_i = bm.cap_i or 2
+                        bm.estake_i = bm.estake_i or 1; bm.cap_i = bm.cap_i or right_panel.KNOCKOUT_DEFAULT_CAP_I
                         rebuild(self)
                     end
                 elseif id == "bm_close" then self.battle_modal, self.list_scroll = nil, 0; rebuild(self)
@@ -736,7 +736,7 @@ function on_input(self, action_id, action)
                     if bm_t == "ELIMINATION" then bm_t = "KNOCKOUT" end
                     if bm and not bm.submitting and bm_t == "KNOCKOUT" then
                         local step = (id == "bm_cap_plus") and 1 or -1
-                        bm.cap_i = math.max(1, math.min(#right_panel.KNOCKOUT_CAPS, (bm.cap_i or 2) + step))
+                        bm.cap_i = math.max(1, math.min(#right_panel.KNOCKOUT_CAPS, (bm.cap_i or right_panel.KNOCKOUT_DEFAULT_CAP_I) + step))
                         rebuild(self)
                     end
                 elseif id == "bm_fmt_minus" or id == "bm_fmt_plus" then
