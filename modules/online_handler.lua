@@ -23,6 +23,12 @@ function M.sync_timers(self, state)
     if state.turnExpiresAt      ~= nil then self.game_state.turnExpiresAt      = state.turnExpiresAt end
     if state.activePenaltyCount ~= nil then self.game_state.activePenaltyCount = state.activePenaltyCount end
     if state.chosenSuit         ~= nil then self.game_state.chosenSuit         = state.chosenSuit end
+    -- Assigned unconditionally, unlike the fields above: a settled General
+    -- Market debt has to be CLEARED, and every state this is called with is
+    -- authoritative about whether one is outstanding. Only copying it when
+    -- non-nil would leave a stale debt pinned forever on the client that
+    -- settled it — which reads as "I can never play again".
+    self.game_state.pendingMarketDraw = state.pendingMarketDraw
 
     local current_turn = state.currentTurn or ""
     local expires_at   = state.turnExpiresAt or 0
