@@ -261,8 +261,31 @@ function M.after_play_settled(self, rec, is_player, result, ticket)
                 continue_actor()
             end
         else
-            local opp_hand = is_player and self.ai_hand or self.player_hand
-            M.draw_to_hand(self, opp_hand, not is_player, 1, function() continue_actor() end)
+            -- Offline follows the same sequence as online: the turn goes to the
+            -- opponent, THEY go to market, then control comes back to the actor.
+            -- (It used to just draw straight into the opponent's hand while the
+            -- actor kept the turn, which never made the opponent take a turn at
+            -- all.) When the AI owes the draw it goes immediately; when the
+            -- human owes it, they must tap the deck — game.script's deck-tap
+            -- handler settles self.pending_market_draw and hands control back.
+            local count = result.draw_cards or 1
+            if is_player then
+                self.current_turn = "ai"
+                self.pending_market_draw = { who = "ai", count = count, return_to = "player" }
+                M.draw_to_hand(self, self.ai_hand, false, count, function()
+                    self.pending_market_draw = nil
+                    self.current_turn = "player"
+                    continue_actor()
+                end)
+            else
+                self.current_turn = "player"
+                self.pending_market_draw = { who = "player", count = count, return_to = "ai" }
+                self.waiting = false
+                self.player_has_drawn = false
+                self.is_local_action_locked = false
+                notify_gui(self.gui_hud, "skip", { show = false })
+                RE.pre_validate_hand(self)
+            end
         end
     else
         notify_gui(self.gui_suit, "suit_select", { mode = "close" })
