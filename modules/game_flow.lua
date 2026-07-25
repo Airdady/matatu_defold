@@ -248,8 +248,18 @@ function M.after_play_settled(self, rec, is_player, result, ticket)
             end
         end
         if self.online_mode then
-            -- The server applies the opponent draw and pushes state; just keep control.
-            continue_actor()
+            -- Online, the 14 hands the turn to the OPPONENT so they visibly go
+            -- to market themselves; the server returns control here once they
+            -- have drawn (pendingMarketDraw in be_matatu's move handler).
+            -- Previously the server auto-drew for them and this client just
+            -- kept control, so the card looked like it did nothing: no trip to
+            -- the deck was ever animated and the turn never left this player.
+            if is_player then
+                self.deactivate_turn()
+                OnlineHandler.end_turn(self)
+            else
+                continue_actor()
+            end
         else
             local opp_hand = is_player and self.ai_hand or self.player_hand
             M.draw_to_hand(self, opp_hand, not is_player, 1, function() continue_actor() end)
