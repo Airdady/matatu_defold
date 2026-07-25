@@ -206,14 +206,32 @@ end
 
 local function knockout_update_chamber(self, state)
     local cap = tonumber((state or {}).scoreCap) or 200
+    local changed = false
+    self._ko_totals = self._ko_totals or {}
+
     for pid, p in pairs((state or {}).players or {}) do
+        local total = tonumber(p.cumulativeScore) or 0
+        if self._ko_totals[tostring(pid)] ~= total then
+            self._ko_totals[tostring(pid)] = total
+            changed = true
+        end
         msg.post(GUI_HUD, "t4_chamber_update", {
             name       = (p.username ~= nil and p.username ~= "" and tostring(p.username)) or "PLAYER",
-            total      = tonumber(p.cumulativeScore) or 0,
+            total      = total,
             threshold  = cap,
             eliminated = p.eliminated and true or false,
             added      = 0,
         })
+    end
+
+    -- Re-sort the standings (lowest total on top, so whoever has MORE points
+    -- sits below, and eliminated players sink to the bottom). t4_ui only
+    -- reflows when told to — deliberately not on every chamber_update — and
+    -- the online path never sent this at all, so the rows stayed in whatever
+    -- order they were first inserted. Only fire it when a total actually
+    -- moved, which in a 2-player knockout means once per round transition.
+    if changed then
+        msg.post(GUI_HUD, "t4_chamber_reflow", {})
     end
 end
 
@@ -881,6 +899,10 @@ function M.start_game(self, state)
     msg.post(GUI_HUD, "setup_avatars", { my_info = my_pub, op_info = op_pub })
     msg.post(GUI_OVER, "setup_avatars", { my_info = my_pub, op_info = op_pub })
     self._is_knockout = is_knockout_state(state)
+    -- The chamber is rebuilt from scratch here, so drop the change-tracking
+    -- totals with it — otherwise the first update of a new round would look
+    -- unchanged and skip the reflow.
+    self._ko_totals = nil
     M.process_scoreboard(self, state)
     if self._is_knockout then knockout_init_chamber(self, state) end
 

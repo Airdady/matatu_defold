@@ -57,7 +57,32 @@ M.get_active_shape = M.get_active_suit
 ----------------------------------------------------------------------
 -- Rule evaluation
 ----------------------------------------------------------------------
+-- True when this player owes a General Market draw and therefore may not play
+-- ANY card — the only legal action is a trip to the deck. Reads the server's
+-- pendingMarketDraw online and the local debt offline.
+function M.owes_market_draw(self)
+    if self.online_mode then
+        local m = self.game_state and self.game_state.pendingMarketDraw
+        return (m ~= nil) and tostring(m.playerId) == tostring(self.my_player_id)
+    end
+    local m = self.pending_market_draw
+    return (m ~= nil) and m.who == "player"
+end
+
 function M.evaluate_play(self, rec, hand)
+    -- Nothing may be played on top of a General Market: the 14 sends the
+    -- turn over specifically so the opponent goes to market. The server
+    -- rejects such a move, but without this the client happily accepted it
+    -- locally first (a penalty card on a 14 matches by shape, so the plain
+    -- match test let it through) and only snapped back on the RESYNC.
+    if M.owes_market_draw(self) then
+        return {
+            valid = false,
+            type = Rules.NextActionType.INVALID_MOVE,
+            message = "General Market — you must draw from the deck",
+        }
+    end
+
     local tp = M.top_played(self)
     local prev_rule = nil
     if tp then prev_rule = M.rules_card(tp) end
