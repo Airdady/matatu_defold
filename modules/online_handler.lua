@@ -671,24 +671,51 @@ local function sync_my_hand(self, state)
     local me = (state.players or {})[self.my_player_id] or {}
     local real = (type(me.hand) == "table") and me.hand or nil
     if not real then return end
-    while #self.player_hand > #real do
-        local c = table.remove(self.player_hand)
-        pcall(go.delete, c.id)
+
+    -- Reconcile by card identity (value+suit) as a multiset, not by array
+    -- position. The local and server hand arrays aren't guaranteed to stay
+    -- in the same relative order (a forced draw or a removed play can land
+    -- anywhere), so an index-for-index overwrite could silently reassign a
+    -- still-held card's face onto a DIFFERENT card's game object — reading
+    -- as a random card "vanishing" — instead of only touching the cards
+    -- that actually changed. This especially broke around duplicate cards
+    -- (Whot has 5 identical 20/W wildcards, so two never-played copies
+    -- could still get relabeled into looking like just one).
+    local pool = {}
+    for _, rc in ipairs(real) do
+        local key = tostring(rc.v) .. "|" .. tostring(rc.s)
+        pool[key] = pool[key] or {}
+        table.insert(pool[key], rc)
     end
-    for i, c in ipairs(self.player_hand) do
-        local rc = real[i]
-        if rc then
-            c.v = tonumber(rc.v) or c.v
-            c.s = tostring(rc.s or c.s)
-            self.set_face(c)
+
+    local kept = {}
+    for _, c in ipairs(self.player_hand) do
+        local key = tostring(c.v) .. "|" .. tostring(c.s)
+        local bucket = pool[key]
+        if bucket and #bucket > 0 then
+            table.remove(bucket) -- consume one matching server card
+            kept[#kept + 1] = c
+        else
+            pcall(go.delete, c.id)
         end
     end
-    if #self.player_hand < #real then
-        local diff = #real - #self.player_hand
-        self.draw_to_hand(self.player_hand, true, diff, function()
-            for i, c in ipairs(self.player_hand) do
-                local rc = real[i]
-                if rc then
+    for i = #self.player_hand, 1, -1 do self.player_hand[i] = nil end
+    for i, c in ipairs(kept) do self.player_hand[i] = c end
+
+    -- Whatever's left in `pool` are server cards this client hasn't
+    -- represented locally yet (new draws) — add exactly that many.
+    local to_add = {}
+    for _, bucket in pairs(pool) do
+        for _, rc in ipairs(bucket) do to_add[#to_add + 1] = rc end
+    end
+
+    if #to_add > 0 then
+        self.draw_to_hand(self.player_hand, true, #to_add, function()
+            local n = #self.player_hand
+            for i = 1, #to_add do
+                local c = self.player_hand[n - #to_add + i]
+                local rc = to_add[i]
+                if c and rc then
                     c.v = tonumber(rc.v) or c.v
                     c.s = tostring(rc.s or c.s)
                     self.set_face(c)
