@@ -166,11 +166,16 @@ function M.calculate_penalty_action(played_card, prev_card, current_penalty)
     local played_penalty = M.get_card_penalty_value(played_card)
 
     if played_card.v == prev_card.v then
+        -- Real Whot rules stack matching Pick cards cumulatively — e.g. a
+        -- Pick Two defended with another 2 becomes Pick Four for the
+        -- opponent, not a fresh Pick Two — so the accumulated total keeps
+        -- rising with every defend instead of resetting each time.
+        local total = (current_penalty or 0) + played_penalty
         return {
             type = M.NextActionType.TRANSFER_PENALTY,
-            next_player_penalty_count = played_penalty,
+            next_player_penalty_count = total,
             current_penalty_count = 0,
-            message = string.format("Penalty transferred (%d cards)", played_penalty),
+            message = string.format("Penalty transferred (%d cards)", total),
         }
     end
 
