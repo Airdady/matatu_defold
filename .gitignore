@@ -6,3 +6,6 @@
 bob.jar
 __pycache__/
 .DS_Store
+
+# Claude Code agent tooling scratch state (isolated worktrees, etc.)
+/.claude/
