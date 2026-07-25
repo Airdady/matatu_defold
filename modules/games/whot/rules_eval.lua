@@ -112,6 +112,17 @@ function M.trigger_play_effects(self, rec, is_last)
     if v == 2 then snd = "SoundPlay20"
     elseif v == 5 then snd = "SoundPlay30" end
 
+    -- Condensing a pending penalty (answering a Pick card with a matching
+    -- Pick card, which cancels it outright) gets its own sting rather than
+    -- the ordinary penalty sound — it's the opposite outcome, so it should
+    -- not sound like another penalty being laid down.
+    if M.get_active_penalty(self) > 0 and Rules.is_penalty_card(rec) then
+        local tp = M.top_played(self)
+        if tp and tonumber(tp.v) == v then
+            snd = "SoundCondense"
+        end
+    end
+
     -- The last card ends the round: it lands with the normal play sound.
     if is_last then snd = "SoundPlay" end
 

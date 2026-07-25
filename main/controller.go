@@ -166,6 +166,12 @@ embedded_components {
   ""
 }
 embedded_components {
+  id: "snd_condense"
+  type: "sound"
+  data: "sound: \"/assets/sounds/condense.ogg\"\n"
+  ""
+}
+embedded_components {
   id: "snd_pick"
   type: "sound"
   data: "sound: \"/assets/sounds/request_suit.ogg\"\n"
