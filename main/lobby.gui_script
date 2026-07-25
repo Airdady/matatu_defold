@@ -316,7 +316,10 @@ local function mode_tile(self, cfg)
         end
     elseif cfg.cta_label then
         local cta_w, cta_h = 160, 46
-        local cta_x = acc_x + 16 + cta_w/2
+        -- Right-anchored (the child-button row and the badge below stay left
+        -- aligned): PLAY NOW sits at the tile's trailing edge so it reads as
+        -- the tile's action rather than as another label in the left stack.
+        local cta_x = x + w/2 - 16 - cta_w/2
         local cta_y = y - h/2 + 50
         track(self, ui.box(vmath.vector3(cta_x, cta_y, 0), vmath.vector3(cta_w, cta_h, 0), C_RED))
         track(self, ui.text(vmath.vector3(cta_x, cta_y, 0), cfg.cta_label, "body", vmath.vector4(0.05, 0.05, 0.05, 1)))

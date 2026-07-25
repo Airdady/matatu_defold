@@ -1055,10 +1055,29 @@ function M.start_game(self, state)
             if seq ~= self._seq then return end
 
             if top_card and top_card.v then
+                -- The starter card is dealt off the deck like any other card
+                -- rather than simply materialising in the middle of the board:
+                -- it launches face-down from the deck the moment the deck has
+                -- settled into its final position, flips over mid-flight, and
+                -- lands on the pile. Previously it just appeared, which read as
+                -- a glitch next to every other card's dealt animation.
                 local rec = self.spawn_card(tonumber(top_card.v) or 10, tostring(top_card.s or "H"),
-                    vmath.vector3(self.CENTER.x, self.CENTER.y, self.Z_PILE))
+                    vmath.vector3(self.DECK_POS.x, self.DECK_POS.y, self.Z_FLY))
+                self.set_back(rec)
                 table.insert(self.played_cards, rec)
-                self.set_face(rec)
+
+                local FLIGHT = 0.32
+                self.play_sound("SoundDraw")
+                go.animate(rec.id, "position", go.PLAYBACK_ONCE_FORWARD,
+                    vmath.vector3(self.CENTER.x, self.CENTER.y, self.Z_FLY),
+                    go.EASING_OUTCUBIC, FLIGHT, 0,
+                    function()
+                        if seq == self._seq then go.set(rec.id, "position.z", self.Z_PILE) end
+                    end)
+                -- Flip at the halfway point so it arrives already face-up.
+                timer.delay(FLIGHT * 0.5, false, function()
+                    if seq == self._seq then self.set_face(rec) end
+                end)
             end
 
             msg.post(GUI_SUIT, "suit_badge", { suit = self.chosen_suit })

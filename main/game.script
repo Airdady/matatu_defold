@@ -50,6 +50,7 @@ local SND = {
     SoundPlayJoker  = "snd_play50",
     SoundWinAlt     = "snd_win",
     SoundLose       = "snd_lose",
+    SoundCondense   = "snd_condense",
     SoundRequestSuit= "snd_pick",
     SoundAlertTimer = "snd_alert",
     SoundInvalid    = "snd_invalid",
