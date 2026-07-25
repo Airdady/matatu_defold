@@ -583,9 +583,18 @@ local function draw_tournament(self)
     local thr_y = CY - 64
     track(self, ui.text(vmath.vector3(CX, thr_y + 38, 0), is_chamber and "SCORE CAP  —  reach it and you're eliminated" or "Score cap (Elimination Chamber only)", "small", is_chamber and C_CREAM or C_MUTED))
     
-    local caps = { 200, 300, 500 }
+    -- Offline score-cap ladder, per game. Whot hands score far lower than
+    -- Matatu's (face value, Stars doubled, Whot = 20), so it runs a tighter
+    -- ladder opening at 100. Keep in lockstep with KNOCKOUT_CAPS_BY_GAME in
+    -- modules/online_right.lua and the backend's KNOCKOUT_SCORE_CAPS_BY_GAME.
+    local CAPS_BY_GAME = {
+        MATATU = { 200, 300, 500 },
+        WHOT   = { 100, 150, 200 },
+        KADI   = { 100, 150, 200 },
+    }
+    local caps = CAPS_BY_GAME[GameMode.GAME] or CAPS_BY_GAME.MATATU
     local cap_w = 118
-    local cur_cap = app_state.chamber_threshold or 200
+    local cur_cap = app_state.chamber_threshold or caps[1]
     
     for i, cap in ipairs(caps) do
         local cx_ = CX - (cap_w + 14) + (i - 1) * (cap_w + 14)
@@ -1395,7 +1404,11 @@ function init(self)
     if not app_state.ai_series          then app_state.ai_series          = 3        end
     if not app_state.tournament_size    then app_state.tournament_size    = 4        end
     if not app_state.t4_mode            then app_state.t4_mode            = "bracket" end
-    if not app_state.chamber_threshold  then app_state.chamber_threshold  = 200      end
+    -- Seeded from the game's own ladder rather than a flat 200: Whot opens at
+    -- 100 (see CAPS_BY_GAME in draw_tourney).
+    if not app_state.chamber_threshold then
+        app_state.chamber_threshold = GameMode.is_matatu() and 200 or 100
+    end
 
     msg.post(".", "acquire_input_focus")
     rebuild(self)
