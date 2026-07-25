@@ -1025,8 +1025,11 @@ local function rebuild(self)
     -- entirely on this screen (STATE_TEAM_CREATE), no routing through the
     -- online-users screen just to fill out the form.
     -- -----------------------------------------------------------------------
-    local has_team_tournament = ws.current_user_data and ws.current_user_data.myTeamTournamentId
-        and tostring(ws.current_user_data.myTeamTournamentId) ~= ""
+    -- Team tournaments are parked until the flow is finished: the tile still
+    -- shows so the mode is discoverable, but it carries a COMING SOON badge
+    -- instead of live CREATE/JOIN/OPEN buttons. badge_label renders the
+    -- non-clickable muted pill (no btn_id, no child_buttons), so nothing on
+    -- the tile registers a hit box and the whole tile is inert.
     mode_tile(self, {
         x = team_cx, y = row_a_cy, w = team_w, h = row_a_h,
         accent      = C_U_TEAM,
@@ -1034,13 +1037,8 @@ local function rebuild(self)
         top_left_2  = "TEAM",
         numeral     = "02",
         title       = "TEAM TOURNAMENTS",
-        sub         = has_team_tournament and "You're in one — manage it" or "Fund a prize, invite your team",
-        cta_label   = has_team_tournament and "OPEN" or nil,
-        btn_id      = has_team_tournament and "team_action_open" or nil,
-        child_buttons = (not has_team_tournament) and {
-            { id = "team_menu_create", label = "CREATE", style = "primary_btn" },
-            { id = "team_menu_join",   label = "JOIN",   style = "secondary_btn" },
-        } or nil,
+        sub         = "Fund a prize, invite your team",
+        badge_label = "COMING SOON",
     })
 
     -- -----------------------------------------------------------------------
