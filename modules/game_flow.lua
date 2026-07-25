@@ -396,7 +396,17 @@ function M.reshuffle_deck(self, done)
     -- completion for this exact card (still mid-flight when reshuffle fired)
     -- sees a stale generation and skips re-asserting its old, high z.
     self.pile_gen = (self.pile_gen or 0) + 1
-    go.set(top.id, "position.z", Z_PILE + 0.001)
+    -- NOT the final pile z yet — the "recycled" cards swept to the center
+    -- below (z = 0.4 + i*0.001, deliberately above Z_FLY=0.3 so the sweep
+    -- reads on top of anything still in flight) would otherwise render
+    -- ABOVE this card for the whole ~0.5-0.8s of the reshuffle animation,
+    -- visually burying whatever was just played right as it lands — most
+    -- noticeable when this fires the instant an opponent's card animates
+    -- onto the pile (e.g. a server-side reshuffle triggered by a Whot
+    -- General Market draw depleting the deck). Held safely above the
+    -- highest recycled z here; set to the real Z_PILE-relative depth once
+    -- the reshuffle animation actually finishes, below.
+    go.set(top.id, "position.z", 0.5)
 
     local existing = {}
     for _, c in ipairs(self.deck) do existing[#existing + 1] = c end
@@ -462,6 +472,11 @@ function M.reshuffle_deck(self, done)
 
                 timer.delay(0.55, false, function()
                     if seq ~= self._seq then return end
+                    -- Drop the preserved top card from its temporary "above
+                    -- the sweep" z (set above, before the recycled cards'
+                    -- animation started) down to its real resting depth,
+                    -- now that nothing is animating above it anymore.
+                    go.set(top.id, "position.z", Z_PILE + 0.001)
                     BL.restack_deck(self)
                     if done then done() end
                 end)
