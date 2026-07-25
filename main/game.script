@@ -16,6 +16,7 @@ local GS    = require "modules.game_state"
 local GF    = require "modules.game_flow"
 
 local OnlineHandler = require "modules.online_handler"
+local OfflineHandler = require "modules.offline_handler"
 local Tut   = require "modules.tutorial"
 local Toast = require "modules.toast"
 
@@ -416,8 +417,14 @@ function update(self, dt)
             -- happened until it times out. Fires once per turn-start edge,
             -- same as the lock-reset above.
             local pending_penalty = RE.get_active_penalty and RE.get_active_penalty(self) or 0
-            local market = self.game_state and self.game_state.pendingMarketDraw
-            local owes_market = market and tostring(market.playerId) == tostring(self.my_player_id)
+            local market, owes_market
+            if self.online_mode then
+                market = self.game_state and self.game_state.pendingMarketDraw
+                owes_market = market and tostring(market.playerId) == tostring(self.my_player_id)
+            else
+                market = self.pending_market_draw
+                owes_market = market and market.who == "player"
+            end
 
             if owes_market then
                 -- General Market: the only legal action is a trip to the deck,
@@ -673,6 +680,29 @@ function on_input(self, action_id, action)
         local p = go.get_position(deck_top.id)
         if math.abs(x - p.x) <= 120 and math.abs(y - p.y) <= 150 then
             if not self.is_player_turn() or self.waiting or self.is_local_action_locked or self.is_suit_selection_active then
+                return true
+            end
+
+            -- Offline General Market: the human owes the opponent's 14 a trip
+            -- to the deck, and control returns to whoever played it once the
+            -- card is in hand. Online, the same debt is tracked server-side
+            -- (pendingMarketDraw) and settled by the ordinary draw path below,
+            -- which already ends the turn and lets the server hand control back.
+            local market = (not self.online_mode) and self.pending_market_draw or nil
+            if market and market.who == "player" then
+                self.pending_market_draw = nil
+                self.is_local_action_locked = true
+                t4_cancel_afk_timer(self)
+                local return_to = market.return_to
+                self.draw_to_hand(self.player_hand, true, market.count or 1, function()
+                    self.current_turn = return_to
+                    if return_to == "ai" then
+                        OfflineHandler.do_ai_turn(self, true)
+                    else
+                        self.is_local_action_locked = false
+                        RE.pre_validate_hand(self)
+                    end
+                end)
                 return true
             end
 

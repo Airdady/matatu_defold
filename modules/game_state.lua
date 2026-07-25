@@ -17,6 +17,10 @@ function M.fresh_state(self)
     self.game_state       = {}
     self.current_turn     = "player"
     self.active_penalty   = 0
+    -- Offline General Market debt: { who, count, return_to }. Must reset with
+    -- the board, or a debt left over from the previous deal would strand the
+    -- next one on a market draw nobody owes.
+    self.pending_market_draw = nil
     self.chosen_suit      = ""
     self.player_has_drawn = false
     self.is_local_action_locked = false
