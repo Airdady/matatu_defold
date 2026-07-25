@@ -516,7 +516,22 @@ function M.finalize_state_sync(self, state, on_complete)
 
     self.active_penalty = state.activePenaltyCount or 0
 
-    if state.chosenSuit and state.chosenSuit ~= "" then
+    -- Same guard M.process_opponent_actions' finish() already applies before
+    -- showing the shape-preview overlay: never open it once either hand has
+    -- actually emptied (the round is over on this exact move). Missing this
+    -- guard here — this function runs on EVERY server sync, not just
+    -- opponent PLAYs — let a Whot wildcard (rank 20) played as the winning
+    -- last card leave the full-screen suit_select overlay open (it renders
+    -- above the game-over modal and swallows all input even while
+    -- invisible in "preview" mode) with nothing left to ever post it a
+    -- "close" — ordinarily the next play does that, but there is no next
+    -- play once the game has ended.
+    local op_for_suit = (state.players or {})[self.opponent_id] or {}
+    local op_hand_for_suit = (type(op_for_suit.hand) == "table") and op_for_suit.hand or nil
+    local opp_hand_count = op_for_suit.handCount or (op_hand_for_suit and #op_hand_for_suit) or #self.ai_hand
+    local game_still_active = opp_hand_count > 0 and #self.player_hand > 0
+
+    if state.chosenSuit and state.chosenSuit ~= "" and game_still_active then
         self.chosen_suit = state.chosenSuit
         msg.post(GUI_SUIT, "suit_select", { mode = "preview", suit = self.chosen_suit })
     else
@@ -533,9 +548,9 @@ function M.finalize_state_sync(self, state, on_complete)
         M.sync_deck_size(self, deck_target)
         stamp_deck(self, state.deck)
 
-        local op = (state.players or {})[self.opponent_id] or {}
-        local real_hand = (type(op.hand) == "table") and op.hand or nil
-        local target = op.handCount or (real_hand and #real_hand) or #self.ai_hand
+        local op = op_for_suit
+        local real_hand = op_hand_for_suit
+        local target = opp_hand_count
 
         local function settle()
             stamp_ai_hand(self, real_hand)
