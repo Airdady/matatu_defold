@@ -102,10 +102,14 @@ function M.extract_game_state(data)
   return {}
 end
 
--- Derive who made the move. The backend advances `currentTurn` to the OTHER
--- player after a move, so the actor is whoever is NOT currentTurn.
--- On the opponent's client this resolves to the real opponent (animate).
--- On the sender's client (reshuffle echo) it resolves to self (state-sync only).
+-- Fallback-only heuristic for who made a move, used when the server message
+-- doesn't carry an explicit `from` field. Assumes the backend always advances
+-- `currentTurn` to the OTHER player after a move — true for Matatu, but NOT
+-- for Whot's turn-retaining cards (Hold On / Suspension / General Market),
+-- where the actor keeps the turn. Relying on this heuristic for those moves
+-- silently misattributes the opponent's play as our own, so the actual
+-- caller (parse_message's MOVE/RESHUFFLING handler) should always prefer an
+-- explicit `from` field on the message when one is present.
 local function derive_sender(gs)
   if type(gs) ~= "table" or type(gs.players) ~= "table" then return "" end
   local turn = gs.currentTurn
@@ -332,7 +336,12 @@ local function parse_message(json_string)
     if next(gs) ~= nil then
       M.active_game_state = gs
       local actions = gs.actions or {}
-      local from_id = derive_sender(gs)
+      -- Prefer the server's explicit `from` field (sent alongside the
+      -- encrypted gameState) over the currentTurn-inequality heuristic —
+      -- the heuristic breaks for Whot's turn-retaining special cards.
+      local explicit_from = d.from
+      local from_id = (explicit_from ~= nil and tostring(explicit_from) ~= "" and tostring(explicit_from))
+        or derive_sender(gs)
       print(string.format("[PIPE-1] decoded from=%s actions=%d turn=%s suit=%s",
         tostring(from_id), #actions, tostring(gs.currentTurn), tostring(gs.chosenSuit)))
       pprint("[PIPE-1] gs.actions:", actions)
