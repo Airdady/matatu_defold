@@ -71,7 +71,10 @@ local DEFS = {
         currency_symbol     = "\226\130\166", -- ₦
         phone_country_code  = "234",
         phone_placeholder   = "0801 234 5678",
-        default_stake_amount = 100,
+        -- Was 100, a tier that no longer exists in the ladder. A default
+        -- that isn't in STAKE_LEVELS leaves online.gui_script's lookup
+        -- falling back to index 2 and the backend rejecting the stake.
+        default_stake_amount = 200,
         how_to  = {
             "On your turn, play a card matching the",
             "top card's SHAPE or NUMBER.",
