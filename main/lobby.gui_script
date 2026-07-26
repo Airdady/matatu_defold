@@ -506,7 +506,9 @@ local function handle(self, b)
         set_state(self, STATE_TEAM_MENU)
 
     elseif b.id == "team_cup_start" then
-        local cup = my_owned_cup(self)
+        -- b.data is set when the tap came from a rail card; the tile's own
+        -- START has none and falls back to the player's owned cup.
+        local cup = b.data and { _id = b.data } or my_owned_cup(self)
         local uid = tostring((ws.current_user_data or {})._id or "")
         if not cup then
             toast.error("Could not find your cup.")
@@ -527,6 +529,40 @@ local function handle(self, b)
                     -- refreshed member count on the tile then explains.
                     load_team_cups(self)
                 end
+            end)
+        end
+
+    elseif b.id == "team_cup_delete" then
+        -- Deleting refunds the escrowed prize but drops the cup for everyone
+        -- who joined, so it takes a second tap to confirm rather than going
+        -- through on one.
+        local id = tostring(b.data or "")
+        local uid = tostring((ws.current_user_data or {})._id or "")
+        if id == "" or uid == "" then
+            toast.error("Could not find that cup.")
+        elseif self.cup_delete_confirm ~= id then
+            self.cup_delete_confirm = id
+            toast.show("Tap DELETE again to cancel this cup.")
+        elseif not self.cup_deleting then
+            self.cup_deleting = true
+            self.cup_delete_confirm = nil
+            api.delete_team_tournament(id, uid, function(res)
+                self.cup_deleting = false
+                if res.success then
+                    local refund = tonumber((res.data or {}).refunded) or 0
+                    toast.success(refund > 0
+                        and ("Cup deleted — " .. commas(refund) .. " refunded.")
+                        or "Cup deleted.")
+                    local u = ws.current_user_data or {}
+                    if refund > 0 then u.balance = (tonumber(u.balance) or 0) + refund end
+                    u.myTeamTournamentId = nil
+                    u.myTeamTournamentIsOwner = nil
+                    ws.current_user_data = u
+                else
+                    toast.error((res.data and res.data.error) or res.message
+                        or "Could not delete the cup.")
+                end
+                load_team_cups(self)
             end)
         end
 
@@ -735,10 +771,15 @@ function on_message(self, message_id, message, sender)
         clear(self)
         
     elseif message_id == hash("auth_state_changed") then
-        -- This block mimics your auth.gui_script. When GPGS signs in completely:
+        -- Just repaint. This used to post "play_online" whenever sign-in
+        -- completed, which force-navigated to the online screen — fine when
+        -- the player had actually tapped PLAY ONLINE, but wrong now that boot
+        -- signs in silently on its own: every cold start would have yanked
+        -- them off the lobby. The controller already routes the deliberate
+        -- case (route_after_auth honours self._explicit_online), so a silent
+        -- sign-in correctly leaves the player exactly where they are.
         if app_state.auth_state == "done" then
             app_state.auth_state = "idle"
-            msg.post("#controller", "play_online")
         end
         rebuild(self) -- Will dynamically change the button text to connection/error states
     end

@@ -150,7 +150,24 @@ function M.draw(self, rail_l, RAIL_W, grid_t)
             -- "JOINED" label, so every card in the list does something.
             local bw, bh = 92, 32
             local bx = card_l + card_w - 14 - bw / 2
-            if mine then
+            if t.isOwner then
+                -- The cup's owner runs it from here: START it while it is
+                -- still gathering players, and DELETE it either way (the
+                -- backend refunds the escrowed prize). Two narrower buttons
+                -- so both fit the card's action row.
+                local ow, gap = 68, 6
+                local o2x = card_l + card_w - 14 - ow / 2
+                local o1x = o2x - ow - gap
+                D.btn(self, "team_cup_delete", vmath.vector3(o1x, card_b + 20, 0),
+                    vmath.vector3(ow, bh, 0), "DELETE", "secondary_btn", t._id)
+                if t.started then
+                    D.btn(self, "team_cup_standings", vmath.vector3(o2x, card_b + 20, 0),
+                        vmath.vector3(ow, bh, 0), "TABLE", "secondary_btn", t._id)
+                else
+                    D.btn(self, "team_cup_start", vmath.vector3(o2x, card_b + 20, 0),
+                        vmath.vector3(ow, bh, 0), "START", "primary_btn", t._id)
+                end
+            elseif mine then
                 D.btn(self, "team_cup_standings", vmath.vector3(bx, card_b + 20, 0),
                     vmath.vector3(bw, bh, 0), "TABLE", "secondary_btn", t._id)
             elseif t.isFull then
