@@ -9,6 +9,17 @@ local C_T_GREEN   = vmath.vector4(0.13, 0.77, 0.37, 0.6)
 local C_T_ORANGE  = vmath.vector4(0.96, 0.62, 0.04, 0.6)
 local C_T_RED     = vmath.vector4(0.94, 0.27, 0.27, 0.6)
 
+-- Expired-turn pulse. Once the countdown reaches zero the ring does NOT
+-- disappear: it snaps to a full red circle and breathes until the turn
+-- actually resolves (the opponent's move lands, the AI covers the seat, the
+-- round ends...). A vanished ring read as "the game froze"; a full pulsing
+-- one reads as "time's up, still waiting". Driven from M.update rather than
+-- gui.animate so it stops the instant the timer is restarted or stopped, with
+-- no stray looping animation left running on the node.
+local EXPIRED_PULSE_SPEED     = 4.0  -- radians/sec => ~1.6s per full breath
+local EXPIRED_PULSE_MIN_ALPHA = 0.28
+local EXPIRED_PULSE_MAX_ALPHA = 0.85
+
 local function box(pos, size, color, pivot)
     local n = gui.new_box_node(pos, size)
     gui.set_color(n, color)
@@ -103,6 +114,11 @@ function M.start_timer(self, is_player, duration, expires_at_ms)
     self.total_duration = duration or 30.0
     self.is_player_turn = is_player
     self.alert_played = false
+    -- A response arrived (or a new turn began): drop the expired pulse so the
+    -- fresh countdown starts from a clean full-alpha ring rather than
+    -- inheriting whatever alpha the breathing animation was mid-way through.
+    self.timer_expired = false
+    self.pulse_t = 0
 
     if expires_at_ms and expires_at_ms > 0 then
         local now_ms = socket.gettime() * 1000.0
@@ -133,6 +149,10 @@ function M.stop_timers(self)
     if self.p_timer then gui.set_enabled(self.p_timer, false) end
     if self.o_timer then gui.set_enabled(self.o_timer, false) end
     self.timer_remaining = 0
+    -- Clear the latch too: without this the pulse branch would immediately
+    -- re-enable the ring it was just asked to hide.
+    self.timer_expired = false
+    self.pulse_t = 0
 end
 
 -- Fully hide the persistent avatar + turn-timer chrome. Used when the board is
@@ -144,29 +164,49 @@ function M.hide_player_chrome(self)
         self.p_avatar_bg, self.o_avatar_bg, self.o_avatar_name,
         self.p_balance, self.p_timer, self.o_timer,
     }
-    for _, n in ipairs(nodes) do if n then gui.set_enabled(n, false) end end
+    -- pairs, not ipairs: ipairs stops dead at the first nil, so if any node
+    -- earlier in this list hadn't been built yet, everything after it —
+    -- including both timer rings — silently stayed visible. That was latent
+    -- before; now that the expired ring re-enables itself every frame, a
+    -- missed hide would leave a pulsing timer stranded over the next screen.
+    for _, n in pairs(nodes) do if n then gui.set_enabled(n, false) end end
     if self.p_net and self.p_net.bg then gui.set_enabled(self.p_net.bg, false) end
     if self.o_net and self.o_net.bg then gui.set_enabled(self.o_net.bg, false) end
+    -- Same reason as stop_timers: the pulse branch re-enables the ring every
+    -- frame, so tearing the board down has to drop the latch or the timer
+    -- would reappear over whatever screen comes next.
+    self.timer_expired = false
+    self.pulse_t = 0
 end
 
 function M.update(self, dt)
+    local active_pie = self.is_player_turn and self.p_timer or self.o_timer
+
+    -- Expired and still waiting: hold a FULL red ring and pulse it. This runs
+    -- outside the countdown branch below, which only ticks while there is time
+    -- left — that guard is why the ring used to freeze on its last drawn frame
+    -- and then vanish, instead of persisting.
+    if self.timer_expired then
+        if active_pie then
+            self.pulse_t = (self.pulse_t or 0) + dt
+            local wave = 0.5 + 0.5 * math.sin(self.pulse_t * EXPIRED_PULSE_SPEED)
+            local alpha = EXPIRED_PULSE_MIN_ALPHA
+                + (EXPIRED_PULSE_MAX_ALPHA - EXPIRED_PULSE_MIN_ALPHA) * wave
+            gui.set_enabled(active_pie, true)
+            gui.set_fill_angle(active_pie, 360)
+            gui.set_color(active_pie, vmath.vector4(C_T_RED.x, C_T_RED.y, C_T_RED.z, alpha))
+        end
+        return
+    end
+
     if self.timer_remaining and self.timer_remaining > 0 then
         self.timer_remaining = self.timer_remaining - dt
         if self.timer_remaining < 0 then self.timer_remaining = 0 end
 
         local progress = math.min(1.0, self.timer_remaining / self.total_duration)
-        local active_pie = self.is_player_turn and self.p_timer or self.o_timer
 
         if active_pie then
-            -- Never let the ring drain all the way to nothing right at 0 —
-            -- a fully-empty pie reads as "broken/gone" rather than "time's
-            -- up, game still running". Hold a small steady sliver instead
-            -- once the timer actually expires (a static amount, not an
-            -- animated blink — the goal is calm visibility, not alarm).
-            local MIN_FILL_DEG = 12
-            local fill_deg = progress * 360
-            if self.timer_remaining <= 0 then fill_deg = MIN_FILL_DEG end
-            gui.set_fill_angle(active_pie, fill_deg)
+            gui.set_fill_angle(active_pie, progress * 360)
             local c = C_T_RED
             if self.timer_remaining > self.total_duration / 2.0 then
                 c = C_T_GREEN
@@ -183,9 +223,17 @@ function M.update(self, dt)
                 self.alert_played = true
                 msg.post("/controller#snd_alert", "play_sound")
             end
+        end
 
-            if self.timer_remaining <= 0 and self.is_player_turn then
-                if not self.is_t4_mode then msg.post("/controller#game_logic", "timer_expired") end
+        -- Crossing zero: latch into the pulsing state and notify once. The
+        -- notify stays inside this branch (rather than the pulse branch) so it
+        -- can only ever fire on the single frame the countdown ran out, no
+        -- matter how long the wait for a response then lasts.
+        if self.timer_remaining <= 0 then
+            self.timer_expired = true
+            self.pulse_t = 0
+            if self.is_player_turn and not self.is_t4_mode then
+                msg.post("/controller#game_logic", "timer_expired")
             end
         end
     end
