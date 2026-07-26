@@ -590,6 +590,10 @@ end
 
 function on_input(self, action_id, action)
     if not self.active then return end
+    -- A dialog is on top (incoming game request, game over, the network
+    -- overlay). game.script is listed BEFORE those in controller.go, so
+    -- without this the board would act on taps meant for the dialog.
+    if app.input_blocked() then return false end
 
     -- The pinch-to-view-history gesture needs two simultaneous touch points,
     -- which only arrive on the TOUCH_MULTI action ("multitouch") with

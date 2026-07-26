@@ -364,6 +364,9 @@ local function set_visible(self, v)
 	gui.set_enabled(self.n_grad, v)
 	gui.set_enabled(self.n_content, v)
 	if not v then clear_confetti(self) end
+	-- Claim/release this dialog's input priority alongside its visibility, so
+	-- the two can never disagree (see app_state.MODAL_PRIORITY).
+	if v then app_state.modal_open("gameover") else app_state.modal_close("gameover") end
 end
 
 local function play_entrance(self)
@@ -522,6 +525,12 @@ end
 function on_input(self, action_id, action)
 	if action_id ~= hash("touch") or not action.pressed then return false end
 	if not gui.is_enabled(self.n_content) then return false end
+	-- Something higher priority is on top (an incoming game request, the
+	-- network overlay). This component is listed BEFORE those in
+	-- controller.go, so without this check it would consume the tap first —
+	-- which is how DECLINE on a request dialog used to press PLAY AGAIN.
+	-- Returning false, not true, so the tap still reaches the dialog above.
+	if app_state.input_blocked("gameover") then return false end
 	if self.locked then return true end
 
 	if hit(self.n_again_bg, action) then

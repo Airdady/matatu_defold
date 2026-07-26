@@ -137,4 +137,61 @@ function M.next_theme()
   M.theme = M.THEME_ORDER[1]
 end
 
+-- ---------------------------------------------------------------------------
+-- Modal input priority
+-- ---------------------------------------------------------------------------
+-- Every screen and dialog in this app is a gui component on ONE game object
+-- (controller.go), and Defold hands on_input to each of them in the order
+-- they are listed there — not in the order they are stacked on screen. The
+-- first component to return true consumes the tap.
+--
+-- "gameover" is listed before "incoming", so with a game-over dialog open
+-- underneath an incoming game request, a tap on DECLINE reached PLAY AGAIN
+-- first and started a rematch. The same ordering let taps land on the lobby,
+-- the online screen and the board while a request dialog was up.
+--
+-- So priority has to be declared rather than inherited from the .go file.
+-- A modal claims a priority while it is visible; anything of LOWER priority
+-- ignores input until it is gone. Screens use priority 0 and are therefore
+-- blocked by every modal.
+M.modals = {}
+
+M.MODAL_PRIORITY = {
+    incoming        = 100,  -- time-limited: must always win
+    network         = 90,
+    announcement    = 80,
+    daily_bonus     = 70,
+    signup_bonus    = 70,
+    season_results  = 60,
+    gameover        = 50,
+    suit_select     = 40,
+    tutorial        = 30,
+}
+
+function M.modal_open(name, priority)
+    M.modals[name] = priority or M.MODAL_PRIORITY[name] or 10
+end
+
+function M.modal_close(name)
+    M.modals[name] = nil
+end
+
+-- Highest priority currently claimed, or 0 when nothing is up.
+function M.modal_top()
+    local top = 0
+    for _, p in pairs(M.modals) do
+        if p > top then top = p end
+    end
+    return top
+end
+
+-- True when something of HIGHER priority than `name` is on screen, so `name`
+-- must keep its hands off input. Pass no name (or an unknown one) for a plain
+-- screen, which any modal outranks.
+function M.input_blocked(name)
+    local mine = M.modals[name] or 0
+    return M.modal_top() > mine
+end
+
+
 return M
