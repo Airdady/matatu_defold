@@ -268,11 +268,6 @@ local function mode_tile(self, cfg)
         set_pivot(n_tl2, gui.PIVOT_W)
     end
 
-    -- Top Right Numeral (Scaled large)
-    local n_num = track(self, ui.text(vmath.vector3(x + w/2 - 20, tl_y + 4, 0), cfg.numeral, "title", C_GOLD))
-    set_pivot(n_num, gui.PIVOT_E)
-    pcall(gui.set_scale, n_num, vmath.vector3(1.4, 1.4, 1))
-
     -- Center Text (Anchored slightly below center or dynamic based on CTA)
     local title_y = (cfg.cta_label or cfg.badge_label or cfg.child_buttons) and (y + 15) or (y + 8)
     
@@ -887,7 +882,6 @@ local function rebuild(self)
         top_left    = "LIVE",
         blink_tl    = true,
         top_left_2  = "MULTI PLAYER",
-        numeral     = "01",
         title       = "PLAY ONLINE",
         sub         = sub_text,
         season_countdown = self.season_text,
@@ -947,7 +941,6 @@ local function rebuild(self)
         accent      = C_U_TEAM,
         top_left    = "ONLINE",
         top_left_2  = "TEAM",
-        numeral     = "02",
         title       = "TEAM CUPS",
         sub         = team_sub,
         cta_label   = (has_team_tournament and not owns_cup) and "OPEN" or nil,
@@ -962,7 +955,6 @@ local function rebuild(self)
         x = off_1_cx, y = row_b_cy, w = off_w1, h = row_b_h,
         accent   = C_GOLD,
         top_left = "OFFLINE",
-        numeral  = "03",
         title    = "QUICK PLAY",
         sub      = "One deal vs the bot",
         btn_id   = "quick_play",
@@ -975,7 +967,6 @@ local function rebuild(self)
         x = off_2_cx, y = row_b_cy, w = off_w1, h = row_b_h,
         accent   = C_GOLD,
         top_left = "OFFLINE",
-        numeral  = "04",
         title    = "BATTLE AI",
         sub      = "Best-of series vs the bot",
         btn_id   = "battle_ai",
@@ -988,7 +979,6 @@ local function rebuild(self)
         x = off_3_cx, y = row_b_cy, w = off_w3, h = row_b_h,
         accent   = C_GOLD,
         top_left = "OFFLINE",
-        numeral  = "05",
         title    = "TOURNAMENT",
         sub      = "One human • three AI • bracket",
         btn_id   = "quick_tournament",
