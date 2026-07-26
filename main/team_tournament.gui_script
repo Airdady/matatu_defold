@@ -155,6 +155,23 @@ local function btn(self, id, x, y, w, h, label, kind, data, enabled)
     end
 end
 
+-- Crafted checkbox: the same three-border recipe as the buttons, with a
+-- filled inner square when ticked. No artwork.
+local function checkbox(self, id, x, y, w, h, label, checked)
+    framed3(self, x, y, w, h, checked and P_GOLD_LIGHT or P_GOLD, P_B_OUTER)
+    local bx = x - w / 2 + 20
+    framed3(self, bx, y, 22, 22, checked and P_GOLD_LIGHT or P_MUTED,
+        checked and P_GOLD or P_B_MID)
+    if checked then
+        track(self, ui.box(vmath.vector3(bx, y, 0), vmath.vector3(8, 8, 0), P_DARK_TXT))
+    end
+    track(self, ui.text(vmath.vector3(bx + 20, y, 0), label, "small",
+        checked and P_CREAM or P_MUTED))
+    gui.set_pivot(self.nodes[#self.nodes], gui.PIVOT_W)
+    local hit = track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), P_TRANSP))
+    self.buttons[#self.buttons + 1] = { node = hit, id = id }
+end
+
 -- Tapping a field focuses it AND raises the device keyboard.
 local function field(self, id, x, y, w, h, value, placeholder, focused)
     framed3(self, x, y, w, h, focused and P_GOLD_LIGHT or P_GOLD, P_B_OUTER)
@@ -181,6 +198,7 @@ local function fresh_form()
         max_players = 8,
         gpl_i       = 2,
         code        = "",
+        owner_plays = false,
         invites     = {},
         invite_buf  = "",
         focus       = nil,
@@ -306,6 +324,14 @@ local function rebuild(self)
     -- ── INVITE CODE ─────────────────────────────────────────────────────
     label(left, string.format("INVITE CODE (optional, %d-%d letters/numbers)", CODE_MIN, CODE_MAX))
     field(self, F_CODE, left, y - ROW / 2, col_w, ROW, f.code, "AUTO-GENERATED", f.focus == F_CODE)
+    y = y - ROW
+
+    y = y - 10
+    -- The owner funds the prize either way; this decides whether they also
+    -- compete for it. Locked once players have joined, like the rest of the
+    -- structure — the bracket has already been built around the field.
+    checkbox(self, "owner_plays", left, y - ROW / 2, col_w, ROW,
+        "I'll play in this cup too", f.owner_plays)
     y = y - ROW
 
     if f.locked then
@@ -554,6 +580,7 @@ local function submit(self)
         invitationCode  = (f.code ~= "" and f.code) or nil,
         inviteUsernames = (#f.invites > 0) and f.invites or nil,
         rules           = rules_for_game(),
+        ownerPlays      = f.owner_plays,
     }, function(res) on_created(self, res) end)
 end
 
@@ -664,6 +691,9 @@ function on_input(self, action_id, action)
                 f.max_players = math.max(MIN_PLAYERS, f.max_players - 1); rebuild(self)
             elseif b.id == "players_plus" then
                 f.max_players = math.min(MAX_PLAYERS, f.max_players + 1); rebuild(self)
+            elseif b.id == "owner_plays" then
+                if not f.locked then f.owner_plays = not f.owner_plays end
+                rebuild(self)
             elseif b.id == "gpl" then
                 f.gpl_i = b.data; rebuild(self)
             elseif b.id == "suggest_pick" then
