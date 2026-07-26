@@ -275,6 +275,12 @@ function M.join_team_tournament(payload, cb)
     request("POST", "/tournaments/team/join", payload, cb)
 end
 
+-- Owner-only: flips a gathering cup ('upcoming') to running ('active').
+-- Refused by the backend with fewer than 2 players joined.
+function M.start_team_tournament(tournament_id, user_id, cb)
+    request("POST", "/tournaments/team/" .. tournament_id .. "/start", { userId = user_id }, cb)
+end
+
 -- Populated bracket view (every player's level/status + the owner) —
 -- viewable by the owner (playing or not) and by any joined player.
 function M.get_team_tournament_bracket(tournament_id, cb)

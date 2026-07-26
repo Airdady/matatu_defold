@@ -70,6 +70,14 @@ local GUTTER = 10
 local PADDING = 32
 local HEADER_H = 65
 
+-- Open-cups rail. Sized as a share of the available width so it scales with
+-- the viewport instead of taking a fixed bite out of every one of them, and
+-- only shown when the mode tiles still have room to be usable beside it.
+local RAIL_SHARE  = 0.21
+local RAIL_MIN_W  = 240
+local RAIL_MAX_W  = 340
+local TILES_MIN_W = 760
+
 local STATE_LOBBY     = "lobby"
 local STATE_AI_SELECT = "ai_select"
 local STATE_TOURNEY   = "tournament"
@@ -621,7 +629,7 @@ local function draw_tournament(self)
     self.buttons[#self.buttons + 1] = { node = bkb, id = "back_to_lobby" }
 end
 
--- Small 2-option menu opened from the TEAM TOURNAMENTS banner: any
+-- Small 2-option menu opened from the TEAM CUPS banner: any
 -- signed-in player can create one (funding its grand prize from their own
 -- balance) or join an existing one by invitation code.
 local function draw_team_menu(self)
@@ -633,7 +641,7 @@ local function draw_team_menu(self)
     track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw - 2, ph - 2, 0), C_TILE))
     track(self, ui.box(vmath.vector3(CX, CY + ph / 2 - 2, 0), vmath.vector3(pw, 4, 0), C_U_TEAM))
 
-    text_sh(self, vmath.vector3(CX, CY + ph / 2 - 40, 0), "TEAM TOURNAMENTS", "title", C_CREAM, 2, -2)
+    text_sh(self, vmath.vector3(CX, CY + ph / 2 - 40, 0), "TEAM CUPS", "title", C_CREAM, 2, -2)
     track(self, ui.text(vmath.vector3(CX, CY + ph / 2 - 70, 0), "Any player can create one, or join with a code", "small", C_MUTED))
 
     local opt_w, opt_h = 220, 96
@@ -660,7 +668,7 @@ local function draw_team_menu(self)
     self.buttons[#self.buttons + 1] = { node = bkb, id = "back_to_lobby" }
 end
 
--- Join a player-created Team Tournament by the invitation code its owner
+-- Join a player-created Team Cup by the invitation code its owner
 -- shared. Codes are alphanumeric (see be_matatu's createTeamTournament, which
 -- uppercases/strips them to 3-16 [A-Z0-9] chars). The code is typed on the
 -- DEVICE keyboard rather than a hand-drawn key grid, matching the create
@@ -668,7 +676,7 @@ end
 -- "text" / "backspace" input actions.
 local TEAM_CODE_MAX = 16
 
--- Three-border recipe shared with profile and the team tournament screen:
+-- Three-border recipe shared with profile and the team cup screen:
 -- accent ring, outer bevel, mid bevel, fill.
 local function tj_framed3(self, x, y, w, h, accent, fill)
     track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w + 6, h + 6, 0), accent))
@@ -699,7 +707,7 @@ local function draw_team_join(self)
     track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw - 2, ph - 2, 0), C_TILE))
     track(self, ui.box(vmath.vector3(CX, CY + ph / 2 - 2, 0), vmath.vector3(pw, 4, 0), C_U_TEAM))
 
-    text_sh(self, vmath.vector3(CX, CY + ph / 2 - 40, 0), "JOIN TEAM TOURNAMENT", "title", C_CREAM, 2, -2)
+    text_sh(self, vmath.vector3(CX, CY + ph / 2 - 40, 0), "JOIN A TEAM CUP", "title", C_CREAM, 2, -2)
     track(self, ui.text(vmath.vector3(CX, CY + ph / 2 - 70, 0), "Enter the invitation code your team owner shared", "small", C_MUTED))
 
     -- Tappable code field. Focus is signalled by a brighter accent ring plus a
@@ -734,6 +742,16 @@ local rebuild_ref
 
 -- Pull the open team cups for the right rail. Cheap endpoint (cards only, no
 -- playersProgress), refreshed on screen entry rather than polled.
+-- The one cup this player owns, if any. Read off the rail's own list rather
+-- than from a separate request: the list already carries isOwner/started/
+-- members for every open cup, so the tile and the rail can never disagree.
+local function my_owned_cup(self)
+    for _, t in ipairs(self.team_cups or {}) do
+        if t.isOwner then return t end
+    end
+    return nil
+end
+
 local function load_team_cups(self)
     if self.team_cups_loading then return end
     self.team_cups_loading = true
@@ -771,19 +789,26 @@ local function rebuild(self)
     local grid_b = EDGE_B + PADDING + util_h + GUTTER
     local grid_t = EDGE_T - PADDING - HEADER_H
 
-    -- Right rail: live list of open team tournaments. Reserved out of the
-    -- grid width so the mode tiles shrink to make room rather than being
-    -- overdrawn. Hidden on very narrow viewports, where 300px of rail would
-    -- leave the tiles unusable.
-    local RAIL_W, RAIL_GAP = 300, GUTTER
-    local show_rail = (grid_r - grid_l) > (RAIL_W + 520)
+    -- Right rail: live list of open team cups, reserved out of the grid width
+    -- so the mode tiles shrink to make room rather than being overdrawn.
+    --
+    -- The width is a SHARE of the available width, not a fixed 300. A fixed
+    -- rail took the same bite out of a narrow viewport as a wide one, which
+    -- is what left the tiles cramped. The old "hide it when narrow" guard
+    -- could never fire either: screen.metrics() never reports a logical width
+    -- below LOGICAL_W, so grid width is always ~1232 or more and the
+    -- (> RAIL_W + 520) test was always true.
+    local RAIL_GAP  = GUTTER
+    local avail_w   = grid_r - grid_l
+    local RAIL_W    = math.floor(math.max(RAIL_MIN_W, math.min(RAIL_MAX_W, avail_w * RAIL_SHARE)))
+    local show_rail = avail_w >= (RAIL_MIN_W + TILES_MIN_W)
     local rail_l = show_rail and (grid_r - RAIL_W) or nil
     if show_rail then grid_r = rail_l - RAIL_GAP end
 
     local grid_w = grid_r - grid_l
     local grid_h = grid_t - grid_b
 
-    -- Row A (top, bigger): PLAY ONLINE + TEAM TOURNAMENTS — the two
+    -- Row A (top, bigger): PLAY ONLINE + TEAM CUPS — the two
     -- real-money/online modes, both prominent. Row B (bottom, smaller): the
     -- three offline-vs-AI modes, secondary to both tiles above them.
     local row_a_h  = math.floor((grid_h - GUTTER) * 0.62)
@@ -791,7 +816,7 @@ local function rebuild(self)
     local row_a_cy = grid_b + row_b_h + GUTTER + row_a_h / 2
     local row_b_cy = grid_b + row_b_h / 2
 
-    -- Row A split: PLAY ONLINE gets the bigger share, TEAM TOURNAMENTS is
+    -- Row A split: PLAY ONLINE gets the bigger share, TEAM CUPS is
     -- second-biggest right beside it.
     local play_w  = math.floor((grid_w - GUTTER) * 0.58)
     local team_w  = grid_w - play_w - GUTTER
@@ -872,7 +897,7 @@ local function rebuild(self)
     })
 
     -- -----------------------------------------------------------------------
-    -- Tile 2: TEAM TOURNAMENTS — second-biggest, right beside PLAY ONLINE
+    -- Tile 2: TEAM CUPS — second-biggest, right beside PLAY ONLINE
     -- and above the offline modes. CREATE and JOIN are their own buttons
     -- directly on the tile so both are reachable in a single tap, instead
     -- of tapping the tile to open a separate CREATE/JOIN BY CODE picker
@@ -883,20 +908,51 @@ local function rebuild(self)
     -- -----------------------------------------------------------------------
     local has_team_tournament = ws.current_user_data and ws.current_user_data.myTeamTournamentId
         and tostring(ws.current_user_data.myTeamTournamentId) ~= ""
+
+    -- A player may own only ONE cup (the backend rejects a second), so once
+    -- they do, CREATE is meaningless and the tile switches to running the cup
+    -- they already have: START it, or JOIN somebody else's.
+    local my_cup = my_owned_cup(self)
+    local owns_cup = my_cup ~= nil
+    local cup_started = owns_cup and my_cup.started
+
+    local team_children
+    if owns_cup then
+        team_children = {
+            { id = cup_started and "team_standings" or "team_cup_start",
+              label = cup_started and "STANDINGS" or "START CUP", style = "primary_btn" },
+            { id = "team_menu_join", label = "JOIN", style = "secondary_btn" },
+        }
+    elseif not has_team_tournament then
+        team_children = {
+            { id = "team_menu_create", label = "CREATE", style = "primary_btn" },
+            { id = "team_menu_join",   label = "JOIN",   style = "secondary_btn" },
+        }
+    end
+
+    local team_sub
+    if owns_cup and cup_started then
+        team_sub = string.format("%s — running", tostring(my_cup.name or "Your cup"))
+    elseif owns_cup then
+        team_sub = string.format("%d/%d joined — start when ready",
+            tonumber(my_cup.members) or 0, tonumber(my_cup.maxPlayers) or 0)
+    elseif has_team_tournament then
+        team_sub = "You're in one — manage it"
+    else
+        team_sub = "Fund a prize, invite your team"
+    end
+
     mode_tile(self, {
         x = team_cx, y = row_a_cy, w = team_w, h = row_a_h,
         accent      = C_U_TEAM,
         top_left    = "ONLINE",
         top_left_2  = "TEAM",
         numeral     = "02",
-        title       = "TEAM TOURNAMENTS",
-        sub         = has_team_tournament and "You're in one — manage it" or "Fund a prize, invite your team",
-        cta_label   = has_team_tournament and "OPEN" or nil,
-        btn_id      = has_team_tournament and "team_action_open" or nil,
-        child_buttons = (not has_team_tournament) and {
-            { id = "team_menu_create", label = "CREATE", style = "primary_btn" },
-            { id = "team_menu_join",   label = "JOIN",   style = "secondary_btn" },
-        } or nil,
+        title       = "TEAM CUPS",
+        sub         = team_sub,
+        cta_label   = (has_team_tournament and not owns_cup) and "OPEN" or nil,
+        btn_id      = (has_team_tournament and not owns_cup) and "team_action_open" or nil,
+        child_buttons = team_children,
     })
 
     -- -----------------------------------------------------------------------
@@ -971,11 +1027,15 @@ local function rebuild(self)
     end
 
     -- -----------------------------------------------------------------------
-    -- Right rail: open team tournaments, newest first, vertically scrollable.
+    -- Right rail: open team cups, newest first, vertically scrollable.
     -- -----------------------------------------------------------------------
     if show_rail then
         local rail_cx = rail_l + RAIL_W / 2
-        local rail_t  = grid_t
+        -- Full height: the rail runs the whole usable column rather than
+        -- starting below the header band, so it fits noticeably more cups.
+        -- Nothing else draws there — the header's right edge is grid_r, which
+        -- was already pulled left of the rail above.
+        local rail_t  = EDGE_T - PADDING
         local rail_b  = EDGE_B + PADDING
         local rail_h  = rail_t - rail_b
 
@@ -1029,11 +1089,13 @@ local function rebuild(self)
                 local mb = track(self, ui.text(vmath.vector3(tx, cy_ - 14, 0), members, "small", C_MUTED))
                 set_pivot(mb, gui.PIVOT_W)
 
-                -- JOIN only when there is actually something to join.
+                -- JOIN only when there is actually something to join. A cup
+                -- you are already in offers STANDINGS instead of a dead
+                -- "JOINED" label, so every card in the list does something.
                 local bx, bw, bh = rail_cx + (RAIL_W - 20) / 2 - 46, 76, 30
-                if t.hasJoined then
-                    track(self, ui.box(vmath.vector3(bx, cy_ - 14, 0), vmath.vector3(bw, bh, 0), C_DARK))
-                    track(self, ui.text(vmath.vector3(bx, cy_ - 14, 0), "JOINED", "small", C_MUTED))
+                if t.hasJoined or t.isOwner then
+                    mkbtn(self, "team_cup_standings", vmath.vector3(bx, cy_ - 14, 0),
+                        vmath.vector3(bw, bh, 0), "TABLE", "secondary_btn", t._id)
                 elseif t.isFull then
                     track(self, ui.box(vmath.vector3(bx, cy_ - 14, 0), vmath.vector3(bw, bh, 0), C_DARK))
                     track(self, ui.text(vmath.vector3(bx, cy_ - 14, 0), "FULL", "small", C_MUTED))
@@ -1107,7 +1169,7 @@ local function set_state(self, new_state)
     rebuild(self)
 end
 
--- Shared by the "play_online" tile tap and the TEAM TOURNAMENTS menu's
+-- Shared by the "play_online" tile tap and the TEAM CUPS menu's
 -- "CREATE" option, both of which need the same sign-in-if-needed-then-
 -- route-to-online dance before anything else can happen.
 local function go_online(self)
@@ -1198,6 +1260,44 @@ local function handle(self, b)
 
     elseif b.id == "team_action_open" then
         set_state(self, STATE_TEAM_MENU)
+
+    elseif b.id == "team_cup_start" then
+        local cup = my_owned_cup(self)
+        local uid = tostring((ws.current_user_data or {})._id or "")
+        if not cup then
+            toast.error("Could not find your cup.")
+        elseif self.cup_starting then
+            return -- already in flight; a second tap must not double-post
+        else
+            self.cup_starting = true
+            api.start_team_tournament(cup._id, uid, function(res)
+                self.cup_starting = false
+                if res.success then
+                    toast.success("Cup started — good luck!")
+                    load_team_cups(self)
+                else
+                    local err = (res.data and res.data.error) or res.message
+                        or "Could not start the cup."
+                    toast.error(err)
+                    -- A refusal is usually "not enough players yet", which the
+                    -- refreshed member count on the tile then explains.
+                    load_team_cups(self)
+                end
+            end)
+        end
+
+    elseif b.id == "team_standings" or b.id == "team_cup_standings" then
+        local id = b.data
+        if not id then
+            local cup = my_owned_cup(self)
+            id = cup and cup._id or (ws.current_user_data or {}).myTeamTournamentId
+        end
+        if not id or tostring(id) == "" then
+            toast.error("No cup to show standings for yet.")
+        else
+            app_state.standings_cup_id = tostring(id)
+            msg.post("#controller", "goto_standings")
+        end
     elseif b.id == "team_menu_create" then
         -- The create/edit form is now its OWN screen rather than the
         -- STATE_TEAM_CREATE dialog that used to live here: the dialog had to
@@ -1279,7 +1379,7 @@ local function handle(self, b)
                 cur.submitting = false
                 if result.success then
                     cur.msg, cur.msg_ok = "Joined! Good luck.", true
-                    toast.success("Joined the team tournament!")
+                    toast.success("Joined the team cup!")
                     local joined = result.data and result.data.tournament
                     if joined and joined._id then
                         local u = ws.current_user_data or {}
