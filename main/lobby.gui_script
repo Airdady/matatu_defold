@@ -263,6 +263,21 @@ local function rebuild(self)
     local owns_cup = my_cup ~= nil
     local cup_started = owns_cup and my_cup.started
 
+    -- Pending invitations turn the tile's secondary action into ACCEPT and
+    -- put a count in the subtitle, so a player who was invited never needs a
+    -- code and can see the invite the moment they open the app.
+    -- Only invitations that can actually be accepted drive the tile: a cup
+    -- that filled up while the invite sat unopened still shows in the rail
+    -- (marked FULL) but must not put an ACCEPT button on the tile.
+    local first_invite
+    local invites = 0
+    for _, iv in ipairs(self.invites or {}) do
+        if not iv.isFull then
+            invites = invites + 1
+            first_invite = first_invite or iv
+        end
+    end
+
     local team_children
     if owns_cup then
         -- The owner's cup is run entirely from this tile — it is deliberately
@@ -273,6 +288,13 @@ local function rebuild(self)
             { id = cup_started and "team_standings" or "team_cup_start",
               label = cup_started and "BRACKET" or "START CUP", style = "primary_btn" },
             { id = "team_standings", label = "MANAGE", style = "secondary_btn" },
+        }
+    elseif invites > 0 then
+        -- Invited: accepting is the obvious action, so it leads.
+        team_children = {
+            { id = "team_invite_accept", label = "ACCEPT", style = "primary_btn",
+              data = first_invite and first_invite._id or nil },
+            { id = "team_menu_create", label = "CREATE", style = "secondary_btn" },
         }
     elseif not has_team_tournament then
         team_children = {
@@ -290,6 +312,10 @@ local function rebuild(self)
             cup_started and "RUNNING" or "NOT STARTED",
             tonumber(my_cup.members) or 0, tonumber(my_cup.maxPlayers) or 0,
             commas(my_cup.grandPrize or 0), tostring(GameMode.CURRENCY_CODE or ""))
+    elseif invites > 0 then
+        team_sub = string.format("%d pending invitation%s%s",
+            invites, invites == 1 and "" or "s",
+            first_invite and (" — " .. tostring(first_invite.name or "a cup")) or "")
     elseif has_team_tournament then
         team_sub = "You're in one — manage it"
     else
@@ -604,6 +630,31 @@ local function handle(self, b)
     elseif b.id == "team_cup_down" then
         self.team_cups_off = (self.team_cups_off or 0) + 1
         rebuild(self)
+    elseif b.id == "team_invite_accept" then
+        -- No code: the invitation is the credential. b.data is the cup id.
+        local id = tostring(b.data or "")
+        local uid = tostring((ws.current_user_data or {})._id or "")
+        if id == "" or uid == "" then
+            toast.error("Could not find that invitation.")
+        elseif not self.accepting_invite then
+            self.accepting_invite = true
+            api.accept_team_invitation(id, uid, function(res)
+                self.accepting_invite = false
+                if res.success then
+                    local t = (res.data or {}).tournament or {}
+                    local u = ws.current_user_data or {}
+                    u.myTeamTournamentId = t._id or id
+                    u.myTeamTournamentIsOwner = false
+                    ws.current_user_data = u
+                    toast.success("You're in " .. tostring(t.name or "the cup") .. "!")
+                else
+                    toast.error((res.data and res.data.error) or res.message
+                        or "Could not accept that invitation.")
+                end
+                load_team_cups(self)
+            end)
+        end
+
     elseif b.id == "team_cup_join" then
         -- The card carries the tournament's own invitation code, so joining
         -- from the rail reuses the exact same by-code endpoint as typing it.

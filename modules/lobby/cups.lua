@@ -1,9 +1,13 @@
--- modules/lobby/cups.lua — the right-hand rail listing open team cups.
+-- modules/lobby/cups.lua — the right-hand rail listing this player's team-cup
+-- INVITATIONS.
 --
--- Owns everything about that column: fetching the list, finding the caller's
--- own cup, and rendering the windowed, scrollable card stack. Split out of
--- lobby.gui_script's rebuild(), where it was ~140 lines of the largest
--- function in the file.
+-- It used to list every open cup, which meant browsing strangers' cups and
+-- typing an invite code to get into one. Now it shows only the cups you were
+-- actually invited to: being on a cup's allowedUsers is both the invitation
+-- and the credential, so the button is ACCEPT and no code is involved.
+--
+-- Owns everything about that column: fetching, finding the caller's own cup,
+-- and rendering the windowed, scrollable card stack.
 
 local ui       = require("modules.ui")
 local ws       = require("modules.websocket_manager")
@@ -24,22 +28,31 @@ function M.my_owned_cup(self)
     return nil
 end
 
--- Pull the open team cups for the rail. Cheap endpoint (cards only, no
--- playersProgress), refreshed on screen entry rather than polled.
+-- Pull this player's pending invitations, plus the open-cup list the tile
+-- reads to find the cup they own. Two cheap calls on screen entry rather
+-- than polling.
 function M.load(self, on_loaded)
     if self.team_cups_loading then return end
     self.team_cups_loading = true
     local uid = tostring((ws.current_user_data or {})._id or "")
     api.list_active_team_tournaments(uid, function(res)
-        self.team_cups_loading = false
         self.team_cups = ((res or {}).data or {}).tournaments or {}
-        self.team_cups_off = 0
+        api.list_team_invitations(uid, function(ires)
+            self.team_cups_loading = false
+            self.invites = ((ires or {}).data or {}).invitations or {}
+            self.team_cups_off = 0
         -- Unlike the other screens, lobby has no self._active flag — gating on
         -- one would silently never repaint, leaving the rail stuck on
         -- "Loading..." forever. self.nodes is the real signal that the screen
         -- is currently built.
-        if self.nodes and on_loaded then on_loaded(self) end
+            if self.nodes and on_loaded then on_loaded(self) end
+        end)
     end)
+end
+
+-- How many invitations are waiting — the tile shows this as a badge.
+function M.invite_count(self)
+    return #(self.invites or {})
 end
 
 -- Reserve the rail's width out of the grid. Returns the width to use, whether
@@ -68,16 +81,12 @@ function M.draw(self, rail_l, RAIL_W, grid_t)
         vmath.vector3(RAIL_W, 3, 0), T.TEAM))
 
     local hy = rail_t - 22
-    D.text_sh(self, vmath.vector3(rail_cx, hy, 0), "OPEN TEAM CUPS", "small", T.CREAM, 1, -1)
+    D.text_sh(self, vmath.vector3(rail_cx, hy, 0), "YOUR INVITATIONS", "small", T.CREAM, 1, -1)
     hy = hy - 22
 
-    -- The cup you OWN is not listed here: all of its detail and its actions
-    -- live on the TEAM CUPS tile, so there is one place to run it rather
-    -- than two that can disagree. The list is other people's open cups.
-    local list = {}
-    for _, t in ipairs(self.team_cups or {}) do
-        if not t.isOwner then list[#list + 1] = t end
-    end
+    -- Only cups this player was invited to. The cup they OWN is run from the
+    -- TEAM CUPS tile, and strangers' cups are no longer browsable at all.
+    local list = self.invites or {}
         local view_t  = hy - 4
     local view_b  = rail_b + 10
     local view_h  = view_t - view_b
@@ -86,8 +95,9 @@ function M.draw(self, rail_l, RAIL_W, grid_t)
     if self.team_cups_loading then
         D.track(self, ui.text(vmath.vector3(rail_cx, view_t - 24, 0), "Loading...", "small", T.MUTED))
     elseif #list == 0 then
-        D.track(self, ui.text(vmath.vector3(rail_cx, view_t - 24, 0), "No open cups yet.", "small", T.MUTED))
-        D.track(self, ui.text(vmath.vector3(rail_cx, view_t - 44, 0), "Create one to get started.", "small", T.MUTED))
+        D.track(self, ui.text(vmath.vector3(rail_cx, view_t - 24, 0), "No invitations.", "small", T.MUTED))
+        D.track(self, ui.text(vmath.vector3(rail_cx, view_t - 44, 0), "A cup owner can invite you", "small", T.MUTED))
+        D.track(self, ui.text(vmath.vector3(rail_cx, view_t - 60, 0), "by your username.", "small", T.MUTED))
     else
         -- Windowed render: only the cards in view are built, so a long
         -- list costs the same as a short one and nothing needs clipping.
@@ -112,7 +122,6 @@ function M.draw(self, rail_l, RAIL_W, grid_t)
             -- Row 1: name, with a state pill right-aligned beside it.
             local joined  = tonumber(t.members) or 0
             local cap     = tonumber(t.maxPlayers) or 0
-            local mine    = t.hasJoined or t.isOwner
             local pill_txt, pill_col
             if t.isOwner        then pill_txt, pill_col = "YOURS",   T.GOLD
             elseif t.hasJoined  then pill_txt, pill_col = "JOINED",  T.TEAM
@@ -156,15 +165,14 @@ function M.draw(self, rail_l, RAIL_W, grid_t)
             -- "JOINED" label, so every card in the list does something.
             local bw, bh = 92, 32
             local bx = card_l + card_w - 14 - bw / 2
-            if mine then
-                D.btn(self, "team_cup_standings", vmath.vector3(bx, card_b + 20, 0),
-                    vmath.vector3(bw, bh, 0), "TABLE", "secondary_btn", t._id)
-            elseif t.isFull then
+            if t.isFull then
                 D.track(self, ui.box(vmath.vector3(bx, card_b + 20, 0), vmath.vector3(bw, bh, 0), T.DARK))
                 D.track(self, ui.text(vmath.vector3(bx, card_b + 20, 0), "FULL", "small", T.MUTED))
             else
-                D.btn(self, "team_cup_join", vmath.vector3(bx, card_b + 20, 0),
-                    vmath.vector3(bw, bh, 0), "JOIN", "primary_btn", t.invitationCode)
+                -- ACCEPT, not JOIN: the invitation itself authorises this, so
+                -- it posts the cup id and never asks for a code.
+                D.btn(self, "team_invite_accept", vmath.vector3(bx, card_b + 20, 0),
+                    vmath.vector3(bw, bh, 0), "ACCEPT", "primary_btn", t._id)
             end
         end
 

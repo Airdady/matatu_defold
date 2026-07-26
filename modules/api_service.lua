@@ -275,6 +275,16 @@ function M.join_team_tournament(payload, cb)
     request("POST", "/tournaments/team/join", payload, cb)
 end
 
+-- Cups this player was invited to but has not joined. No code needed to
+-- accept one — being on the cup's allowedUsers IS the credential.
+function M.list_team_invitations(user_id, cb)
+    request("GET", "/tournaments/team/invitations?userId=" .. urlencode(user_id), nil, cb)
+end
+
+function M.accept_team_invitation(tournament_id, user_id, cb)
+    request("POST", "/tournaments/team/" .. tournament_id .. "/accept", { userId = user_id }, cb)
+end
+
 -- Owner-only: cancels the cup and refunds the escrowed grand prize.
 -- POSTed rather than DELETEd: a body on DELETE is dropped by some HTTP
 -- stacks, which made the backend see no userId and refuse the real owner.
