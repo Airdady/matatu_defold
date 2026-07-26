@@ -19,6 +19,10 @@ fonts {
   name: "btn_md"
   font: "/fonts/btn_md.font"
 }
+fonts {
+  name: "btn_sm"
+  font: "/fonts/btn_sm.font"
+}
 textures {
   name: "ui"
   texture: "/assets/ui/ui.atlas"
