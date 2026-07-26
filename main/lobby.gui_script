@@ -112,6 +112,13 @@ end
 local function clear(self)
     for _, n in ipairs(self.nodes) do pcall(gui.delete_node, n) end
     self.nodes, self.buttons = {}, {}
+    -- The rail's drag surface is one of the nodes just deleted. Leaving the
+    -- reference behind means on_input's drag test runs gui.pick_node against a
+    -- DELETED node, which raises — and since on_input runs every frame, that
+    -- takes the whole lobby's input down, not just the drag. "disable" clears
+    -- without rebuilding, so this is reachable.
+    self.team_rail_node = nil
+    self._rail_drag = nil
 end
 
 local function track(self, n) self.nodes[#self.nodes + 1] = n; return n end
@@ -129,10 +136,23 @@ end
 
 -- Textured slice-9 button + optional label, registered as a tappable button
 -- in one call — same shape as online.gui_script's local mkbtn helper.
+-- Big buttons wear the same slice-9 background image as the stake tiles
+-- (online_center.lua draws those with ui.btn9 + "container_bg"), so the
+-- lobby's primary actions read as part of the same system instead of as flat
+-- colour fills. Small controls (the rail's JOIN/TABLE chips, scroll arrows)
+-- keep the compact button art — the glass panel's 15px slice margins need
+-- room to look right.
+local BIG_BTN_H = 44
+local function big_btn_texture(style)
+    return (style == "primary_btn") and "container_bg_active" or "container_bg"
+end
+
 local function mkbtn(self, id, pos, size, label, style, data)
-    local bg = track(self, ui.btn9(pos, size, style or "secondary_btn"))
+    local big = size.y >= BIG_BTN_H
+    local tex = big and big_btn_texture(style) or (style or "secondary_btn")
+    local bg = track(self, ui.btn9(pos, size, tex))
     if label then
-        track(self, ui.text(vmath.vector3(pos.x, pos.y - 3, pos.z), label, size.y >= 44 and "btn_md" or "btn_sm", C_CREAM))
+        track(self, ui.text(vmath.vector3(pos.x, pos.y - 3, pos.z), label, big and "btn_md" or "btn_sm", C_CREAM))
     end
     self.buttons[#self.buttons + 1] = { node = bg, id = id, data = data }
     return bg
@@ -323,15 +343,17 @@ local function mode_tile(self, cfg)
         -- the tile's action rather than as another label in the left stack.
         local cta_x = x + w/2 - 16 - cta_w/2
         local cta_y = y - h/2 + 50
-        track(self, ui.box(vmath.vector3(cta_x, cta_y, 0), vmath.vector3(cta_w, cta_h, 0), C_RED))
-        track(self, ui.text(vmath.vector3(cta_x, cta_y, 0), cfg.cta_label, "body", vmath.vector4(0.05, 0.05, 0.05, 1)))
+        track(self, ui.btn9(vmath.vector3(cta_x, cta_y, 0), vmath.vector3(cta_w, cta_h, 0), "container_bg_active"))
+        track(self, ui.text(vmath.vector3(cta_x, cta_y, 0), cfg.cta_label, "body", C_CREAM))
     elseif cfg.badge_label then
         local badge_w, badge_h = 160, 46
         local badge_x = acc_x + 16 + badge_w/2
         local badge_y = y - h/2 + 50
-        -- Muted/darker styling for a non-clickable badge look
-        track(self, ui.box(vmath.vector3(badge_x, badge_y, 0), vmath.vector3(badge_w, badge_h, 0), C_DARKRED))
-        track(self, ui.text(vmath.vector3(badge_x, badge_y, 0), cfg.badge_label, "body", C_CREAM))
+        -- Same panel as the live CTA but muted, so it reads as a state rather
+        -- than as something to press.
+        local bnode = track(self, ui.btn9(vmath.vector3(badge_x, badge_y, 0), vmath.vector3(badge_w, badge_h, 0), "container_bg"))
+        gui.set_color(bnode, vmath.vector4(0.65, 0.65, 0.65, 1))
+        track(self, ui.text(vmath.vector3(badge_x, badge_y, 0), cfg.badge_label, "body", C_MUTED))
     end
 
     -- Invisible hit node (only if tile is clickable)
