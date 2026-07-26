@@ -237,6 +237,30 @@ end
 -- Team Tournaments — player-created, owner-funded multi-level brackets.
 -- payload = { userId, name?, grandPrizeCoins, maxPlayers, gamesPerLevel,
 --             invitationCode?, inviteUsernames? }
+-- Percent-encode a query-string value. Usernames can legitimately contain
+-- spaces and punctuation, which would otherwise produce a malformed URL.
+local function urlencode(v)
+    return (tostring(v or ""):gsub("[^%w%-%_%.%~]", function(c)
+        return string.format("%%%02X", string.byte(c))
+    end))
+end
+
+-- Autocomplete for the invite field. Server caps at 5 and returns usernames
+-- only; `exclude` keeps the caller out of their own suggestions.
+function M.search_usernames(q, exclude, cb)
+    local ep = "/users/search/usernames?q=" .. urlencode(q)
+    if exclude and exclude ~= "" then ep = ep .. "&excludeUserId=" .. urlencode(exclude) end
+    request("GET", ep, nil, cb)
+end
+
+-- Open team tournaments for the lobby list. `user_id` marks the ones the
+-- caller already joined/owns so the card can render JOINED instead of JOIN.
+function M.list_active_team_tournaments(user_id, cb)
+    local ep = "/tournaments/team/active"
+    if user_id and user_id ~= "" then ep = ep .. "?userId=" .. urlencode(user_id) end
+    request("GET", ep, nil, cb)
+end
+
 function M.create_team_tournament(payload, cb)
     request("POST", "/tournaments/team", payload, cb)
 end
