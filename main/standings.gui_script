@@ -404,8 +404,13 @@ function on_message(self, message_id, message, sender)
         self._active = true
         rebuild(self)
     elseif message_id == hash("disable") then
+        -- Deliberately NO release_input_focus here. Every screen in this
+        -- project is a gui component on the SAME game object (controller.go),
+        -- and acquire/release_input_focus are game-OBJECT messages — releasing
+        -- drops the whole object off the input stack, killing input for the
+        -- lobby and every other screen too. `self._active` already gates this
+        -- screen's own on_input, which is what the other screens rely on.
         self._active = false
-        msg.post(".", "release_input_focus")
         clear(self)
     elseif message_id == hash("layout_changed") then
         refresh_wh()
