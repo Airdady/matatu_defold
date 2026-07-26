@@ -139,6 +139,44 @@ function M.send_move(game_id, from_id, to_id, actions, new_suit, active_penalty_
   M.send_message("MOVE", move_data)
 end
 
+-- IDENTIFY watchdog. The client used to send IDENTIFY and then simply wait:
+-- if the reply never came (dropped frame, a rejected/stale user id answered
+-- with a generic ERROR rather than IDENTIFY_ERROR, a socket that reports
+-- "connected" a moment before it really is), is_identified stayed false and
+-- the UI sat on CONNECTING forever with no way out. Resend a couple of
+-- times, then surface it as an identify failure so the auth layer can
+-- recover instead of hanging.
+local IDENTIFY_TIMEOUT   = 6
+local IDENTIFY_MAX_TRIES = 3
+local identify_timer     = nil
+local identify_tries     = 0
+
+local function cancel_identify_watchdog()
+    if identify_timer then pcall(timer.cancel, identify_timer); identify_timer = nil end
+end
+M.cancel_identify_watchdog = cancel_identify_watchdog
+
+local function arm_identify_watchdog()
+    cancel_identify_watchdog()
+    if not pending_identity then return end
+    identify_timer = timer.delay(IDENTIFY_TIMEOUT, false, function()
+        identify_timer = nil
+        if M.is_identified or not pending_identity then return end
+        if identify_tries < IDENTIFY_MAX_TRIES then
+            identify_tries = identify_tries + 1
+            print(string.format("[WS-DEBUG] IDENTIFY unanswered after %ds, resending (%d/%d)",
+                IDENTIFY_TIMEOUT, identify_tries, IDENTIFY_MAX_TRIES))
+            if M.socket_connected then M.send_message("IDENTIFY", pending_identity) end
+            arm_identify_watchdog()
+        else
+            print("[WS-DEBUG] IDENTIFY never answered — reporting identify_error")
+            identify_tries = 0
+            emit("identify_error", "Could not sign you in. Retrying...")
+        end
+    end)
+end
+M.arm_identify_watchdog = arm_identify_watchdog
+
 function M.identify(id, username, stake, country)
   M.current_user_id = id
   pending_identity = {
@@ -150,9 +188,11 @@ function M.identify(id, username, stake, country)
   }
   print(string.format("[WS-DEBUG] identify() called: id=%s socket_connected=%s (%s)",
     tostring(id), tostring(M.socket_connected), M.socket_connected and "sending IDENTIFY now" or "queued for on_connected"))
+  identify_tries = 0
   if M.socket_connected then
     M.send_message("IDENTIFY", pending_identity)
   end
+  arm_identify_watchdog()
 end
 
 -- FIXED: extra_data logic appends payload keys matching the Godot structure (e.g. tournamentId)
@@ -286,6 +326,8 @@ local function parse_message(json_string)
     emit("auth_required", d.message or "Device not registered")
   elseif t == "IDENTIFY" then
     print("[WS-DEBUG] IDENTIFY response received, marking is_identified=true")
+    cancel_identify_watchdog()
+    identify_tries = 0
     M.is_identified = true
     local user_payload = d
     if type(d.user) == "table" then
@@ -516,10 +558,23 @@ local function parse_message(json_string)
     emit("transaction_failed", d.reason or "Failed")
   elseif t == "IDENTIFY_ERROR" then
     print("[WS-DEBUG] IDENTIFY_ERROR received: " .. tostring(d.message))
+    cancel_identify_watchdog()
     M.is_identified = false
     emit("identify_error", d.message or "Authentication Failed")
   elseif t == "ERROR" then
-    emit("error", d.message or "Error")
+    -- handleIdentify answers an unknown/stale user id with a generic ERROR
+    -- ("User not found"), not IDENTIFY_ERROR. Treated as a plain error it
+    -- left is_identified false forever and the UI stuck on CONNECTING — and
+    -- every later authenticated call kept using the same dead id, which is
+    -- what surfaced as "Team owner not found". While un-identified, route it
+    -- to the identify-failure path so the session can be rebuilt.
+    if not M.is_identified and pending_identity then
+      print("[WS-DEBUG] ERROR while un-identified, treating as identify failure: " .. tostring(d.message))
+      cancel_identify_watchdog()
+      emit("identify_error", d.message or "Could not sign you in.")
+    else
+      emit("error", d.message or "Error")
+    end
   else
     -- Diagnostic: if the opponent move ever stops arriving, this line tells you
     -- the backend is using a `type` string this client doesn't handle yet.
@@ -573,7 +628,10 @@ local function on_connected()
   start_keep_alive()
   emit("connected")
   print(string.format("[WS-DEBUG] on_connected: pending_identity=%s", tostring(pending_identity ~= nil)))
-  if pending_identity then M.send_message("IDENTIFY", pending_identity) end
+  if pending_identity then
+    M.send_message("IDENTIFY", pending_identity)
+    arm_identify_watchdog()
+  end
 end
 
 on_disconnected = function(reason)

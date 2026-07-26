@@ -271,9 +271,20 @@ function init(self)
             show(self, "lobby")
         end
     else
-        -- No local session cached: do NOT attempt sign-in at boot.
-        auth_debug("init: no cached session, waiting for play_online tap to trigger sign-in")
+        -- No local session cached: sign in SILENTLY right now. Sign-in in
+        -- this app is always automatic — there is no manual "SIGN IN" button
+        -- anywhere in the UI — so waiting for a "Play Online" tap left a
+        -- fresh install with no session at all, and every authenticated call
+        -- it made in the meantime went out with no user behind it.
+        -- try_silent_login retries on its own and gives up quietly, so this
+        -- can never block or gate the lobby.
+        auth_debug("init: no cached session, starting silent sign-in")
         show(self, "lobby")
+        if gpgs then
+            try_silent_login(self)
+        else
+            auth_debug("init: gpgs unavailable, staying signed out")
+        end
     end
 
     local function forward(evt, target, notification)
@@ -283,6 +294,7 @@ function init(self)
     end
 
     table.insert(self.tokens, ws.on("identify_success", function()
+        self._identify_recoveries = 0
         if self._restore_pending then
             self._restore_pending = false
             app_state.auth_state = "idle"
@@ -454,11 +466,27 @@ function init(self)
         msg.post("#lobby", "auth_state_changed")
         if self.screen ~= "lobby" then show(self, "lobby") end
     end))
+    -- A failed IDENTIFY means the cached id is no good to the server (stale
+    -- session from a reinstall/another environment, or a reply that never
+    -- came). Clearing it is only half the job: sign-in here is always
+    -- automatic, so re-run the silent login straight away and rebuild a
+    -- valid session, rather than leaving the player signed out with a
+    -- CONNECTING screen and no button to press. Bounded so a server that
+    -- rejects every identify can't spin.
+    local MAX_IDENTIFY_RECOVERIES = 2
     table.insert(self.tokens, ws.on("identify_error", function()
         clear_session()
-        app_state.auth_state = "error"
-        app_state.auth_error = "Connection failed."
-        msg.post("#lobby", "auth_state_changed")
+        self._identify_recoveries = (self._identify_recoveries or 0) + 1
+        if gpgs and self._identify_recoveries <= MAX_IDENTIFY_RECOVERIES then
+            auth_debug("identify_error: rebuilding session via silent login (%d/%d)",
+                self._identify_recoveries, MAX_IDENTIFY_RECOVERIES)
+            self._silent_login_attempts = 0
+            try_silent_login(self)
+        else
+            app_state.auth_state = "error"
+            app_state.auth_error = "Connection failed."
+            msg.post("#lobby", "auth_state_changed")
+        end
         if self.screen ~= "lobby" then show(self, "lobby") end
     end))
 
