@@ -75,7 +75,6 @@ local STATE_AI_SELECT = "ai_select"
 local STATE_TOURNEY   = "tournament"
 local STATE_TEAM_JOIN = "team_join"
 local STATE_TEAM_MENU = "team_menu"
-local STATE_TEAM_CREATE = "team_create"
 
 -- ---------------------------------------------------------------------------
 -- Tutorial data
@@ -735,172 +734,6 @@ local function draw_team_join(self)
     self.buttons[#self.buttons + 1] = { node = bkb, id = "back_to_lobby" }
 end
 
--- Create a Team Tournament — owner funds the grand prize from their own
--- balance, picks a max player count (which auto-suggests a bracket depth via
--- cup rules) and games-per-level, and can optionally reserve a custom
--- invitation code. Lives entirely on the lobby screen now (no more routing
--- through the online screen just to open this form) — the row-height budget
--- below is computed from summed constants, not hand-picked, ported from the
--- version of this dialog that was already verified (via a mocked Defold GUI
--- harness) to lay out every row without overlap.
-local function draw_team_create(self)
-    local tc = self.team_create or { prize = 1000, max_players = 8, gpl_i = 2, code = "", submitting = false, show_code_kb = false }
-    self.team_create = tc
-
-    local scrim = track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.85)))
-    self.buttons[#self.buttons + 1] = { node = scrim, id = "dialog_block" }
-
-    local NOTE_C = C_MUTED
-
-    -- With every row always shown — including the on-screen invite-code
-    -- keyboard — this panel summed to ~704px tall, taller than the 720
-    -- logical canvas itself with zero margin left for safe-area insets.
-    -- That's what was pushing the BACK button (and sometimes the top rows)
-    -- off the visible screen. The invite code is optional and defaults to
-    -- AUTO, so keyboard_block below is now only added once the player taps
-    -- in to customize it (see the INVITE CODE section further down); PAD/
-    -- KB_ROW/KB_GAP are also trimmed slightly as extra margin.
-    local PAD        = 16
-    local ROW_LABEL  = 20
-    local ROW_GAP    = 8
-    local STEP_ROW   = 40
-    local SEC_GAP    = 14
-    local KB_ROW     = 28
-    local KB_GAP     = 4
-    local SUB_H      = 18 -- the "-> N levels" subtitle line
-
-    local grand_prize_block = ROW_LABEL + ROW_GAP + STEP_ROW + SEC_GAP
-    local max_players_block = ROW_LABEL + ROW_GAP + STEP_ROW + ROW_GAP + SUB_H + SEC_GAP
-    local games_level_block = ROW_LABEL + ROW_GAP + STEP_ROW + SEC_GAP
-    local invite_code_block = ROW_LABEL + ROW_GAP + STEP_ROW + ROW_GAP
-    local keyboard_block    = tc.show_code_kb and (5 * (KB_ROW + KB_GAP)) or 0 -- 3 letter rows + digit row + delete row, only once expanded
-    local msg_reserve       = 26
-    local submit_block      = 50
-    local header_block      = 30 + 10 + 1 + 14 -- title + gap + divider + gap
-
-    local content_h = header_block + grand_prize_block + max_players_block
-        + games_level_block + invite_code_block + keyboard_block + msg_reserve + submit_block
-    local pw, ph = 560, content_h + PAD * 2
-
-    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), C_BORDER))
-    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw - 2, ph - 2, 0), C_TILE))
-    track(self, ui.box(vmath.vector3(CX, CY + ph / 2 - 2, 0), vmath.vector3(pw, 4, 0), C_U_TEAM))
-
-    local step_w = 220
-    local cursor_y = CY + ph/2 - PAD
-
-    text_sh(self, vmath.vector3(CX, cursor_y - 10, 0), "CREATE TEAM TOURNAMENT", "subtitle2", C_CREAM, 1, -1)
-    cursor_y = cursor_y - 30 - 10
-
-    track(self, ui.box(vmath.vector3(CX, cursor_y, 0), vmath.vector3(pw - 48, 1, 0), vmath.vector4(1, 1, 1, 0.14)))
-    cursor_y = cursor_y - 1 - 14
-
-    -- GRAND PRIZE
-    track(self, ui.text(vmath.vector3(CX, cursor_y, 0), "GRAND PRIZE (from your balance)", "small", NOTE_C))
-    cursor_y = cursor_y - ROW_LABEL - ROW_GAP
-    mkbtn(self, "tc_prize_minus", vmath.vector3(CX - step_w/2 - 28, cursor_y - STEP_ROW/2, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
-    track(self, ui.box(vmath.vector3(CX, cursor_y - STEP_ROW/2, 0), vmath.vector3(step_w, STEP_ROW, 0), C_DARK))
-    track(self, ui.text(vmath.vector3(CX, cursor_y - STEP_ROW/2, 0), commas(tc.prize) .. " COINS", "body", C_GOLD))
-    mkbtn(self, "tc_prize_plus", vmath.vector3(CX + step_w/2 + 28, cursor_y - STEP_ROW/2, 0), vmath.vector3(40, 40, 0), "+", "secondary_btn")
-    cursor_y = cursor_y - STEP_ROW - SEC_GAP
-
-    -- MAX PLAYERS + auto-suggested level count
-    track(self, ui.text(vmath.vector3(CX, cursor_y, 0), "MAX PLAYERS", "small", NOTE_C))
-    cursor_y = cursor_y - ROW_LABEL - ROW_GAP
-    mkbtn(self, "tc_players_minus", vmath.vector3(CX - step_w/2 - 28, cursor_y - STEP_ROW/2, 0), vmath.vector3(40, 40, 0), "-", "secondary_btn")
-    track(self, ui.box(vmath.vector3(CX, cursor_y - STEP_ROW/2, 0), vmath.vector3(step_w, STEP_ROW, 0), C_DARK))
-    track(self, ui.text(vmath.vector3(CX, cursor_y - STEP_ROW/2, 0), tostring(tc.max_players), "body", C_CREAM))
-    mkbtn(self, "tc_players_plus", vmath.vector3(CX + step_w/2 + 28, cursor_y - STEP_ROW/2, 0), vmath.vector3(40, 40, 0), "+", "secondary_btn")
-    cursor_y = cursor_y - STEP_ROW - ROW_GAP
-    track(self, ui.text(vmath.vector3(CX, cursor_y - SUB_H/2, 0),
-        string.format("-> %d levels (cup rules, 3-7)", suggested_levels(tc.max_players)), "small", NOTE_C))
-    cursor_y = cursor_y - SUB_H - SEC_GAP
-
-    -- GAMES PER LEVEL
-    track(self, ui.text(vmath.vector3(CX, cursor_y, 0), "GAMES PER LEVEL (to advance)", "small", NOTE_C))
-    cursor_y = cursor_y - ROW_LABEL - ROW_GAP
-    local gpl_opts = { 1, 3, 5 }
-    local seg_w, seg_gap = 120, 12
-    local seg_n = #gpl_opts
-    for i, v in ipairs(gpl_opts) do
-        local sx = CX + (i - (seg_n+1)/2) * (seg_w + seg_gap)
-        local on = (tc.gpl_i or 2) == i
-        local box = track(self, ui.box(vmath.vector3(sx, cursor_y - STEP_ROW/2, 0), vmath.vector3(seg_w, STEP_ROW, 0), on and C_U_TEAM or C_DARK))
-        self.buttons[#self.buttons+1] = { node = box, id = "tc_gpl", data = i }
-        track(self, ui.text(vmath.vector3(sx, cursor_y - STEP_ROW/2, 0), "Best of " .. v, "small", C_CREAM))
-    end
-    cursor_y = cursor_y - STEP_ROW - SEC_GAP
-
-    -- INVITE CODE (optional custom word — blank means auto-generated). The
-    -- pill itself is the expand/collapse toggle for the keyboard below it:
-    -- collapsed by default, since AUTO is the common path and the keyboard
-    -- alone is taller than every other block in this form combined.
-    track(self, ui.text(vmath.vector3(CX, cursor_y, 0), "INVITE CODE (optional, leave blank to auto-generate)", "small", NOTE_C))
-    cursor_y = cursor_y - ROW_LABEL - ROW_GAP
-    track(self, ui.box(vmath.vector3(CX, cursor_y - STEP_ROW/2, 0), vmath.vector3(300, STEP_ROW, 0), C_DARK))
-    local code_shown
-    if tc.code ~= "" then
-        code_shown = tc.code
-    elseif tc.show_code_kb then
-        code_shown = "TYPE BELOW..."
-    else
-        code_shown = "AUTO  ·  TAP TO CUSTOMIZE"
-    end
-    track(self, ui.text(vmath.vector3(CX, cursor_y - STEP_ROW/2, 0), code_shown, "small", (tc.code ~= "") and C_CREAM or NOTE_C))
-    local code_toggle_hit = track(self, ui.box(vmath.vector3(CX, cursor_y - STEP_ROW/2, 0), vmath.vector3(300, STEP_ROW, 0), C_TRANSP))
-    self.buttons[#self.buttons + 1] = { node = code_toggle_hit, id = "tc_code_toggle" }
-    cursor_y = cursor_y - STEP_ROW - ROW_GAP
-
-    -- Keyboard, writes into tc.code — reuses the same TEAM_KB layout as
-    -- draw_team_join, with a distinct "tc_key_" id prefix so the two
-    -- keyboards' button handlers never collide. Only drawn once expanded —
-    -- this is the block that no longer taxes the panel height by default.
-    if tc.show_code_kb then
-        local kw, kh, kg = 44, KB_ROW, KB_GAP
-        local function key(px, py, w, ch, label)
-            track(self, ui.box(vmath.vector3(px, py, 0), vmath.vector3(w, kh, 0), C_BORDER))
-            track(self, ui.box(vmath.vector3(px, py, 0), vmath.vector3(w - 2, kh - 2, 0), C_DARK))
-            track(self, ui.text(vmath.vector3(px, py, 0), label or ch, "small", C_CREAM))
-            local hit = track(self, ui.box(vmath.vector3(px, py, 0), vmath.vector3(w, kh, 0), C_TRANSP))
-            self.buttons[#self.buttons+1] = { node = hit, id = "tc_key_" .. ch, data = (ch ~= "back") and ch or nil }
-        end
-        local row_py = cursor_y - kh/2
-        for r, row in ipairs(TEAM_KB) do
-            local n = #row
-            local roww = n * (kw + kg) - kg
-            local kx0 = CX - roww/2 + kw/2
-            local py = row_py - (r-1) * (KB_ROW + KB_GAP)
-            for i = 1, n do
-                key(kx0 + (i-1) * (kw + kg), py, kw, row:sub(i, i))
-            end
-        end
-        local digit_py = row_py - 3 * (KB_ROW + KB_GAP)
-        local digits = "0123456789"
-        local d_roww = 10 * (kw + kg) - kg
-        local d_kx0 = CX - d_roww/2 + kw/2
-        for i = 1, 10 do
-            key(d_kx0 + (i-1) * (kw + kg), digit_py, kw, digits:sub(i, i))
-        end
-        local delete_py = digit_py - (KB_ROW + KB_GAP)
-        key(CX, delete_py, 300, "back", "DELETE")
-        cursor_y = delete_py - KB_ROW/2 - ROW_GAP
-    end
-
-    if tc.msg then
-        track(self, ui.text(vmath.vector3(CX, cursor_y, 0), tc.msg, "small",
-            tc.msg_ok and vmath.vector4(0.3, 0.9, 0.4, 1) or vmath.vector4(1, 0.35, 0.35, 1)))
-    end
-
-    local sub_label = tc.submitting and "CREATING..." or "CREATE"
-    local sub_y = CY - ph/2 + PAD + submit_block/2
-    local sbtn = track(self, ui.btn9(vmath.vector3(CX, sub_y, 0), vmath.vector3(pw - 60, submit_block, 0), "primary_btn"))
-    text_sh(self, vmath.vector3(CX, sub_y + 2, 0), sub_label, "body", C_CREAM, 2, -2)
-    self.buttons[#self.buttons + 1] = { node = sbtn, id = "tc_submit" }
-
-    local bkb = track(self, ui.btn9(vmath.vector3(CX - pw / 2 + 50, CY + ph / 2 - 24, 0), vmath.vector3(78, 32, 0), "secondary_btn"))
-    track(self, ui.text(vmath.vector3(CX - pw / 2 + 50, CY + ph / 2 - 26, 0), "< BACK", "small", C_CREAM))
-    self.buttons[#self.buttons + 1] = { node = bkb, id = "back_to_lobby" }
-end
 
 -- ---------------------------------------------------------------------------
 -- Main Rebuild
@@ -1019,17 +852,13 @@ local function rebuild(self)
     -- and above the offline modes. CREATE and JOIN are their own buttons
     -- directly on the tile so both are reachable in a single tap, instead
     -- of tapping the tile to open a separate CREATE/JOIN BY CODE picker
-    -- first (STATE_TEAM_MENU / draw_team_menu are still here and still used
-    -- for the has_team_tournament case below, since there's nothing to
-    -- create or join once you're already in one). CREATE itself still lives
-    -- entirely on this screen (STATE_TEAM_CREATE), no routing through the
-    -- online-users screen just to fill out the form.
+    -- first (STATE_TEAM_MENU / draw_team_menu are still used for the
+    -- has_team_tournament case below, since there is nothing to create or
+    -- join once you are already in one). CREATE now opens the dedicated
+    -- team-tournament screen rather than an in-lobby dialog.
     -- -----------------------------------------------------------------------
-    -- Team tournaments are parked until the flow is finished: the tile still
-    -- shows so the mode is discoverable, but it carries a COMING SOON badge
-    -- instead of live CREATE/JOIN/OPEN buttons. badge_label renders the
-    -- non-clickable muted pill (no btn_id, no child_buttons), so nothing on
-    -- the tile registers a hit box and the whole tile is inert.
+    local has_team_tournament = ws.current_user_data and ws.current_user_data.myTeamTournamentId
+        and tostring(ws.current_user_data.myTeamTournamentId) ~= ""
     mode_tile(self, {
         x = team_cx, y = row_a_cy, w = team_w, h = row_a_h,
         accent      = C_U_TEAM,
@@ -1037,8 +866,13 @@ local function rebuild(self)
         top_left_2  = "TEAM",
         numeral     = "02",
         title       = "TEAM TOURNAMENTS",
-        sub         = "Fund a prize, invite your team",
-        badge_label = "COMING SOON",
+        sub         = has_team_tournament and "You're in one — manage it" or "Fund a prize, invite your team",
+        cta_label   = has_team_tournament and "OPEN" or nil,
+        btn_id      = has_team_tournament and "team_action_open" or nil,
+        child_buttons = (not has_team_tournament) and {
+            { id = "team_menu_create", label = "CREATE", style = "primary_btn" },
+            { id = "team_menu_join",   label = "JOIN",   style = "secondary_btn" },
+        } or nil,
     })
 
     -- -----------------------------------------------------------------------
@@ -1127,8 +961,6 @@ local function rebuild(self)
         draw_team_menu(self)
     elseif self.state == STATE_TEAM_JOIN then
         draw_team_join(self)
-    elseif self.state == STATE_TEAM_CREATE then
-        draw_team_create(self)
     end
 
     draw_tutorial(self)
@@ -1305,81 +1137,6 @@ local function handle(self, b)
             end)
         end
 
-    elseif b.id == "tc_prize_minus" or b.id == "tc_prize_plus" then
-        local tc = self.team_create
-        if tc and not tc.submitting then
-            local step = (b.id == "tc_prize_plus") and 500 or -500
-            tc.prize = math.max(500, math.min(50000, (tc.prize or 1000) + step))
-            rebuild(self)
-        end
-    elseif b.id == "tc_players_minus" or b.id == "tc_players_plus" then
-        local tc = self.team_create
-        if tc and not tc.submitting then
-            local step = (b.id == "tc_players_plus") and 2 or -2
-            tc.max_players = math.max(4, math.min(64, (tc.max_players or 8) + step))
-            rebuild(self)
-        end
-    elseif b.id == "tc_gpl" then
-        local tc = self.team_create
-        if tc and not tc.submitting then tc.gpl_i = b.data; rebuild(self) end
-    elseif b.id == "tc_code_toggle" then
-        local tc = self.team_create
-        if tc and not tc.submitting then tc.show_code_kb = not tc.show_code_kb; rebuild(self) end
-    elseif b.id:sub(1, 7) == "tc_key_" then
-        local tc = self.team_create
-        if tc and not tc.submitting then
-            local ch = b.id:sub(8)
-            if ch == "back" then
-                tc.code = tc.code:sub(1, -2)
-            elseif #tc.code < 16 then
-                tc.code = tc.code .. tostring(b.data or ""):upper()
-            end
-            rebuild(self)
-        end
-    elseif b.id == "tc_submit" then
-        local tc = self.team_create
-        if not tc or tc.submitting then return end
-        local uid = (ws.current_user_data or {})._id
-        if not uid or uid == "" then
-            tc.msg, tc.msg_ok = "Sign in first.", false
-            rebuild(self)
-            return
-        end
-        tc.submitting = true
-        tc.msg, tc.msg_ok = nil, nil
-        rebuild(self)
-        local gpl_opts = { 1, 3, 5 }
-        local payload = {
-            userId = uid,
-            grandPrizeCoins = tc.prize,
-            maxPlayers = tc.max_players,
-            gamesPerLevel = gpl_opts[tc.gpl_i or 2] or 3,
-        }
-        if tc.code ~= "" then payload.invitationCode = tc.code end
-        api.create_team_tournament(payload, function(result)
-            local cur = self.team_create
-            if not cur then return end
-            cur.submitting = false
-            if result.success then
-                local created = (result.data or {}).tournament or {}
-                local code = created.invitationCode or "?"
-                cur.msg, cur.msg_ok = "Created! Invitation code: " .. tostring(code), true
-                toast.success("Team tournament created — code: " .. tostring(code))
-                local u = ws.current_user_data or {}
-                u.myTeamTournamentId = created._id
-                u.myTeamTournamentIsOwner = true
-                ws.current_user_data = u
-                if self._active then rebuild(self) end
-                timer.delay(1.5, false, function()
-                    if self.team_create == cur then set_state(self, STATE_LOBBY) end
-                end)
-            else
-                local err = (result.data and result.data.error) or result.message or "Could not create the team tournament."
-                cur.msg, cur.msg_ok = err, false
-                toast.error(err)
-                if self._active then rebuild(self) end
-            end
-        end)
     end
 end
 

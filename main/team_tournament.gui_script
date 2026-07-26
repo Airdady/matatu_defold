@@ -420,6 +420,9 @@ local function on_created(self, res)
     if t._id then
         ws.current_user_data = ws.current_user_data or {}
         ws.current_user_data.myTeamTournamentId = t._id
+        -- online_right's bracket modal reads this to decide whether to show
+        -- the owner-only admin controls; the creator is always the owner.
+        ws.current_user_data.myTeamTournamentIsOwner = true
     end
     msg.post("#controller", "goto_lobby")
 end
