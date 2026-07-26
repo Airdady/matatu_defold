@@ -194,6 +194,10 @@ local function open_dialog(self, name, stake, request_id, avatar, opponent_id, h
         compact = compact and true or false,
     }
     self.dlg_alpha = 0
+    -- Claim top input priority. The FULL dialog is modal, so nothing beneath
+    -- it may act on a tap; the compact in-game toast is deliberately
+    -- non-disruptive and makes no claim, letting play continue.
+    if not self.dialog.compact then app_state.modal_open("incoming") end
     -- Audible cue when an opponent's challenge arrives. EVERY incoming request
     -- (normal, battle, tournament, knockout — full dialog or compact banner)
     -- uses the same request.ogg cue (snd_notify on the sibling controller object).
@@ -204,6 +208,7 @@ end
 
 local function close_dialog(self)
     self.dialog = nil
+    app_state.modal_close("incoming")
     rebuild(self)
 end
 
@@ -321,12 +326,14 @@ function on_input(self, action_id, action)
                         ws.accept_game_request(self.dialog.request_id)
                     end
                     self.dialog = nil
+                    app_state.modal_close("incoming")
                     rebuild(self)
                 elseif id == "decline" then
                     if self.dialog and self.dialog.request_id and self.dialog.request_id ~= "" then
                         ws.decline_game_request(self.dialog.request_id)
                     end
                     self.dialog = nil
+                    app_state.modal_close("incoming")
                     rebuild(self)
                 end
                 return true

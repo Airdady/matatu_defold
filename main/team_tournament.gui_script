@@ -617,6 +617,10 @@ function on_message(self, message_id, message, sender)
 end
 
 function on_input(self, action_id, action)
+    -- Any modal on top outranks a screen. These components are listed
+    -- BEFORE the dialogs in controller.go, so without this they would
+    -- consume the tap first and act on it behind an open dialog.
+    if app_state.input_blocked() then return false end
     if not self._active then return end
     local f = self.form
 
