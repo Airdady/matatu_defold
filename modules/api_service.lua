@@ -275,6 +275,11 @@ function M.join_team_tournament(payload, cb)
     request("POST", "/tournaments/team/join", payload, cb)
 end
 
+-- Owner-only: cancels the cup and refunds the escrowed grand prize.
+function M.delete_team_tournament(tournament_id, user_id, cb)
+    request("DELETE", "/tournaments/team/" .. tournament_id, { userId = user_id }, cb)
+end
+
 -- Owner-only: flips a gathering cup ('upcoming') to running ('active').
 -- Refused by the backend with fewer than 2 players joined.
 function M.start_team_tournament(tournament_id, user_id, cb)
