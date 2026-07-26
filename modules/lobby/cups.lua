@@ -71,7 +71,13 @@ function M.draw(self, rail_l, RAIL_W, grid_t)
     D.text_sh(self, vmath.vector3(rail_cx, hy, 0), "OPEN TEAM CUPS", "small", T.CREAM, 1, -1)
     hy = hy - 22
 
-    local list = self.team_cups or {}
+    -- The cup you OWN is not listed here: all of its detail and its actions
+    -- live on the TEAM CUPS tile, so there is one place to run it rather
+    -- than two that can disagree. The list is other people's open cups.
+    local list = {}
+    for _, t in ipairs(self.team_cups or {}) do
+        if not t.isOwner then list[#list + 1] = t end
+    end
         local view_t  = hy - 4
     local view_b  = rail_b + 10
     local view_h  = view_t - view_b
@@ -150,24 +156,7 @@ function M.draw(self, rail_l, RAIL_W, grid_t)
             -- "JOINED" label, so every card in the list does something.
             local bw, bh = 92, 32
             local bx = card_l + card_w - 14 - bw / 2
-            if t.isOwner then
-                -- The cup's owner runs it from here: START it while it is
-                -- still gathering players, and DELETE it either way (the
-                -- backend refunds the escrowed prize). Two narrower buttons
-                -- so both fit the card's action row.
-                local ow, gap = 68, 6
-                local o2x = card_l + card_w - 14 - ow / 2
-                local o1x = o2x - ow - gap
-                D.btn(self, "team_cup_delete", vmath.vector3(o1x, card_b + 20, 0),
-                    vmath.vector3(ow, bh, 0), "DELETE", "secondary_btn", t._id)
-                if t.started then
-                    D.btn(self, "team_cup_standings", vmath.vector3(o2x, card_b + 20, 0),
-                        vmath.vector3(ow, bh, 0), "TABLE", "secondary_btn", t._id)
-                else
-                    D.btn(self, "team_cup_start", vmath.vector3(o2x, card_b + 20, 0),
-                        vmath.vector3(ow, bh, 0), "START", "primary_btn", t._id)
-                end
-            elseif mine then
+            if mine then
                 D.btn(self, "team_cup_standings", vmath.vector3(bx, card_b + 20, 0),
                     vmath.vector3(bw, bh, 0), "TABLE", "secondary_btn", t._id)
             elseif t.isFull then
