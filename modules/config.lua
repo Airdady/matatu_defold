@@ -36,28 +36,28 @@ M.TURN_SECONDS = 30
 -- SETTLEMENT_STAKE_LEVELS_BY_GAME (src/common/constants/gameConfig.ts) so a
 -- selected stake button here is one the backend actually recognises for
 -- that game — Matatu's amounts are unchanged:
---   UGX 100  -> NGN 50  (charge 10) -> KES 5  (charge 1)
 --   UGX 200  -> NGN 100 (charge 10) -> KES 10 (charge 1)
 --   UGX 500  -> NGN 200 (charge 10) -> KES 20 (charge 1)
 --   UGX 1000 -> NGN 500 (charge 20) -> KES 50 (charge 2)
+--   UGX 2000 -> NGN 800 (charge 40) -> KES 80 (charge 4)   [new top tier]
+-- The 100 tier (UGX 100 / NGN 50 / KES 5) has been retired.
 local STAKE_LEVELS_BY_GAME = {
   MATATU = {
     { amount = 0, charge = 0, points = 0, label = "Free" },
-    -- Was charge=10 while the backend's real settlement charge for this
-    -- tier was actually 0 (nobody paid the platform's running cost) — now
-    -- 25, matching the fixed SETTLEMENT_STAKE_LEVELS_BY_GAME charge so what
-    -- this button shows is what both players actually get charged.
-    { amount = 100, charge = 25, points = 25, label = "100" },
     { amount = 200, charge = 20, points = 20, label = "200" },
     { amount = 500, charge = 50, points = 50, label = "500" },
     { amount = 1000, charge = 100, points = 100, label = "1000" },
+    -- New top tier replacing the retired 100. ALL_PAY: both players are
+    -- charged amount + charge when the game starts, so 2000 costs each of
+    -- them 2100 and the winner takes a clean 4000.
+    { amount = 2000, charge = 100, points = 100, label = "2000" },
   },
   WHOT = {
     { amount = 0, charge = 0, points = 0, label = "Free" },
     { amount = 50, charge = 10, points = 10, label = "50" },
-    { amount = 100, charge = 10, points = 10, label = "100" },
     { amount = 200, charge = 10, points = 10, label = "200" },
     { amount = 500, charge = 20, points = 20, label = "500" },
+    { amount = 800, charge = 40, points = 40, label = "800" },
   },
   KADI = {
     { amount = 0, charge = 0, points = 0, label = "Free" },
@@ -65,6 +65,7 @@ local STAKE_LEVELS_BY_GAME = {
     { amount = 10, charge = 1, points = 1, label = "10" },
     { amount = 20, charge = 1, points = 1, label = "20" },
     { amount = 50, charge = 2, points = 2, label = "50" },
+    { amount = 80, charge = 4, points = 4, label = "80" },
   },
 }
 
