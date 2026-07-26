@@ -1,0 +1,592 @@
+-- team_tournament.gui_script — full-screen CREATE / EDIT for a team tournament.
+--
+-- Replaces the cramped STATE_TEAM_CREATE dialog that used to live inside
+-- lobby.gui_script. That panel had to compute its own height from a stack of
+-- per-row constants and still overflowed the 720px canvas once the invite-code
+-- keyboard was expanded, which is why the keyboard had to be collapsible and
+-- the SUBMIT button kept sliding off-screen. A screen has the whole canvas, so
+-- every field (including a permanently-visible keyboard and the invite list)
+-- fits with room to spare.
+--
+-- Game-agnostic: matatu, whot and kadi all route here. The only per-game bits
+-- are the currency label and the `rules` value sent to the backend, both taken
+-- from modules.game_mode.
+--
+-- FIELDS — mirror POST /tournaments/team (be_matatu
+-- common/controllers/tournament.controller.js createTeamTournament):
+--   userId          required  — the owner, taken from the session
+--   grandPrizeCoins required  — > 0 and <= owner balance (escrowed on create)
+--   name            optional  — defaults to 'Team Tournament' server-side
+--   maxPlayers      optional  — clamped 2..128, default 8
+--   gamesPerLevel   optional  — must be 1 | 3 | 5, default 3
+--   invitationCode  optional  — 3-16 A-Z0-9, must be unique; blank = generated
+--   inviteUsernames optional  — unknown names come back as notFoundUsernames
+--   rules           optional  — per game
+
+local ui        = require("modules.ui")
+local app_state = require("modules.app_state")
+local ws        = require("modules.websocket_manager")
+local api       = require("modules.api_service")
+local screen    = require("modules.screen")
+local toast     = require("modules.toast")
+local GameMode  = require("modules.game_mode")
+
+local LOGICAL_W, LOGICAL_H = 1280, 720
+local CX, CY = 640, 360
+local EDGE_L, EDGE_R, EDGE_B, EDGE_T = 0, 1280, 0, 720
+
+local C_BG      = vmath.vector4(0.042, 0.033, 0.027, 1)
+local C_PANEL   = vmath.vector4(0.082, 0.063, 0.051, 1)
+local C_DARK    = vmath.vector4(0.06, 0.05, 0.04, 1)
+local C_BORDER  = vmath.vector4(0.165, 0.129, 0.102, 1)
+local C_CREAM   = vmath.vector4(0.957, 0.925, 0.843, 1)
+local C_MUTED   = vmath.vector4(0.455, 0.400, 0.325, 1)
+local C_GOLD    = vmath.vector4(0.784, 0.573, 0.165, 1)
+local C_TEAM    = vmath.vector4(0.36, 0.42, 0.85, 1)
+local C_ERROR   = vmath.vector4(0.85, 0.35, 0.35, 1)
+local C_OK      = vmath.vector4(0.35, 0.78, 0.45, 1)
+local C_TRANSP  = vmath.vector4(0, 0, 0, 0)
+
+-- Backend contract constants. Keep in lockstep with createTeamTournament.
+local MIN_PLAYERS, MAX_PLAYERS = 2, 128
+local GPL_OPTIONS              = { 1, 3, 5 }
+local CODE_MIN, CODE_MAX       = 3, 16
+local NAME_MAX                 = 32
+local USERNAME_MAX             = 20
+local MAX_INVITES              = 12
+
+-- Prize stepper granularity, in the game's own currency.
+local PRIZE_STEP_BY_GAME = { MATATU = 500, WHOT = 200, KADI = 20 }
+local PRIZE_STEP = PRIZE_STEP_BY_GAME[GameMode.GAME] or 500
+
+-- Field a keystroke is routed to.
+local F_NAME, F_CODE, F_INVITE = "name", "code", "invite"
+
+local KB_ROWS = { "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM" }
+local KB_DIGITS = "0123456789"
+
+local function refresh_wh()
+    local m = screen.metrics()
+    EDGE_L, EDGE_R, EDGE_B, EDGE_T = m.L, m.R, m.B, m.T
+end
+
+local function commas(n)
+    local s = tostring(math.floor(tonumber(n) or 0))
+    local out = s:reverse():gsub("(%d%d%d)", "%1,"):reverse()
+    return (out:gsub("^,", ""))
+end
+
+-- Mirrors computeSuggestedLevels() in the controller: ceil(log2(n)) clamped
+-- 3..7. Shown so the owner can see the bracket depth their player count
+-- implies BEFORE committing coins to it.
+local function suggested_levels(max_players)
+    local n = math.max(2, tonumber(max_players) or 2)
+    local s = math.ceil(math.log(n) / math.log(2))
+    return math.max(3, math.min(7, s))
+end
+
+local function balance()
+    return math.floor(tonumber((ws.current_user_data or {}).balance) or 0)
+end
+
+local function rules_for_game()
+    if GameMode.is_whot and GameMode.is_whot() then return "WHOT" end
+    if GameMode.GAME == "KADI" then return "KADI" end
+    return "JOKERS"
+end
+
+----------------------------------------------------------------------
+-- node bookkeeping
+----------------------------------------------------------------------
+local function track(self, node)
+    self.nodes[#self.nodes + 1] = node
+    return node
+end
+
+local function clear(self)
+    for _, n in ipairs(self.nodes or {}) do pcall(gui.delete_node, n) end
+    self.nodes, self.buttons = {}, {}
+end
+
+local function mkbtn(self, id, pos, size, label, style, data, enabled)
+    local on = enabled ~= false
+    track(self, ui.btn9(pos, size, style or "secondary_btn"))
+    track(self, ui.text(pos, label, "btn_md", on and C_CREAM or C_MUTED))
+    if on then
+        local hit = track(self, ui.box(pos, size, C_TRANSP))
+        self.buttons[#self.buttons + 1] = { node = hit, id = id, data = data }
+    end
+end
+
+local function field_box(self, id, pos, size, value, placeholder, focused)
+    track(self, ui.box(pos, size, focused and C_BORDER or C_DARK))
+    track(self, ui.box(pos, vmath.vector3(size.x - 3, size.y - 3, 0), C_DARK))
+    local shown = (value ~= "" and value) or placeholder
+    track(self, ui.text(pos, shown, "small", (value ~= "") and C_CREAM or C_MUTED))
+    if focused then
+        -- Underline the focused field so it's obvious which one the keyboard
+        -- is typing into — there are three text fields on this screen.
+        track(self, ui.box(vmath.vector3(pos.x, pos.y - size.y / 2 + 2, 0),
+            vmath.vector3(size.x - 8, 2, 0), C_TEAM))
+    end
+    local hit = track(self, ui.box(pos, size, C_TRANSP))
+    self.buttons[#self.buttons + 1] = { node = hit, id = "focus", data = id }
+end
+
+----------------------------------------------------------------------
+-- state
+----------------------------------------------------------------------
+local function fresh_form()
+    return {
+        edit_id     = nil,     -- set when editing an existing tournament
+        name        = "",
+        prize       = PRIZE_STEP * 2,
+        max_players = 8,
+        gpl_i       = 2,       -- index into GPL_OPTIONS -> 3
+        code        = "",
+        invites     = {},
+        invite_buf  = "",
+        focus       = F_NAME,
+        submitting  = false,
+        msg         = nil,
+        msg_ok      = false,
+        locked      = false,   -- structure locked: players already joined
+    }
+end
+
+local function set_msg(self, text, ok)
+    self.form.msg = text
+    self.form.msg_ok = ok and true or false
+end
+
+----------------------------------------------------------------------
+-- draw
+----------------------------------------------------------------------
+local function rebuild(self)
+    clear(self)
+    if not self._active then return end
+    local f = self.form
+    local editing = f.edit_id ~= nil
+
+    track(self, ui.box(vmath.vector3(CX, CY, 0),
+        vmath.vector3(EDGE_R - EDGE_L, EDGE_T - EDGE_B, 0), C_BG))
+
+    -- ---- header --------------------------------------------------------
+    local head_y = EDGE_T - 34
+    track(self, ui.box(vmath.vector3(CX, head_y, 0), vmath.vector3(EDGE_R - EDGE_L, 68, 0), C_PANEL))
+    track(self, ui.box(vmath.vector3(CX, head_y - 34, 0), vmath.vector3(EDGE_R - EDGE_L, 3, 0), C_TEAM))
+    mkbtn(self, "back", vmath.vector3(EDGE_L + 74, head_y, 0), vmath.vector3(108, 44, 0), "BACK", "secondary_btn")
+    track(self, ui.text(vmath.vector3(CX, head_y, 0),
+        editing and "EDIT TEAM TOURNAMENT" or "CREATE TEAM TOURNAMENT", "subtitle2", C_CREAM))
+    track(self, ui.text(vmath.vector3(EDGE_R - 24, head_y, 0),
+        commas(balance()) .. " " .. tostring(GameMode.CURRENCY_CODE or ""), "small", C_GOLD))
+    gui.set_pivot(self.nodes[#self.nodes], gui.PIVOT_E)
+
+    -- Two columns: settings on the left, invites + keyboard on the right.
+    local col_l_cx = EDGE_L + (CX - EDGE_L) * 0.52
+    local col_r_cx = CX + (EDGE_R - CX) * 0.50
+    local col_w    = math.min(520, (EDGE_R - EDGE_L) * 0.44)
+    local y        = head_y - 62
+
+    local LBL_GAP, ROW_H, SEC_GAP = 20, 42, 20
+
+    local function label(cx_, text)
+        track(self, ui.text(vmath.vector3(cx_ - col_w / 2, y, 0), text, "small", C_MUTED))
+        gui.set_pivot(self.nodes[#self.nodes], gui.PIVOT_W)
+        y = y - LBL_GAP
+    end
+
+    -- ---- NAME ----------------------------------------------------------
+    label(col_l_cx, "TOURNAMENT NAME (optional)")
+    field_box(self, F_NAME, vmath.vector3(col_l_cx, y - ROW_H / 2, 0),
+        vmath.vector3(col_w, ROW_H, 0), f.name, "TEAM TOURNAMENT", f.focus == F_NAME)
+    y = y - ROW_H - SEC_GAP
+
+    -- ---- GRAND PRIZE ---------------------------------------------------
+    label(col_l_cx, "GRAND PRIZE  (funded from your balance, required)")
+    local step_w = col_w - 120
+    local can_edit_prize = not editing -- escrow is taken at create time only
+    mkbtn(self, "prize_minus", vmath.vector3(col_l_cx - col_w / 2 + 26, y - ROW_H / 2, 0),
+        vmath.vector3(44, ROW_H, 0), "-", "secondary_btn", nil, can_edit_prize)
+    track(self, ui.box(vmath.vector3(col_l_cx, y - ROW_H / 2, 0), vmath.vector3(step_w, ROW_H, 0), C_DARK))
+    track(self, ui.text(vmath.vector3(col_l_cx, y - ROW_H / 2, 0),
+        commas(f.prize) .. "  " .. tostring(GameMode.CURRENCY_CODE or ""), "body",
+        (f.prize > balance()) and C_ERROR or C_GOLD))
+    mkbtn(self, "prize_plus", vmath.vector3(col_l_cx + col_w / 2 - 26, y - ROW_H / 2, 0),
+        vmath.vector3(44, ROW_H, 0), "+", "secondary_btn", nil, can_edit_prize)
+    y = y - ROW_H - 4
+    if editing then
+        track(self, ui.text(vmath.vector3(col_l_cx, y - 8, 0),
+            "Prize is escrowed at creation and cannot be changed.", "small", C_MUTED))
+    elseif f.prize > balance() then
+        track(self, ui.text(vmath.vector3(col_l_cx, y - 8, 0),
+            "More than your balance — top up or lower the prize.", "small", C_ERROR))
+    end
+    y = y - 18 - SEC_GAP
+
+    -- ---- MAX PLAYERS ---------------------------------------------------
+    label(col_l_cx, "MAX PLAYERS")
+    mkbtn(self, "players_minus", vmath.vector3(col_l_cx - col_w / 2 + 26, y - ROW_H / 2, 0),
+        vmath.vector3(44, ROW_H, 0), "-", "secondary_btn", nil, not f.locked)
+    track(self, ui.box(vmath.vector3(col_l_cx, y - ROW_H / 2, 0), vmath.vector3(step_w, ROW_H, 0), C_DARK))
+    track(self, ui.text(vmath.vector3(col_l_cx, y - ROW_H / 2, 0), tostring(f.max_players), "body", C_CREAM))
+    mkbtn(self, "players_plus", vmath.vector3(col_l_cx + col_w / 2 - 26, y - ROW_H / 2, 0),
+        vmath.vector3(44, ROW_H, 0), "+", "secondary_btn", nil, not f.locked)
+    y = y - ROW_H - 4
+    track(self, ui.text(vmath.vector3(col_l_cx, y - 8, 0),
+        string.format("Bracket depth: %d levels", suggested_levels(f.max_players)), "small", C_MUTED))
+    y = y - 18 - SEC_GAP
+
+    -- ---- GAMES PER LEVEL -----------------------------------------------
+    label(col_l_cx, "GAMES PER LEVEL (to advance)")
+    local seg_w = (col_w - 24) / #GPL_OPTIONS
+    for i, v in ipairs(GPL_OPTIONS) do
+        local sx = col_l_cx - col_w / 2 + seg_w / 2 + (i - 1) * (seg_w + 12)
+        local on = f.gpl_i == i
+        local b = track(self, ui.box(vmath.vector3(sx, y - ROW_H / 2, 0),
+            vmath.vector3(seg_w, ROW_H, 0), on and C_TEAM or C_DARK))
+        track(self, ui.text(vmath.vector3(sx, y - ROW_H / 2, 0), "Best of " .. v, "small", C_CREAM))
+        if not f.locked then
+            self.buttons[#self.buttons + 1] = { node = b, id = "gpl", data = i }
+        end
+    end
+    y = y - ROW_H - SEC_GAP
+
+    -- ---- INVITE CODE ---------------------------------------------------
+    label(col_l_cx, string.format("INVITE CODE (optional, %d-%d letters/numbers)", CODE_MIN, CODE_MAX))
+    field_box(self, F_CODE, vmath.vector3(col_l_cx, y - ROW_H / 2, 0),
+        vmath.vector3(col_w, ROW_H, 0), f.code, "AUTO-GENERATED", f.focus == F_CODE)
+    y = y - ROW_H
+
+    if f.locked then
+        track(self, ui.text(vmath.vector3(col_l_cx, y - 14, 0),
+            "Players have joined — structure is locked.", "small", C_MUTED))
+    end
+
+    -- ---- RIGHT COLUMN: invites ----------------------------------------
+    local ry = head_y - 62
+    track(self, ui.text(vmath.vector3(col_r_cx - col_w / 2, ry, 0),
+        string.format("INVITE PLAYERS BY USERNAME (%d/%d)", #f.invites, MAX_INVITES), "small", C_MUTED))
+    gui.set_pivot(self.nodes[#self.nodes], gui.PIVOT_W)
+    ry = ry - LBL_GAP
+
+    field_box(self, F_INVITE, vmath.vector3(col_r_cx - 56, ry - ROW_H / 2, 0),
+        vmath.vector3(col_w - 112, ROW_H, 0), f.invite_buf, "TYPE A USERNAME", f.focus == F_INVITE)
+    mkbtn(self, "invite_add", vmath.vector3(col_r_cx + col_w / 2 - 50, ry - ROW_H / 2, 0),
+        vmath.vector3(96, ROW_H, 0), "ADD", "primary_btn", nil,
+        f.invite_buf ~= "" and #f.invites < MAX_INVITES)
+    ry = ry - ROW_H - 10
+
+    local CHIP_H = 32
+    if #f.invites == 0 then
+        track(self, ui.text(vmath.vector3(col_r_cx, ry - CHIP_H / 2, 0),
+            "No invites yet — anyone with the code can still join.", "small", C_MUTED))
+        ry = ry - CHIP_H - 6
+    else
+        for i, uname in ipairs(f.invites) do
+            local cy_ = ry - CHIP_H / 2
+            track(self, ui.box(vmath.vector3(col_r_cx, cy_, 0), vmath.vector3(col_w, CHIP_H, 0), C_DARK))
+            track(self, ui.text(vmath.vector3(col_r_cx - col_w / 2 + 14, cy_, 0), uname, "small", C_CREAM))
+            gui.set_pivot(self.nodes[#self.nodes], gui.PIVOT_W)
+            local x_pos = vmath.vector3(col_r_cx + col_w / 2 - 22, cy_, 0)
+            track(self, ui.text(x_pos, "X", "small", C_ERROR))
+            local hit = track(self, ui.box(x_pos, vmath.vector3(36, CHIP_H, 0), C_TRANSP))
+            self.buttons[#self.buttons + 1] = { node = hit, id = "invite_del", data = i }
+            ry = ry - CHIP_H - 6
+        end
+    end
+
+    -- ---- KEYBOARD ------------------------------------------------------
+    -- Always visible: a screen has the room the old dialog didn't, so the
+    -- code field no longer needs a collapsible keyboard to fit.
+    local kb_top = math.min(ry - 14, EDGE_B + 232)
+    local KEY_W, KEY_H, KEY_GAP = 44, 40, 6
+    local ky = kb_top
+    for _, row in ipairs(KB_ROWS) do
+        local n = #row
+        local total = n * KEY_W + (n - 1) * KEY_GAP
+        for i = 1, n do
+            local ch = row:sub(i, i)
+            local kx = col_r_cx - total / 2 + KEY_W / 2 + (i - 1) * (KEY_W + KEY_GAP)
+            mkbtn(self, "key", vmath.vector3(kx, ky - KEY_H / 2, 0),
+                vmath.vector3(KEY_W, KEY_H, 0), ch, "secondary_btn", ch)
+        end
+        ky = ky - KEY_H - KEY_GAP
+    end
+    local n = #KB_DIGITS
+    local total = n * KEY_W + (n - 1) * KEY_GAP
+    for i = 1, n do
+        local ch = KB_DIGITS:sub(i, i)
+        local kx = col_r_cx - total / 2 + KEY_W / 2 + (i - 1) * (KEY_W + KEY_GAP)
+        mkbtn(self, "key", vmath.vector3(kx, ky - KEY_H / 2, 0),
+            vmath.vector3(KEY_W, KEY_H, 0), ch, "secondary_btn", ch)
+    end
+    ky = ky - KEY_H - KEY_GAP
+    mkbtn(self, "key_space", vmath.vector3(col_r_cx - 60, ky - KEY_H / 2, 0),
+        vmath.vector3(150, KEY_H, 0), "SPACE", "secondary_btn", nil, f.focus == F_NAME)
+    mkbtn(self, "key_del", vmath.vector3(col_r_cx + 70, ky - KEY_H / 2, 0),
+        vmath.vector3(130, KEY_H, 0), "DELETE", "secondary_btn")
+
+    -- ---- FOOTER --------------------------------------------------------
+    local foot_y = EDGE_B + 44
+    if f.msg then
+        track(self, ui.text(vmath.vector3(CX, foot_y + 42, 0), f.msg, "small",
+            f.msg_ok and C_OK or C_ERROR))
+    end
+    local submit_label
+    if f.submitting then
+        submit_label = editing and "SAVING..." or "CREATING..."
+    else
+        submit_label = editing and "SAVE CHANGES" or "CREATE TOURNAMENT"
+    end
+    mkbtn(self, "submit", vmath.vector3(CX, foot_y, 0), vmath.vector3(340, 52, 0),
+        submit_label, "primary_btn", nil, not f.submitting)
+end
+
+----------------------------------------------------------------------
+-- text entry
+----------------------------------------------------------------------
+local function target_limit(focus)
+    if focus == F_NAME then return NAME_MAX end
+    if focus == F_CODE then return CODE_MAX end
+    return USERNAME_MAX
+end
+
+local function push_char(self, ch)
+    local f = self.form
+    local lim = target_limit(f.focus)
+    if f.focus == F_NAME then
+        if #f.name < lim then f.name = f.name .. ch end
+    elseif f.focus == F_CODE then
+        -- The controller uppercases and strips non-alphanumerics anyway; do it
+        -- here too so what's on screen is exactly what will be stored.
+        if #f.code < lim then f.code = f.code .. ch:upper() end
+    else
+        if #f.invite_buf < lim then f.invite_buf = f.invite_buf .. ch end
+    end
+end
+
+local function pop_char(self)
+    local f = self.form
+    if f.focus == F_NAME then f.name = f.name:sub(1, -2)
+    elseif f.focus == F_CODE then f.code = f.code:sub(1, -2)
+    else f.invite_buf = f.invite_buf:sub(1, -2) end
+end
+
+----------------------------------------------------------------------
+-- submit
+----------------------------------------------------------------------
+local function validate(self)
+    local f = self.form
+    if not f.edit_id then
+        if f.prize <= 0 then return "A grand prize amount is required." end
+        if f.prize > balance() then return "Insufficient balance for that grand prize." end
+    end
+    if f.code ~= "" and (#f.code < CODE_MIN or #f.code > CODE_MAX) then
+        return string.format("Invite code must be %d-%d letters/numbers.", CODE_MIN, CODE_MAX)
+    end
+    if f.max_players < MIN_PLAYERS or f.max_players > MAX_PLAYERS then
+        return string.format("Players must be between %d and %d.", MIN_PLAYERS, MAX_PLAYERS)
+    end
+    return nil
+end
+
+local function on_created(self, res)
+    local f = self.form
+    f.submitting = false
+    if not res.success then
+        set_msg(self, res.message or "Could not create the tournament.", false)
+        rebuild(self)
+        return
+    end
+
+    -- The controller reports unresolvable usernames instead of silently
+    -- dropping them, so surface them rather than letting the owner believe
+    -- everyone was added.
+    local missing = (res.data or {}).notFoundUsernames
+    if type(missing) == "table" and #missing > 0 then
+        toast.info("Not found: " .. table.concat(missing, ", "))
+    end
+
+    local t = (res.data or {}).tournament or {}
+    if t.invitationCode then
+        toast.success("Created. Invite code: " .. tostring(t.invitationCode))
+    else
+        toast.success("Team tournament created.")
+    end
+
+    -- Reflect ownership immediately so the lobby shows the right state
+    -- without waiting for the next user_data refresh.
+    if t._id then
+        ws.current_user_data = ws.current_user_data or {}
+        ws.current_user_data.myTeamTournamentId = t._id
+    end
+    msg.post("#controller", "goto_lobby")
+end
+
+local function submit(self)
+    local f = self.form
+    if f.submitting then return end
+
+    local err = validate(self)
+    if err then set_msg(self, err, false); rebuild(self); return end
+
+    local uid = tostring((ws.current_user_data or {})._id or "")
+    if uid == "" then
+        set_msg(self, "Sign in first.", false); rebuild(self); return
+    end
+
+    f.submitting = true
+    set_msg(self, nil, false)
+    rebuild(self)
+
+    if f.edit_id then
+        -- Structure edits go through the generic update route; invites have
+        -- their own endpoint, so send whichever the owner actually changed.
+        local payload = {
+            name = (f.name ~= "" and f.name) or nil,
+            maxPlayers = f.max_players,
+            matchFormat = GPL_OPTIONS[f.gpl_i],
+        }
+        api.update_tournament(f.edit_id, payload, function(res)
+            if res.success and #f.invites > 0 then
+                api.invite_team_tournament(f.edit_id,
+                    { userId = uid, usernames = f.invites }, function(ires)
+                        f.submitting = false
+                        local missing = (ires.data or {}).notFoundUsernames
+                        if type(missing) == "table" and #missing > 0 then
+                            toast.info("Not found: " .. table.concat(missing, ", "))
+                        end
+                        toast.success("Tournament updated.")
+                        msg.post("#controller", "goto_lobby")
+                    end)
+            else
+                f.submitting = false
+                if res.success then
+                    toast.success("Tournament updated.")
+                    msg.post("#controller", "goto_lobby")
+                else
+                    set_msg(self, res.message or "Could not save changes.", false)
+                    rebuild(self)
+                end
+            end
+        end)
+        return
+    end
+
+    api.create_team_tournament({
+        userId          = uid,
+        name            = (f.name ~= "" and f.name) or nil,
+        grandPrizeCoins = f.prize,
+        maxPlayers      = f.max_players,
+        gamesPerLevel   = GPL_OPTIONS[f.gpl_i],
+        invitationCode  = (f.code ~= "" and f.code) or nil,
+        inviteUsernames = (#f.invites > 0) and f.invites or nil,
+        rules           = rules_for_game(),
+    }, function(res) on_created(self, res) end)
+end
+
+----------------------------------------------------------------------
+-- lifecycle
+----------------------------------------------------------------------
+function init(self)
+    self.nodes, self.buttons = {}, {}
+    self.form = fresh_form()
+    refresh_wh()
+end
+
+function on_message(self, message_id, message, sender)
+    if message_id == hash("screen_enter") then
+        refresh_wh()
+        msg.post(".", "acquire_input_focus")
+        self._active = true
+        -- Seed from whatever the caller handed over: app_state.team_edit is
+        -- set by the lobby when opening in EDIT mode, and cleared here so a
+        -- later CREATE never inherits a stale tournament id.
+        local seed = app_state.team_edit
+        app_state.team_edit = nil
+        self.form = fresh_form()
+        if type(seed) == "table" and seed._id then
+            local f = self.form
+            f.edit_id     = seed._id
+            f.name        = tostring(seed.name or "")
+            f.prize       = math.floor(tonumber((seed.grandPrize or {}).value) or 0)
+            f.max_players = math.floor(tonumber(seed.maxPlayers) or 8)
+            f.code        = tostring(seed.invitationCode or "")
+            f.locked      = (tonumber(seed.joinedCount) or 0) > 1
+            for i, v in ipairs(GPL_OPTIONS) do
+                if v == tonumber(seed.matchFormat) then f.gpl_i = i end
+            end
+        end
+        rebuild(self)
+    elseif message_id == hash("enable") then
+        self._active = true
+        rebuild(self)
+    elseif message_id == hash("disable") then
+        self._active = false
+        clear(self)
+    elseif message_id == hash("layout_changed") or message_id == hash("user_data_updated") then
+        refresh_wh()
+        if self._active then rebuild(self) end
+    end
+end
+
+function on_input(self, action_id, action)
+    if not self._active then return end
+    if action_id ~= hash("touch") or not action.pressed then return end
+
+    local m = screen.metrics()
+    local x = action.x / (m.VW / LOGICAL_W)
+    local y = action.y / (m.VH / LOGICAL_H)
+
+    for i = #self.buttons, 1, -1 do
+        local b = self.buttons[i]
+        if gui.pick_node(b.node, x, y) then
+            local f = self.form
+            if b.id == "back" then
+                msg.post("#controller", "goto_lobby")
+            elseif b.id == "focus" then
+                f.focus = b.data
+                rebuild(self)
+            elseif b.id == "key" then
+                push_char(self, b.data); rebuild(self)
+            elseif b.id == "key_space" then
+                if f.focus == F_NAME then push_char(self, " "); rebuild(self) end
+            elseif b.id == "key_del" then
+                pop_char(self); rebuild(self)
+            elseif b.id == "prize_minus" then
+                f.prize = math.max(0, f.prize - PRIZE_STEP); rebuild(self)
+            elseif b.id == "prize_plus" then
+                f.prize = f.prize + PRIZE_STEP; rebuild(self)
+            elseif b.id == "players_minus" then
+                f.max_players = math.max(MIN_PLAYERS, f.max_players - 1); rebuild(self)
+            elseif b.id == "players_plus" then
+                f.max_players = math.min(MAX_PLAYERS, f.max_players + 1); rebuild(self)
+            elseif b.id == "gpl" then
+                f.gpl_i = b.data; rebuild(self)
+            elseif b.id == "invite_add" then
+                local uname = f.invite_buf:gsub("^%s+", ""):gsub("%s+$", "")
+                if uname ~= "" and #f.invites < MAX_INVITES then
+                    local dup = false
+                    for _, v in ipairs(f.invites) do
+                        if v:upper() == uname:upper() then dup = true end
+                    end
+                    if dup then
+                        set_msg(self, "Already on the invite list.", false)
+                    else
+                        f.invites[#f.invites + 1] = uname
+                        f.invite_buf = ""
+                        set_msg(self, nil, false)
+                    end
+                end
+                rebuild(self)
+            elseif b.id == "invite_del" then
+                table.remove(f.invites, b.data); rebuild(self)
+            elseif b.id == "submit" then
+                submit(self)
+            end
+            return true
+        end
+    end
+    return false
+end

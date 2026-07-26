@@ -31,6 +31,10 @@ components {
   component: "/main/tournaments.gui"
 }
 components {
+  id: "team_tournament"
+  component: "/main/team_tournament.gui"
+}
+components {
   id: "game"
   component: "/main/game.gui"
 }

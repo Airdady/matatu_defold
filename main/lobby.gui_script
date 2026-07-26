@@ -1235,16 +1235,18 @@ local function handle(self, b)
     elseif b.id == "team_action_open" then
         set_state(self, STATE_TEAM_MENU)
     elseif b.id == "team_menu_create" then
-        -- Any signed-in player can create one. The form itself lives right
-        -- here on the lobby screen (STATE_TEAM_CREATE) — no more routing
-        -- through the online-users screen just to open it.
+        -- The create/edit form is now its OWN screen rather than the
+        -- STATE_TEAM_CREATE dialog that used to live here: the dialog had to
+        -- size itself from a stack of per-row constants and still overflowed
+        -- the 720px canvas once its invite-code keyboard was open. Leaving
+        -- app_state.team_edit nil opens a blank CREATE form.
         local has_account = ws.current_user_data and ws.current_user_data.username and ws.current_user_data.username ~= ""
         if not has_account then
             toast.error("Sign in first — tap PLAY ONLINE.")
             return
         end
-        self.team_create = { prize = 1000, max_players = 8, gpl_i = 2, code = "", submitting = false, show_code_kb = false }
-        set_state(self, STATE_TEAM_CREATE)
+        app_state.team_edit = nil
+        msg.post("#controller", "goto_team_tournament")
     elseif b.id == "team_menu_join" then
         local has_account = ws.current_user_data and ws.current_user_data.username and ws.current_user_data.username ~= ""
         if not has_account then
