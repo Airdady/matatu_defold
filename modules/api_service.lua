@@ -276,8 +276,16 @@ function M.join_team_tournament(payload, cb)
 end
 
 -- Owner-only: cancels the cup and refunds the escrowed grand prize.
+-- POSTed rather than DELETEd: a body on DELETE is dropped by some HTTP
+-- stacks, which made the backend see no userId and refuse the real owner.
 function M.delete_team_tournament(tournament_id, user_id, cb)
-    request("DELETE", "/tournaments/team/" .. tournament_id, { userId = user_id }, cb)
+    request("POST", "/tournaments/team/" .. tournament_id .. "/delete", { userId = user_id }, cb)
+end
+
+-- Owner-only: remove a player from the bracket.
+function M.drop_team_player(tournament_id, user_id, player_id, cb)
+    request("POST", "/tournaments/team/" .. tournament_id .. "/drop",
+        { userId = user_id, playerId = player_id }, cb)
 end
 
 -- Owner-only: flips a gathering cup ('upcoming') to running ('active').

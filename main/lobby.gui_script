@@ -265,10 +265,14 @@ local function rebuild(self)
 
     local team_children
     if owns_cup then
+        -- The owner's cup is run entirely from this tile — it is deliberately
+        -- absent from the open-cups rail, so there is one place to manage it
+        -- rather than two that can disagree. BRACKET opens the full drawing,
+        -- which carries the rest of the controls (remove player, delete).
         team_children = {
             { id = cup_started and "team_standings" or "team_cup_start",
-              label = cup_started and "STANDINGS" or "START CUP", style = "primary_btn" },
-            { id = "team_menu_join", label = "JOIN", style = "secondary_btn" },
+              label = cup_started and "BRACKET" or "START CUP", style = "primary_btn" },
+            { id = "team_standings", label = "MANAGE", style = "secondary_btn" },
         }
     elseif not has_team_tournament then
         team_children = {
@@ -278,11 +282,14 @@ local function rebuild(self)
     end
 
     local team_sub
-    if owns_cup and cup_started then
-        team_sub = string.format("%s — running", tostring(my_cup.name or "Your cup"))
-    elseif owns_cup then
-        team_sub = string.format("%d/%d joined — start when ready",
-            tonumber(my_cup.members) or 0, tonumber(my_cup.maxPlayers) or 0)
+    if owns_cup then
+        -- Everything the owner needs to see at a glance: name, state, how
+        -- full it is and what it pays.
+        team_sub = string.format("%s • %s • %d/%d • %s %s",
+            tostring(my_cup.name or "Your cup"),
+            cup_started and "RUNNING" or "NOT STARTED",
+            tonumber(my_cup.members) or 0, tonumber(my_cup.maxPlayers) or 0,
+            commas(my_cup.grandPrize or 0), tostring(GameMode.CURRENCY_CODE or ""))
     elseif has_team_tournament then
         team_sub = "You're in one — manage it"
     else

@@ -1,19 +1,23 @@
--- standings.gui_script — interactive standings / bracket chart for one team cup.
+-- standings.gui_script — the team cup's BRACKET.
 --
--- Answers, at a glance: who cleared which stage, who they faced there, and the
--- series score. Data comes from GET /tournaments/team/:id/bracket, which
--- returns each competitor's levelResults (stage, stage name, opponent,
--- both scores, outcome) plus clearedLevel — how far they actually GOT, which
--- is not the same as currentLevel, because a beaten player is reset to level 1
--- and would otherwise look like they never progressed.
+-- A drawing, not a table: one column per stage, match boxes holding both
+-- competitors and the series score, and elbow connectors running from each
+-- match to the next stage — so who beat whom, and how far each player got,
+-- reads at a glance.
 --
--- Layout: a stage-per-column chart on the left, and a detail panel on the
--- right showing the selected player's full run. Tapping any chip in the chart
--- selects that player; tapping a stage header filters the chart to it.
+-- Open to everyone in the cup. The OWNER additionally gets the controls that
+-- run it: START while it is still gathering, REMOVE a player from the
+-- bracket, and DELETE the cup.
 --
--- Visual language follows profile.gui_script / team_tournament.gui_script:
--- flat luxury-dark base, "texture_bg" cover, 3-stripe divider and crafted
--- three-border panels — no slice-9 button artwork.
+-- Data comes from GET /tournaments/team/:id/bracket:
+--   rounds[]  — pairings per stage, each decided series appearing ONCE
+--   players[] — every entrant with levelResults, clearedLevel, isChampion
+-- clearedLevel is used rather than currentLevel: a beaten player is reset to
+-- level 1 and would otherwise look like they never progressed.
+--
+-- Visual language follows team_tournament.gui_script: flat luxury-dark base,
+-- "texture_bg" cover, 3-stripe header divider and crafted three-border
+-- panels — no slice-9 button artwork.
 
 local ui        = require("modules.ui")
 local app_state = require("modules.app_state")
@@ -39,6 +43,7 @@ local P_B_OUTER    = vmath.vector4(0.027, 0.020, 0.016, 1)
 local P_B_MID      = vmath.vector4(0.012, 0.008, 0.008, 1)
 local P_WIN        = vmath.vector4(0.275, 0.624, 0.388, 1)
 local P_LOSS       = vmath.vector4(0.820, 0.231, 0.231, 1)
+local P_LINE       = vmath.vector4(0.300, 0.250, 0.180, 1)
 local P_DARK_TXT   = vmath.vector4(0.06, 0.045, 0.02, 1)
 local P_TRANSP     = vmath.vector4(0, 0, 0, 0)
 
@@ -46,8 +51,13 @@ local STRIPE_OUTER = vmath.vector4(0.169, 0.153, 0.141, 1.0)
 local STRIPE_MID   = vmath.vector4(0.039, 0.031, 0.027, 1.0)
 local STRIPE_INNER = vmath.vector4(0.337, 0.333, 0.314, 1.0)
 
-local CHIP_H, CHIP_GAP = 34, 6
-local COL_MIN_W        = 150
+-- Bracket geometry
+local SEAT_H     = 26          -- one competitor row inside a match box
+local MATCH_H    = SEAT_H * 2 + 6
+local MATCH_GAP  = 14
+local COL_GAP    = 34
+local COL_MIN_W  = 168
+local COL_MAX_W  = 240
 
 local function refresh_wh()
     local m = screen.metrics()
@@ -61,76 +71,64 @@ local function commas(n)
     return (s:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""))
 end
 
-local function my_id()
-    return tostring((ws.current_user_data or {})._id or "")
+local function my_id() return tostring((ws.current_user_data or {})._id or "") end
+
+local function short(name, n)
+    name = tostring(name or "Player")
+    if #name > n then return name:sub(1, n - 1) .. "." end
+    return name
 end
 
 ----------------------------------------------------------------------
--- node bookkeeping + crafted primitives
+-- primitives
 ----------------------------------------------------------------------
-local function track(self, node)
-    self.nodes[#self.nodes + 1] = node
-    return node
-end
-
+local function track(self, node) self.nodes[#self.nodes + 1] = node; return node end
 local function clear(self)
     for _, n in ipairs(self.nodes or {}) do pcall(gui.delete_node, n) end
     self.nodes, self.buttons = {}, {}
 end
 
+local function box(self, x, y, w, h, c)
+    return track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), c))
+end
+local function text(self, x, y, s, font, c)
+    return track(self, ui.text(vmath.vector3(x, y, 0), s, font, c))
+end
+local function text_w(self, x, y, s, font, c)
+    local n = text(self, x, y, s, font, c); gui.set_pivot(n, gui.PIVOT_W); return n
+end
+local function text_e(self, x, y, s, font, c)
+    local n = text(self, x, y, s, font, c); gui.set_pivot(n, gui.PIVOT_E); return n
+end
+
 local function framed3(self, x, y, w, h, accent, fill)
-    track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), accent))
-    track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w - 2, h - 2, 0), P_B_OUTER))
-    track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w - 6, h - 6, 0), P_B_MID))
-    track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w - 10, h - 10, 0), fill))
+    box(self, x, y, w, h, accent)
+    box(self, x, y, w - 2, h - 2, P_B_OUTER)
+    box(self, x, y, w - 6, h - 6, P_B_MID)
+    box(self, x, y, w - 10, h - 10, fill)
 end
 
 local function btn(self, id, x, y, w, h, label, kind, data, enabled)
     local on = enabled ~= false
     local accent, fill, txt
-    if not on then
-        accent, fill, txt = P_MUTED, P_B_MID, P_MUTED
-    elseif kind == "primary" then
-        accent, fill, txt = P_GOLD_LIGHT, P_GOLD, P_DARK_TXT
-    else
-        accent, fill, txt = P_GOLD, P_BADGE_BG, P_CREAM
-    end
+    if not on then accent, fill, txt = P_MUTED, P_B_MID, P_MUTED
+    elseif kind == "primary" then accent, fill, txt = P_GOLD_LIGHT, P_GOLD, P_DARK_TXT
+    elseif kind == "danger"  then accent, fill, txt = P_LOSS, P_B_OUTER, P_LOSS
+    else accent, fill, txt = P_GOLD, P_BADGE_BG, P_CREAM end
     framed3(self, x, y, w, h, accent, fill)
-    track(self, ui.text(vmath.vector3(x, y, 0), label, "btn_md", txt))
+    text(self, x, y, label, "btn_md", txt)
     if on then
-        local hit = track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), P_TRANSP))
+        local hit = box(self, x, y, w, h, P_TRANSP)
         self.buttons[#self.buttons + 1] = { node = hit, id = id, data = data }
     end
-end
-
-local function label_w(self, x, y, text, font, col)
-    track(self, ui.text(vmath.vector3(x, y, 0), text, font or "small", col or P_MUTED))
-    gui.set_pivot(self.nodes[#self.nodes], gui.PIVOT_W)
 end
 
 ----------------------------------------------------------------------
 -- data helpers
 ----------------------------------------------------------------------
-
--- Every player who contested `level`, with the row for that stage. This is
--- what "who passed which stage" reads off: a player appears in a stage column
--- only once they have actually played there, and the row says whether they
--- went through.
-local function contenders_at(self, level)
-    local out = {}
-    for _, p in ipairs((self.cup or {}).players or {}) do
-        for _, r in ipairs(p.levelResults or {}) do
-            if tonumber(r.level) == level then
-                out[#out + 1] = { player = p, result = r }
-                break
-            end
-        end
-    end
-    table.sort(out, function(a, b)
-        if a.result.won ~= b.result.won then return a.result.won end
-        return tostring(a.player.username) < tostring(b.player.username)
-    end)
-    return out
+local function is_owner(self)
+    local c = self.cup
+    return c and tostring(c.ownerId or "") == my_id()
 end
 
 local function find_player(self, pid)
@@ -140,10 +138,14 @@ local function find_player(self, pid)
     return nil
 end
 
-local function stage_name(self, level)
-    local levels = (self.cup or {}).levels or {}
-    local l = levels[level]
-    return (l and l.name) or ("Level " .. tostring(level))
+-- Entrants who have not played a match yet still belong on the drawing —
+-- otherwise a cup that has just started looks empty.
+local function unplayed(self)
+    local out = {}
+    for _, p in ipairs((self.cup or {}).players or {}) do
+        if #(p.levelResults or {}) == 0 then out[#out + 1] = p end
+    end
+    return out
 end
 
 ----------------------------------------------------------------------
@@ -159,208 +161,212 @@ local function rebuild(self)
     gui.set_texture(bg, "ui")
     pcall(gui.play_flipbook, bg, "texture_bg")
 
-    -- Header + 3-stripe divider.
+    -- Header + 3-stripe divider
     local hdr_h = 76
-    track(self, ui.box(vmath.vector3(CX, EDGE_T - hdr_h / 2, 0),
-        vmath.vector3(VISIBLE_W, hdr_h, 0), vmath.vector4(0, 0, 0, 0.45)))
+    box(self, CX, EDGE_T - hdr_h / 2, VISIBLE_W, hdr_h, vmath.vector4(0, 0, 0, 0.45))
     local d_y = EDGE_T - hdr_h - 9
-    track(self, ui.box(vmath.vector3(CX, d_y + 7, 0), vmath.vector3(VISIBLE_W, 4, 0), STRIPE_OUTER))
-    track(self, ui.box(vmath.vector3(CX, d_y, 0), vmath.vector3(VISIBLE_W, 10, 0), STRIPE_MID))
-    track(self, ui.box(vmath.vector3(CX, d_y - 7, 0), vmath.vector3(VISIBLE_W, 4, 0), STRIPE_INNER))
+    box(self, CX, d_y + 7, VISIBLE_W, 4, STRIPE_OUTER)
+    box(self, CX, d_y,     VISIBLE_W, 10, STRIPE_MID)
+    box(self, CX, d_y - 7, VISIBLE_W, 4, STRIPE_INNER)
 
     local hy = EDGE_T - hdr_h / 2
     btn(self, "back", EDGE_L + 78, hy, 116, 46, "BACK", "secondary")
 
     local cup = self.cup
-    local title = cup and tostring(cup.name or "Team Cup") or "STANDINGS"
-    track(self, ui.text(vmath.vector3(CX, hy + 8, 0), string.upper(title), "subtitle2", P_GOLD))
+    text(self, CX, hy + 10, string.upper(cup and tostring(cup.name or "Team Cup") or "BRACKET"),
+        "subtitle2", P_GOLD)
     if cup then
-        local sub = string.format("%s  •  %s %s  •  best of %d",
+        text(self, CX, hy - 16, string.format("%s  •  %s %s  •  best of %d  •  %d players",
             cup.started and "RUNNING" or "NOT STARTED",
             commas((cup.grandPrize or {}).value or 0),
             tostring(GameMode.CURRENCY_CODE or ""),
-            tonumber(cup.matchFormat) or 3)
-        track(self, ui.text(vmath.vector3(CX, hy - 16, 0), sub, "small", P_MUTED))
+            tonumber(cup.matchFormat) or 3,
+            #((cup.players) or {})), "small", P_MUTED)
     end
     btn(self, "refresh", EDGE_R - 78, hy, 116, 46, "REFRESH", "secondary", nil, not self.loading)
 
     if self.loading then
-        track(self, ui.text(vmath.vector3(CX, CY, 0), "Loading standings...", "body", P_MUTED))
-        return
+        text(self, CX, CY, "Loading bracket...", "body", P_MUTED); return
     end
     if not cup then
-        track(self, ui.text(vmath.vector3(CX, CY + 10, 0),
-            self.err or "Could not load this cup.", "body", P_LOSS))
+        text(self, CX, CY + 10, self.err or "Could not load this cup.", "body", P_LOSS); return
+    end
+
+    local owner = is_owner(self)
+
+    -- Owner control strip along the bottom.
+    local body_b = EDGE_B + (owner and 74 or 24)
+    if owner then
+        local by = EDGE_B + 38
+        local n = cup.started and 2 or 3
+        local bw = 190
+        local total = n * bw + (n - 1) * 14
+        local x0 = CX - total / 2 + bw / 2
+        local i = 0
+        if not cup.started then
+            btn(self, "cup_start", x0, by, bw, 44, "START CUP", "primary")
+            i = 1
+        end
+        btn(self, "cup_remove_mode", x0 + i * (bw + 14), by, bw, 44,
+            self.remove_mode and "DONE REMOVING" or "REMOVE PLAYER",
+            self.remove_mode and "primary" or "secondary")
+        btn(self, "cup_delete", x0 + (i + 1) * (bw + 14), by, bw, 44,
+            (self.confirm_delete and "TAP TO CONFIRM") or "DELETE CUP", "danger")
+        if self.remove_mode then
+            text(self, CX, by + 34, "Tap a player in the bracket to remove them",
+                "small", P_GOLD_LIGHT)
+        end
+    end
+
+    ------------------------------------------------------------------
+    -- The bracket itself
+    ------------------------------------------------------------------
+    local body_t = d_y - 26
+    local rounds = cup.rounds or {}
+    local waiting = unplayed(self)
+
+    -- An "ENTRANTS" column precedes the played stages so a freshly started
+    -- cup still draws something meaningful.
+    local cols = {}
+    if #waiting > 0 then
+        cols[#cols + 1] = { name = "ENTRANTS", entrants = waiting }
+    end
+    for _, r in ipairs(rounds) do
+        cols[#cols + 1] = { name = r.name, matches = r.matches or {}, level = r.level }
+    end
+
+    if #cols == 0 then
+        text(self, CX, CY + 12, "No matches played yet.", "body", P_MUTED)
+        text(self, CX, CY - 14,
+            cup.started and "The bracket fills in as games are won."
+                or "Start the cup to begin the bracket.", "small", P_MUTED)
         return
     end
 
-    local total = tonumber(cup.totalLevels) or #(cup.levels or {})
-    if total < 1 then total = 1 end
+    local chart_l, chart_r = EDGE_L + 26, EDGE_R - 26
+    local avail = chart_r - chart_l
+    local col_w = math.floor(math.min(COL_MAX_W,
+        math.max(COL_MIN_W, (avail - COL_GAP * (#cols - 1)) / #cols)))
+    local span = #cols * col_w + (#cols - 1) * COL_GAP
 
-    -- Right: detail panel for the selected player. Reserved first so the
-    -- chart columns lay out inside what's left.
-    local body_t = d_y - 22
-    local body_b = EDGE_B + 24
-    local det_w  = math.floor(math.max(260, math.min(360, (EDGE_R - EDGE_L) * 0.26)))
-    local det_l  = EDGE_R - 24 - det_w
-    local chart_l, chart_r = EDGE_L + 24, det_l - 18
+    -- More stages than fit: scroll horizontally a column at a time.
+    local max_scroll = math.max(0, #cols - math.max(1, math.floor((avail + COL_GAP) / (col_w + COL_GAP))))
+    self.col_off = math.max(0, math.min(max_scroll, self.col_off or 0))
+    local first = self.col_off + 1
+    local visible = math.max(1, math.floor((avail + COL_GAP) / (col_w + COL_GAP)))
 
-    ------------------------------------------------------------------
-    -- Chart: one column per stage
-    ------------------------------------------------------------------
-    local shown_levels = {}
-    if self.focus_level then
-        shown_levels[1] = self.focus_level
-    else
-        for l = 1, total do shown_levels[#shown_levels + 1] = l end
+    if max_scroll > 0 then
+        btn(self, "col_prev", chart_l + 40, body_b + 18, 76, 30, "<", "secondary", nil, self.col_off > 0)
+        btn(self, "col_next", chart_l + 124, body_b + 18, 76, 30, ">", "secondary", nil, self.col_off < max_scroll)
+        text_e(self, chart_r, body_b + 18,
+            string.format("stages %d-%d of %d", first, math.min(#cols, first + visible - 1), #cols),
+            "small", P_MUTED)
+        body_b = body_b + 44
     end
 
-    local n_cols = #shown_levels
-    local chart_w = chart_r - chart_l
-    local col_gap = 10
-    local col_w = math.floor((chart_w - col_gap * (n_cols - 1)) / math.max(1, n_cols))
+    local col_top = body_t - 30
 
-    -- Too many stages to fit legibly: fall back to one stage at a time so
-    -- columns never collapse into unreadable slivers.
-    if col_w < COL_MIN_W and not self.focus_level then
-        self.focus_level = math.min(total, math.max(1, self.focus_level or 1))
-        rebuild(self)
-        return
-    end
-
-    for ci, level in ipairs(shown_levels) do
-        local cl = chart_l + (ci - 1) * (col_w + col_gap)
+    for slot = 0, visible - 1 do
+        local ci = first + slot
+        local col = cols[ci]
+        if not col then break end
+        local cl  = chart_l + slot * (col_w + COL_GAP)
         local ccx = cl + col_w / 2
 
-        -- Stage header doubles as a filter toggle.
-        framed3(self, ccx, body_t - 17, col_w, 34,
-            (self.focus_level == level) and P_GOLD_LIGHT or P_GOLD, P_BADGE_BG)
-        track(self, ui.text(vmath.vector3(ccx, body_t - 17, 0),
-            string.upper(stage_name(self, level)), "small", P_CREAM))
-        local hh = track(self, ui.box(vmath.vector3(ccx, body_t - 17, 0),
-            vmath.vector3(col_w, 34, 0), P_TRANSP))
-        self.buttons[#self.buttons + 1] = { node = hh, id = "stage", data = level }
+        -- Stage header
+        framed3(self, ccx, body_t - 15, col_w, 30, P_GOLD, P_BADGE_BG)
+        text(self, ccx, body_t - 15, string.upper(tostring(col.name)), "small", P_CREAM)
 
-        local rows = contenders_at(self, level)
-        local y = body_t - 34 - 12
+        local y = col_top - 8
 
-        if #rows == 0 then
-            track(self, ui.text(vmath.vector3(ccx, y - 14, 0), "not played yet", "small", P_MUTED))
-        end
-
-        for _, row in ipairs(rows) do
-            if y - CHIP_H < body_b then break end
-            local p, r = row.player, row.result
-            local cy_ = y - CHIP_H / 2
+        -- Entrants column: one seat per waiting player.
+        for _, p in ipairs(col.entrants or {}) do
+            if y - SEAT_H < body_b then break end
+            local cy_ = y - SEAT_H / 2
             local mine = tostring(p.playerId) == my_id()
-            local sel  = tostring(self.selected or "") == tostring(p.playerId)
-
-            local accent = r.won and P_WIN or P_LOSS
-            if sel then accent = P_GOLD_LIGHT end
-            framed3(self, ccx, cy_, col_w, CHIP_H, accent,
+            framed3(self, ccx, cy_, col_w, SEAT_H, mine and P_GOLD_LIGHT or P_MUTED,
                 mine and P_BADGE_BG or P_PANEL)
+            text_w(self, cl + 12, cy_, short(p.username, 14), "small",
+                mine and P_GOLD_LIGHT or P_CREAM)
+            if owner and self.remove_mode then
+                text_e(self, cl + col_w - 10, cy_, "X", "small", P_LOSS)
+            end
+            local hit = box(self, ccx, cy_, col_w, SEAT_H, P_TRANSP)
+            self.buttons[#self.buttons + 1] =
+                { node = hit, id = "player", data = p.playerId }
+            y = y - SEAT_H - 6
+        end
 
-            local nm = tostring(p.username or "Player")
-            if #nm > 12 then nm = nm:sub(1, 11) .. "." end
-            if p.isChampion then nm = nm .. " *" end
-            label_w(self, cl + 10, cy_, nm, "small", mine and P_GOLD_LIGHT or P_CREAM)
+        -- Played stage: a match box per pairing, two seats each.
+        for mi, m in ipairs(col.matches or {}) do
+            if y - MATCH_H < body_b then break end
+            local top = y
+            local mcy = top - MATCH_H / 2
 
-            -- The series score at THIS stage, from this player's side.
-            local sc = string.format("%d-%d", tonumber(r.myScore) or 0, tonumber(r.opponentScore) or 0)
-            track(self, ui.text(vmath.vector3(cl + col_w - 10, cy_, 0), sc, "small",
-                r.won and P_WIN or P_LOSS))
-            gui.set_pivot(self.nodes[#self.nodes], gui.PIVOT_E)
+            framed3(self, ccx, mcy, col_w, MATCH_H, P_GOLD, P_PANEL)
 
-            local hit = track(self, ui.box(vmath.vector3(ccx, cy_, 0),
-                vmath.vector3(col_w, CHIP_H, 0), P_TRANSP))
-            self.buttons[#self.buttons + 1] = { node = hit, id = "pick", data = p.playerId }
+            local function seat(side, sy)
+                local mine = tostring(side.playerId) == my_id()
+                local col_txt = side.won and P_WIN or P_LOSS
+                box(self, ccx, sy, col_w - 14, SEAT_H - 4,
+                    side.won and vmath.vector4(0.10, 0.16, 0.11, 1) or P_B_OUTER)
+                text_w(self, cl + 14, sy, short(side.username, 12), "small",
+                    mine and P_GOLD_LIGHT or P_CREAM)
+                text_e(self, cl + col_w - 14, sy, tostring(tonumber(side.score) or 0),
+                    "small", col_txt)
+                local hit = box(self, ccx, sy, col_w - 14, SEAT_H - 4, P_TRANSP)
+                self.buttons[#self.buttons + 1] =
+                    { node = hit, id = "player", data = side.playerId }
+            end
+            seat(m.a, top - SEAT_H / 2 - 3)
+            seat(m.b, top - SEAT_H - SEAT_H / 2 - 3)
 
-            y = y - CHIP_H - CHIP_GAP
+            -- Elbow connector into the next stage: out of the match's right
+            -- edge, then a short vertical join. Drawn only when there IS a
+            -- next column on screen, so nothing dangles off the edge.
+            if cols[ci + 1] and slot < visible - 1 then
+                box(self, cl + col_w + COL_GAP / 4, mcy, COL_GAP / 2, 2, P_LINE)
+                if mi % 2 == 1 and col.matches[mi + 1] then
+                    local nxt_cy = mcy - (MATCH_H + MATCH_GAP)
+                    box(self, cl + col_w + COL_GAP / 2, (mcy + nxt_cy) / 2,
+                        2, math.abs(mcy - nxt_cy), P_LINE)
+                end
+            end
+
+            y = y - MATCH_H - MATCH_GAP
         end
     end
 
-    -- Stage paging, shown only when the chart is filtered to a single stage.
-    if self.focus_level then
-        btn(self, "stage_prev", chart_l + 46, body_b + 20, 84, 32, "< PREV", "secondary",
-            nil, self.focus_level > 1)
-        btn(self, "stage_all", chart_l + 150, body_b + 20, 110, 32, "ALL STAGES", "secondary")
-        btn(self, "stage_next", chart_l + 262, body_b + 20, 84, 32, "NEXT >", "secondary",
-            nil, self.focus_level < total)
-    end
-
     ------------------------------------------------------------------
-    -- Detail panel: the selected player's full run
+    -- Selected player strip
     ------------------------------------------------------------------
-    local dcx = det_l + det_w / 2
-    framed3(self, dcx, (body_t + body_b) / 2, det_w, body_t - body_b, P_GOLD, P_PANEL)
-
     local p = self.selected and find_player(self, self.selected) or nil
-    local dy = body_t - 22
-
-    if not p then
-        track(self, ui.text(vmath.vector3(dcx, dy, 0), "PLAYER RUN", "small", P_GOLD))
-        track(self, ui.text(vmath.vector3(dcx, dy - 30, 0), "Tap any player", "small", P_MUTED))
-        track(self, ui.text(vmath.vector3(dcx, dy - 50, 0), "to see their run.", "small", P_MUTED))
-    else
-        track(self, ui.text(vmath.vector3(dcx, dy, 0),
-            string.upper(tostring(p.username or "Player")), "subtitle2", P_GOLD_LIGHT))
-        dy = dy - 26
-
-        local cleared = tonumber(p.clearedLevel) or 0
-        local standing
-        if p.isChampion then
-            standing = "CHAMPION"
-        elseif cleared >= 1 then
-            standing = "Reached " .. stage_name(self, math.min(total, cleared + 1))
-        else
-            standing = "No stage cleared yet"
-        end
-        track(self, ui.text(vmath.vector3(dcx, dy, 0), standing, "small",
-            p.isChampion and P_GOLD or P_MUTED))
-        dy = dy - 26
-
+    if p then
+        local sy = body_b + 4
+        local sw = math.min(560, chart_r - chart_l)
+        framed3(self, CX, sy + 22, sw, 44, P_GOLD_LIGHT, P_BADGE_BG)
         local wins, losses = 0, 0
         for _, r in ipairs(p.levelResults or {}) do
             if r.won then wins = wins + 1 else losses = losses + 1 end
         end
-        track(self, ui.text(vmath.vector3(dcx, dy, 0),
-            string.format("%d won  •  %d lost", wins, losses), "small", P_CREAM))
-        dy = dy - 24
-
-        if #(p.levelResults or {}) == 0 then
-            track(self, ui.text(vmath.vector3(dcx, dy - 16, 0), "No matches played yet.", "small", P_MUTED))
-        end
-
-        for _, r in ipairs(p.levelResults or {}) do
-            if dy - 56 < body_b + 10 then break end
-            local rc = dy - 28
-            framed3(self, dcx, rc, det_w - 24, 52, r.won and P_WIN or P_LOSS, P_BADGE_BG)
-            label_w(self, det_l + 22, rc + 12,
-                string.upper(tostring(r.levelName or stage_name(self, r.level))), "small",
-                r.won and P_WIN or P_LOSS)
-            label_w(self, det_l + 22, rc - 8,
-                "vs " .. tostring(r.opponentUsername or "Player"), "small", P_CREAM)
-            track(self, ui.text(vmath.vector3(det_l + det_w - 22, rc - 8, 0),
-                string.format("%d - %d", tonumber(r.myScore) or 0, tonumber(r.opponentScore) or 0),
-                "small", P_CREAM))
-            gui.set_pivot(self.nodes[#self.nodes], gui.PIVOT_E)
-            track(self, ui.text(vmath.vector3(det_l + det_w - 22, rc + 12, 0),
-                r.won and "PASSED" or "OUT", "small", r.won and P_WIN or P_LOSS))
-            gui.set_pivot(self.nodes[#self.nodes], gui.PIVOT_E)
-            dy = dy - 60
-        end
+        text_w(self, CX - sw / 2 + 14, sy + 22,
+            string.upper(short(p.username, 16)) ..
+            (p.isChampion and "  —  CHAMPION" or ""), "small",
+            p.isChampion and P_GOLD or P_CREAM)
+        text_e(self, CX + sw / 2 - 14, sy + 22,
+            string.format("%d won  •  %d lost  •  cleared %d",
+                wins, losses, tonumber(p.clearedLevel) or 0), "small", P_MUTED)
     end
 end
 
 ----------------------------------------------------------------------
--- load
+-- actions
 ----------------------------------------------------------------------
 local function load(self)
     local id = self.cup_id
     if not id or id == "" then
         self.loading, self.err = false, "No cup selected."
-        rebuild(self)
-        return
+        rebuild(self); return
     end
     self.loading, self.err = true, nil
     rebuild(self)
@@ -369,8 +375,6 @@ local function load(self)
         self.loading = false
         if res.success then
             self.cup = res.data
-            -- Default the detail panel to the viewer, so the screen opens on
-            -- the run they care about most rather than on an empty panel.
             if not self.selected then
                 local me = find_player(self, my_id())
                 self.selected = me and me.playerId or nil
@@ -380,6 +384,19 @@ local function load(self)
             self.err = (res.data and res.data.error) or res.message or "Could not load this cup."
         end
         rebuild(self)
+    end)
+end
+
+local function remove_player(self, player_id)
+    local p = find_player(self, player_id)
+    if not p then return end
+    api.drop_team_player(self.cup_id, my_id(), player_id, function(res)
+        if res.success then
+            toast.success(short(p.username, 16) .. " removed.")
+        else
+            toast.error((res.data and res.data.error) or res.message or "Could not remove them.")
+        end
+        load(self)
     end)
 end
 
@@ -397,24 +414,19 @@ function on_message(self, message_id, message, sender)
         msg.post(".", "acquire_input_focus")
         self._active = true
         self.cup_id = tostring(app_state.standings_cup_id or "")
-        self.cup, self.selected, self.focus_level, self.err = nil, nil, nil, nil
+        self.cup, self.selected, self.err = nil, nil, nil
+        self.col_off, self.remove_mode, self.confirm_delete = 0, false, false
         load(self)
     elseif message_id == hash("enable") then
-        refresh_wh()
-        self._active = true
-        rebuild(self)
+        refresh_wh(); self._active = true; rebuild(self)
     elseif message_id == hash("disable") then
-        -- Deliberately NO release_input_focus here. Every screen in this
-        -- project is a gui component on the SAME game object (controller.go),
-        -- and acquire/release_input_focus are game-OBJECT messages — releasing
-        -- drops the whole object off the input stack, killing input for the
-        -- lobby and every other screen too. `self._active` already gates this
-        -- screen's own on_input, which is what the other screens rely on.
+        -- No release_input_focus: it is a game-OBJECT message and every screen
+        -- is a component on the same object, so releasing kills input for all
+        -- of them. self._active already gates this screen's on_input.
         self._active = false
         clear(self)
     elseif message_id == hash("layout_changed") then
-        refresh_wh()
-        rebuild(self)
+        refresh_wh(); rebuild(self)
     end
 end
 
@@ -422,8 +434,7 @@ function on_input(self, action_id, action)
     if not self._active then return false end
     if action_id ~= hash("touch") or not action.pressed then return false end
 
-    -- Raw coordinates, as on every other screen — see the note in
-    -- team_tournament.gui_script about why these must not be scaled.
+    -- Raw coordinates, as on every other screen.
     for i = #self.buttons, 1, -1 do
         local b = self.buttons[i]
         if gui.pick_node(b.node, action.x, action.y) then
@@ -431,27 +442,61 @@ function on_input(self, action_id, action)
                 msg.post("#controller", "goto_lobby")
             elseif b.id == "refresh" then
                 load(self)
-            elseif b.id == "pick" then
-                -- Tapping the already-selected player clears the selection,
-                -- so the panel can be dismissed without leaving the screen.
-                if tostring(self.selected or "") == tostring(b.data) then
-                    self.selected = nil
+            elseif b.id == "col_prev" then
+                self.col_off = math.max(0, (self.col_off or 0) - 1); rebuild(self)
+            elseif b.id == "col_next" then
+                self.col_off = (self.col_off or 0) + 1; rebuild(self)
+            elseif b.id == "player" then
+                if self.remove_mode and is_owner(self) then
+                    remove_player(self, b.data)
+                elseif tostring(self.selected or "") == tostring(b.data) then
+                    self.selected = nil; rebuild(self)
                 else
-                    self.selected = b.data
+                    self.selected = b.data; rebuild(self)
                 end
+            elseif b.id == "cup_start" then
+                if not self.starting then
+                    self.starting = true
+                    api.start_team_tournament(self.cup_id, my_id(), function(res)
+                        self.starting = false
+                        if res.success then toast.success("Cup started — good luck!")
+                        else toast.error((res.data and res.data.error) or res.message
+                            or "Could not start the cup.") end
+                        load(self)
+                    end)
+                end
+            elseif b.id == "cup_remove_mode" then
+                self.remove_mode = not self.remove_mode
+                self.confirm_delete = false
                 rebuild(self)
-            elseif b.id == "stage" then
-                self.focus_level = (self.focus_level == b.data) and nil or b.data
-                rebuild(self)
-            elseif b.id == "stage_all" then
-                self.focus_level = nil
-                rebuild(self)
-            elseif b.id == "stage_prev" then
-                self.focus_level = math.max(1, (self.focus_level or 1) - 1)
-                rebuild(self)
-            elseif b.id == "stage_next" then
-                self.focus_level = (self.focus_level or 1) + 1
-                rebuild(self)
+            elseif b.id == "cup_delete" then
+                -- Two taps: deleting drops the cup for everyone who joined.
+                if not self.confirm_delete then
+                    self.confirm_delete = true
+                    rebuild(self)
+                elseif not self.deleting then
+                    self.deleting = true
+                    api.delete_team_tournament(self.cup_id, my_id(), function(res)
+                        self.deleting = false
+                        if res.success then
+                            local refund = tonumber((res.data or {}).refunded) or 0
+                            local u = ws.current_user_data or {}
+                            if refund > 0 then u.balance = (tonumber(u.balance) or 0) + refund end
+                            u.myTeamTournamentId = nil
+                            u.myTeamTournamentIsOwner = nil
+                            ws.current_user_data = u
+                            toast.success(refund > 0
+                                and ("Cup deleted — " .. commas(refund) .. " refunded.")
+                                or "Cup deleted.")
+                            msg.post("#controller", "goto_lobby")
+                        else
+                            self.confirm_delete = false
+                            toast.error((res.data and res.data.error) or res.message
+                                or "Could not delete the cup.")
+                            rebuild(self)
+                        end
+                    end)
+                end
             end
             return true
         end
