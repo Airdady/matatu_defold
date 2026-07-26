@@ -31,6 +31,18 @@ local function show(self, screen)
     else
         msg.post("#game_logic", "disable")
     end
+
+    -- Every screen here is a gui component on THIS one game object, and
+    -- acquire/release_input_focus are game-OBJECT messages: a single screen
+    -- releasing drops the whole object off the input stack and kills input
+    -- for all of them. Screens each acquire on their own screen_enter, which
+    -- leaves the app one stray release away from being completely dead — as
+    -- happened when the standings screen released on disable. Re-acquiring
+    -- here makes the object's presence on the input stack a property of
+    -- routing rather than of any individual screen's behaviour. Posted last
+    -- so it lands after the per-screen enable/disable above.
+    msg.post(".", "acquire_input_focus")
+
     self.screen = screen
     app_state.current_screen = screen
 end

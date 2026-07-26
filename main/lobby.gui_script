@@ -1047,7 +1047,7 @@ local function rebuild(self)
         hy = hy - 22
 
         local list = self.team_cups or {}
-        local CARD_H, CARD_GAP = 86, 8
+        local CARD_H, CARD_GAP = 104, 10
         local view_t  = hy - 4
         local view_b  = rail_b + 10
         local view_h  = view_t - view_b
@@ -1070,35 +1070,70 @@ local function rebuild(self)
                 if not t then break end
                 local cy_ = view_t - (i - 1) * (CARD_H + CARD_GAP) - CARD_H / 2
 
+                local card_w = RAIL_W - 16
+                local card_l = rail_cx - card_w / 2
                 track(self, ui.panel9(vmath.vector3(rail_cx, cy_, 0),
-                    vmath.vector3(RAIL_W - 16, CARD_H, 0), "container_bg"))
+                    vmath.vector3(card_w, CARD_H, 0), "container_bg"))
 
-                local tx = rail_cx - (RAIL_W - 20) / 2 + 12
-                local n = track(self, ui.text(vmath.vector3(tx, cy_ + 26, 0),
-                    tostring(t.name or "Team Cup"):sub(1, 20), "small", C_CREAM))
+                local tx      = card_l + 14
+                local card_t  = cy_ + CARD_H / 2
+                local card_b  = cy_ - CARD_H / 2
+
+                -- Row 1: name, with a state pill right-aligned beside it.
+                local joined  = tonumber(t.members) or 0
+                local cap     = tonumber(t.maxPlayers) or 0
+                local mine    = t.hasJoined or t.isOwner
+                local pill_txt, pill_col
+                if t.isOwner        then pill_txt, pill_col = "YOURS",   C_GOLD
+                elseif t.hasJoined  then pill_txt, pill_col = "JOINED",  C_U_TEAM
+                elseif t.isFull     then pill_txt, pill_col = "FULL",    C_DISABLED
+                elseif t.started    then pill_txt, pill_col = "RUNNING", C_U_TEAM
+                else                     pill_txt, pill_col = "OPEN",    C_GOLD end
+
+                local n = track(self, ui.text(vmath.vector3(tx, card_t - 18, 0),
+                    tostring(t.name or "Team Cup"):sub(1, 16), "body", C_CREAM))
                 set_pivot(n, gui.PIVOT_W)
 
-                local pz = track(self, ui.text(vmath.vector3(tx, cy_ + 6, 0),
-                    commas(t.grandPrize or 0) .. " " .. tostring(GameMode.CURRENCY_CODE or ""), "small", C_GOLD))
+                local pl = track(self, ui.text(vmath.vector3(card_l + card_w - 14, card_t - 18, 0),
+                    pill_txt, "small", pill_col))
+                set_pivot(pl, gui.PIVOT_E)
+
+                -- Row 2: the prize, the reason to care about this card.
+                local pz = track(self, ui.text(vmath.vector3(tx, card_t - 42, 0),
+                    commas(t.grandPrize or 0) .. " " .. tostring(GameMode.CURRENCY_CODE or ""),
+                    "subtitle2", C_GOLD))
                 set_pivot(pz, gui.PIVOT_W)
 
-                local members = string.format("%d/%d members",
-                    tonumber(t.members) or 0, tonumber(t.maxPlayers) or 0)
-                local mb = track(self, ui.text(vmath.vector3(tx, cy_ - 14, 0), members, "small", C_MUTED))
+                -- Row 3: a fill bar makes "how full" readable at a glance in a
+                -- way a bare "3/8" does not.
+                local bar_w = card_w - 28
+                local bar_y = card_t - 62
+                track(self, ui.box(vmath.vector3(card_l + 14 + bar_w / 2, bar_y, 0),
+                    vmath.vector3(bar_w, 5, 0), C_DARK))
+                if cap > 0 and joined > 0 then
+                    local fw = math.max(3, math.floor(bar_w * math.min(1, joined / cap)))
+                    local fb = track(self, ui.box(vmath.vector3(card_l + 14 + fw / 2, bar_y, 0),
+                        vmath.vector3(fw, 5, 0), t.isFull and C_DISABLED or C_GOLD))
+                    set_pivot(fb, gui.PIVOT_CENTER)
+                end
+
+                -- Row 4: member count on the left, the action on the right.
+                local mb = track(self, ui.text(vmath.vector3(tx, card_b + 20, 0),
+                    string.format("%d/%d players", joined, cap), "small", C_MUTED))
                 set_pivot(mb, gui.PIVOT_W)
 
-                -- JOIN only when there is actually something to join. A cup
-                -- you are already in offers STANDINGS instead of a dead
+                -- A cup you are already in offers STANDINGS instead of a dead
                 -- "JOINED" label, so every card in the list does something.
-                local bx, bw, bh = rail_cx + (RAIL_W - 20) / 2 - 46, 76, 30
-                if t.hasJoined or t.isOwner then
-                    mkbtn(self, "team_cup_standings", vmath.vector3(bx, cy_ - 14, 0),
+                local bw, bh = 92, 32
+                local bx = card_l + card_w - 14 - bw / 2
+                if mine then
+                    mkbtn(self, "team_cup_standings", vmath.vector3(bx, card_b + 20, 0),
                         vmath.vector3(bw, bh, 0), "TABLE", "secondary_btn", t._id)
                 elseif t.isFull then
-                    track(self, ui.box(vmath.vector3(bx, cy_ - 14, 0), vmath.vector3(bw, bh, 0), C_DARK))
-                    track(self, ui.text(vmath.vector3(bx, cy_ - 14, 0), "FULL", "small", C_MUTED))
+                    track(self, ui.box(vmath.vector3(bx, card_b + 20, 0), vmath.vector3(bw, bh, 0), C_DARK))
+                    track(self, ui.text(vmath.vector3(bx, card_b + 20, 0), "FULL", "small", C_MUTED))
                 else
-                    mkbtn(self, "team_cup_join", vmath.vector3(bx, cy_ - 14, 0),
+                    mkbtn(self, "team_cup_join", vmath.vector3(bx, card_b + 20, 0),
                         vmath.vector3(bw, bh, 0), "JOIN", "primary_btn", t.invitationCode)
                 end
             end

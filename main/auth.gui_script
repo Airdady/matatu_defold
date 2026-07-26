@@ -84,7 +84,10 @@ function on_message(self, message_id, message, sender)
             if self._active then
                 clear(self)
                 self._active = false
-                msg.post(".", "release_input_focus")
+                -- No release_input_focus: it is a game-OBJECT message and
+                -- every screen is a component on the same object, so it drops
+                -- input for ALL of them. self._active already gates this
+                -- screen's own on_input, which is what the rest do.
                 msg.post("#controller", "play_online")
             end
             return
