@@ -334,14 +334,20 @@ local function mode_tile(self, cfg)
             mkbtn(self, cb.id, vmath.vector3(cbx, cby, 0), vmath.vector3(cbtn_w, cbtn_h, 0), cb.label, cb_style, cb.data)
         end
     elseif cfg.cta_label then
-        local cta_w, cta_h = 160, 46
+        -- Narrow enough to sit inside the smaller offline tiles too, which
+        -- are roughly a third of the grid rather than half of it.
+        local cta_w, cta_h = math.min(160, math.max(96, w - 40)), 46
         -- Right-anchored (the child-button row and the badge below stay left
         -- aligned): PLAY NOW sits at the tile's trailing edge so it reads as
         -- the tile's action rather than as another label in the left stack.
         local cta_x = x + w/2 - 16 - cta_w/2
         local cta_y = y - h/2 + 50
         if cfg.big_bg then
-            track(self, ui.btn9(vmath.vector3(cta_x, cta_y, 0), vmath.vector3(cta_w, cta_h, 0), "container_bg_active"))
+            -- Same background family as the CREATE / JOIN buttons: the
+            -- "active" variant marks a tile's primary action, the plain one
+            -- the secondary tiles.
+            local tex = (cfg.cta_style == "secondary") and "container_bg" or "container_bg_active"
+            track(self, ui.btn9(vmath.vector3(cta_x, cta_y, 0), vmath.vector3(cta_w, cta_h, 0), tex))
             track(self, ui.text(vmath.vector3(cta_x, cta_y, 0), cfg.cta_label, "body", C_CREAM))
         else
             track(self, ui.box(vmath.vector3(cta_x, cta_y, 0), vmath.vector3(cta_w, cta_h, 0), C_RED))
@@ -982,6 +988,9 @@ local function rebuild(self)
         title    = "QUICK PLAY",
         sub      = "One deal vs the bot",
         btn_id   = "quick_play",
+        cta_label = "PLAY",
+        cta_style = "secondary",
+        big_bg   = true,
     })
 
     -- -----------------------------------------------------------------------
@@ -994,6 +1003,9 @@ local function rebuild(self)
         title    = "BATTLE AI",
         sub      = "Best-of series vs the bot",
         btn_id   = "battle_ai",
+        cta_label = "BATTLE",
+        cta_style = "secondary",
+        big_bg   = true,
     })
 
     -- -----------------------------------------------------------------------
@@ -1006,6 +1018,9 @@ local function rebuild(self)
         title    = "TOURNAMENT",
         sub      = "One human • three AI • bracket",
         btn_id   = "quick_tournament",
+        cta_label = "ENTER",
+        cta_style = "secondary",
+        big_bg   = true,
     })
 
     -- -----------------------------------------------------------------------
