@@ -2,7 +2,7 @@ local ws        = require("modules.websocket_manager")
 local api       = require("modules.api_service")
 local app_state = require("modules.app_state")
 
-local SCREENS = { "lobby", "auth", "profile", "online", "themes", "payments", "tournaments", "team_tournament", "game" }
+local SCREENS = { "lobby", "auth", "profile", "online", "themes", "payments", "tournaments", "team_tournament", "standings", "game" }
 
 -- Debug trail for the sign-in/connect pipeline (boot silent-login, "Play
 -- Online" tap, GPGS callback, backend verify, WS identify) — every step logs
@@ -507,6 +507,10 @@ function on_message(self, message_id, message, sender)
         -- app_state.team_edit beforehand to open in EDIT mode; leaving it nil
         -- opens a blank CREATE form.
         if is_logged_in() then show(self, "team_tournament") else show(self, "lobby") end
+    elseif message_id == hash("goto_standings") then
+        -- Interactive bracket/standings for one team cup. The caller sets
+        -- app_state.standings_cup_id beforehand.
+        if is_logged_in() then show(self, "standings") else show(self, "lobby") end
     elseif message_id == hash("goto_profile") then
         if is_logged_in() then show(self, "profile") else show(self, "lobby") end
     elseif message_id == hash("goto_auth") then show(self, "auth")
