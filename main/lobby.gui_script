@@ -136,26 +136,22 @@ end
 
 -- Textured slice-9 button + optional label, registered as a tappable button
 -- in one call — same shape as online.gui_script's local mkbtn helper.
--- Big buttons wear the same slice-9 background image as the stake tiles
--- (online_center.lua draws those with ui.btn9 + "container_bg"), so the
--- lobby's primary actions read as part of the same system instead of as flat
--- colour fills. Small controls (the rail's JOIN/TABLE chips, scroll arrows)
--- keep the compact button art — the glass panel's 15px slice margins need
--- room to look right.
-local BIG_BTN_H = 44
-local function big_btn_texture(style)
-    return (style == "primary_btn") and "container_bg_active" or "container_bg"
-end
-
 local function mkbtn(self, id, pos, size, label, style, data)
-    local big = size.y >= BIG_BTN_H
-    local tex = big and big_btn_texture(style) or (style or "secondary_btn")
-    local bg = track(self, ui.btn9(pos, size, tex))
+    local bg = track(self, ui.btn9(pos, size, style or "secondary_btn"))
     if label then
-        track(self, ui.text(vmath.vector3(pos.x, pos.y - 3, pos.z), label, big and "btn_md" or "btn_sm", C_CREAM))
+        track(self, ui.text(vmath.vector3(pos.x, pos.y - 3, pos.z), label, size.y >= 44 and "btn_md" or "btn_sm", C_CREAM))
     end
     self.buttons[#self.buttons + 1] = { node = bg, id = id, data = data }
     return bg
+end
+
+-- The two headline tiles (PLAY ONLINE, TEAM CUPS) wear the same slice-9
+-- background image as the stake tiles — online_center.lua draws those with
+-- ui.btn9 + "container_bg". Opt-in per tile (cfg.big_bg) rather than derived
+-- from button height, so it stays on those two and can't leak into the
+-- offline tiles, dialogs or the rail's small chips.
+local function big_bg_texture(style)
+    return (style == "primary_btn") and "container_bg_active" or "container_bg"
 end
 
 local function commas(n)
@@ -334,7 +330,8 @@ local function mode_tile(self, cfg)
         local cbx0        = acc_x + 16 + cbtn_w/2
         for i, cb in ipairs(cfg.child_buttons) do
             local cbx = cbx0 + (i - 1) * (cbtn_w + cbtn_gap)
-            mkbtn(self, cb.id, vmath.vector3(cbx, cby, 0), vmath.vector3(cbtn_w, cbtn_h, 0), cb.label, cb.style, cb.data)
+            local cb_style = cfg.big_bg and big_bg_texture(cb.style) or cb.style
+            mkbtn(self, cb.id, vmath.vector3(cbx, cby, 0), vmath.vector3(cbtn_w, cbtn_h, 0), cb.label, cb_style, cb.data)
         end
     elseif cfg.cta_label then
         local cta_w, cta_h = 160, 46
@@ -343,17 +340,20 @@ local function mode_tile(self, cfg)
         -- the tile's action rather than as another label in the left stack.
         local cta_x = x + w/2 - 16 - cta_w/2
         local cta_y = y - h/2 + 50
-        track(self, ui.btn9(vmath.vector3(cta_x, cta_y, 0), vmath.vector3(cta_w, cta_h, 0), "container_bg_active"))
-        track(self, ui.text(vmath.vector3(cta_x, cta_y, 0), cfg.cta_label, "body", C_CREAM))
+        if cfg.big_bg then
+            track(self, ui.btn9(vmath.vector3(cta_x, cta_y, 0), vmath.vector3(cta_w, cta_h, 0), "container_bg_active"))
+            track(self, ui.text(vmath.vector3(cta_x, cta_y, 0), cfg.cta_label, "body", C_CREAM))
+        else
+            track(self, ui.box(vmath.vector3(cta_x, cta_y, 0), vmath.vector3(cta_w, cta_h, 0), C_RED))
+            track(self, ui.text(vmath.vector3(cta_x, cta_y, 0), cfg.cta_label, "body", vmath.vector4(0.05, 0.05, 0.05, 1)))
+        end
     elseif cfg.badge_label then
         local badge_w, badge_h = 160, 46
         local badge_x = acc_x + 16 + badge_w/2
         local badge_y = y - h/2 + 50
-        -- Same panel as the live CTA but muted, so it reads as a state rather
-        -- than as something to press.
-        local bnode = track(self, ui.btn9(vmath.vector3(badge_x, badge_y, 0), vmath.vector3(badge_w, badge_h, 0), "container_bg"))
-        gui.set_color(bnode, vmath.vector4(0.65, 0.65, 0.65, 1))
-        track(self, ui.text(vmath.vector3(badge_x, badge_y, 0), cfg.badge_label, "body", C_MUTED))
+        -- Muted/darker styling for a non-clickable badge look
+        track(self, ui.box(vmath.vector3(badge_x, badge_y, 0), vmath.vector3(badge_w, badge_h, 0), C_DARKRED))
+        track(self, ui.text(vmath.vector3(badge_x, badge_y, 0), cfg.badge_label, "body", C_CREAM))
     end
 
     -- Invisible hit node (only if tile is clickable)
@@ -910,6 +910,7 @@ local function rebuild(self)
         season_deadline  = self.season_deadline_text,
         cta_label   = cta_text,
         btn_id      = "play_online",
+        big_bg      = true,
     })
 
     -- -----------------------------------------------------------------------
@@ -965,6 +966,7 @@ local function rebuild(self)
         top_left_2  = "TEAM",
         title       = "TEAM CUPS",
         sub         = team_sub,
+        big_bg      = true,
         cta_label   = (has_team_tournament and not owns_cup) and "OPEN" or nil,
         btn_id      = (has_team_tournament and not owns_cup) and "team_action_open" or nil,
         child_buttons = team_children,
