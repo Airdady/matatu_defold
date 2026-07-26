@@ -15,133 +15,60 @@ local api         = require("modules.api_service")
 local toast       = require("modules.toast")
 
 -- ---------------------------------------------------------------------------
--- Canvas — refreshed from screen.metrics() before every rebuild
+-- Shared lobby components. The look, the drawing primitives, the two tile
+-- shapes, the season countdown and the open-cups rail each live in their own
+-- module under modules/lobby/ — this file keeps the screen's state machine,
+-- its overlays and its input handling.
 -- ---------------------------------------------------------------------------
-local LOGICAL_W, LOGICAL_H = 1280, 720
-local VW, VH = 1280, 720
-local EDGE_L, EDGE_R, EDGE_B, EDGE_T = 0, 1280, 0, 720
-local CX, CY = 640, 360
+local T      = require("modules.lobby.theme")
+local D      = require("modules.lobby.draw")
+local Tiles  = require("modules.lobby.tiles")
+local Season = require("modules.lobby.season")
+local Cups   = require("modules.lobby.cups")
 
--- ---------------------------------------------------------------------------
--- Palette (Matching Screenshot)
--- ---------------------------------------------------------------------------
-local C_CREAM   = vmath.vector4(1.000, 0.980, 0.950, 1.00)
-local C_RED     = vmath.vector4(0.929, 0.110, 0.141, 1.00)
-local C_DARKRED = vmath.vector4(0.600, 0.100, 0.100, 1.00)
-local C_GOLD    = vmath.vector4(0.784, 0.580, 0.235, 1.00)
-local C_BORDER  = vmath.vector4(0.350, 0.290, 0.200, 1.00) -- Thin gold border
-local C_TILE    = vmath.vector4(0.060, 0.050, 0.040, 0.95) -- Almost black tile fill
-local C_DARK    = vmath.vector4(0.050, 0.040, 0.030, 0.95)
-local C_TRANSP  = vmath.vector4(0, 0, 0, 0)
-local C_MUTED   = vmath.vector4(0.600, 0.600, 0.600, 1.00)
+-- Local aliases keep the rest of this file reading as it did before the split.
+local track     = D.track
+local clear     = D.clear
+local set_pivot = D.set_pivot
+local text_sh   = D.text_sh
+local mkbtn     = D.btn
+local commas    = D.commas
 
--- Mode accent colours
-local C_COPPER  = C_GOLD
-local C_TAN     = C_GOLD
+local C_CREAM, C_RED, C_DARKRED = T.CREAM, T.RED, T.DARKRED
+local C_GOLD, C_BORDER, C_TILE  = T.GOLD, T.BORDER, T.TILE
+local C_DARK, C_TRANSP, C_MUTED = T.DARK, T.TRANSP, T.MUTED
+local C_COPPER, C_TAN           = T.GOLD, T.GOLD
+local C_U_TEAM, C_DISABLED      = T.TEAM, T.DISABLED
 
--- Utility tile accent colours (bottom ticks)
-local C_U_TEAM    = vmath.vector4(0.596, 0.298, 0.796, 1.00)
-local C_DISABLED  = vmath.vector4(0.380, 0.380, 0.380, 1.00)
+local CONSENT_PANEL, CONSENT_ACCENT = T.CONSENT_PANEL, T.CONSENT_ACCENT
+local CONSENT_BODY_C, CONSENT_DARK  = T.CONSENT_BODY, T.CONSENT_DARK
+local CONSENT_NEUTRAL, CONSENT_DONE = T.CONSENT_NEUTRAL, T.CONSENT_DONE
 
--- Akira / consent palette
-local CONSENT_PANEL   = vmath.vector4(0.110, 0.071, 0.051, 1.0)
-local CONSENT_ACCENT  = vmath.vector4(0.949, 0.702, 0.180, 1.0)
-local CONSENT_BODY_C  = vmath.vector4(0.850, 0.800, 0.750, 1.0)
-local CONSENT_DARK    = vmath.vector4(0.082, 0.055, 0.040, 1.0)
-local CONSENT_NEUTRAL = vmath.vector4(0.180, 0.140, 0.110, 1.0)
-local CONSENT_DONE    = vmath.vector4(0.612, 0.482, 0.325, 1.0)
+local LOGICAL_W, LOGICAL_H = T.LOGICAL_W, T.LOGICAL_H
+local GUTTER, PADDING, HEADER_H = T.GUTTER, T.PADDING, T.HEADER_H
 
-local INSTALL_DURATION = 2.8
-local INSTALL_STEPS = {
-    { at = 0.00, label = "Downloading Akira core..."     },
-    { at = 0.40, label = "Calibrating card instincts..."  },
-    { at = 0.75, label = "Linking Akira to your seat..."  },
-}
+local STATE_LOBBY     = T.STATE_LOBBY
+local STATE_AI_SELECT = T.STATE_AI_SELECT
+local STATE_TOURNEY   = T.STATE_TOURNEY
+local STATE_TEAM_JOIN = T.STATE_TEAM_JOIN
+local STATE_TEAM_MENU = T.STATE_TEAM_MENU
 
--- ---------------------------------------------------------------------------
--- Layout & State constants
--- ---------------------------------------------------------------------------
-local GUTTER = 10
-local PADDING = 32
-local HEADER_H = 65
-
--- Open-cups rail. Sized as a share of the available width so it scales with
--- the viewport instead of taking a fixed bite out of every one of them, and
--- only shown when the mode tiles still have room to be usable beside it.
-local RAIL_SHARE  = 0.21
-local RAIL_MIN_W  = 240
-local RAIL_MAX_W  = 340
-local TILES_MIN_W = 760
-
-local STATE_LOBBY     = "lobby"
-local STATE_AI_SELECT = "ai_select"
-local STATE_TOURNEY   = "tournament"
-local STATE_TEAM_JOIN = "team_join"
-local STATE_TEAM_MENU = "team_menu"
-
--- ---------------------------------------------------------------------------
--- Tutorial data
--- ---------------------------------------------------------------------------
--- Game-specific copy comes from modules/game_mode.lua so the tutorial matches
--- whichever game this build targets (Whot / Matatu / Kadi).
-local TUTORIAL_PAGES = {
-    { t = "WELCOME TO " .. GameMode.TITLE, lines = { GameMode.TAGLINE, "Match, attack, and be the first to", "empty your hand to win!" } },
-    { t = "GAME MODES", lines = { "PLAY ONLINE  —  live coin matches", "QUICK PLAY  —  practice vs the AI", "BATTLE AI  —  best-of series", "TOURNAMENT  —  bracket of players" } },
-    { t = "HOW TO PLAY", lines = GameMode.def().how_to },
-    { t = "SPECIAL CARDS", lines = GameMode.def().specials },
-    { t = "WIN & CLIMB", lines = { "Empty your hand to win the round.", "Earn POINTS to climb the weekly rank.", "Prizes are paid every Wednesday midday", "and Saturday midnight (EAT)." } },
-    { t = "YOU'RE READY!", lines = { "Tap PLAY ONLINE to challenge real", "players, or QUICK PLAY to practice.", "Good luck — and have fun!" } },
-}
+-- Canvas, mirrored from the theme so this file's own layout maths reads the
+-- same numbers the components do. refresh_wh() below keeps both in step.
+local VW, VH = T.VW, T.VH
+local EDGE_L, EDGE_R, EDGE_B, EDGE_T = T.EDGE_L, T.EDGE_R, T.EDGE_B, T.EDGE_T
+local CX, CY = T.CX, T.CY
 
 -- ---------------------------------------------------------------------------
 -- Helpers
 -- ---------------------------------------------------------------------------
 local function refresh_wh()
     local m  = screen.metrics()
+    T.refresh(m)
     VW, VH   = m.VW, m.VH
     EDGE_L, EDGE_R = m.L, m.R
     EDGE_B, EDGE_T = m.B, m.T
     CX, CY   = m.CX, m.CY
-end
-
-local function clear(self)
-    for _, n in ipairs(self.nodes) do pcall(gui.delete_node, n) end
-    self.nodes, self.buttons = {}, {}
-    -- The rail's drag surface is one of the nodes just deleted. Leaving the
-    -- reference behind means on_input's drag test runs gui.pick_node against a
-    -- DELETED node, which raises — and since on_input runs every frame, that
-    -- takes the whole lobby's input down, not just the drag. "disable" clears
-    -- without rebuilding, so this is reachable.
-    self.team_rail_node = nil
-    self._rail_drag = nil
-end
-
-local function track(self, n) self.nodes[#self.nodes + 1] = n; return n end
-
-local function set_pivot(node, pivot)
-    pcall(gui.set_pivot, node, pivot)
-    return node
-end
-
-local function text_sh(self, pos, str, font, color, ox, oy)
-    ox = ox or 1; oy = oy or -2
-    track(self, ui.text(vmath.vector3(pos.x + ox, pos.y + oy, 0), str, font, vmath.vector4(0, 0, 0, 0.8)))
-    return track(self, ui.text(pos, str, font, color))
-end
-
--- Textured slice-9 button + optional label, registered as a tappable button
--- in one call — same shape as online.gui_script's local mkbtn helper.
-local function mkbtn(self, id, pos, size, label, style, data)
-    local bg = track(self, ui.btn9(pos, size, style or "secondary_btn"))
-    if label then
-        track(self, ui.text(vmath.vector3(pos.x, pos.y - 3, pos.z), label, size.y >= 44 and "btn_md" or "btn_sm", C_CREAM))
-    end
-    self.buttons[#self.buttons + 1] = { node = bg, id = id, data = data }
-    return bg
-end
-
-local function commas(n)
-    return (tostring(math.floor(tonumber(n) or 0)):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""))
 end
 
 -- "Cup rules": mirrors computeSuggestedLevels in be_matatu's
@@ -169,606 +96,35 @@ local function url_encode(str)
     return str
 end
 
--- ---------------------------------------------------------------------------
--- Season countdown (header, middle)
--- ---------------------------------------------------------------------------
-local function days_from_civil(y, m, d)
-    y = (m <= 2) and (y - 1) or y
-    local era = math.floor((y >= 0 and y or y - 399) / 400)
-    local yoe = y - era * 400
-    local mp = (m + 9) % 12
-    local doy = math.floor((153 * mp + 2) / 5) + d - 1
-    local doe = yoe * 365 + math.floor(yoe / 4) - math.floor(yoe / 100) + doy
-    return era * 146097 + doe - 719468
-end
+local update_lobby_season = Season.update
 
-local function parse_iso_utc(str)
-    if type(str) ~= "string" then return nil end
-    local y, mo, d, h, mi, s = str:match("(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
-    if not y then return nil end
-    local days = days_from_civil(tonumber(y), tonumber(mo), tonumber(d))
-    return days * 86400 + tonumber(h) * 3600 + tonumber(mi) * 60 + tonumber(s)
-end
-
-local WEEKDAY_NAMES = { "SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY" }
-local EAT_OFFSET = 3 * 3600 -- Africa/Nairobi, UTC+3, no DST
-
--- end_epoch is a true UTC unix timestamp. Always render it in EAT — the
--- prize/season cadence is fixed to Africa/Nairobi regardless of the
--- player's device timezone — via the same "+3h then read as UTC" trick
--- used for the fallback cadence below, rather than os.date's un-prefixed
--- form (which follows the device's own local timezone).
-local function format_season_deadline(end_epoch)
-    local t = os.date("!*t", end_epoch + EAT_OFFSET)
-    local h12 = t.hour % 12
-    if h12 == 0 then h12 = 12 end
-    local ampm = t.hour < 12 and "AM" or "PM"
-    return string.format("ENDS %s %d:%02d %s EAT", WEEKDAY_NAMES[t.wday] or "?", h12, t.min, ampm)
-end
-
--- Placeholder cadence (Wednesday 12:00 / Saturday 23:59 Africa/Nairobi) used
--- whenever the backend hasn't told us the real per-game boundary yet.
--- SEASON_STATUS is only ever sent to an authenticated client right after
--- IDENTIFY, so guests — and anyone before that round-trip completes — would
--- otherwise see a blank/frozen countdown. Mirrors be_matatu's
--- Prize.DEFAULT_SEASON_SCOPES so it agrees with the real schedule until the
--- live value arrives.
-local function fallback_season_end_utc()
-    local now_eat = os.time() + EAT_OFFSET
-    local t = os.date("!*t", now_eat)
-    local seconds_today = t.hour * 3600 + t.min * 60 + t.sec
-    local midnight_today_eat = now_eat - seconds_today
-    local is_phase_1 = (t.wday >= 1 and t.wday <= 3) or (t.wday == 4 and seconds_today < 43200)
-    local target_eat = is_phase_1
-        and (midnight_today_eat + (((4 - t.wday) % 7) * 86400) + 43200)
-        or (midnight_today_eat + (((7 - t.wday) % 7) * 86400) + 86399)
-    return target_eat - EAT_OFFSET
-end
-
-local function update_lobby_season(self)
-    local status = ws.current_season_status
-    local end_epoch = status and parse_iso_utc(status.endDate)
-    if not end_epoch then
-        end_epoch = fallback_season_end_utc()
-    end
-    local diff = math.max(0, end_epoch - os.time())
-    self.season_text = diff >= 86400
-        and string.format("%dD %02dH %02dM %02dS", math.floor(diff / 86400), math.floor((diff % 86400) / 3600), math.floor((diff % 3600) / 60), diff % 60)
-        or string.format("%02dH %02dM %02dS", math.floor(diff / 3600), math.floor((diff % 3600) / 60), diff % 60)
-    self.season_deadline_text = format_season_deadline(end_epoch)
-end
-
--- ---------------------------------------------------------------------------
--- Main mode-tile builder
--- ---------------------------------------------------------------------------
-local function mode_tile(self, cfg)
-    local x, y, w, h = cfg.x, cfg.y, cfg.w, cfg.h
-
-    -- The tile container is the textured slice-9 panel from the ui atlas —
-    -- the same artwork the stake tiles use (ui.panel9 + "container_bg", see
-    -- online_center.lua). It replaces the two flat layered boxes that used to
-    -- fake a 1px border, so every mode tile reads as part of one system.
-    track(self, ui.panel9(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), "container_bg"))
-
-    -- Left Accent Line
-    local acc_w = 3
-    local acc_h = h - 24
-    local acc_x = x - w/2 + 8
-    local n_acc = track(self, ui.box(vmath.vector3(acc_x, y, 0), vmath.vector3(acc_w, acc_h, 0), cfg.accent))
-    set_pivot(n_acc, gui.PIVOT_W)
-
-    -- Top Left Text
-    local tl_y = y + h/2 - 28
-    local n_tl = track(self, ui.text(vmath.vector3(acc_x + 16, tl_y, 0), cfg.top_left, "small", cfg.accent))
-    set_pivot(n_tl, gui.PIVOT_W)
-
-    -- Camera recording blink effect for the LIVE tag
-    if cfg.blink_tl then
-        gui.animate(n_tl, "color.w", 0.1, gui.EASING_LINEAR, 0.8, 0, nil, gui.PLAYBACK_LOOP_PINGPONG)
-    end
-
-    if cfg.top_left_2 then
-        local n_tl2 = track(self, ui.text(vmath.vector3(acc_x + 16 + 55, tl_y, 0), cfg.top_left_2, "small", C_DARKRED))
-        set_pivot(n_tl2, gui.PIVOT_W)
-    end
-
-    -- Center Text (Anchored slightly below center or dynamic based on CTA)
-    local title_y = (cfg.cta_label or cfg.badge_label or cfg.child_buttons) and (y + 15) or (y + 8)
-    
-    local n_title = track(self, ui.text(vmath.vector3(acc_x + 16, title_y, 0), cfg.title, "title", C_CREAM))
-    set_pivot(n_title, gui.PIVOT_W)
-    pcall(gui.set_scale, n_title, vmath.vector3(1.15, 1.15, 1))
-
-    if cfg.sub then
-        local n_sub = track(self, ui.text(vmath.vector3(acc_x + 16, title_y - 32, 0), cfg.sub, "small", C_MUTED))
-        set_pivot(n_sub, gui.PIVOT_W)
-    end
-
-    -- Season countdown block (PLAY ONLINE tile only) — sits in the gap
-    -- between the subtitle and the CTA pill: a big "ends in" countdown with
-    -- the actual day-of-week/time it ends underneath, visible to guests too.
-    if cfg.season_countdown then
-        local sy = title_y - 62
-        local n_slabel = track(self, ui.text(vmath.vector3(acc_x + 16, sy, 0), "SEASON ENDS IN", "small", C_MUTED))
-        set_pivot(n_slabel, gui.PIVOT_W)
-
-        local n_scount = track(self, ui.text(vmath.vector3(acc_x + 16, sy - 30, 0), cfg.season_countdown, "subtitle2", C_GOLD))
-        set_pivot(n_scount, gui.PIVOT_W)
-        pcall(gui.set_scale, n_scount, vmath.vector3(1.15, 1.15, 1))
-
-        if cfg.season_deadline then
-            local n_sdead = track(self, ui.text(vmath.vector3(acc_x + 16, sy - 62, 0), cfg.season_deadline, "small", C_MUTED))
-            set_pivot(n_sdead, gui.PIVOT_W)
-        end
-    end
-
-    -- Child action buttons (e.g. CREATE / JOIN) when the tile represents
-    -- more than one destination — takes priority over the single-button
-    -- CTA/badge below so a tile never draws both. Each child gets its own
-    -- hit region sized to fit, so the tile itself doesn't need (and won't
-    -- get, see the "Invisible hit node" block below) one big hit region
-    -- covering the whole tile.
-    if cfg.child_buttons then
-        local n_children = #cfg.child_buttons
-        local cbtn_h      = 46
-        local cbtn_gap    = 12
-        local avail_w     = (x + w/2 - 20) - (acc_x + 16)
-        local cbtn_w      = math.floor((avail_w - cbtn_gap * (n_children - 1)) / n_children)
-        local cby         = y - h/2 + 50
-        local cbx0        = acc_x + 16 + cbtn_w/2
-        for i, cb in ipairs(cfg.child_buttons) do
-            local cbx = cbx0 + (i - 1) * (cbtn_w + cbtn_gap)
-            mkbtn(self, cb.id, vmath.vector3(cbx, cby, 0), vmath.vector3(cbtn_w, cbtn_h, 0), cb.label, cb.style, cb.data)
-        end
-    elseif cfg.cta_label then
-        -- Narrow enough to sit inside the smaller offline tiles too, which
-        -- are roughly a third of the grid rather than half of it.
-        local cta_w, cta_h = math.min(160, math.max(96, w - 40)), 46
-        -- Right-anchored (the child-button row and the badge below stay left
-        -- aligned): PLAY NOW sits at the tile's trailing edge so it reads as
-        -- the tile's action rather than as another label in the left stack.
-        local cta_x = x + w/2 - 16 - cta_w/2
-        local cta_y = y - h/2 + 50
-        track(self, ui.box(vmath.vector3(cta_x, cta_y, 0), vmath.vector3(cta_w, cta_h, 0), C_RED))
-        track(self, ui.text(vmath.vector3(cta_x, cta_y, 0), cfg.cta_label, "body", vmath.vector4(0.05, 0.05, 0.05, 1)))
-    elseif cfg.badge_label then
-        local badge_w, badge_h = 160, 46
-        local badge_x = acc_x + 16 + badge_w/2
-        local badge_y = y - h/2 + 50
-        -- Muted/darker styling for a non-clickable badge look
-        track(self, ui.box(vmath.vector3(badge_x, badge_y, 0), vmath.vector3(badge_w, badge_h, 0), C_DARKRED))
-        track(self, ui.text(vmath.vector3(badge_x, badge_y, 0), cfg.badge_label, "body", C_CREAM))
-    end
-
-    -- Invisible hit node (only if tile is clickable)
-    if cfg.btn_id then
-        local hit = track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), C_TRANSP))
-        self.buttons[#self.buttons + 1] = { node = hit, id = cfg.btn_id, data = cfg.btn_data }
-    end
-end
-
--- ---------------------------------------------------------------------------
--- Utility square-tile builder
--- ---------------------------------------------------------------------------
-local function util_tile(self, cfg)
-    local x, y, w, h = cfg.x, cfg.y, cfg.w, cfg.h
-    local disabled = cfg.disabled
-
-    -- Same textured panel as the mode tiles, so the whole lobby is one
-    -- material. Deliberately no per-button accent colour: RULES / SHARE /
-    -- HELP / THEME / CONTACT each used to carry their own hue, which put five
-    -- unrelated colours along the bottom of the screen for no informational
-    -- gain. Disabled state is carried by the greyed label alone.
-    local panel = track(self, ui.panel9(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), "container_bg"))
-    if disabled then gui.set_color(panel, vmath.vector4(0.55, 0.55, 0.55, 1)) end
-
-    -- Centered Label (greyed when disabled)
-    track(self, ui.text(vmath.vector3(x, y + 2, 0), cfg.label, "body", disabled and C_DISABLED or C_CREAM))
-
-    -- Sub-label (e.g. lock hint) when disabled
-    if disabled and cfg.locked_hint then
-        local n = track(self, ui.text(vmath.vector3(x, y - 16, 0), cfg.locked_hint, "small", C_DISABLED))
-        set_pivot(n, gui.PIVOT_CENTER)
-    end
-
-    local hit = track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), C_TRANSP))
-    self.buttons[#self.buttons + 1] = { node = hit, id = disabled and (cfg.disabled_id or "noop") or cfg.btn_id }
-end
+local mode_tile = Tiles.mode
+local util_tile = Tiles.util
 
 -- ---------------------------------------------------------------------------
 -- Overlays (Tutorial, Consent, AI, Tournament)
 -- ---------------------------------------------------------------------------
-local function tutorial_seen()
-    local ok, data = pcall(sys.load, sys.get_save_file("matatu_defold", "tutorial"))
-    return ok and type(data) == "table" and data.seen == true
-end
+local Overlays = require("modules.lobby.overlays")
 
-local function mark_tutorial_seen()
-    pcall(sys.save, sys.get_save_file("matatu_defold", "tutorial"), { seen = true })
-end
+local tutorial_seen      = Overlays.tutorial_seen
+local mark_tutorial_seen = Overlays.mark_tutorial_seen
+local draw_tutorial      = Overlays.tutorial
+local draw_consent       = Overlays.consent
+local draw_ai_select     = Overlays.ai_select
+local draw_tournament    = Overlays.tournament
+local draw_team_menu     = Overlays.team_menu
+local draw_team_join     = Overlays.team_join
+local TUTORIAL_PAGES     = Overlays.TUTORIAL_PAGES
+local INSTALL_STEPS      = Overlays.INSTALL_STEPS
+local INSTALL_DURATION   = Overlays.INSTALL_DURATION
+local TEAM_CODE_MAX      = Overlays.TEAM_CODE_MAX
 
-local function draw_tutorial(self)
-    if not self.tutorial_active then return end
-    local page  = self.tut_page or 1
-    local data  = TUTORIAL_PAGES[page]
-    if not data then return end
-    local total = #TUTORIAL_PAGES
-
-    local scrim = track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.85)))
-    self.buttons[#self.buttons + 1] = { node = scrim, id = "tut_block" }
-
-    local pw, ph = 600, 400
-    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), C_DARK))
-    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), C_BORDER))
-    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw - 2, ph - 2, 0), C_TILE))
-    
-    track(self, ui.box(vmath.vector3(CX, CY + ph / 2 - 2, 0), vmath.vector3(pw, 4, 0), C_RED))
-
-    track(self, ui.text(vmath.vector3(CX, CY + ph / 2 - 22, 0), string.format("STEP %d OF %d", page, total), "small", vmath.vector4(1, 1, 1, 0.38)))
-    text_sh(self, vmath.vector3(CX, CY + ph / 2 - 56, 0), data.t, "title", C_CREAM, 2, -2)
-
-    local ly = CY + 70
-    for _, line in ipairs(data.lines) do
-        track(self, ui.text(vmath.vector3(CX, ly, 0), line, "small", C_CREAM))
-        ly = ly - 28
-    end
-
-    local dgap = 22
-    local dx0  = CX - ((total - 1) * dgap) / 2
-    local dy   = CY - ph / 2 + 62
-    for i = 1, total do
-        local sz = (i == page) and 12 or 7
-        track(self, ui.box(vmath.vector3(dx0 + (i - 1) * dgap, dy, 0), vmath.vector3(sz, sz, 0), (i == page) and C_RED or vmath.vector4(1, 1, 1, 0.24)))
-    end
-
-    local skb = track(self, ui.btn9(vmath.vector3(CX - pw / 2 + 52, CY + ph / 2 - 22, 0), vmath.vector3(88, 32, 0), "secondary_btn"))
-    track(self, ui.text(vmath.vector3(CX - pw / 2 + 52, CY + ph / 2 - 24, 0), "SKIP", "small", C_MUTED))
-    self.buttons[#self.buttons + 1] = { node = skb, id = "tut_skip" }
-
-    local by = CY - ph / 2 + 30
-    if page > 1 then
-        local bkb = track(self, ui.btn9(vmath.vector3(CX - 88, by, 0), vmath.vector3(148, 44, 0), "secondary_btn"))
-        text_sh(self, vmath.vector3(CX - 88, by - 1, 0), "BACK", "body", C_CREAM, 1, -1)
-        self.buttons[#self.buttons + 1] = { node = bkb, id = "tut_back" }
-    end
-    local nxb = track(self, ui.btn9(vmath.vector3(CX + 88, by, 0), vmath.vector3(148, 44, 0), "primary_btn"))
-    text_sh(self, vmath.vector3(CX + 88, by - 1, 0), (page == total) and "START" or "NEXT", "body", C_CREAM, 1, -1)
-    self.buttons[#self.buttons + 1] = { node = nxb, id = "tut_next" }
-end
-
-local function draw_consent(self)
-    if not self.consent_active then return end
-    local phase = self.consent_phase or "ask"
-
-    local scrim = track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.85)))
-    self.buttons[#self.buttons + 1] = { node = scrim, id = "consent_block" }
-
-    local pw, ph = 680, 470
-    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), C_BORDER))
-    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw - 2, ph - 2, 0), C_TILE))
-    
-    local strip_col = (phase == "done") and CONSENT_DONE or CONSENT_ACCENT
-    track(self, ui.box(vmath.vector3(CX, CY + ph / 2 - 3, 0), vmath.vector3(pw, 6, 0), strip_col))
-
-    local av_y = CY + ph / 2 - 84
-    local frame_col = (phase == "done") and CONSENT_DONE or CONSENT_ACCENT
-    track(self, ui.box(vmath.vector3(CX, av_y, 0), vmath.vector3(104, 104, 0), frame_col))
-    track(self, ui.box(vmath.vector3(CX, av_y, 0), vmath.vector3(100, 100, 0), CONSENT_DARK))
-    local av = track(self, ui.avatar(vmath.vector3(CX, av_y, 0), vmath.vector3(92, 92, 0), akira.avatar()))
-    
-    if phase == "installing" then
-        gui.animate(av, "scale", vmath.vector3(1.07, 1.07, 1), gui.EASING_INOUTSINE, 0.45, 0, nil, gui.PLAYBACK_LOOP_PINGPONG)
-    elseif phase == "done" then
-        gui.set_scale(av, vmath.vector3(0.85, 0.85, 1))
-        gui.animate(av, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTBACK, 0.4)
-    end
-
-    if phase == "ask" then
-        track(self, ui.text(vmath.vector3(CX, av_y - 78, 0), "MEET AKIRA - YOUR AI HELPER", "subtitle2", C_CREAM, 26 / 34))
-        local lines = { "Akira plays your turns whenever you go offline", "or run out of time, so you never lose your", "entry tokens. Install Akira to protect your games." }
-        local ly = av_y - 122
-        for _, line in ipairs(lines) do
-            track(self, ui.text(vmath.vector3(CX, ly, 0), line, "body", CONSENT_BODY_C, 19 / 28))
-            ly = ly - 32
-        end
-        local by = CY - ph / 2 + 60
-        local inst = track(self, ui.box(vmath.vector3(CX + 140, by, 0), vmath.vector3(248, 58, 0), CONSENT_ACCENT))
-        track(self, ui.text(vmath.vector3(CX + 140, by - 2, 0), "INSTALL AKIRA", "subtitle2", CONSENT_DARK, 20 / 34))
-        self.buttons[#self.buttons + 1] = { node = inst, id = "consent_install" }
-        local later = track(self, ui.box(vmath.vector3(CX - 140, by, 0), vmath.vector3(248, 58, 0), CONSENT_NEUTRAL))
-        track(self, ui.text(vmath.vector3(CX - 140, by - 2, 0), "NOT NOW", "subtitle2", CONSENT_BODY_C, 20 / 34))
-        self.buttons[#self.buttons + 1] = { node = later, id = "consent_later" }
-
-    elseif phase == "installing" then
-        track(self, ui.text(vmath.vector3(CX, av_y - 78, 0), "INSTALLING AKIRA", "subtitle2", C_CREAM, 26 / 34))
-        local bar_w = 480
-        local bar_y = av_y - 130
-        track(self, ui.box(vmath.vector3(CX, bar_y, 0), vmath.vector3(bar_w, 10, 0), CONSENT_NEUTRAL))
-        local fill = ui.box(vmath.vector3(CX - bar_w / 2, bar_y, 0), vmath.vector3(1, 10, 0), CONSENT_ACCENT)
-        gui.set_pivot(fill, gui.PIVOT_W)
-        track(self, fill)
-        self._install_fill   = fill
-        self._install_bar_w  = bar_w
-        self._install_pct    = track(self, ui.text(vmath.vector3(CX, bar_y - 34, 0), "0%", "subtitle2", CONSENT_ACCENT, 20 / 34))
-        self._install_status = track(self, ui.text(vmath.vector3(CX, bar_y - 68, 0), INSTALL_STEPS[1].label, "body", CONSENT_BODY_C, 17 / 28))
-
-    else -- done
-        track(self, ui.text(vmath.vector3(CX, av_y - 78, 0), "AKIRA INSTALLED", "subtitle2", CONSENT_DONE, 26 / 34))
-        track(self, ui.text(vmath.vector3(CX, av_y - 118, 0), "Akira now guards your seat whenever you", "body", CONSENT_BODY_C, 19 / 28))
-        track(self, ui.text(vmath.vector3(CX, av_y - 150, 0), "drop or time out. Good luck out there!", "body", CONSENT_BODY_C, 19 / 28))
-        local by = CY - ph / 2 + 60
-        local done_btn = track(self, ui.box(vmath.vector3(CX, by, 0), vmath.vector3(248, 58, 0), CONSENT_DONE))
-        track(self, ui.text(vmath.vector3(CX, by - 2, 0), "DONE", "subtitle2", CONSENT_DARK, 20 / 34))
-        self.buttons[#self.buttons + 1] = { node = done_btn, id = "consent_done" }
-    end
-end
-
-local function draw_ai_select(self)
-    local scrim = track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.85)))
-    self.buttons[#self.buttons + 1] = { node = scrim, id = "dialog_block" }
-
-    local pw, ph = 720, 420
-    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), C_BORDER))
-    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw-2, ph-2, 0), C_TILE))
-    
-    track(self, ui.box(vmath.vector3(CX, CY + ph / 2 - 2, 0), vmath.vector3(pw, 4, 0), C_COPPER))
-
-    text_sh(self, vmath.vector3(CX, CY + ph / 2 - 44, 0), "BATTLE AI", "title", C_CREAM, 2, -2)
-    track(self, ui.text(vmath.vector3(CX, CY + ph / 2 - 76, 0), "Choose your series length", "small", C_MUTED))
-
-    local opts = {
-        { label = "Best of 3", desc = "First to 2 wins" },
-        { label = "Best of 5", desc = "First to 3 wins" },
-        { label = "Best of 7", desc = "First to 4 wins" },
-        { label = "Best of 9", desc = "First to 5 wins" },
-    }
-    local opt_w, opt_h = 138, 96
-    local opt_y, opt_x0 = CY + 20, CX - (opt_w * 1.5 + 20 * 1.5)
-    local cur = app_state.ai_series or 3
-
-    for i, o in ipairs(opts) do
-        local ox = opt_x0 + (i - 1) * (opt_w + 20)
-        local active = (cur == (i * 2 + 1))
-        
-        track(self, ui.box(vmath.vector3(ox, opt_y, 0), vmath.vector3(opt_w, opt_h, 0), C_BORDER))
-        track(self, ui.box(vmath.vector3(ox, opt_y, 0), vmath.vector3(opt_w-2, opt_h-2, 0), active and vmath.vector4(0.20, 0.10, 0.06, 1) or C_TILE))
-        
-        if active then track(self, ui.box(vmath.vector3(ox, opt_y + opt_h / 2 - 2, 0), vmath.vector3(opt_w - 6, 3, 0), C_COPPER)) end
-        
-        text_sh(self, vmath.vector3(ox, opt_y + 14, 0), o.label, "body", active and C_COPPER or C_CREAM, 1, -1)
-        track(self, ui.text(vmath.vector3(ox, opt_y - 16, 0), o.desc, "small", C_MUTED))
-        
-        local hit = track(self, ui.box(vmath.vector3(ox, opt_y, 0), vmath.vector3(opt_w, opt_h, 0), C_TRANSP))
-        self.buttons[#self.buttons + 1] = { node = hit, id = "ai_series", data = i * 2 + 1 }
-    end
-
-    local sb_y = CY - 128
-    local sb = track(self, ui.btn9(vmath.vector3(CX, sb_y, 0), vmath.vector3(296, 60, 0), "primary_btn"))
-    text_sh(self, vmath.vector3(CX, sb_y + 3, 0), "START BATTLE", "body", C_CREAM, 2, -2)
-    track(self, ui.text(vmath.vector3(CX, sb_y - 20, 0), "vs " .. GameMode.BOT, "small", C_MUTED))
-    self.buttons[#self.buttons + 1] = { node = sb, id = "start_ai" }
-
-    local bkb = track(self, ui.btn9(vmath.vector3(CX - pw / 2 + 50, CY + ph / 2 - 24, 0), vmath.vector3(78, 32, 0), "secondary_btn"))
-    track(self, ui.text(vmath.vector3(CX - pw / 2 + 50, CY + ph / 2 - 26, 0), "< BACK", "small", C_CREAM))
-    self.buttons[#self.buttons + 1] = { node = bkb, id = "back_to_lobby" }
-end
-
-local function draw_tournament(self)
-    local scrim = track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.85)))
-    self.buttons[#self.buttons + 1] = { node = scrim, id = "dialog_block" }
-
-    local pw, ph = 720, 470
-    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), C_BORDER))
-    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw-2, ph-2, 0), C_TILE))
-    
-    track(self, ui.box(vmath.vector3(CX, CY + ph / 2 - 2, 0), vmath.vector3(pw, 4, 0), C_TAN))
-
-    text_sh(self, vmath.vector3(CX, CY + ph / 2 - 44, 0), "4-PLAYER TABLE", "title", C_CREAM, 2, -2)
-    track(self, ui.text(vmath.vector3(CX, CY + ph / 2 - 76, 0), "1 human + 3 AI  ·  choose a mode", "small", C_MUTED))
-
-    local modes = {
-        { id = "bracket", label = "QUICK BRACKET",      desc = "Most cards out each deal"      },
-        { id = "chamber", label = "ELIMINATION CHAMBER", desc = "Hit the score cap, you're out" },
-    }
-    local m_w, m_h, m_y = 298, 102, CY + 66
-    local cur_mode = app_state.t4_mode or "bracket"
-    
-    for i, m in ipairs(modes) do
-        local mx = CX - (m_w + 22) / 2 + (i - 1) * (m_w + 22)
-        local active = (cur_mode == m.id)
-        
-        track(self, ui.box(vmath.vector3(mx, m_y, 0), vmath.vector3(m_w, m_h, 0), C_BORDER))
-        track(self, ui.box(vmath.vector3(mx, m_y, 0), vmath.vector3(m_w-2, m_h-2, 0), active and vmath.vector4(0.20, 0.10, 0.06, 1) or C_TILE))
-        
-        if active then track(self, ui.box(vmath.vector3(mx, m_y + m_h / 2 - 2, 0), vmath.vector3(m_w - 6, 3, 0), C_TAN)) end
-        
-        text_sh(self, vmath.vector3(mx, m_y + 16, 0), m.label, "body", active and C_TAN or C_CREAM, 1, -1)
-        track(self, ui.text(vmath.vector3(mx, m_y - 16, 0), m.desc, "small", C_MUTED))
-        
-        local hit = track(self, ui.box(vmath.vector3(mx, m_y, 0), vmath.vector3(m_w, m_h, 0), C_TRANSP))
-        self.buttons[#self.buttons + 1] = { node = hit, id = "t4_mode", data = m.id }
-    end
-
-    local is_chamber = (cur_mode == "chamber")
-    local thr_y = CY - 64
-    track(self, ui.text(vmath.vector3(CX, thr_y + 38, 0), is_chamber and "SCORE CAP  —  reach it and you're eliminated" or "Score cap (Elimination Chamber only)", "small", is_chamber and C_CREAM or C_MUTED))
-    
-    -- Offline score-cap ladder, per game. Whot hands score far lower than
-    -- Matatu's (face value, Stars doubled, Whot = 20), so it runs a tighter
-    -- ladder opening at 100. Keep in lockstep with KNOCKOUT_CAPS_BY_GAME in
-    -- modules/online_right.lua and the backend's KNOCKOUT_SCORE_CAPS_BY_GAME.
-    local CAPS_BY_GAME = {
-        MATATU = { 200, 300, 500 },
-        WHOT   = { 100, 150, 200 },
-        KADI   = { 100, 150, 200 },
-    }
-    local caps = CAPS_BY_GAME[GameMode.GAME] or CAPS_BY_GAME.MATATU
-    local cap_w = 118
-    local cur_cap = app_state.chamber_threshold or caps[1]
-    
-    for i, cap in ipairs(caps) do
-        local cx_ = CX - (cap_w + 14) + (i - 1) * (cap_w + 14)
-        local active = is_chamber and (cur_cap == cap)
-        
-        track(self, ui.btn9(vmath.vector3(cx_, thr_y, 0), vmath.vector3(cap_w, 48, 0), "secondary_btn"))
-        if active then track(self, ui.box(vmath.vector3(cx_, thr_y + 21, 0), vmath.vector3(cap_w - 6, 3, 0), C_TAN)) end
-        
-        text_sh(self, vmath.vector3(cx_, thr_y - 2, 0), tostring(cap), "body", active and C_TAN or (is_chamber and C_CREAM or C_MUTED), 1, -1)
-        
-        if is_chamber then
-            local hit = track(self, ui.box(vmath.vector3(cx_, thr_y, 0), vmath.vector3(cap_w, 48, 0), C_TRANSP))
-            self.buttons[#self.buttons + 1] = { node = hit, id = "chamber_threshold", data = cap }
-        end
-    end
-
-    local fb_y = CY - 166
-    local fb = track(self, ui.btn9(vmath.vector3(CX, fb_y, 0), vmath.vector3(318, 60, 0), "primary_btn"))
-    text_sh(self, vmath.vector3(CX, fb_y + 3, 0), "START", "body", C_CREAM, 2, -2)
-    track(self, ui.text(vmath.vector3(CX, fb_y - 20, 0), is_chamber and ("First to " .. tostring(cur_cap) .. " leaves the table") or "Last player standing wins", "small", C_MUTED))
-    self.buttons[#self.buttons + 1] = { node = fb, id = "start_tournament" }
-
-    local bkb = track(self, ui.btn9(vmath.vector3(CX - pw / 2 + 50, CY + ph / 2 - 24, 0), vmath.vector3(78, 32, 0), "secondary_btn"))
-    track(self, ui.text(vmath.vector3(CX - pw / 2 + 50, CY + ph / 2 - 26, 0), "< BACK", "small", C_CREAM))
-    self.buttons[#self.buttons + 1] = { node = bkb, id = "back_to_lobby" }
-end
-
--- Small 2-option menu opened from the TEAM CUPS banner: any
--- signed-in player can create one (funding its grand prize from their own
--- balance) or join an existing one by invitation code.
-local function draw_team_menu(self)
-    local scrim = track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.85)))
-    self.buttons[#self.buttons + 1] = { node = scrim, id = "dialog_block" }
-
-    local pw, ph = 520, 320
-    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), C_BORDER))
-    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw - 2, ph - 2, 0), C_TILE))
-    track(self, ui.box(vmath.vector3(CX, CY + ph / 2 - 2, 0), vmath.vector3(pw, 4, 0), C_U_TEAM))
-
-    text_sh(self, vmath.vector3(CX, CY + ph / 2 - 40, 0), "TEAM CUPS", "title", C_CREAM, 2, -2)
-    track(self, ui.text(vmath.vector3(CX, CY + ph / 2 - 70, 0), "Any player can create one, or join with a code", "small", C_MUTED))
-
-    local opt_w, opt_h = 220, 96
-    local create_x = CX - opt_w/2 - 12
-    local join_x   = CX + opt_w/2 + 12
-    local opt_y = CY - 10
-
-    track(self, ui.box(vmath.vector3(create_x, opt_y, 0), vmath.vector3(opt_w, opt_h, 0), C_BORDER))
-    track(self, ui.box(vmath.vector3(create_x, opt_y, 0), vmath.vector3(opt_w - 2, opt_h - 2, 0), C_TILE))
-    text_sh(self, vmath.vector3(create_x, opt_y + 12, 0), "CREATE", "body", C_CREAM, 1, -1)
-    track(self, ui.text(vmath.vector3(create_x, opt_y - 16, 0), "Fund a prize, invite your team", "small", C_MUTED))
-    local create_hit = track(self, ui.box(vmath.vector3(create_x, opt_y, 0), vmath.vector3(opt_w, opt_h, 0), C_TRANSP))
-    self.buttons[#self.buttons + 1] = { node = create_hit, id = "team_menu_create" }
-
-    track(self, ui.box(vmath.vector3(join_x, opt_y, 0), vmath.vector3(opt_w, opt_h, 0), C_BORDER))
-    track(self, ui.box(vmath.vector3(join_x, opt_y, 0), vmath.vector3(opt_w - 2, opt_h - 2, 0), C_TILE))
-    text_sh(self, vmath.vector3(join_x, opt_y + 12, 0), "JOIN BY CODE", "body", C_CREAM, 1, -1)
-    track(self, ui.text(vmath.vector3(join_x, opt_y - 16, 0), "Enter a code your owner shared", "small", C_MUTED))
-    local join_hit = track(self, ui.box(vmath.vector3(join_x, opt_y, 0), vmath.vector3(opt_w, opt_h, 0), C_TRANSP))
-    self.buttons[#self.buttons + 1] = { node = join_hit, id = "team_menu_join" }
-
-    local bkb = track(self, ui.btn9(vmath.vector3(CX - pw / 2 + 50, CY + ph / 2 - 24, 0), vmath.vector3(78, 32, 0), "secondary_btn"))
-    track(self, ui.text(vmath.vector3(CX - pw / 2 + 50, CY + ph / 2 - 26, 0), "< BACK", "small", C_CREAM))
-    self.buttons[#self.buttons + 1] = { node = bkb, id = "back_to_lobby" }
-end
-
--- Join a player-created Team Cup by the invitation code its owner
--- shared. Codes are alphanumeric (see be_matatu's createTeamTournament, which
--- uppercases/strips them to 3-16 [A-Z0-9] chars). The code is typed on the
--- DEVICE keyboard rather than a hand-drawn key grid, matching the create
--- screen: tapping the field raises the platform IME and characters arrive as
--- "text" / "backspace" input actions.
-local TEAM_CODE_MAX = 16
-
--- Three-border recipe shared with profile and the team cup screen:
--- accent ring, outer bevel, mid bevel, fill.
-local function tj_framed3(self, x, y, w, h, accent, fill)
-    track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w + 6, h + 6, 0), accent))
-    track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w + 3, h + 3, 0), C_BORDER))
-    track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), C_DARK))
-    track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w - 3, h - 3, 0), fill))
-end
-
--- Crafted button — no slice-9 artwork, so it matches the create screen.
-local function tj_btn(self, id, x, y, w, h, label, accent, fill, font)
-    tj_framed3(self, x, y, w, h, accent, fill)
-    text_sh(self, vmath.vector3(x, y + 1, 0), label, font or "body", C_CREAM, 2, -2)
-    local hit = track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w + 6, h + 6, 0), C_TRANSP))
-    self.buttons[#self.buttons + 1] = { node = hit, id = id }
-end
-
-local function draw_team_join(self)
-    local tj = self.team_join or { code = "" }
-    self.team_join = tj
-
-    local scrim = track(self, ui.cover(LOGICAL_W, LOGICAL_H, vmath.vector4(0, 0, 0, 0.85)))
-    self.buttons[#self.buttons + 1] = { node = scrim, id = "dialog_block" }
-
-    -- Without the on-screen key grid the panel only needs room for the field,
-    -- so it shrinks and stays clear of the raised system keyboard.
-    local pw, ph = 720, 300
-    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw, ph, 0), C_BORDER))
-    track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(pw - 2, ph - 2, 0), C_TILE))
-    track(self, ui.box(vmath.vector3(CX, CY + ph / 2 - 2, 0), vmath.vector3(pw, 4, 0), C_U_TEAM))
-
-    text_sh(self, vmath.vector3(CX, CY + ph / 2 - 40, 0), "JOIN A TEAM CUP", "title", C_CREAM, 2, -2)
-    track(self, ui.text(vmath.vector3(CX, CY + ph / 2 - 70, 0), "Enter the invitation code your team owner shared", "small", C_MUTED))
-
-    -- Tappable code field. Focus is signalled by a brighter accent ring plus a
-    -- caret, since the platform IME draws no field of its own.
-    local code_y = CY + 10
-    local focused = tj.focus and true or false
-    tj_framed3(self, CX, code_y, 440, 56, focused and C_GOLD or C_BORDER, C_DARK)
-    local shown = tj.code
-    if shown == "" then
-        track(self, ui.text(vmath.vector3(CX, code_y, 0), focused and "|" or "TAP TO TYPE CODE", "subtitle2", C_MUTED))
-    else
-        track(self, ui.text(vmath.vector3(CX, code_y, 0), focused and (shown .. "|") or shown, "subtitle2", C_CREAM))
-    end
-    local code_hit = track(self, ui.box(vmath.vector3(CX, code_y, 0), vmath.vector3(446, 62, 0), C_TRANSP))
-    self.buttons[#self.buttons + 1] = { node = code_hit, id = "tj_focus" }
-
-    if tj.msg then
-        track(self, ui.text(vmath.vector3(CX, code_y - 44, 0), tj.msg, "small", tj.msg_ok and vmath.vector4(0.3, 0.9, 0.4, 1) or vmath.vector4(1, 0.35, 0.35, 1)))
-    end
-
-    local jb_y = CY - ph / 2 + 46
-    tj_btn(self, "team_join_submit", CX, jb_y, 260, 52,
-        tj.submitting and "JOINING..." or "JOIN", C_GOLD, C_U_TEAM)
-
-    tj_btn(self, "back_to_lobby", CX - pw / 2 + 62, CY + ph / 2 - 28, 88, 32,
-        "< BACK", C_BORDER, C_DARK, "small")
-end
-
-
--- Forward reference: load_team_cups' callback fires after rebuild is defined.
+-- Forward reference: the rail's loader repaints once its request lands.
 local rebuild_ref
 
--- Pull the open team cups for the right rail. Cheap endpoint (cards only, no
--- playersProgress), refreshed on screen entry rather than polled.
--- The one cup this player owns, if any. Read off the rail's own list rather
--- than from a separate request: the list already carries isOwner/started/
--- members for every open cup, so the tile and the rail can never disagree.
-local function my_owned_cup(self)
-    for _, t in ipairs(self.team_cups or {}) do
-        if t.isOwner then return t end
-    end
-    return nil
-end
-
+local my_owned_cup = Cups.my_owned_cup
 local function load_team_cups(self)
-    if self.team_cups_loading then return end
-    self.team_cups_loading = true
-    local uid = tostring((ws.current_user_data or {})._id or "")
-    api.list_active_team_tournaments(uid, function(res)
-        self.team_cups_loading = false
-        self.team_cups = ((res or {}).data or {}).tournaments or {}
-        self.team_cups_off = 0
-        -- Unlike the other screens, lobby has no self._active flag — gating on
-        -- one would silently never repaint, leaving the rail stuck on
-        -- "Loading..." forever. self.nodes is the real signal that the screen
-        -- is currently built.
-        if self.nodes then rebuild_ref(self) end
-    end)
+    Cups.load(self, function(s2) rebuild_ref(s2) end)
 end
 
 -- ---------------------------------------------------------------------------
@@ -792,21 +148,10 @@ local function rebuild(self)
     local grid_b = EDGE_B + PADDING + util_h + GUTTER
     local grid_t = EDGE_T - PADDING - HEADER_H
 
-    -- Right rail: live list of open team cups, reserved out of the grid width
-    -- so the mode tiles shrink to make room rather than being overdrawn.
-    --
-    -- The width is a SHARE of the available width, not a fixed 300. A fixed
-    -- rail took the same bite out of a narrow viewport as a wide one, which
-    -- is what left the tiles cramped. The old "hide it when narrow" guard
-    -- could never fire either: screen.metrics() never reports a logical width
-    -- below LOGICAL_W, so grid width is always ~1232 or more and the
-    -- (> RAIL_W + 520) test was always true.
-    local RAIL_GAP  = GUTTER
-    local avail_w   = grid_r - grid_l
-    local RAIL_W    = math.floor(math.max(RAIL_MIN_W, math.min(RAIL_MAX_W, avail_w * RAIL_SHARE)))
-    local show_rail = avail_w >= (RAIL_MIN_W + TILES_MIN_W)
-    local rail_l = show_rail and (grid_r - RAIL_W) or nil
-    if show_rail then grid_r = rail_l - RAIL_GAP end
+    -- Right rail: open team cups. Its width is reserved out of the grid so
+    -- the mode tiles shrink to make room rather than being overdrawn.
+    local RAIL_W, show_rail, rail_l = Cups.reserve(grid_l, grid_r)
+    if show_rail then grid_r = rail_l - GUTTER end
 
     local grid_w = grid_r - grid_l
     local grid_h = grid_t - grid_b
@@ -1024,148 +369,14 @@ local function rebuild(self)
         })
     end
 
-    -- -----------------------------------------------------------------------
-    -- Right rail: open team cups, newest first, vertically scrollable.
-    -- -----------------------------------------------------------------------
+    -- ---------------------------------------------------------------------
+    -- Right rail: open team cups (modules/lobby/cups.lua)
+    -- ---------------------------------------------------------------------
     if show_rail then
-        local rail_cx = rail_l + RAIL_W / 2
-        -- Full height: the rail runs the whole usable column rather than
-        -- starting below the header band, so it fits noticeably more cups.
-        -- Nothing else draws there — the header's right edge is grid_r, which
-        -- was already pulled left of the rail above.
-        local rail_t  = EDGE_T - PADDING
-        local rail_b  = EDGE_B + PADDING
-        local rail_h  = rail_t - rail_b
-
-        track(self, ui.box(vmath.vector3(rail_cx, rail_b + rail_h / 2, 0),
-            vmath.vector3(RAIL_W, rail_h, 0), vmath.vector4(0, 0, 0, 0.42)))
-        track(self, ui.box(vmath.vector3(rail_cx, rail_t - 1, 0),
-            vmath.vector3(RAIL_W, 3, 0), C_U_TEAM))
-
-        local hy = rail_t - 22
-        text_sh(self, vmath.vector3(rail_cx, hy, 0), "OPEN TEAM CUPS", "small", C_CREAM, 1, -1)
-        hy = hy - 22
-
-        local list = self.team_cups or {}
-        local CARD_H, CARD_GAP = 104, 10
-        local view_t  = hy - 4
-        local view_b  = rail_b + 10
-        local view_h  = view_t - view_b
-        local per_page = math.max(1, math.floor((view_h + CARD_GAP) / (CARD_H + CARD_GAP)))
-
-        if self.team_cups_loading then
-            track(self, ui.text(vmath.vector3(rail_cx, view_t - 24, 0), "Loading...", "small", C_MUTED))
-        elseif #list == 0 then
-            track(self, ui.text(vmath.vector3(rail_cx, view_t - 24, 0), "No open cups yet.", "small", C_MUTED))
-            track(self, ui.text(vmath.vector3(rail_cx, view_t - 44, 0), "Create one to get started.", "small", C_MUTED))
-        else
-            -- Windowed render: only the cards in view are built, so a long
-            -- list costs the same as a short one and nothing needs clipping.
-            local max_off = math.max(0, #list - per_page)
-            self.team_cups_off = math.max(0, math.min(max_off, self.team_cups_off or 0))
-            local off = self.team_cups_off
-
-            for i = 1, per_page do
-                local t = list[off + i]
-                if not t then break end
-                local cy_ = view_t - (i - 1) * (CARD_H + CARD_GAP) - CARD_H / 2
-
-                local card_w = RAIL_W - 16
-                local card_l = rail_cx - card_w / 2
-                track(self, ui.panel9(vmath.vector3(rail_cx, cy_, 0),
-                    vmath.vector3(card_w, CARD_H, 0), "container_bg"))
-
-                local tx      = card_l + 14
-                local card_t  = cy_ + CARD_H / 2
-                local card_b  = cy_ - CARD_H / 2
-
-                -- Row 1: name, with a state pill right-aligned beside it.
-                local joined  = tonumber(t.members) or 0
-                local cap     = tonumber(t.maxPlayers) or 0
-                local mine    = t.hasJoined or t.isOwner
-                local pill_txt, pill_col
-                if t.isOwner        then pill_txt, pill_col = "YOURS",   C_GOLD
-                elseif t.hasJoined  then pill_txt, pill_col = "JOINED",  C_U_TEAM
-                elseif t.isFull     then pill_txt, pill_col = "FULL",    C_DISABLED
-                elseif t.started    then pill_txt, pill_col = "RUNNING", C_U_TEAM
-                else                     pill_txt, pill_col = "OPEN",    C_GOLD end
-
-                local n = track(self, ui.text(vmath.vector3(tx, card_t - 18, 0),
-                    tostring(t.name or "Team Cup"):sub(1, 16), "body", C_CREAM))
-                set_pivot(n, gui.PIVOT_W)
-
-                local pl = track(self, ui.text(vmath.vector3(card_l + card_w - 14, card_t - 18, 0),
-                    pill_txt, "small", pill_col))
-                set_pivot(pl, gui.PIVOT_E)
-
-                -- Row 2: the prize, the reason to care about this card.
-                local pz = track(self, ui.text(vmath.vector3(tx, card_t - 42, 0),
-                    commas(t.grandPrize or 0) .. " " .. tostring(GameMode.CURRENCY_CODE or ""),
-                    "subtitle2", C_GOLD))
-                set_pivot(pz, gui.PIVOT_W)
-
-                -- Row 3: a fill bar makes "how full" readable at a glance in a
-                -- way a bare "3/8" does not.
-                local bar_w = card_w - 28
-                local bar_y = card_t - 62
-                track(self, ui.box(vmath.vector3(card_l + 14 + bar_w / 2, bar_y, 0),
-                    vmath.vector3(bar_w, 5, 0), C_DARK))
-                if cap > 0 and joined > 0 then
-                    local fw = math.max(3, math.floor(bar_w * math.min(1, joined / cap)))
-                    local fb = track(self, ui.box(vmath.vector3(card_l + 14 + fw / 2, bar_y, 0),
-                        vmath.vector3(fw, 5, 0), t.isFull and C_DISABLED or C_GOLD))
-                    set_pivot(fb, gui.PIVOT_CENTER)
-                end
-
-                -- Row 4: member count on the left, the action on the right.
-                local mb = track(self, ui.text(vmath.vector3(tx, card_b + 20, 0),
-                    string.format("%d/%d players", joined, cap), "small", C_MUTED))
-                set_pivot(mb, gui.PIVOT_W)
-
-                -- A cup you are already in offers STANDINGS instead of a dead
-                -- "JOINED" label, so every card in the list does something.
-                local bw, bh = 92, 32
-                local bx = card_l + card_w - 14 - bw / 2
-                if mine then
-                    mkbtn(self, "team_cup_standings", vmath.vector3(bx, card_b + 20, 0),
-                        vmath.vector3(bw, bh, 0), "TABLE", "secondary_btn", t._id)
-                elseif t.isFull then
-                    track(self, ui.box(vmath.vector3(bx, card_b + 20, 0), vmath.vector3(bw, bh, 0), C_DARK))
-                    track(self, ui.text(vmath.vector3(bx, card_b + 20, 0), "FULL", "small", C_MUTED))
-                else
-                    mkbtn(self, "team_cup_join", vmath.vector3(bx, card_b + 20, 0),
-                        vmath.vector3(bw, bh, 0), "JOIN", "primary_btn", t.invitationCode)
-                end
-            end
-
-            if max_off > 0 then
-                -- Explicit arrows in addition to drag, so the list is usable
-                -- without discovering the gesture.
-                local ax = rail_cx + (RAIL_W - 20) / 2 - 16
-                if off > 0 then
-                    mkbtn(self, "team_cup_up", vmath.vector3(ax, rail_t - 22, 0),
-                        vmath.vector3(26, 22, 0), "^", "secondary_btn")
-                end
-                if off < max_off then
-                    mkbtn(self, "team_cup_down", vmath.vector3(ax, view_b + 12, 0),
-                        vmath.vector3(26, 22, 0), "v", "secondary_btn")
-                end
-                track(self, ui.text(vmath.vector3(rail_cx - (RAIL_W - 20) / 2 + 12, view_b + 12, 0),
-                    string.format("%d-%d of %d", off + 1,
-                        math.min(#list, off + per_page), #list), "small", C_MUTED))
-                set_pivot(self.nodes[#self.nodes], gui.PIVOT_W)
-            end
-        end
-
-        -- Drag surface, added last so it sits under the card buttons above.
-        local drag = track(self, ui.box(vmath.vector3(rail_cx, rail_b + rail_h / 2, 0),
-            vmath.vector3(RAIL_W, rail_h, 0), C_TRANSP))
-        self.team_rail_node = drag
-        self.team_rail_step = CARD_H + CARD_GAP
+        Cups.draw(self, rail_l, RAIL_W, grid_t)
     else
         self.team_rail_node = nil
     end
-
     local deco = track(self, gui.new_box_node(vmath.vector3(grid_r + 4, util_cy, 0), vmath.vector3(44, 44, 0)))
     pcall(gui.play_flipbook, deco, hash("diamonds"))
     gui.set_color(deco, vmath.vector4(0.5, 0.5, 0.5, 1))
