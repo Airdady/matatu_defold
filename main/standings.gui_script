@@ -25,9 +25,12 @@
 -- clearedLevel is used rather than currentLevel: a beaten player is reset to
 -- level 1 and would otherwise look like they never progressed.
 --
--- Visual language follows team_tournament.gui_script: flat luxury-dark base,
--- "texture_bg" cover, 3-stripe header divider and crafted three-border
--- panels — no slice-9 button artwork.
+-- Visual language: flat luxury-dark base, "texture_bg" cover, 3-stripe header
+-- divider, and the SAME slice-9 atlas art the rest of the app uses —
+-- container_bg / container_bg_active for panels, primary_btn / secondary_btn
+-- for controls. It used to hand-draw a three-border frame out of four nested
+-- boxes, which made the bracket look like a different product from the lobby
+-- it is opened from.
 
 local ui        = require("modules.ui")
 local app_state = require("modules.app_state")
@@ -43,14 +46,11 @@ local CX, CY = 640, 360
 local EDGE_L, EDGE_R, EDGE_B, EDGE_T = 0, 1280, 0, 720
 
 local P_BG         = vmath.vector4(0.042, 0.033, 0.027, 1)
-local P_PANEL      = vmath.vector4(0.082, 0.063, 0.051, 1)
 local P_GOLD       = vmath.vector4(0.784, 0.573, 0.165, 1)
 local P_GOLD_LIGHT = vmath.vector4(0.941, 0.753, 0.376, 1)
 local P_CREAM      = vmath.vector4(0.957, 0.925, 0.843, 1)
 local P_MUTED      = vmath.vector4(0.455, 0.400, 0.325, 1)
-local P_BADGE_BG   = vmath.vector4(0.157, 0.118, 0.078, 1)
 local P_B_OUTER    = vmath.vector4(0.027, 0.020, 0.016, 1)
-local P_B_MID      = vmath.vector4(0.012, 0.008, 0.008, 1)
 local P_WIN        = vmath.vector4(0.275, 0.624, 0.388, 1)
 local P_LOSS       = vmath.vector4(0.820, 0.231, 0.231, 1)
 local P_LINE       = vmath.vector4(0.300, 0.250, 0.180, 1)
@@ -111,11 +111,24 @@ local function text_e(self, x, y, s, font, c)
     local n = text(self, x, y, s, font, c); gui.set_pivot(n, gui.PIVOT_E); return n
 end
 
-local function framed3(self, x, y, w, h, accent, fill)
-    box(self, x, y, w, h, accent)
-    box(self, x, y, w - 2, h - 2, P_B_OUTER)
-    box(self, x, y, w - 6, h - 6, P_B_MID)
-    box(self, x, y, w - 10, h - 10, fill)
+-- Container art, matching the lobby and the stake pickers. This screen used to
+-- hand-draw a three-border frame out of four nested boxes; the rest of the app
+-- uses the slice-9 atlas art, so the bracket looked like a different product.
+-- `tint` keeps the per-state colouring the frames carried (gold for a normal
+-- row, brighter for your own, muted for a pending one).
+local function panel(self, x, y, w, h, tint, anim)
+    local n = track(self, ui.panel9(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0),
+        anim or "container_bg"))
+    if tint then gui.set_color(n, tint) end
+    return n
+end
+
+-- Slice-9 button art. primary_btn / secondary_btn are the same two faces the
+-- lobby's CREATE / JOIN use, so a control means the same thing everywhere.
+local function btn_art(self, x, y, w, h, anim, tint)
+    local n = track(self, ui.btn9(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), anim))
+    if tint then gui.set_color(n, tint) end
+    return n
 end
 
 -- Pick the largest button font that actually FITS, instead of always reaching
@@ -148,15 +161,21 @@ local function btn_w(label, font_size, min_w)
         math.ceil(#tostring(label or "") * font_size * CHAR_W) + BTN_PAD_X)
 end
 
+-- Tint applied over the button art per state. A disabled control is dimmed
+-- rather than redrawn, and "danger" is the same face washed red, so the whole
+-- screen still reads as one set of buttons.
+local BTN_ART = {
+    primary   = { "primary_btn",   vmath.vector4(1.00, 1.00, 1.00, 1), P_DARK_TXT },
+    secondary = { "secondary_btn", vmath.vector4(1.00, 1.00, 1.00, 1), P_CREAM },
+    danger    = { "secondary_btn", vmath.vector4(1.00, 0.62, 0.62, 1), P_LOSS },
+    off       = { "secondary_btn", vmath.vector4(0.55, 0.55, 0.55, 1), P_MUTED },
+}
+
 local function btn(self, id, x, y, w, h, label, kind, data, enabled)
     local on = enabled ~= false
-    local accent, fill, txt
-    if not on then accent, fill, txt = P_MUTED, P_B_MID, P_MUTED
-    elseif kind == "primary" then accent, fill, txt = P_GOLD_LIGHT, P_GOLD, P_DARK_TXT
-    elseif kind == "danger"  then accent, fill, txt = P_LOSS, P_B_OUTER, P_LOSS
-    else accent, fill, txt = P_GOLD, P_BADGE_BG, P_CREAM end
-    framed3(self, x, y, w, h, accent, fill)
-    text(self, x, y, label, fit_font(label, w, h), txt)
+    local art = BTN_ART[on and (kind or "secondary") or "off"] or BTN_ART.secondary
+    btn_art(self, x, y, w, h, art[1], art[2])
+    text(self, x, y, label, fit_font(label, w, h), art[3])
     if on then
         local hit = box(self, x, y, w, h, P_TRANSP)
         self.buttons[#self.buttons + 1] = { node = hit, id = id, data = data }
@@ -211,7 +230,10 @@ local function roster_row(self, cl, cy_, w, entry, kind, owner)
     local pending = kind == "pending"
     local accent  = mine and P_GOLD_LIGHT or (pending and P_MUTED or P_GOLD)
 
-    framed3(self, cl + w / 2, cy_, w, ROW_H, accent, mine and P_BADGE_BG or P_PANEL)
+    -- Your own row uses the ACTIVE container face so it stands out from the
+    -- rest without needing a different colour scheme.
+    panel(self, cl + w / 2, cy_, w, ROW_H, accent,
+        mine and "container_bg_active" or "container_bg")
 
     -- Avatar in a framed disc, so it reads as a portrait rather than a sticker
     -- floating on the row.
@@ -238,7 +260,7 @@ local function roster_row(self, cl, cy_, w, entry, kind, owner)
         -- A pill, not bare text, so the viewer's own row is findable at a
         -- glance in a list of eight.
         local pw = btn_w("YOU", 20, 64)
-        framed3(self, cl + w - COL_PAD - pw / 2, cy_, pw, 30, P_GOLD_LIGHT, P_BADGE_BG)
+        btn_art(self, cl + w - COL_PAD - pw / 2, cy_, pw, 30, "secondary_btn", P_GOLD_LIGHT)
         text(self, cl + w - COL_PAD - pw / 2, cy_, "YOU", "small", P_GOLD_LIGHT)
     end
 end
@@ -251,11 +273,11 @@ local function roster_column(self, cl, w, top, bottom, title, list, kind, owner,
     local h   = top - bottom
 
     -- Panel behind the whole column, so the rows sit *inside* something.
-    framed3(self, ccx, bottom + h / 2, w, h, P_GOLD, P_BG)
+    panel(self, ccx, bottom + h / 2, w, h)
 
     -- Header band.
     local hdr_cy = top - COL_HDR_H / 2 - 4
-    box(self, ccx, hdr_cy, w - 12, COL_HDR_H - 6, P_BADGE_BG)
+    panel(self, ccx, hdr_cy, w - 12, COL_HDR_H - 6, nil, "container_bg_active")
     text_w(self, cl + COL_PAD, hdr_cy, string.upper(title), "small", P_GOLD_LIGHT)
 
     local rows_t = top - COL_HDR_H - 8
@@ -495,7 +517,7 @@ local function rebuild(self)
         local ccx = cl + col_w / 2
 
         -- Stage header
-        framed3(self, ccx, body_t - 15, col_w, 30, P_GOLD, P_BADGE_BG)
+        panel(self, ccx, body_t - 15, col_w, 30, nil, "container_bg_active")
         text(self, ccx, body_t - 15, string.upper(tostring(col.name)), "small", P_CREAM)
 
         local y = col_top - 8
@@ -505,8 +527,8 @@ local function rebuild(self)
             if y - SEAT_H < body_b then break end
             local cy_ = y - SEAT_H / 2
             local mine = tostring(p.playerId) == my_id()
-            framed3(self, ccx, cy_, col_w, SEAT_H, mine and P_GOLD_LIGHT or P_MUTED,
-                mine and P_BADGE_BG or P_PANEL)
+            panel(self, ccx, cy_, col_w, SEAT_H, mine and P_GOLD_LIGHT or nil,
+                mine and "container_bg_active" or "container_bg")
             text_w(self, cl + 12, cy_, short(p.username, 14), "small",
                 mine and P_GOLD_LIGHT or P_CREAM)
             if owner and self.remove_mode then
@@ -524,7 +546,7 @@ local function rebuild(self)
             local top = y
             local mcy = top - MATCH_H / 2
 
-            framed3(self, ccx, mcy, col_w, MATCH_H, P_GOLD, P_PANEL)
+            panel(self, ccx, mcy, col_w, MATCH_H)
 
             local function seat(side, sy)
                 local mine = tostring(side.playerId) == my_id()
@@ -565,7 +587,7 @@ local function rebuild(self)
     if p then
         local sy = body_b + 4
         local sw = math.min(560, chart_r - chart_l)
-        framed3(self, CX, sy + 22, sw, 44, P_GOLD_LIGHT, P_BADGE_BG)
+        panel(self, CX, sy + 22, sw, 44, nil, "container_bg_active")
         local wins, losses = 0, 0
         for _, r in ipairs(p.levelResults or {}) do
             if r.won then wins = wins + 1 else losses = losses + 1 end
