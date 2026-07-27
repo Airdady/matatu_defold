@@ -96,7 +96,10 @@ function on_message(self, message_id, message)
         t4.flash(self, message)
 
     elseif message_id == hash("turn") then
-        hud.start_timer(self, message.who == "player", message.duration, message.expires_at)
+        -- message.grace is set by the ONLINE handler only; offline and t4
+        -- turns leave it nil, which keeps their straight-to-expired behaviour.
+        hud.start_timer(self, message.who == "player", message.duration,
+            message.expires_at, message.grace)
 
     elseif message_id == hash("skip") then
         overlay.set_skip_visible(self, message.show)
