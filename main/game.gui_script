@@ -105,6 +105,9 @@ function on_message(self, message_id, message)
     elseif message_id == hash("t4_chamber_reflow") then
         t4.chamber_reflow(self)
 
+    elseif message_id == hash("t4_chamber_counting") then
+        t4.chamber_counting(self, message and message.on)
+
     elseif message_id == hash("t4_flash") then
         t4.flash(self, message)
 

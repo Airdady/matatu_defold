@@ -1109,7 +1109,14 @@ function M.end_game(self, player_won, is_cut, backend_results)
         timer.delay(0.35, false, function()
             if is_knockout then
                 sweep_played_cards(function()
+                    -- Freeze the standings order for the whole counting
+                    -- sequence: totals climb card by card, and reordering on
+                    -- those intermediate values makes the board reshuffle
+                    -- mid-count. Released below, after which the one reflow
+                    -- that matters is the round-transition one.
+                    notify_gui(self.gui_hud, "t4_chamber_counting", { on = true })
                     count_next_player(1, function()
+                        notify_gui(self.gui_hud, "t4_chamber_counting", { on = false })
                         final_resolution()
                     end)
                 end)

@@ -206,6 +206,30 @@ local function knockout_chamber_rows(self, state)
     return rows
 end
 
+-- Re-seed the cumulative-counting baseline from the server every time the
+-- board is built.
+--
+-- _knockout_scores is what the round-end counting animation counts UP FROM, so
+-- it has to survive between rounds of a series — which is why it was never
+-- cleared, and why a previous series' totals used to live on and get added to.
+-- Clearing it instead would break the counting (every round would count up
+-- from zero). Overwriting it with the server's authoritative cumulative totals
+-- does both jobs: correct within a series, and impossible to inherit across
+-- one.
+function M.seed_knockout_totals(self, state)
+    local seeded, sum = {}, 0
+    for pid, p in pairs((state or {}).players or {}) do
+        local t = tonumber(p.cumulativeScore) or 0
+        seeded[tostring(pid)] = t
+        sum = sum + t
+    end
+    self._knockout_scores = seeded
+    -- Everyone on zero means this is round 1 of a fresh series, so the
+    -- per-round history from the last one must not be carried into it. Mid
+    -- series it is left alone — those rows are this series' own record.
+    if sum == 0 then self._knockout_history = nil end
+end
+
 local function knockout_init_chamber(self, state)
     msg.post(GUI_HUD, "t4_chamber_init", {
         threshold = tonumber(state.scoreCap) or 200,
@@ -913,6 +937,7 @@ function M.start_game(self, state)
     -- totals with it — otherwise the first update of a new round would look
     -- unchanged and skip the reflow.
     self._ko_totals = nil
+    if self._is_knockout then M.seed_knockout_totals(self, state) end
     M.process_scoreboard(self, state)
     if self._is_knockout then knockout_init_chamber(self, state) end
 

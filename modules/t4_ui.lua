@@ -333,19 +333,42 @@ end
 
 local function t4_chamber_row_y(i) return -58 - i * T4_CHAMBER_ROW_GAP end
 
+-- THE standings order, in one place so the board is built in it and re-sorted
+-- by it — fewest marks on top, since a mark is a step towards elimination.
+-- Ties break on the row's original index so the comparison is total and the
+-- sort is stable.
+--
+-- It used to live only in the reflow. The board was BUILT from whatever order
+-- `pairs()` happened to hand back, so it started out unsorted and then snapped
+-- into place at the first round transition — which is what "the order changes
+-- in the middle of the game" was.
+local function chamber_before(a, b)
+    local ae = a.eliminated and 1 or 0
+    local be = b.eliminated and 1 or 0
+    if ae ~= be then return ae < be end
+    local at, bt = a.total or 0, b.total or 0
+    if at ~= bt then return at < bt end
+    return (a.idx or 0) < (b.idx or 0)
+end
+
 local function t4_chamber_reflow(self)
     if not (self.t4_chamber and self.t4_chamber.list) then return end
     local list = self.t4_chamber.list
     local order = {}
     for _, e in ipairs(list) do order[#order + 1] = e end
-    table.sort(order, function(a, b)
-        local ae = a.eliminated and 1 or 0
-        local be = b.eliminated and 1 or 0
-        if ae ~= be then return ae < be end
-        if a.total ~= b.total then return a.total < b.total end
-        return a.idx < b.idx
-    end)
+    table.sort(order, chamber_before)
+
+    -- Nothing actually moved: leave the rows alone. Re-animating them to the
+    -- positions they already hold reads as the board twitching for no reason,
+    -- and a reflow can legitimately be requested when only a value changed.
+    local moved = false
     for slot, e in ipairs(order) do
+        if e.slot ~= slot then moved = true break end
+    end
+    if not moved then return end
+
+    for slot, e in ipairs(order) do
+        e.slot = slot
         local base_y = t4_chamber_row_y(slot - 1)
         gui.set_text(e.rk, tostring(slot))
         for _, nd in ipairs(e.nodes) do
@@ -360,7 +383,18 @@ function M.chamber_init(self, message)
         if self.t4_chamber and self.t4_chamber.root then pcall(gui.delete_node, self.t4_chamber.root) end
         
         local threshold = message.threshold or 100
-        local rows = message.rows or {}
+
+        -- Build the board ALREADY in standings order. The callers hand these
+        -- over from a `pairs()` walk of the players table, whose order is
+        -- arbitrary, so sorting here is what makes the very first frame
+        -- correct rather than the first round transition.
+        local rows = {}
+        for i, r in ipairs(message.rows or {}) do
+            rows[i] = { name = r.name, total = tonumber(r.total) or 0,
+                        eliminated = r.eliminated and true or false,
+                        avatar = r.avatar, slot = r.slot, idx = i }
+        end
+        table.sort(rows, chamber_before)
         local n = #rows
         local HELPER_H = 26
         local height = 66 + n * T4_CHAMBER_ROW_GAP + HELPER_H
@@ -411,10 +445,23 @@ function M.chamber_init(self, message)
             gui.set_scale(fill, vmath.vector3(frac, 1, 1))
             
             local entry = {
-                idx = i, total = total, eliminated = false, rk = rk, nm = nm, val = val, fill = fill, trk = trk, bg = bg,
+                -- idx is the tiebreaker for a stable sort, and slot is where
+                -- the row currently sits, so a reflow can tell whether
+                -- anything actually needs to move.
+                idx = i, slot = i, total = total,
+                -- Honour the incoming flag: a game rejoined after somebody was
+                -- already knocked out used to render them as still alive, and
+                -- no reflow would ever sink them.
+                eliminated = r.eliminated and true or false,
+                rk = rk, nm = nm, val = val, fill = fill, trk = trk, bg = bg,
                 nodes = { {node=bg, dy=-4}, {node=rk, dy=0}, {node=nm, dy=0}, {node=val, dy=0}, {node=trk, dy=-17}, {node=fill, dy=-17} },
                 key = safe_upper(r.name, "")
             }
+            if entry.eliminated then
+                gui.set_color(nm, vmath.vector4(0.5, 0.5, 0.55, 1))
+                gui.set_color(val, vmath.vector4(0.95, 0.32, 0.32, 1))
+                gui.set_color(fill, C_T_RED)
+            end
             self.t4_chamber.rows[entry.key] = entry
             self.t4_chamber.list[i] = entry
         end
@@ -430,12 +477,32 @@ function M.chamber_init(self, message)
     end)
 end
 
--- Re-sort the standings board (lowest total on top). Called explicitly, once
+-- Re-sort the standings board (fewest marks on top). Called explicitly, once
 -- per round transition — NOT from every chamber_update — so the board only
--- ever reorders when a new round is actually being initialized, instead of
--- shuffling positions mid-round on every incidental score-sync tick.
+-- ever reorders when a round has actually settled, instead of shuffling
+-- positions mid-round on every incidental score-sync tick.
 function M.chamber_reflow(self)
+    -- Held while a round's cumulative counting is playing out. Totals climb
+    -- card by card during that, and a row can transiently overtake another on
+    -- its way to a final position it does not end up in — reordering on those
+    -- intermediate values is the board visibly reshuffling mid-count. The
+    -- request is remembered and honoured the moment counting finishes.
+    if self.t4_chamber and self.t4_chamber.counting then
+        self.t4_chamber.reflow_pending = true
+        return
+    end
     t4_chamber_reflow(self)
+end
+
+-- Bracket the cumulative-counting sequence. `on` freezes the row order;
+-- releasing it applies any reflow that was requested while frozen.
+function M.chamber_counting(self, on)
+    if not self.t4_chamber then return end
+    self.t4_chamber.counting = on and true or false
+    if not self.t4_chamber.counting and self.t4_chamber.reflow_pending then
+        self.t4_chamber.reflow_pending = false
+        t4_chamber_reflow(self)
+    end
 end
 
 function M.chamber_update(self, message)
