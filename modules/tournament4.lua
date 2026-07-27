@@ -16,6 +16,7 @@ local AI       = require "modules.ai_player"
 local util     = require "modules.game_util"
 local BL       = require "modules.board_layout"
 local GameMode = require "modules.game_mode"
+local app      = require "modules.app_state"
 
 local M = {}
 
@@ -772,6 +773,7 @@ function M.finish_round(self, finisher)
     if self.t4.revealing then return end
     self.t4.revealing = true
     self.game_over = true
+    app.lock_board()
     notify(GUI_HUD, "stop_timers")
     notify(GUI_HUD, "t4_active", { slot = "none" })
 
@@ -842,6 +844,7 @@ function M.game_over_human_out(self, finisher)
     -- setting self.game_over — so board/hand cards stayed fully tappable
     -- behind the game-over modal whenever the human lost this way.
     self.game_over = true
+    app.lock_board()
     notify(GUI_OVER, "game_over", {
         won = false, player_score = 0, ai_score = 0,
         is_cut = false, series_active = false, series_over = true,
@@ -990,6 +993,8 @@ end
 function M.deal_round(self)
     self.t4.revealing = false
     self.game_over = false
+    -- A fresh chamber round: the board is live again.
+    app.unlock_board()
     self._seq = (self._seq or 0) + 1
     local seq = self._seq
 

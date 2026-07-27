@@ -197,5 +197,26 @@ function M.input_blocked(name)
     return M.modal_top() > mine
 end
 
+-- ---------------------------------------------------------------------------
+-- Board lock
+-- ---------------------------------------------------------------------------
+-- Set the moment a game is DECLARED over — however it was declared, in any
+-- mode (offline, online, tournament chamber) and any game type. From then on
+-- no card may be played, no card may be drawn, and no HUD control responds,
+-- until a new game or round actually starts.
+--
+-- Why a shared flag rather than the per-game `self.game_over`: the board and
+-- the HUD are two separate scripts with two separate `self` tables, and only
+-- the board's one carried the game state. The HUD therefore kept EXIT, SKIP
+-- and the emoji tray live over a finished game.
+--
+-- It is deliberately independent of the modal registry too. `input_blocked`
+-- only says "a dialog is on top", which goes false the instant the game-over
+-- dialog closes — while the board underneath is still finished.
+M.board_locked = false
+
+function M.lock_board()   M.board_locked = true  end
+function M.unlock_board() M.board_locked = false end
+
 
 return M
