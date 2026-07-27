@@ -53,6 +53,11 @@ local P_MUTED      = vmath.vector4(0.455, 0.400, 0.325, 1)
 local P_B_OUTER    = vmath.vector4(0.027, 0.020, 0.016, 1)
 local P_WIN        = vmath.vector4(0.275, 0.624, 0.388, 1)
 local P_LOSS       = vmath.vector4(0.820, 0.231, 0.231, 1)
+-- Smoke grey. Red was being used as decoration — on destructive button labels
+-- and on the "could not load" line — which made ordinary controls look like
+-- warnings. Red is now reserved for the one place it carries meaning: the
+-- losing score in a played match.
+local P_SMOKE      = vmath.vector4(0.870, 0.870, 0.855, 1)
 local P_LINE       = vmath.vector4(0.300, 0.250, 0.180, 1)
 local P_DARK_TXT   = vmath.vector4(0.06, 0.045, 0.02, 1)
 local P_TRANSP     = vmath.vector4(0, 0, 0, 0)
@@ -119,6 +124,11 @@ local function track(self, node) self.nodes[#self.nodes + 1] = node; return node
 local function clear(self)
     for _, n in ipairs(self.nodes or {}) do pcall(gui.delete_node, n) end
     self.nodes, self.buttons = {}, {}
+    -- The columns' drag surfaces are among the nodes just deleted. Leaving the
+    -- references behind means on_input runs gui.pick_node against DELETED
+    -- nodes, which raises — and since on_input runs every frame, that takes
+    -- the whole screen's input down, not just the scrolling.
+    self.roster_drag = nil
 end
 
 local function box(self, x, y, w, h, c)
@@ -194,7 +204,10 @@ local BTN_ART = {
     primary   = { "primary_btn",   vmath.vector4(1.00, 1.00, 1.00, 1), P_DARK_TXT },
     secondary = { "secondary_btn", vmath.vector4(1.00, 1.00, 1.00, 1), P_CREAM },
     neutral   = { "default_btn",   vmath.vector4(1.00, 1.00, 1.00, 1), P_CREAM },
-    danger    = { "secondary_btn", vmath.vector4(1.00, 0.62, 0.62, 1), P_LOSS },
+    -- REMOVE / WITHDRAW / DELETE CUP: the primary face, like any other action.
+    -- They are still confirmed (DELETE takes two taps) — the safeguard is in
+    -- the interaction, not in colouring the button like a hazard sign.
+    danger    = { "primary_btn",   vmath.vector4(1.00, 1.00, 1.00, 1), P_SMOKE },
     off       = { "default_btn",   vmath.vector4(0.55, 0.55, 0.55, 1), P_MUTED },
 }
 
@@ -347,6 +360,16 @@ local function roster_column(self, cl, w, top, bottom, title, list, kind, owner,
         roster_row(self, cl + COL_PAD, y - ROW_H / 2, w - COL_PAD * 2, e, kind, owner)
         y = y - ROW_H - ROW_GAP
     end
+
+    -- Drag-to-scroll over this column's rows. Registered whether or not the
+    -- list currently overflows: a column that fits still swallows the gesture
+    -- rather than letting a stray drag act on the row under the finger.
+    -- Added last so it covers the rows; the tap-vs-drag split in on_input is
+    -- what lets a clean tap still reach the button underneath.
+    local drag = box(self, ccx, (rows_t + rows_b) / 2, w, rows_t - rows_b, P_TRANSP)
+    self.roster_drag = self.roster_drag or {}
+    self.roster_drag[#self.roster_drag + 1] =
+        { node = drag, key = kind, max_off = max_off }
 end
 
 -- The invite code, given its own band above the two columns. Anyone holding it
@@ -464,7 +487,7 @@ local function rebuild(self)
         text(self, CX, CY, "Loading bracket...", "body", P_MUTED); return
     end
     if not cup then
-        text(self, CX, CY + 10, self.err or "Could not load this cup.", "body", P_LOSS); return
+        text(self, CX, CY + 10, self.err or "Could not load this cup.", "body", P_SMOKE); return
     end
 
     local owner = is_owner(self)
@@ -608,7 +631,7 @@ local function rebuild(self)
             text_w(self, cl + 12, cy_, short(p.username, 14), "small",
                 mine and P_GOLD_LIGHT or P_CREAM)
             if owner and self.remove_mode then
-                text_e(self, cl + col_w - 10, cy_, "X", "small", P_LOSS)
+                text_e(self, cl + col_w - 10, cy_, "X", "small", P_SMOKE)
             end
             local hit = box(self, ccx, cy_, col_w, SEAT_H, P_TRANSP)
             self.buttons[#self.buttons + 1] =
@@ -757,6 +780,9 @@ function on_message(self, message_id, message, sender)
         self.cup, self.selected, self.err = nil, nil, nil
         self.col_off, self.remove_mode, self.confirm_delete = 0, false, false
         self.roster_off = { joined = 0, pending = 0 }
+        -- Only numbers and a key, no node references — but a drag left over
+        -- from the previous visit would resume mid-gesture on this one.
+        self._rdrag = nil
         load(self)
     elseif message_id == hash("enable") then
         refresh_wh(); self._active = true; rebuild(self)
@@ -771,18 +797,25 @@ function on_message(self, message_id, message, sender)
     end
 end
 
-function on_input(self, action_id, action)
-    -- Any modal on top outranks a screen. These components are listed
-    -- BEFORE the dialogs in controller.go, so without this they would
-    -- consume the tap first and act on it behind an open dialog.
-    if app_state.input_blocked() then return false end
-    if not self._active then return false end
-    if action_id ~= hash("touch") or not action.pressed then return false end
+-- How far a finger may travel before a press stops counting as a tap.
+local TAP_SLOP = 8
 
-    -- Raw coordinates, as on every other screen.
+-- Which scrollable column, if any, the point lands in.
+local function column_at(self, x, y)
+    for _, c in ipairs(self.roster_drag or {}) do
+        local ok, hit = pcall(gui.pick_node, c.node, x, y)
+        if ok and hit then return c end
+    end
+    return nil
+end
+
+-- The button sweep, taken out of on_input so a press inside a scrollable
+-- column can defer it to release and still run it unchanged.
+-- Raw coordinates, as on every other screen.
+local function dispatch(self, x, y)
     for i = #self.buttons, 1, -1 do
         local b = self.buttons[i]
-        if gui.pick_node(b.node, action.x, action.y) then
+        if gui.pick_node(b.node, x, y) then
             if b.id == "back" then
                 msg.post("#controller", "goto_lobby")
             elseif b.id == "refresh" then
@@ -875,4 +908,54 @@ function on_input(self, action_id, action)
         end
     end
     return false
+end
+
+function on_input(self, action_id, action)
+    -- Any modal on top outranks a screen. These components are listed
+    -- BEFORE the dialogs in controller.go, so without this they would
+    -- consume the tap first and act on it behind an open dialog.
+    if app_state.input_blocked() then return false end
+    if not self._active then return false end
+    if action_id ~= hash("touch") then return false end
+
+    -- ── drag-to-scroll the roster columns ────────────────────────────────
+    -- A press that lands on a column is HELD rather than dispatched: if the
+    -- finger then moves it scrolls, and if it does not the tap is replayed on
+    -- release. Dispatching on press instead (as the rest of the screen does)
+    -- would fire REMOVE the instant you touched a row you meant to scroll.
+    if action.pressed then
+        local col = column_at(self, action.x, action.y)
+        if col then
+            self._rdrag = { key = col.key, max_off = col.max_off,
+                            moved = 0, acc = 0, x = action.x, y = action.y }
+            return true
+        end
+    elseif self._rdrag and not action.released then
+        local d  = self._rdrag
+        local dy = action.dy or 0
+        d.moved  = d.moved + math.abs(dy)
+        d.acc    = d.acc + dy
+        self.roster_off = self.roster_off or {}
+        local step = ROW_H + ROW_GAP
+        -- Dragging UP (negative dy) reveals later entries.
+        while d.acc <= -step do
+            d.acc = d.acc + step
+            self.roster_off[d.key] = math.min(d.max_off, (self.roster_off[d.key] or 0) + 1)
+            rebuild(self)
+        end
+        while d.acc >= step do
+            d.acc = d.acc - step
+            self.roster_off[d.key] = math.max(0, (self.roster_off[d.key] or 0) - 1)
+            rebuild(self)
+        end
+        return true
+    elseif self._rdrag and action.released then
+        local d = self._rdrag
+        self._rdrag = nil
+        if d.moved <= TAP_SLOP then dispatch(self, d.x, d.y) end
+        return true
+    end
+
+    if not action.pressed then return false end
+    return dispatch(self, action.x, action.y)
 end
