@@ -4,6 +4,7 @@ local hud           = require("modules.hud_ui")
 local overlay       = require("modules.overlay_ui")
 local story         = require("modules.round_story_ui")
 local t4            = require("modules.t4_ui")
+local app_state     = require("modules.app_state")
 
 local LOGICAL_W = 1280
 local LOGICAL_H = 720
@@ -34,6 +35,18 @@ end
 
 function on_input(self, action_id, action)
     if action_id ~= hash("touch") or not action.pressed then return false end
+
+    -- A dialog is on top. This component is listed BEFORE gameover/incoming/
+    -- network in controller.go, so without this its EXIT, SKIP, emoji tray and
+    -- AI-notice stayed live UNDER those dialogs — the board looked blocked
+    -- because the cards were, but the HUD around it was not.
+    if app_state.input_blocked() then return false end
+
+    -- The game is over. Even with no dialog up (it has been dismissed, or the
+    -- result is known but the dialog has not appeared yet) nothing on a
+    -- finished board responds.
+    if app_state.board_locked then return true end
+
     if self.story_active then return true end
     
     if not self.is_t4_mode then

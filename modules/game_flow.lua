@@ -675,6 +675,10 @@ end
 function M.end_game(self, player_won, is_cut, backend_results)
     if self.game_over then return end
     self.game_over = true
+    -- Every game-over in every mode and game type funnels through here, so
+    -- this is where the board goes inert: no card playable, no HUD control
+    -- live, until a new game or round actually starts.
+    app.lock_board()
     
     -- GAME QUEUE LOCK:
     -- Prevent background processing from ripping the board away while 
@@ -1149,7 +1153,14 @@ function M.start_game(self)
     self.queued_start_game = false
     self.is_transitioning_round = false
     self._history_added_this_round = false
-    
+
+    -- THE funnel for starting any game or round, including a knockout/battle
+    -- round that continues without going back through game.script's own
+    -- start path — so this is where the board comes back to life. Releasing
+    -- it only in game.script would have left the next round of a series
+    -- permanently inert.
+    app.unlock_board()
+
     GS.destroy_all(self)
     GS.fresh_state(self)
     apply_stake_background(self)
