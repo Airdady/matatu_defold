@@ -40,16 +40,6 @@ M.GUTTER   = 10
 M.PADDING  = 32
 M.HEADER_H = 65
 
--- Open-cups rail. Sized as a share of the available width so it scales with
--- the viewport instead of taking a fixed bite out of every one of them, and
--- only shown when the mode tiles still have room to be usable beside it.
-M.RAIL_SHARE  = 0.21
-M.RAIL_MIN_W  = 240
-M.RAIL_MAX_W  = 340
-M.TILES_MIN_W = 760
-M.CARD_H      = 104
-M.CARD_GAP    = 10
-
 -- ---------------------------------------------------------------------------
 -- Screen states
 -- ---------------------------------------------------------------------------
