@@ -61,13 +61,20 @@ function M.draw(self, ctx, d, a)
     track(self, ui.text(vmath.vector3(me_x, av_y - 68, 0), commas(u.balance or 0), "small", with_a(C.COL_GOLD, a)))
     track(self, ui.text(vmath.vector3(me_x, av_y - 88, 0), "YOU", "body", with_a(ctx.DLG_SEARCH, a)))
 
-    -- Central VS & Pot Elements (Re-spaced to prevent overlaps)
+    -- Central Pot Element (Re-spaced to prevent overlaps)
     local bundle_y = av_y + 15
     local bundle_h = 96
-    track(self, ui.text(vmath.vector3(CX, bundle_y + 55, 0), "VS", "title", with_a(ctx.DLG_RED, a)))
 
     local amt = tonumber((d.stake or {}).amount) or 0
     local pot_amt = amt * 2
+
+    -- "VS" only when there is nothing else in the middle. With a stake the
+    -- coin pot sits between the two avatars and already says "these two are
+    -- playing each other for this" — the word on top of it was a second,
+    -- weaker way of saying the same thing.
+    if amt <= 0 then
+        track(self, ui.text(vmath.vector3(CX, bundle_y + 55, 0), "VS", "title", with_a(ctx.DLG_RED, a)))
+    end
 
     -- Render Dynamic Coin Bundle
     if amt > 0 then
