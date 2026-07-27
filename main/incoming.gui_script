@@ -112,58 +112,64 @@ local function make_ctx()
     }
 end
 
--- ── Compact toast (shown while the user is mid-game) ──────────────────────────
--- A small, non-modal notification pinned to the TOP-RIGHT corner so an incoming
--- challenge never blacks out the board. It reuses the SAME button ids ("accept"
--- / "decline") so on_input dispatches exactly as the full dialog does. No scrim
--- and no "dlg_block" button: input outside the two buttons falls through to the
--- game (see on_input's compact branch).
-local function draw_toast(self, d, a)
-    local m = screen.metrics()
-    local TW, TH = 340, 120
-    local margin = 16
-    -- Anchor top-right, dropped below the very top so the toast clears the
-    -- screen's exit button. Real visible edges (m.R / m.T) hug the corner.
-    local cx = m.R - margin - TW / 2
-    local cy = m.T - 78 - TH / 2
-    local top = cy + TH / 2
+-- ── Top banner (tournament / battle / knockout invites) ───────────────────────
+-- The full-bleed strip across the top of the screen — the SAME surface the
+-- online screen uses for these invites (main/online.gui_script's draw_banner),
+-- so a tournament invite looks identical whether it arrives on the online
+-- screen, the lobby, or mid-game. It replaces the small top-right notification
+-- panel that used to live here: one banner, one look, one place to expect it.
+--
+-- It reuses the SAME button ids ("accept" / "decline") so on_input dispatches
+-- exactly as the full dialog does. Non-modal by design — no scrim and no
+-- "dlg_block" button, so input outside the two buttons falls through to
+-- whatever is underneath (see on_input's banner branch).
+local BAN_H       = 92
+local BAN_PANEL   = vmath.vector4(0.06, 0.10, 0.14, 0.97)
+local BAN_RULE    = vmath.vector4(0.20, 0.90, 1.00, 1.00)
+local BAN_TITLE   = vmath.vector4(0.92, 0.96, 1.00, 1.00)
+local BAN_DESC    = vmath.vector4(0.42, 0.56, 0.68, 1.00)
+local BAN_AV_BG   = vmath.vector4(0.10, 0.14, 0.18, 1.00)
+local BAN_TRACK   = vmath.vector4(0.12, 0.19, 0.27, 1.00)
+local BAN_ACCEPT  = vmath.vector4(0.00, 0.90, 0.63, 0.30)
+local BAN_DECLINE = vmath.vector4(0.12, 0.19, 0.27, 0.85)
 
-    -- Panel background.
-    track(self, ui.panel9(vmath.vector3(cx, cy, 0), vmath.vector3(TW, TH, 0), "container_bg"))
+local function draw_banner(self, d, a)
+    local m  = screen.metrics()
+    local bw = m.VW
+    local cy = m.T - 70
+    local top, bot = cy + BAN_H / 2, cy - BAN_H / 2
 
-    -- Opponent avatar + name on the top row.
-    local av_size = 46
-    local av_y = top - 14 - av_size / 2
-    local av_x = cx - TW / 2 + 12 + av_size / 2
-    track(self, ui.pie(vmath.vector3(av_x, av_y, 0), av_size / 2 + 4, with_a(DLG_AV_BG, a)))
-    gui.set_color(track(self, ui.avatar(vmath.vector3(av_x, av_y, 0), vmath.vector3(av_size, av_size, 0), d.avatar or 1)), with_a(COL_WHITE, a))
+    track(self, ui.box(vmath.vector3(m.CX, cy, 0), vmath.vector3(bw, BAN_H, 0), with_a(BAN_PANEL, a)))
+    track(self, ui.box(vmath.vector3(m.CX, top, 0), vmath.vector3(bw, 3, 0), with_a(BAN_RULE, a)))
 
-    -- Buttons (small ✓ / ✗) pinned to the right edge.
-    local bw, bh = (TW - 36) / 2, 40
-    local by = cy - TH / 2 + bh / 2 + 12
-    local dec_x = cx - bw / 2 - 6
-    local acc_x = cx + bw / 2 + 6
-    mkbtn(self, "decline", vmath.vector3(dec_x, by, 0), vmath.vector3(bw, bh, 0), "DECLINE", "primary_btn",   nil, "small", with_a(COL_WHITE, a))
-    mkbtn(self, "accept",  vmath.vector3(acc_x, by, 0), vmath.vector3(bw, bh, 0), "ACCEPT",  "secondary_btn", nil, "small", with_a(COL_WHITE, a))
+    -- Sender avatar (framed disc) on the left.
+    local av_x = m.L + 48
+    track(self, ui.box(vmath.vector3(av_x, cy, 0), vmath.vector3(60, 60, 0), with_a(BAN_AV_BG, a)))
+    gui.set_color(track(self, ui.avatar(vmath.vector3(av_x, cy, 0), vmath.vector3(54, 54, 0), d.avatar or 1)),
+        with_a(COL_WHITE, a))
 
-    -- Text block between the avatar and the buttons.
-    local txt_left = av_x + av_size / 2 + 8
-    local name     = tostring(d.name or "Player")
-    if #name > 14 then name = name:sub(1, 13) .. "…" end
-    local t1 = track(self, ui.text(vmath.vector3(txt_left, av_y + 11, 0), name, "body", with_a(COL_WHITE, a)))
-    gui.set_pivot(t1, gui.PIVOT_W)
-    pcall(gui.set_scale, t1, vmath.vector3(0.85, 0.85, 1))
-    local t2 = track(self, ui.text(vmath.vector3(txt_left, av_y - 12, 0), "wants to play online", "small", with_a(COL_CYAN, a)))
-    gui.set_pivot(t2, gui.PIVOT_W)
+    -- Title + one-line description, left-aligned beside the avatar.
+    gui.set_pivot(track(self, ui.text(vmath.vector3(m.L + 90, cy + 20, 0),
+        tostring(d.title or "GAME REQUEST"), "body", with_a(BAN_TITLE, a))), gui.PIVOT_W)
+    gui.set_pivot(track(self, ui.text(vmath.vector3(m.L + 90, cy - 12, 0),
+        tostring(d.desc or ""), "small", with_a(BAN_DESC, a))), gui.PIVOT_W)
 
-    -- Slim countdown bar along the bottom edge of the toast.
-    local frac = math.max(0, math.min(1, (d.time_left or 0) / (d.max_time or 10)))
-    local bar_full = TW - 16
-    local bar_w    = bar_full * frac
-    local bar_y    = cy - TH / 2 + 5
-    local bar_col  = (d.time_left or 0) <= 3 and COL_RED or COL_CYAN
-    local bx = (cx - bar_full / 2) + bar_w / 2
-    track(self, ui.box(vmath.vector3(bx, bar_y, 0), vmath.vector3(bar_w, 3, 0), with_a(bar_col, a)))
+    -- Actions on the right, in the same order as the online screen's banner.
+    mkbtn(self, "decline", vmath.vector3(m.R - 225, cy, 0), vmath.vector3(120, 46, 0),
+        "DECLINE", with_a(BAN_DECLINE, a), nil, "btn_md", with_a(COL_MID, a))
+    mkbtn(self, "accept",  vmath.vector3(m.R - 90,  cy, 0), vmath.vector3(120, 46, 0),
+        "ACCEPT",  with_a(BAN_ACCEPT,  a), nil, "btn_md", with_a(COL_WHITE, a))
+
+    if d.h2h then draw_h2h_row(self, m.R - 430, cy, h2h_view(d.h2h), a) end
+
+    -- Countdown along the bottom edge.
+    local frac  = math.max(0, math.min(1, (d.time_left or 0) / (d.max_time or 10)))
+    local bar_w = bw * frac
+    track(self, ui.box(vmath.vector3(m.CX, bot, 0), vmath.vector3(bw, 3, 0), with_a(BAN_TRACK, a)))
+    if bar_w > 1 then
+        track(self, ui.box(vmath.vector3(m.L + bar_w / 2, bot, 0), vmath.vector3(bar_w, 3, 0),
+            with_a(frac < 0.3 and COL_RED or COL_GREEN, a)))
+    end
 end
 
 -- ── Rendering ─────────────────────────────────────────────────────────────────
@@ -171,8 +177,8 @@ local function rebuild(self)
     clear(self)
     if not self.dialog then return end
     local ok, err = pcall(function()
-        if self.dialog.compact then
-            draw_toast(self, self.dialog, self.dlg_alpha or 1)
+        if self.dialog.banner then
+            draw_banner(self, self.dialog, self.dlg_alpha or 1)
         else
             dialog_incoming.draw(self, make_ctx(), self.dialog, self.dlg_alpha or 1)
         end
@@ -184,23 +190,30 @@ local function rebuild(self)
 end
 
 -- ── Dialog lifecycle ──────────────────────────────────────────────────────────
-local function open_dialog(self, name, stake, request_id, avatar, opponent_id, h2h, compact)
+-- `d` is the request as it should be shown:
+--   { name, stake, request_id, avatar, opponent_id, h2h, banner, title, desc }
+-- A table rather than nine positional arguments — the last three exist only for
+-- the banner, and threading them through as trailing nils was how the old
+-- signature grew unreadable.
+local function open_dialog(self, d)
     self.dialog = {
-        kind = "incoming", name = name, stake = stake or {}, request_id = request_id,
-        avatar = tonumber(avatar) or 1, time_left = 10, max_time = 10,
-        opponent_id = opponent_id and tostring(opponent_id) or nil, h2h = h2h,
-        -- When the user is mid-game we surface a small top-right toast instead of
-        -- the full-screen modal (set from on_message via app_state.current_screen).
-        compact = compact and true or false,
+        kind = "incoming",
+        name = d.name, stake = d.stake or {}, request_id = d.request_id,
+        avatar = tonumber(d.avatar) or 1, time_left = 10, max_time = 10,
+        opponent_id = d.opponent_id and tostring(d.opponent_id) or nil, h2h = d.h2h,
+        -- Tournament / battle / knockout invites render as the top banner; a
+        -- plain game request always gets the full dialog (set in on_message).
+        banner = d.banner and true or false,
+        title = d.title, desc = d.desc,
     }
     self.dlg_alpha = 0
     -- Claim top input priority. The FULL dialog is modal, so nothing beneath
-    -- it may act on a tap; the compact in-game toast is deliberately
-    -- non-disruptive and makes no claim, letting play continue.
-    if not self.dialog.compact then app_state.modal_open("incoming") end
+    -- it may act on a tap; the top banner is deliberately non-disruptive and
+    -- makes no claim, letting whatever is underneath carry on.
+    if not self.dialog.banner then app_state.modal_open("incoming") end
     -- Audible cue when an opponent's challenge arrives. EVERY incoming request
-    -- (normal, battle, tournament, knockout — full dialog or compact banner)
-    -- uses the same request.ogg cue (snd_notify on the sibling controller object).
+    -- (normal, battle, tournament, knockout — full dialog or top banner) uses
+    -- the same request.ogg cue (snd_notify on the sibling controller object).
     pcall(msg.post, "#snd_notify", "play_sound")
     refresh_wh()
     rebuild(self)
@@ -280,27 +293,44 @@ function on_message(self, message_id, message)
             return
         end
 
-        -- Tournament / battle / knockout invites ALWAYS use the dedicated compact
-        -- top banner (never the full modal) — that is their dedicated surface.
-        -- A plain NORMAL game request uses the full modal dialog, except while a
-        -- game board is actively in play, where it too drops to the compact banner
-        -- so it never blacks out the table.
-        local compact = (app_state.game_active or is_tb) and true or false
+        -- Two surfaces, chosen by WHAT arrived rather than by where the player
+        -- happens to be:
+        --   • a plain game request  -> the full dialog, always (a challenge is
+        --     a decision, and it is the same decision mid-game as in the lobby)
+        --   • tournament / battle / knockout -> the top banner, always
+        -- There is no third, smaller surface: the little corner panel that used
+        -- to appear mid-game is gone.
+        local banner = is_tb and true or false
 
-        local disp_name = (r.user or {}).username or "A player"
+        local sender = (type(raw) == "table" and type(raw.sender) == "table") and raw.sender or (r.user or {})
+        local disp_name = sender.username or (r.user or {}).username or "A player"
+
+        local title, desc
         if is_tb then
+            -- Same wording as the online screen's inline banner so the two
+            -- surfaces read identically.
+            local kind = (type(raw) == "table" and raw.gameType == "BATTLE") and "BATTLE" or "TOURNAMENT"
+            title = kind .. "  -  " .. tostring(disp_name):upper()
+            local tourney = (type(raw) == "table" and type(raw.tournament) == "table") and raw.tournament or {}
+            local amount  = tonumber((tourney.stake or raw.stake or r.stake or {}).amount) or 0
+            desc = "Best of " .. (tonumber(tourney.matchFormat) or 3)
+                .. "   -   " .. (amount > 0 and (commas(amount) .. " Coins") or "Practice Mode")
             disp_name = (type(raw) == "table" and (raw.tournamentName or raw.name)) or "Tournament Match"
         end
 
-        open_dialog(self,
-            disp_name,
-            r.stake or {},
-            r.requestId,
-            (r.user or {}).avatar,
-            (r.user or {})._id,
-            (type(raw) == "table" and raw.headToHead) or nil,
-            compact)
-            
+        open_dialog(self, {
+            name        = disp_name,
+            stake       = r.stake or {},
+            request_id  = r.requestId,
+            avatar      = sender.avatar or (r.user or {}).avatar,
+            opponent_id = (r.user or {})._id,
+            h2h         = (type(raw) == "table" and raw.headToHead) or nil,
+            banner      = banner,
+            title       = title,
+            desc        = desc,
+        })
+
+
     elseif message_id == hash("incoming_clear") then
         -- Clear if the event targets the dialog we're showing (or carries no id).
         local rid = message and message.request_id
@@ -339,15 +369,15 @@ function on_input(self, action_id, action)
                 return true
             end
         end
-        -- Full dialog is modal: swallow taps anywhere while it is up. The compact
-        -- toast is non-disruptive, so taps outside its buttons fall through to the
-        -- game underneath.
-        if self.dialog.compact then return false end
+        -- Full dialog is modal: swallow taps anywhere while it is up. The top
+        -- banner is non-disruptive, so taps outside its two buttons fall through
+        -- to whatever is underneath.
+        if self.dialog.banner then return false end
         return true
     end
 
     -- Full dialog blocks all other input (drags, releases, keys) while visible.
-    -- The compact toast lets everything else through so play continues normally.
-    if self.dialog.compact then return false end
+    -- The banner lets everything else through so play continues normally.
+    if self.dialog.banner then return false end
     return true
 end

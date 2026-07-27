@@ -6,9 +6,13 @@ local M = {}
 M.mode = "offline"
 
 -- True only while a game board is actively in play (set on game screen_enter,
--- cleared on the final game-over modal or when leaving the game screen). Used
--- by the global incoming-request overlay to decide between the compact top
--- banner (mid-game) and the full dialog (no active game).
+-- cleared on the final game-over modal or when leaving the game screen). Read
+-- by controller.script to tell a round continuation from a fresh match.
+--
+-- It used to also pick the incoming-request surface — a small corner panel
+-- mid-game, the full dialog otherwise. That third surface is gone: a plain
+-- game request is now always the full dialog, and a tournament/battle/knockout
+-- invite is always the top banner, wherever the player is.
 M.game_active = false
 
 -- Name of the screen currently shown (set by the controller's show()).
