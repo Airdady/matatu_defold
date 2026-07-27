@@ -56,6 +56,10 @@ local P_LOSS       = vmath.vector4(0.820, 0.231, 0.231, 1)
 local P_LINE       = vmath.vector4(0.300, 0.250, 0.180, 1)
 local P_DARK_TXT   = vmath.vector4(0.06, 0.045, 0.02, 1)
 local P_TRANSP     = vmath.vector4(0, 0, 0, 0)
+-- List-item fills. Flat, and only just lighter than the column behind them —
+-- enough to separate one row from the next without competing with it.
+local ROW_FILL     = vmath.vector4(0.000, 0.000, 0.000, 0.30)
+local ROW_MINE     = vmath.vector4(0.235, 0.176, 0.075, 0.55)
 
 local STRIPE_OUTER = vmath.vector4(0.169, 0.153, 0.141, 1.0)
 local STRIPE_MID   = vmath.vector4(0.039, 0.031, 0.027, 1.0)
@@ -161,14 +165,18 @@ local function btn_w(label, font_size, min_w)
         math.ceil(#tostring(label or "") * font_size * CHAR_W) + BTN_PAD_X)
 end
 
--- Tint applied over the button art per state. A disabled control is dimmed
--- rather than redrawn, and "danger" is the same face washed red, so the whole
--- screen still reads as one set of buttons.
+-- All three button faces, used the way the rest of the app uses them:
+--   primary_btn   the one action this screen most wants you to take
+--   secondary_btn a real alternative sitting beside it
+--   default_btn   neutral chrome — navigation, paging — and the disabled state
+-- `danger` is secondary_btn washed red rather than a fourth face, so a
+-- destructive control still reads as part of the same set.
 local BTN_ART = {
     primary   = { "primary_btn",   vmath.vector4(1.00, 1.00, 1.00, 1), P_DARK_TXT },
     secondary = { "secondary_btn", vmath.vector4(1.00, 1.00, 1.00, 1), P_CREAM },
+    neutral   = { "default_btn",   vmath.vector4(1.00, 1.00, 1.00, 1), P_CREAM },
     danger    = { "secondary_btn", vmath.vector4(1.00, 0.62, 0.62, 1), P_LOSS },
-    off       = { "secondary_btn", vmath.vector4(0.55, 0.55, 0.55, 1), P_MUTED },
+    off       = { "default_btn",   vmath.vector4(0.55, 0.55, 0.55, 1), P_MUTED },
 }
 
 local function btn(self, id, x, y, w, h, label, kind, data, enabled)
@@ -230,10 +238,13 @@ local function roster_row(self, cl, cy_, w, entry, kind, owner)
     local pending = kind == "pending"
     local accent  = mine and P_GOLD_LIGHT or (pending and P_MUTED or P_GOLD)
 
-    -- Your own row uses the ACTIVE container face so it stands out from the
-    -- rest without needing a different colour scheme.
-    panel(self, cl + w / 2, cy_, w, ROW_H, accent,
-        mine and "container_bg_active" or "container_bg")
+    -- No panel art on a list item: the column already sits on one, and
+    -- stacking a second textured face inside it made the rows fight the
+    -- container they live in. A flat fill plus a state-coloured spine down the
+    -- left edge separates the rows and says which list this is, at a fraction
+    -- of the visual weight.
+    box(self, cl + w / 2, cy_, w, ROW_H, mine and ROW_MINE or ROW_FILL)
+    box(self, cl + 2, cy_, 4, ROW_H - 10, accent)
 
     -- Avatar in a framed disc, so it reads as a portrait rather than a sticker
     -- floating on the row.
@@ -260,7 +271,7 @@ local function roster_row(self, cl, cy_, w, entry, kind, owner)
         -- A pill, not bare text, so the viewer's own row is findable at a
         -- glance in a list of eight.
         local pw = btn_w("YOU", 20, 64)
-        btn_art(self, cl + w - COL_PAD - pw / 2, cy_, pw, 30, "secondary_btn", P_GOLD_LIGHT)
+        btn_art(self, cl + w - COL_PAD - pw / 2, cy_, pw, 30, "default_btn", P_GOLD_LIGHT)
         text(self, cl + w - COL_PAD - pw / 2, cy_, "YOU", "small", P_GOLD_LIGHT)
     end
 end
@@ -275,10 +286,11 @@ local function roster_column(self, cl, w, top, bottom, title, list, kind, owner,
     -- Panel behind the whole column, so the rows sit *inside* something.
     panel(self, ccx, bottom + h / 2, w, h)
 
-    -- Header band.
+    -- Title: type and a hairline, no panel art. A textured band here read as a
+    -- third nested surface and buried the word it was supposed to present.
     local hdr_cy = top - COL_HDR_H / 2 - 4
-    panel(self, ccx, hdr_cy, w - 12, COL_HDR_H - 6, nil, "container_bg_active")
     text_w(self, cl + COL_PAD, hdr_cy, string.upper(title), "small", P_GOLD_LIGHT)
+    box(self, ccx, hdr_cy - COL_HDR_H / 2 + 4, w - COL_PAD * 2, 2, P_LINE)
 
     local rows_t = top - COL_HDR_H - 8
     local rows_b = bottom + COL_PAD
@@ -303,9 +315,9 @@ local function roster_column(self, cl, w, top, bottom, title, list, kind, owner,
         "body", P_CREAM)
 
     if max_off > 0 then
-        btn(self, "roster_up",   cl + w - COL_PAD - 58, hdr_cy, 34, 32, "^", "secondary",
+        btn(self, "roster_up",   cl + w - COL_PAD - 58, hdr_cy, 34, 32, "^", "neutral",
             kind, off > 0)
-        btn(self, "roster_down", cl + w - COL_PAD - 18, hdr_cy, 34, 32, "v", "secondary",
+        btn(self, "roster_down", cl + w - COL_PAD - 18, hdr_cy, 34, 32, "v", "neutral",
             kind, off < max_off)
     end
 
@@ -371,14 +383,20 @@ local function rebuild(self)
     local hy = EDGE_T - hdr_h / 2
     -- Sized to their own labels, like the strip below, so neither gets clipped
     -- and both sit at the same visual weight.
+    -- BACK / REFRESH are chrome, so they take the neutral face rather than
+    -- competing with the actions at the foot of the screen.
     local nav_w, nav_h = btn_w("REFRESH", 25, 124), 48
-    btn(self, "back", EDGE_L + 24 + nav_w / 2, hy, nav_w, nav_h, "BACK", "secondary")
+    btn(self, "back", EDGE_L + 24 + nav_w / 2, hy, nav_w, nav_h, "BACK", "neutral")
 
+    -- Title is the GAME's name — "WHOT CUP", "MATATU CUP" — so the screen is
+    -- branded the same way in every build. The particular cup's name is not
+    -- lost: it leads the detail line underneath.
     local cup = self.cup
-    text(self, CX, hy + 10, string.upper(cup and tostring(cup.name or "Team Cup") or "BRACKET"),
-        "subtitle2", P_GOLD)
+    text(self, CX, hy + 10,
+        string.upper(tostring(GameMode.TITLE or "TEAM")) .. " CUP", "subtitle2", P_GOLD)
     if cup then
-        text(self, CX, hy - 16, string.format("%s  •  %s %s  •  best of %d  •  %d players",
+        text(self, CX, hy - 16, string.format("%s  •  %s  •  %s %s  •  best of %d  •  %d players",
+            tostring(cup.name or "Team Cup"),
             cup.started and "RUNNING" or "NOT STARTED",
             commas((cup.grandPrize or {}).value or 0),
             tostring(GameMode.CURRENCY_CODE or ""),
@@ -386,7 +404,7 @@ local function rebuild(self)
             #((cup.players) or {})), "small", P_MUTED)
     end
     btn(self, "refresh", EDGE_R - 24 - nav_w / 2, hy, nav_w, nav_h, "REFRESH",
-        "secondary", nil, not self.loading)
+        "neutral", nil, not self.loading)
 
     if self.loading then
         text(self, CX, CY, "Loading bracket...", "body", P_MUTED); return
@@ -499,8 +517,8 @@ local function rebuild(self)
     local visible = math.max(1, math.floor((avail + COL_GAP) / (col_w + COL_GAP)))
 
     if max_scroll > 0 then
-        btn(self, "col_prev", chart_l + 40, body_b + 18, 76, 30, "<", "secondary", nil, self.col_off > 0)
-        btn(self, "col_next", chart_l + 124, body_b + 18, 76, 30, ">", "secondary", nil, self.col_off < max_scroll)
+        btn(self, "col_prev", chart_l + 40, body_b + 18, 76, 30, "<", "neutral", nil, self.col_off > 0)
+        btn(self, "col_next", chart_l + 124, body_b + 18, 76, 30, ">", "neutral", nil, self.col_off < max_scroll)
         text_e(self, chart_r, body_b + 18,
             string.format("stages %d-%d of %d", first, math.min(#cols, first + visible - 1), #cols),
             "small", P_MUTED)
@@ -516,9 +534,10 @@ local function rebuild(self)
         local cl  = chart_l + slot * (col_w + COL_GAP)
         local ccx = cl + col_w / 2
 
-        -- Stage header
-        panel(self, ccx, body_t - 15, col_w, 30, nil, "container_bg_active")
-        text(self, ccx, body_t - 15, string.upper(tostring(col.name)), "small", P_CREAM)
+        -- Stage header: type and a hairline, matching the roster's column
+        -- titles. No panel art on a title.
+        text(self, ccx, body_t - 15, string.upper(tostring(col.name)), "small", P_GOLD_LIGHT)
+        box(self, ccx, body_t - 30, col_w, 2, P_LINE)
 
         local y = col_top - 8
 
@@ -527,8 +546,11 @@ local function rebuild(self)
             if y - SEAT_H < body_b then break end
             local cy_ = y - SEAT_H / 2
             local mine = tostring(p.playerId) == my_id()
-            panel(self, ccx, cy_, col_w, SEAT_H, mine and P_GOLD_LIGHT or nil,
-                mine and "container_bg_active" or "container_bg")
+            -- List item: flat fill with a state-coloured spine, as in the
+            -- roster. The match boxes below ARE containers and keep their art.
+            box(self, ccx, cy_, col_w, SEAT_H, mine and ROW_MINE or ROW_FILL)
+            box(self, ccx - col_w / 2 + 2, cy_, 4, SEAT_H - 6,
+                mine and P_GOLD_LIGHT or P_MUTED)
             text_w(self, cl + 12, cy_, short(p.username, 14), "small",
                 mine and P_GOLD_LIGHT or P_CREAM)
             if owner and self.remove_mode then
