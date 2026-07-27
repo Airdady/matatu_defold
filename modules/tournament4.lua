@@ -873,6 +873,9 @@ end
 -- deal, the LOWEST cumulative total (count + history) wins — "whoever makes the
 -- less count wins it".
 function M.chamber_resolve(self, finisher)
+    -- Same freeze as the online path: the totals below are applied seat by
+    -- seat, and the board must not reorder between them.
+    notify(GUI_HUD, "t4_chamber_counting", { on = true })
     for _, s in ipairs(alive_seats(self)) do
         s.total = (s.total or 0) + (s._count or 0)
         notify(GUI_HUD, "t4_chamber_update", {
@@ -881,8 +884,9 @@ function M.chamber_resolve(self, finisher)
             eliminated = (s.total >= self.t4.threshold),
         })
     end
-    -- This round's totals are now final — reorder the board once, here,
-    -- rather than on every incidental score update.
+    -- This round's totals are now final — release the freeze and reorder the
+    -- board once, here, rather than on every incidental score update.
+    notify(GUI_HUD, "t4_chamber_counting", { on = false })
     notify(GUI_HUD, "t4_chamber_reflow", {})
 
     local seq = self._seq
