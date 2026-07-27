@@ -87,10 +87,29 @@ end
 
 local function my_id() return tostring((ws.current_user_data or {})._id or "") end
 
+-- Percent-encode for the share URL. Cup names are free text, so spaces and
+-- punctuation would otherwise produce a malformed link.
+local function url_encode(str)
+    str = tostring(str or ""):gsub("([^%w%-%_%.%~])", function(c)
+        return string.format("%%%02X", string.byte(c))
+    end)
+    return str
+end
+
 local function short(name, n)
     name = tostring(name or "Player")
     if #name > n then return name:sub(1, n - 1) .. "." end
     return name
+end
+
+-- "<cup name> CUP", uppercased. A cup already named "…Cup" keeps its own
+-- wording rather than becoming "ADA CUP CUP".
+local function cup_title(cup)
+    local name = tostring((cup or {}).name or "")
+    if name == "" then return "TEAM CUP" end
+    name = string.upper(name)
+    if name:match("%f[%w]CUP$") then return name end
+    return name .. " CUP"
 end
 
 ----------------------------------------------------------------------
@@ -330,9 +349,38 @@ local function roster_column(self, cl, w, top, bottom, title, list, kind, owner,
     end
 end
 
+-- The invite code, given its own band above the two columns. Anyone holding it
+-- can join without being invited by name, so it is the one thing on this screen
+-- a player actually needs to read off and pass on — it deserves better than a
+-- fragment of the header's detail line.
+local CODE_H = 54
+
+local function draw_code_strip(self, cup, top)
+    local code = tostring(cup.invitationCode or "")
+    if code == "" then return top end
+
+    local l, r = EDGE_L + 30, EDGE_R - 30
+    local cy_  = top - CODE_H / 2
+
+    text_w(self, l + 4, cy_ + 11, "INVITE CODE", "small", P_MUTED)
+    text_w(self, l + 4, cy_ - 13, string.upper(code), "subtitle2", P_GOLD_LIGHT)
+    text_w(self, l + 4 + #code * 34 * CHAR_W + 18, cy_ - 13,
+        "anyone with this code can join", "small", P_MUTED)
+
+    -- No clipboard API in the engine, so SHARE hands the code to WhatsApp the
+    -- same way the lobby's share button does.
+    local sw = btn_w("SHARE CODE", 25, 168)
+    btn(self, "code_share", r - sw / 2, cy_, sw, 44, "SHARE CODE", "secondary", code)
+
+    box(self, (l + r) / 2, top - CODE_H, r - l, 2, P_LINE)
+    return top - CODE_H - 12
+end
+
 local function draw_roster(self, cup, owner, body_t, body_b)
     local joined  = cup.players or {}
     local pending = cup.pending or {}
+
+    body_t = draw_code_strip(self, cup, body_t)
 
     local l, r = EDGE_L + 30, EDGE_R - 30
     local gap  = 26
@@ -388,20 +436,26 @@ local function rebuild(self)
     local nav_w, nav_h = btn_w("REFRESH", 25, 124), 48
     btn(self, "back", EDGE_L + 24 + nav_w / 2, hy, nav_w, nav_h, "BACK", "neutral")
 
-    -- Title is the GAME's name — "WHOT CUP", "MATATU CUP" — so the screen is
-    -- branded the same way in every build. The particular cup's name is not
-    -- lost: it leads the detail line underneath.
+    -- Title is THIS cup's name with CUP after it — "ADA CUP". Owners who
+    -- already named their cup "…Cup" would otherwise read "ADA CUP CUP", so
+    -- the suffix is only added when it is not already there.
     local cup = self.cup
-    text(self, CX, hy + 10,
-        string.upper(tostring(GameMode.TITLE or "TEAM")) .. " CUP", "subtitle2", P_GOLD)
+    text(self, CX, hy + 10, cup_title(cup), "subtitle2", P_GOLD)
     if cup then
-        text(self, CX, hy - 16, string.format("%s  •  %s  •  %s %s  •  best of %d  •  %d players",
-            tostring(cup.name or "Team Cup"),
+        local detail = string.format("%s  •  %s %s  •  best of %d  •  %d players",
             cup.started and "RUNNING" or "NOT STARTED",
             commas((cup.grandPrize or {}).value or 0),
             tostring(GameMode.CURRENCY_CODE or ""),
             tonumber(cup.matchFormat) or 3,
-            #((cup.players) or {})), "small", P_MUTED)
+            #((cup.players) or {}))
+        -- Pre-start the code gets its own band over the roster, so repeating it
+        -- here would be noise. Once running there is no roster, and this is the
+        -- only place left to show it.
+        local code = tostring(cup.invitationCode or "")
+        if cup.started and code ~= "" then
+            detail = detail .. "  •  code " .. string.upper(code)
+        end
+        text(self, CX, hy - 16, detail, "small", P_MUTED)
     end
     btn(self, "refresh", EDGE_R - 24 - nav_w / 2, hy, nav_w, nav_h, "REFRESH",
         "neutral", nil, not self.loading)
@@ -756,6 +810,15 @@ function on_input(self, action_id, action)
                         load(self)
                     end)
                 end
+            elseif b.id == "code_share" then
+                pcall(function()
+                    local cfg = require("modules.config")
+                    local name = tostring((self.cup or {}).name or "my team cup")
+                    sys.open_url("https://wa.me/?text="
+                        .. url_encode("Join " .. name .. " on " .. tostring(GameMode.BRAND or "")
+                            .. "! Invite code: " .. string.upper(tostring(b.data or ""))
+                            .. "  https://" .. tostring(cfg.DOMAIN or "")))
+                end)
             elseif b.id == "roster_up" or b.id == "roster_down" then
                 -- b.data is the column key ("joined" / "pending"), so the two
                 -- lists page independently.
