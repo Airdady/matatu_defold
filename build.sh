@@ -61,13 +61,23 @@ case "$TARGET" in
             ICON_SVG="tools/icons/matatu.svg"; ICON_BG="#4a3020,#2b1810"
             LOGO_SVG="tools/logos/matatu.svg" ;;
     # Same GAME as matatu above — same M.GAME, same endpoints, same rules, same
-    # art. A separate shipping target only: its own package name and its own
-    # keystore (see release.sh). Deliberately reuses matatu's icon and logo
-    # sources rather than getting near-duplicates of its own.
+    # gameplay. A separate shipping target: its own package name, its own
+    # keystore (see release.sh) and its own launcher icon, so the two Matatu
+    # apps are told apart on a home screen that has both installed.
     matatu_nap) GAME_UPPER="MATATU"; PROJECT_TITLE="Matatu"
             PACKAGE_NAME="com.matatu.nap"
-            ICON_SVG="tools/icons/matatu.svg"; ICON_BG="#4a3020,#2b1810"
-            LOGO_SVG="tools/logos/matatu.svg" ;;
+            ICON_SVG="tools/icons/matatu_nap.svg"; ICON_BG="#4a3020,#2b1810"
+            # No nap-specific watermark yet, so fall back to matatu's. Drop
+            # tools/logos/matatu_nap.svg in and this picks it up with no code
+            # change — the icon above is already nap's own.
+            LOGO_SVG="tools/logos/matatu.svg"
+            # `if`, not `[ -f ] && ...`: these scripts run under `set -e`, and a
+            # trailing test that fails is a non-zero exit from the case branch,
+            # which would abort the whole build whenever the file is absent —
+            # i.e. in exactly the normal case this fallback exists for.
+            if [ -f "tools/logos/matatu_nap.svg" ]; then
+                LOGO_SVG="tools/logos/matatu_nap.svg"
+            fi ;;
     kadi)   GAME_UPPER="KADI";   PROJECT_TITLE="Kadi"
             PACKAGE_NAME="com.matatu.kadi"
             ICON_SVG="tools/icons/kadi.svg";   ICON_BG="#12503a,#0a2e20"

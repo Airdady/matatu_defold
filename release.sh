@@ -87,14 +87,26 @@ case "$TARGET" in
             ICON_SVG="tools/icons/matatu.svg"; ICON_BG="#4a3020,#2b1810"
             LOGO_SVG="tools/logos/matatu.svg"
             KEYSTORE_PATH="./champion-keystore.jks"; KEYSTORE_PASS="./champion-keystore.pass.txt"; KEYSTORE_ALIAS="upload" ;;
-    # Identical to matatu in every runtime respect — same GAME_UPPER, title,
-    # icon and logo. Only the package and the signing material differ.
+    # Identical to matatu in every RUNTIME respect — same GAME_UPPER, same
+    # title, same rules and endpoints. What differs is what ships: the
+    # package, the signing material, and the launcher icon that tells the two
+    # apart on a device with both installed.
     # Override the alias with NAP_KEYSTORE_ALIAS if the key inside
     # nap-keystore.jks is not named "upload".
     matatu_nap) GAME_UPPER="MATATU"; PROJECT_TITLE="Matatu"
             PACKAGE_NAME="com.matatu.nap"
-            ICON_SVG="tools/icons/matatu.svg"; ICON_BG="#4a3020,#2b1810"
+            ICON_SVG="tools/icons/matatu_nap.svg"; ICON_BG="#4a3020,#2b1810"
+            # No nap-specific watermark yet, so fall back to matatu's. Drop
+            # tools/logos/matatu_nap.svg in and this picks it up with no code
+            # change — the icon above is already nap's own.
             LOGO_SVG="tools/logos/matatu.svg"
+            # `if`, not `[ -f ] && ...`: these scripts run under `set -e`, and a
+            # trailing test that fails is a non-zero exit from the case branch,
+            # which would abort the whole build whenever the file is absent —
+            # i.e. in exactly the normal case this fallback exists for.
+            if [ -f "tools/logos/matatu_nap.svg" ]; then
+                LOGO_SVG="tools/logos/matatu_nap.svg"
+            fi
             KEYSTORE_PATH="./nap-keystore.jks"; KEYSTORE_PASS="./nap-keystore.pass.txt"
             KEYSTORE_ALIAS="${NAP_KEYSTORE_ALIAS:-upload}" ;;
     kadi)   GAME_UPPER="KADI";   PROJECT_TITLE="Kadi"
