@@ -29,8 +29,10 @@ print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_usage() {
-    echo -e "Usage: ./release.sh --game <whot|matatu|kadi> --version-name <x.x.x> --version-code <int>"
+    echo -e "Usage: ./release.sh --game <whot|matatu|matatu_nap|kadi> --version-name <x.x.x> --version-code <int>"
     echo -e "Example: ${YELLOW}./release.sh --game matatu --version-name \"1.2.0\" --version-code 15${NC}"
+    echo -e "         ${YELLOW}./release.sh --game matatu_nap --version-name \"1.2.0\" --version-code 15${NC}"
+    echo -e "matatu_nap is the same GAME as matatu — same build, own package + keystore."
 }
 
 # ═══════════════════════════════════════════════════════════
@@ -47,6 +49,10 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 GAME="$(echo "$GAME" | tr '[:upper:]' '[:lower:]')"
+# What is being SHIPPED (package + keystore + output dir) as opposed to what
+# the app IS at runtime (GAME_UPPER / M.GAME). matatu and matatu_nap are two
+# targets for one game.
+TARGET="$GAME"
 
 # Validation Checks
 if [ -z "$VERSION_NAME" ] || [ -z "$VERSION_CODE" ]; then
@@ -59,13 +65,18 @@ fi
 # PER-GAME CONFIG
 # ═══════════════════════════════════════════════════════════
 # Package name + visual identity sources mirror build.sh's case statement.
-# All three games are currently signed with the SAME keystore/alias — see
-# build.sh's Google Sign-In note: each package name still needs its OWN
-# Android OAuth client registered against this keystore's SHA-1 in Google
-# Cloud Console, so sharing the keystore is intentional, not a placeholder.
-# Kept as a per-game case (rather than one top-level constant) so switching
-# any single game to its own dedicated keystore later is a one-line change.
-case "$GAME" in
+# whot, matatu and kadi are signed with the SAME keystore/alias — see build.sh's
+# Google Sign-In note: each package name still needs its OWN Android OAuth
+# client registered against that keystore's SHA-1 in Google Cloud Console, so
+# sharing the keystore is intentional, not a placeholder.
+#
+# matatu_nap is the exception, and the reason this is a per-target case rather
+# than one top-level constant: it ships the identical Matatu build under its
+# own package and its OWN keystore. Its SHA-1 therefore differs from every
+# other target's, so com.matatu.nap needs its own Android OAuth client
+# registered against THAT certificate — registering it against the shared one
+# will fail with DEVELOPER_ERROR on device.
+case "$TARGET" in
     whot)   GAME_UPPER="WHOT";   PROJECT_TITLE="Whot"
             PACKAGE_NAME="com.matatu.pro"
             ICON_SVG="tools/icons/whot.svg";   ICON_BG="#C42B2B,#6E1414"
@@ -76,19 +87,31 @@ case "$GAME" in
             ICON_SVG="tools/icons/matatu.svg"; ICON_BG="#4a3020,#2b1810"
             LOGO_SVG="tools/logos/matatu.svg"
             KEYSTORE_PATH="./champion-keystore.jks"; KEYSTORE_PASS="./champion-keystore.pass.txt"; KEYSTORE_ALIAS="upload" ;;
+    # Identical to matatu in every runtime respect — same GAME_UPPER, title,
+    # icon and logo. Only the package and the signing material differ.
+    # Override the alias with NAP_KEYSTORE_ALIAS if the key inside
+    # nap-keystore.jks is not named "upload".
+    matatu_nap) GAME_UPPER="MATATU"; PROJECT_TITLE="Matatu"
+            PACKAGE_NAME="com.matatu.nap"
+            ICON_SVG="tools/icons/matatu.svg"; ICON_BG="#4a3020,#2b1810"
+            LOGO_SVG="tools/logos/matatu.svg"
+            KEYSTORE_PATH="./nap-keystore.jks"; KEYSTORE_PASS="./nap-keystore.pass.txt"
+            KEYSTORE_ALIAS="${NAP_KEYSTORE_ALIAS:-upload}" ;;
     kadi)   GAME_UPPER="KADI";   PROJECT_TITLE="Kadi"
             PACKAGE_NAME="com.matatu.kadi"
             ICON_SVG="tools/icons/kadi.svg";   ICON_BG="#12503a,#0a2e20"
             LOGO_SVG="tools/logos/kadi.svg"
             KEYSTORE_PATH="./kadi.keystore"; KEYSTORE_PASS="./kadi.pass.txt"; KEYSTORE_ALIAS="matatu_alias" ;;
     *)
-        print_error "Unknown game '$GAME' — expected: whot | matatu | kadi"
+        print_error "Unknown target '$TARGET' — expected: whot | matatu | matatu_nap | kadi"
         print_usage
         exit 1
         ;;
 esac
 
-OUTPUT_DIR="./bundles/android_release_${GAME}"
+# Keyed by TARGET: matatu and matatu_nap are both MATATU and would otherwise
+# overwrite each other's AAB.
+OUTPUT_DIR="./bundles/android_release_${TARGET}"
 
 if [ ! -f "$KEYSTORE_PATH" ]; then
     print_error "Keystore not found at $KEYSTORE_PATH"

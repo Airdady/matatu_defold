@@ -6,7 +6,7 @@
 # PRESERVES APP DATA/CACHE
 #
 # USAGE:
-#   ./build.sh [whot|matatu|kadi]
+#   ./build.sh [whot|matatu|matatu_nap|kadi]
 #
 # The game argument (default: whot) patches modules/game_mode.lua's M.GAME so
 # every endpoint, card-art path and in-app label follows (see that file's
@@ -17,10 +17,18 @@
 # whichever game was just built instead of whatever happened to be baked in
 # from the last manual run.
 #
-# Package names (fixed per game, see the case statement below):
-#   matatu -> com.matatu.champ
-#   whot   -> com.matatu.pro
-#   kadi   -> com.matatu.kadi
+# Package names (fixed per TARGET, see the case statement below):
+#   matatu     -> com.matatu.champ
+#   matatu_nap -> com.matatu.nap
+#   whot       -> com.matatu.pro
+#   kadi       -> com.matatu.kadi
+#
+# TARGET vs GAME: these were the same thing until matatu_nap. A target is what
+# you are shipping — a package name, a keystore, a Play listing. A game is what
+# the app IS at runtime (M.GAME), which drives endpoints, rules, currency and
+# card art. matatu_nap is a second SHIPPING TARGET for the same GAME: byte for
+# byte the same Matatu build, differing only in package name and signing, so
+# GAME_UPPER stays MATATU and only the packaging changes.
 #
 # IMPORTANT — Google Sign-In (GPGS): it's registered in Google Cloud Console
 # against one specific (package name + signing certificate SHA-1) pair per
@@ -39,10 +47,11 @@
 set -e
 
 # ---------------- CONFIG ----------------
-GAME="${1:-whot}"
-GAME="$(echo "$GAME" | tr '[:upper:]' '[:lower:]')"
+TARGET="${1:-whot}"
+TARGET="$(echo "$TARGET" | tr '[:upper:]' '[:lower:]')"
+GAME="$TARGET"
 
-case "$GAME" in
+case "$TARGET" in
     whot)   GAME_UPPER="WHOT";   PROJECT_TITLE="Whot"
             PACKAGE_NAME="com.matatu.pro"
             ICON_SVG="tools/icons/whot.svg";   ICON_BG="#C42B2B,#6E1414"
@@ -51,17 +60,27 @@ case "$GAME" in
             PACKAGE_NAME="com.matatu.champ"
             ICON_SVG="tools/icons/matatu.svg"; ICON_BG="#4a3020,#2b1810"
             LOGO_SVG="tools/logos/matatu.svg" ;;
+    # Same GAME as matatu above — same M.GAME, same endpoints, same rules, same
+    # art. A separate shipping target only: its own package name and its own
+    # keystore (see release.sh). Deliberately reuses matatu's icon and logo
+    # sources rather than getting near-duplicates of its own.
+    matatu_nap) GAME_UPPER="MATATU"; PROJECT_TITLE="Matatu"
+            PACKAGE_NAME="com.matatu.nap"
+            ICON_SVG="tools/icons/matatu.svg"; ICON_BG="#4a3020,#2b1810"
+            LOGO_SVG="tools/logos/matatu.svg" ;;
     kadi)   GAME_UPPER="KADI";   PROJECT_TITLE="Kadi"
             PACKAGE_NAME="com.matatu.kadi"
             ICON_SVG="tools/icons/kadi.svg";   ICON_BG="#12503a,#0a2e20"
             LOGO_SVG="tools/logos/kadi.svg" ;;
     *)
-        echo "❌ Unknown game '$GAME' — expected: whot | matatu | kadi"
+        echo "❌ Unknown target '$TARGET' — expected: whot | matatu | matatu_nap | kadi"
         exit 1
         ;;
 esac
 
-BUNDLE_DIR="./bundles/android_debug_${GAME}"
+# Keyed by TARGET, not GAME: matatu and matatu_nap are both MATATU, and a
+# shared directory would have them overwriting each other's bundle.
+BUNDLE_DIR="./bundles/android_debug_${TARGET}"
 
 # Optional manual activity
 MAIN_ACTIVITY=""
@@ -76,6 +95,7 @@ ARCHITECTURES="armv7-android,arm64-android"
 
 echo "=========================================================="
 echo "🚀 Starting Defold Android Debug Build"
+echo "🎯 Target:  $TARGET"
 echo "🎮 Game:    $GAME_UPPER"
 echo "📦 Package: $PACKAGE_NAME"
 echo "=========================================================="
