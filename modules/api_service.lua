@@ -107,7 +107,16 @@ local function parse_response(response)
     local data = json_util.decode(response.response or "") or {}
     local success = code >= 200 and code < 300
     local message = "Success"
-    if not success then
+    if code == 304 then
+        -- 304 carries NO body, so `data` is empty. Every caller reads fields
+        -- off data — ownerId, players, balance — and an empty table looks
+        -- exactly like a legitimate "you are not the owner" or "this bracket
+        -- has nobody in it". Both ends now prevent 304s (the server sends
+        -- no-store and generates no ETag; requests below set ignore_cache), so
+        -- if one still arrives it is a proxy's doing: fail it plainly rather
+        -- than letting a bodyless response masquerade as data.
+        message = "Stale response from the network. Pull to refresh."
+    elseif not success then
         if type(data) == "table" and data.message then
             message = data.message
         elseif type(data) == "table" and data.reason then
@@ -136,7 +145,10 @@ local function request(method, endpoint, payload, cb)
     local url = config.BASE_URL .. endpoint
     local headers = build_headers()
     local body = payload and json_util.encode(payload) or nil
-    local options = { timeout = 20 }
+    -- ignore_cache: every endpoint here returns live state. Defold's HTTP cache
+    -- would otherwise replay a stored response, or revalidate it and hand us a
+    -- bodyless 304 that parse_response can only read as "no data".
+    local options = { timeout = 20, ignore_cache = true }
     print("[API] " .. method .. " " .. url)
     http.request(url, method, function(_, _, response)
         if cb then
@@ -290,6 +302,13 @@ end
 -- stacks, which made the backend see no userId and refuse the real owner.
 function M.delete_team_tournament(tournament_id, user_id, cb)
     request("POST", "/tournaments/team/" .. tournament_id .. "/delete", { userId = user_id }, cb)
+end
+
+-- Owner-only: withdraw an invitation that was never accepted. Distinct from
+-- drop_team_player, which removes someone already on the bracket.
+function M.revoke_team_invitation(tournament_id, user_id, player_id, cb)
+    request("POST", "/tournaments/team/" .. tournament_id .. "/revoke",
+        { userId = user_id, playerId = player_id }, cb)
 end
 
 -- Owner-only: remove a player from the bracket.
