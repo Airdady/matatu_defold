@@ -8,12 +8,13 @@ local C_WHITE     = vmath.vector4(1.0, 1.0, 1.0, 1.0)
 local C_T_GREEN   = vmath.vector4(0.13, 0.77, 0.37, 0.6)
 local C_T_ORANGE  = vmath.vector4(0.96, 0.62, 0.04, 0.6)
 local C_T_RED     = vmath.vector4(0.94, 0.27, 0.27, 0.6)
--- Grace period. The server allows more time per turn than the pie counts down
--- (see config.GRACE_SECONDS), and that slack is when it decides between "the
--- player came back" and "hand the seat to the AI". The ring shows it as a
--- SECOND round in purple rather than jumping straight to the red alarm — the
--- old behaviour said "something has gone wrong" during a window in which
--- nothing has gone wrong yet.
+-- Grace period. When the turn countdown reaches zero the server has NOT given
+-- up on that seat: its own timeout hands the seat to the AI (or plays one
+-- assisted move) and starts another full turn window, so the player has a
+-- further ~35s to reappear and take it back — see config.GRACE_SECONDS. The
+-- ring shows that window as a SECOND round in purple rather than jumping
+-- straight to the red alarm, which used to say "something has gone wrong"
+-- through half a minute in which nothing had.
 local C_T_PURPLE  = vmath.vector4(0.62, 0.35, 0.90, 0.75)
 local GRACE_LABEL = "RECONNECTING..."
 

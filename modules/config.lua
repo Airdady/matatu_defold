@@ -31,15 +31,23 @@ M.KEEP_ALIVE_INTERVAL = 4.0
 M.ZOMBIE_TIMEOUT = 13.0
 M.TURN_SECONDS = 30
 
--- The server allows 35s per turn (PLAY_TIMEOUT_DURATION in be_matatu's
--- src/matatu/websocket/state.ts) — 5s more than the pie counts down. That
--- slack is the window in which the server decides between "the player came
--- back" and "hand the seat to the AI", so nothing has actually gone wrong
--- during it. The HUD spends it on a second, purple pie round labelled
--- RECONNECTING... instead of jumping straight to the red alarm.
+-- The server's own per-turn window: PLAY_TIMEOUT_DURATION in be_matatu's
+-- src/matatu/websocket/state.ts, currently 35000ms. Keep the two in step.
+M.PLAY_TIMEOUT_SECONDS = 35
+
+-- How long the pie spends on the GRACE round after the turn countdown hits
+-- zero, before it raises the red alarm.
+--
+-- This is a FULL server window, not the 5s by which PLAY_TIMEOUT_DURATION
+-- exceeds TURN_SECONDS. When the server's turn timeout fires on a seat that
+-- has gone quiet it does not end anything — it hands the seat to the AI (or
+-- plays one assisted move) and calls startTimeout again, giving that player
+-- another whole PLAY_TIMEOUT_DURATION to come back and take it over. So the
+-- window in which a player can still reappear is a turn timer long, and the
+-- purple ring should last as long as the thing it is representing.
 --
 -- Online only: offline the AI is local and there is nobody to wait for.
-M.GRACE_SECONDS = 5
+M.GRACE_SECONDS = M.PLAY_TIMEOUT_SECONDS
 
 -- Stake levels, in each game's own local currency (UGX/NGN/KES). Whot/Kadi
 -- are the exact conversion table for this rollout, matching be_matatu's
