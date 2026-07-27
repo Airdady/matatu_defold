@@ -45,7 +45,48 @@ public class InAppUpdateDefold implements InstallStateUpdatedListener {
             this.appUpdateInfo = info;
             boolean available = info.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE;
             boolean resuming = info.updateAvailability() == UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS;
-            nativeLog(0, "Google Play task response parsed. Update Availability matches: " + available);
+
+            // Log WHY, not just whether. "The forced update didn't show on all
+            // versions" is otherwise impossible to diagnose from a device: a
+            // staged rollout, a Play Store metadata cache that has not
+            // refreshed yet, and an install that did not come from Play all
+            // look identical from here — they all just report
+            // UPDATE_NOT_AVAILABLE. These fields tell them apart.
+            //
+            //   availability 1 = UPDATE_NOT_AVAILABLE  2 = UPDATE_AVAILABLE
+            //                3 = DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS
+            //   staleness    = days since Play learned of the update; null
+            //                  until Play's cache has actually seen it
+            //   priority     = inAppUpdatePriority, settable ONLY through the
+            //                  Play Developer Publishing API at release-edit
+            //                  time (there is no field for it in the Console),
+            //                  so it is 0 unless someone set it there
+            Integer staleness = null;
+            int priority = -1;
+            int availableCode = -1;
+            try {
+                staleness = info.clientVersionStalenessDays();
+                priority = info.updatePriority();
+                availableCode = info.availableVersionCode();
+            } catch (Throwable ignored) {
+                // Older Play Core: keep the primary log line rather than lose it.
+            }
+            nativeLog(0, String.format(
+                "Play update check: availability=%d available=%b availableVersionCode=%d "
+                + "priority=%d stalenessDays=%s immediateAllowed=%b flexibleAllowed=%b",
+                info.updateAvailability(), available, availableCode, priority,
+                String.valueOf(staleness),
+                info.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE),
+                info.isUpdateTypeAllowed(AppUpdateType.FLEXIBLE)));
+
+            if (!available && !resuming) {
+                nativeLog(0, "Play reports no update for THIS install. That is not "
+                    + "proof the app is current: a staged rollout, a stale Play "
+                    + "Store cache, or a non-Play install all report exactly this. "
+                    + "The server-side version floor is what actually guarantees "
+                    + "old builds stop working.");
+            }
+
             onUpdateAvailable(available);
 
             // Force the player through the update the instant they open the
