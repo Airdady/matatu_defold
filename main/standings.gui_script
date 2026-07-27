@@ -5,13 +5,23 @@
 -- match to the next stage — so who beat whom, and how far each player got,
 -- reads at a glance.
 --
+-- Two views, one screen:
+--   • BEFORE the cup starts there are no matches to draw, so it shows the
+--     ROSTER instead — who has accepted, and who was invited and has not.
+--     An empty bracket told the owner nothing about the six invitations still
+--     outstanding.
+--   • ONCE started it becomes the bracket drawing described above.
+--
 -- Open to everyone in the cup. The OWNER additionally gets the controls that
--- run it: START while it is still gathering, REMOVE a player from the
--- bracket, and DELETE the cup.
+-- run it: START while it is still gathering, INVITE more players, WITHDRAW an
+-- unaccepted invitation, REMOVE a player, and DELETE the cup.
 --
 -- Data comes from GET /tournaments/team/:id/bracket:
 --   rounds[]  — pairings per stage, each decided series appearing ONCE
 --   players[] — every entrant with levelResults, clearedLevel, isChampion
+--   pending[] — invited, not yet accepted (allowedUsers minus players)
+--   canStart  — the server's own start rule, so the button can be disabled
+--               with a reason instead of the owner discovering it by refusal
 -- clearedLevel is used rather than currentLevel: a beaten player is reset to
 -- level 1 and would otherwise look like they never progressed.
 --
@@ -149,6 +159,88 @@ local function unplayed(self)
 end
 
 ----------------------------------------------------------------------
+-- roster (pre-start)
+----------------------------------------------------------------------
+-- One person's row: avatar disc, name, a state pill, and — for the owner —
+-- the action that applies to THIS list (remove from the bracket, or withdraw
+-- an invitation that was never accepted).
+local function roster_row(self, cl, cy_, w, entry, kind, owner)
+    local mine = tostring(entry.playerId) == my_id()
+    framed3(self, cl + w / 2, cy_, w, 40,
+        mine and P_GOLD_LIGHT or (kind == "pending" and P_MUTED or P_GOLD),
+        mine and P_BADGE_BG or P_PANEL)
+
+    local av_x = cl + 26
+    track(self, ui.pie(vmath.vector3(av_x, cy_, 0), 15, P_B_OUTER))
+    track(self, ui.avatar(vmath.vector3(av_x, cy_, 0), vmath.vector3(26, 26, 0),
+        tonumber(entry.avatar) or 1))
+
+    text_w(self, cl + 46, cy_ + 7, short(entry.username, 16), "small",
+        mine and P_GOLD_LIGHT or P_CREAM)
+    text_w(self, cl + 46, cy_ - 9,
+        kind == "pending" and "invited — awaiting reply" or "in the cup",
+        "small", P_MUTED)
+
+    if owner then
+        local bw = 84
+        btn(self, kind == "pending" and "invite_revoke" or "player_remove",
+            cl + w - 12 - bw / 2, cy_, bw, 28,
+            kind == "pending" and "WITHDRAW" or "REMOVE", "danger", entry.playerId)
+    elseif mine then
+        text_e(self, cl + w - 12, cy_, "YOU", "small", P_GOLD_LIGHT)
+    end
+end
+
+-- A titled column of rows, windowed to whatever vertical room there is.
+local function roster_column(self, cl, w, top, bottom, title, list, kind, owner, empty_msg)
+    framed3(self, cl + w / 2, top - 15, w, 30, P_GOLD, P_BADGE_BG)
+    text(self, cl + w / 2, top - 15,
+        string.format("%s  (%d)", title, #list), "small", P_CREAM)
+
+    local y = top - 38
+    if #list == 0 then
+        text(self, cl + w / 2, y - 14, empty_msg, "small", P_MUTED)
+        return
+    end
+    local shown = 0
+    for _, e in ipairs(list) do
+        if y - 40 < bottom + (shown < #list - 1 and 18 or 0) then break end
+        roster_row(self, cl, y - 20, w, e, kind, owner)
+        y = y - 46
+        shown = shown + 1
+    end
+    if shown < #list then
+        text(self, cl + w / 2, y - 10,
+            string.format("+%d more", #list - shown), "small", P_MUTED)
+    end
+end
+
+local function draw_roster(self, cup, owner, body_t, body_b)
+    local joined  = cup.players or {}
+    local pending = cup.pending or {}
+
+    local l, r = EDGE_L + 26, EDGE_R - 26
+    local gap  = 20
+    local w    = math.floor((r - l - gap) / 2)
+
+    roster_column(self, l, w, body_t, body_b, "ACCEPTED", joined, "joined", owner,
+        "Nobody has joined yet.")
+    roster_column(self, l + w + gap, w, body_t, body_b, "PENDING", pending, "pending", owner,
+        owner and "No invitations outstanding." or "No pending invitations.")
+
+    -- Why the cup cannot start yet, stated once, under both columns.
+    if owner and not cup.canStart then
+        local need = 2 - #joined
+        text(self, CX, body_b - 6,
+            need > 0
+                and string.format("%d more player%s needed before this cup can start.",
+                    need, need == 1 and "" or "s")
+                or "This cup cannot be started right now.",
+            "small", P_GOLD_LIGHT)
+    end
+end
+
+----------------------------------------------------------------------
 -- draw
 ----------------------------------------------------------------------
 local function rebuild(self)
@@ -194,24 +286,34 @@ local function rebuild(self)
 
     local owner = is_owner(self)
 
-    -- Owner control strip along the bottom.
+    -- Owner control strip along the bottom. Which controls appear depends on
+    -- the phase: before the start there is a roster to fill (INVITE) and a cup
+    -- to launch; after it there is a bracket to police (REMOVE PLAYER).
     local body_b = EDGE_B + (owner and 74 or 24)
     if owner then
         local by = EDGE_B + 38
-        local n = cup.started and 2 or 3
-        local bw = 190
-        local total = n * bw + (n - 1) * 14
-        local x0 = CX - total / 2 + bw / 2
-        local i = 0
+        local strip = {}
         if not cup.started then
-            btn(self, "cup_start", x0, by, bw, 44, "START CUP", "primary")
-            i = 1
+            strip[#strip + 1] = { id = "cup_start", label = "START CUP",
+                                  kind = "primary", enabled = cup.canStart ~= false }
+            strip[#strip + 1] = { id = "cup_invite", label = "INVITE PLAYERS",
+                                  kind = "secondary" }
+        else
+            strip[#strip + 1] = { id = "cup_remove_mode",
+                label = self.remove_mode and "DONE REMOVING" or "REMOVE PLAYER",
+                kind = self.remove_mode and "primary" or "secondary" }
         end
-        btn(self, "cup_remove_mode", x0 + i * (bw + 14), by, bw, 44,
-            self.remove_mode and "DONE REMOVING" or "REMOVE PLAYER",
-            self.remove_mode and "primary" or "secondary")
-        btn(self, "cup_delete", x0 + (i + 1) * (bw + 14), by, bw, 44,
-            (self.confirm_delete and "TAP TO CONFIRM") or "DELETE CUP", "danger")
+        strip[#strip + 1] = { id = "cup_delete",
+            label = (self.confirm_delete and "TAP TO CONFIRM") or "DELETE CUP",
+            kind = "danger" }
+
+        local bw = 190
+        local total = #strip * bw + (#strip - 1) * 14
+        local x0 = CX - total / 2 + bw / 2
+        for i, b in ipairs(strip) do
+            btn(self, b.id, x0 + (i - 1) * (bw + 14), by, bw, 44, b.label, b.kind,
+                nil, b.enabled)
+        end
         if self.remove_mode then
             text(self, CX, by + 34, "Tap a player in the bracket to remove them",
                 "small", P_GOLD_LIGHT)
@@ -219,9 +321,17 @@ local function rebuild(self)
     end
 
     ------------------------------------------------------------------
-    -- The bracket itself
+    -- Before the start: the roster, not an empty bracket
     ------------------------------------------------------------------
     local body_t = d_y - 26
+    if not cup.started then
+        draw_roster(self, cup, owner, body_t, body_b + 22)
+        return
+    end
+
+    ------------------------------------------------------------------
+    -- The bracket itself
+    ------------------------------------------------------------------
     local rounds = cup.rounds or {}
     local waiting = unplayed(self)
 
@@ -400,6 +510,27 @@ local function remove_player(self, player_id)
     end)
 end
 
+local function find_pending(self, pid)
+    for _, p in ipairs((self.cup or {}).pending or {}) do
+        if tostring(p.playerId) == tostring(pid) then return p end
+    end
+    return nil
+end
+
+local function revoke_invite(self, player_id)
+    local p = find_pending(self, player_id)
+    if not p then return end
+    api.revoke_team_invitation(self.cup_id, my_id(), player_id, function(res)
+        if res.success then
+            toast.success("Invitation to " .. short(p.username, 16) .. " withdrawn.")
+        else
+            toast.error((res.data and res.data.error) or res.message
+                or "Could not withdraw that invitation.")
+        end
+        load(self)
+    end)
+end
+
 ----------------------------------------------------------------------
 -- lifecycle
 ----------------------------------------------------------------------
@@ -469,6 +600,17 @@ function on_input(self, action_id, action)
                         load(self)
                     end)
                 end
+            elseif b.id == "player_remove" then
+                if is_owner(self) then remove_player(self, b.data) end
+            elseif b.id == "invite_revoke" then
+                if is_owner(self) then revoke_invite(self, b.data) end
+            elseif b.id == "cup_invite" then
+                -- Inviting needs the keyboard-driven username field, which
+                -- lives on the create/edit screen. Seed it with this cup so it
+                -- opens in EDIT mode against the right bracket rather than
+                -- starting a second one.
+                app_state.team_edit = self.cup
+                msg.post("#controller", "goto_team_tournament")
             elseif b.id == "cup_remove_mode" then
                 self.remove_mode = not self.remove_mode
                 self.confirm_delete = false

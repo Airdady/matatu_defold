@@ -23,6 +23,10 @@ textures {
   name: "ui"
   texture: "/assets/ui/ui.atlas"
 }
+textures {
+  name: "avatars"
+  texture: "/assets/avatars/avatars.atlas"
+}
 background_color {
   x: 0.0
   y: 0.0
