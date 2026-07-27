@@ -20,7 +20,47 @@ end
 M.BASE_URL = "https://" .. M.DOMAIN .. "/" .. GameMode.PATH
 M.WS_URL   = "wss://" .. M.DOMAIN .. "/" .. GameMode.PATH .. "/ws"
 
+-- ---------------------------------------------------------------------------
+-- VERSION
+-- ---------------------------------------------------------------------------
+-- STAMPED AT RELEASE. release.sh rewrites these two lines from its
+-- --version-name / --version-code arguments and restores them afterwards, so
+-- what a shipped build reports is what was actually published.
+--
+-- They used to be hand-maintained, and drifted: release.sh injected the real
+-- version into game.project via a temp settings file but never touched this
+-- module, so a build released as 18.6.0 still told the server it was 18.5.9.
+-- Anything that trusts the reported version — the force-update floor most of
+-- all — was comparing against a constant that had nothing to do with the APK.
+--
+-- APP_BUILD is the Android versionCode: a monotonic integer, so the server can
+-- compare it without parsing. 0 means "not stamped" (an editor/dev run), which
+-- the server treats as unknown rather than as ancient.
 M.APP_VERSION = "18.5.9"
+M.APP_BUILD   = 0
+
+-- Prefer what the engine was actually bundled with over the stamped constants
+-- above. release.sh passes --settings to bob.jar with the real version/code,
+-- so the BUILT game.project carries them and this reads them back at runtime —
+-- self-maintaining, and true even if the stamping step below were skipped.
+--
+-- Wrapped in pcall and tried both ways because sys.get_config was deprecated
+-- in favour of sys.get_config_string: a missing key here must degrade to the
+-- stamped constants, never abort config.lua on startup (this module is
+-- required by nearly everything).
+do
+    local function cfg(key)
+        local ok, v = pcall(function()
+            if sys.get_config_string then return sys.get_config_string(key, "") end
+            return sys.get_config(key)
+        end)
+        return (ok and v) or ""
+    end
+    local v = cfg("project.version")
+    if v ~= "" then M.APP_VERSION = v end
+    local b = tonumber(cfg("android.version_code"))
+    if b and b > 0 then M.APP_BUILD = b end
+end
 M.GAME_STATE_SECRET = "a27a120adfbc9f727c187748fff44547e1ee72f09481c8a965d62ed1c02e6ea3"
 
 M.INITIAL_RECONNECT_DELAY = 1.0

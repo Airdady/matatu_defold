@@ -14,6 +14,11 @@ local M = {}
 -- ── state ───────────────────────────────────────────────────────────────────
 M.socket_connected = false
 M.is_identified = false
+
+-- Set once the server refuses this build as too old (UPDATE_REQUIRED, or a
+-- 4426 close). Latching, deliberately: nothing short of updating the app can
+-- clear it, so it also suppresses the reconnect loop.
+M.update_required = false
 M.online_users = {}
 M.current_user_data = {}
 M.current_user_id = ""
@@ -320,6 +325,13 @@ local function parse_message(json_string)
     if uid ~= "" then
       emit("network_quality", { user_id = uid, latency_ms = tonumber(d.latency) or 0 })
     end
+  elseif t == "UPDATE_REQUIRED" then
+    -- This build is below the server's minimum. Distinct from AUTH_REQUIRED:
+    -- there is nothing wrong with the session, so the cached credentials must
+    -- NOT be wiped — the player will still be signed in after they update.
+    print("[WS] UPDATE_REQUIRED: " .. tostring(d.message))
+    M.update_required = true
+    emit("update_required", d)
   elseif t == "AUTH_REQUIRED" then
     print("[WS-DEBUG] AUTH_REQUIRED received: " .. tostring(d.message))
     M.is_identified = false
@@ -646,6 +658,14 @@ on_disconnected = function(reason)
     is_manual_disconnect = false
     return
   end
+  -- The server hung up because this build is below its minimum. Reconnecting
+  -- would be refused identically every time, so the loop would just burn
+  -- battery behind the update screen — and each retry re-runs the handshake
+  -- that produced the refusal. This is terminal until the app is updated.
+  if M.update_required then
+    print("[WS] not reconnecting: update required")
+    return
+  end
   schedule_reconnect()
 end
 
@@ -682,6 +702,13 @@ local function ws_callback(_, conn, data)
 end
 
 function M.connect()
+  -- Every other caller of connect() (the "Play Online" tap, the reconnect
+  -- timer, the lobby's auto-identify) goes through here, so refusing once is
+  -- enough to stop all of them rather than guarding each one.
+  if M.update_required then
+    print("[WS] connect() refused: update required")
+    return
+  end
   if is_connecting or M.socket_connected then
     print(string.format("[WS-DEBUG] connect() no-op: is_connecting=%s socket_connected=%s",
       tostring(is_connecting), tostring(M.socket_connected)))
@@ -697,7 +724,12 @@ function M.connect()
   local ok_api, api = pcall(require, "modules.api_service")
   if ok_api then device_id = api.get_device_id() end
 
-  local url = config.WS_URL .. "/?deviceId=" .. tostring(device_id) .. "&v=" .. config.APP_VERSION
+  -- `b` is the Android versionCode, alongside the display version in `v`.
+  -- The server gates on b when it has one (an integer needs no parsing) and
+  -- falls back to v for builds older than the stamping change.
+  local url = config.WS_URL .. "/?deviceId=" .. tostring(device_id)
+      .. "&v=" .. config.APP_VERSION
+      .. "&b=" .. tostring(config.APP_BUILD or 0)
   print("[WS] connecting to " .. url)
   is_connecting = true
   is_manual_disconnect = false

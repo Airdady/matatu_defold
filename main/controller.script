@@ -227,7 +227,27 @@ function init(self)
     end
 
     if gameservices then gameservices.check_update() end
-    
+
+    -- Re-check whenever the app comes back to the foreground, not just at
+    -- cold start. Two reasons, both of which produced "the update didn't show
+    -- for me":
+    --
+    --   1. getAppUpdateInfo() answers from the Play Store app's cached
+    --      metadata, which refreshes on Play's schedule. A player who opened
+    --      the app before that refresh got "no update available" and, with a
+    --      single check at init, would never be asked again for as long as the
+    --      app stayed resident.
+    --   2. Google requires an onResume check to resume an IMMEDIATE update
+    --      that was interrupted (app killed or backgrounded mid-flow) —
+    --      checkForUpdate() routes that case to resumeUpdate().
+    if gameservices then
+        window.set_listener(function(_, event)
+            if event == window.WINDOW_EVENT_FOCUS_GAINED then
+                pcall(gameservices.check_update)
+            end
+        end)
+    end
+
     if gpgs then
         gpgs.set_callback(function(self_, mid, m) gpgs_callback(self, mid, m) end)
     end

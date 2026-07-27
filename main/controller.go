@@ -3,6 +3,10 @@ components {
   component: "/main/controller.script"
 }
 components {
+  id: "update_required"
+  component: "/main/update_required.gui"
+}
+components {
   id: "lobby"
   component: "/main/lobby.gui"
 }

@@ -163,6 +163,43 @@ fi
 print_success "modules/game_mode.lua -> M.GAME = \"${GAME_UPPER}\""
 
 # ═══════════════════════════════════════════════════════════
+# 0b. STAMP THE VERSION INTO modules/config.lua
+# ═══════════════════════════════════════════════════════════
+# The version/version_code below go to bob.jar as a --settings override, which
+# lands in the BUILT game.project — config.lua reads them back at runtime via
+# sys.get_config. This stamp is the fallback for when that read comes back
+# empty, and it is why it matters: M.APP_VERSION was a hand-edited constant
+# that nothing in this script ever touched, so every release since it was last
+# edited by hand reported "18.5.9" to the server no matter what was actually
+# published. The force-update floor compares against what the client reports,
+# so a stale constant there is not cosmetic — it silently disables the gate.
+print_status "Stamping version $VERSION_NAME ($VERSION_CODE) into modules/config.lua..."
+
+if [ ! -f modules/config.lua ]; then
+    print_error "modules/config.lua not found — is this the matatu_defold repo root?"
+    exit 1
+fi
+
+sed -i.bak -E \
+    -e "s/^(M\.APP_VERSION[[:space:]]*=[[:space:]]*)\".*\"/\1\"${VERSION_NAME}\"/" \
+    -e "s/^(M\.APP_BUILD[[:space:]]*=[[:space:]]*).*/\1${VERSION_CODE}/" \
+    modules/config.lua
+rm -f modules/config.lua.bak
+
+# Verify rather than trust: a sed that matched nothing exits 0, so without this
+# a renamed field would silently go back to shipping a stale version.
+if ! grep -q "^M.APP_VERSION = \"${VERSION_NAME}\"" modules/config.lua; then
+    print_error "Failed to stamp M.APP_VERSION in modules/config.lua"
+    exit 1
+fi
+if ! grep -q "^M.APP_BUILD   = ${VERSION_CODE}$" modules/config.lua; then
+    print_error "Failed to stamp M.APP_BUILD in modules/config.lua"
+    exit 1
+fi
+
+print_success "modules/config.lua -> APP_VERSION=${VERSION_NAME} APP_BUILD=${VERSION_CODE}"
+
+# ═══════════════════════════════════════════════════════════
 # 1. REGENERATE VISUAL IDENTITY ASSETS FOR $GAME_UPPER
 #    (launcher icon: bundle/android/res/** ; bg_logo watermark: assets/ui/)
 # ═══════════════════════════════════════════════════════════
