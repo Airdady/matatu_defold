@@ -202,6 +202,12 @@ local function fresh_form()
         code        = "",
         owner_plays = false,
         invites     = {},
+        -- Already on the cup when this form was opened for EDIT: everyone
+        -- invited and still awaiting a reply. Kept SEPARATE from `invites`
+        -- (which is names typed in this sitting and sent on submit) because
+        -- these are already on the server — re-sending them would be noise,
+        -- and their X has to WITHDRAW rather than just forget them locally.
+        existing    = {},
         invite_buf  = "",
         focus       = nil,
         suggestions = {},
@@ -420,11 +426,26 @@ local function rebuild(self)
         sug_note('No player found for "' .. f.invite_buf .. '" — ADD invites them anyway.', P_MUTED)
     end
 
-    if #f.invites == 0 then
+    -- Invitations already outstanding on this cup, shown first so editing a
+    -- live cup opens with its real roster. Their X calls the backend's revoke
+    -- rather than just dropping the name locally: these are already sent, so
+    -- forgetting them here would not un-invite anybody.
+    for i, e in ipairs(f.existing or {}) do
+        local cy_ = ry - 18
+        framed3(self, right, cy_, col_w, 36, P_MUTED, P_BADGE_BG)
+        track(self, ui.text(vmath.vector3(right - col_w / 2 + 16, cy_, 0), e.username, "small", P_CREAM))
+        gui.set_pivot(self.nodes[#self.nodes], gui.PIVOT_W)
+        track(self, ui.text(vmath.vector3(right + col_w / 2 - 56, cy_, 0), "INVITED", "small", P_MUTED))
+        gui.set_pivot(self.nodes[#self.nodes], gui.PIVOT_E)
+        btn(self, "invite_revoke", right + col_w / 2 - 28, cy_, 40, 28, "X", "danger", i)
+        ry = ry - 40
+    end
+
+    if #f.invites == 0 and #(f.existing or {}) == 0 then
         track(self, ui.text(vmath.vector3(right, ry - 16, 0),
             "No invites yet — anyone with the code can still join.", "small", P_MUTED))
         ry = ry - 36
-    else
+    elseif #f.invites > 0 then
         for i, uname in ipairs(f.invites) do
             local cy_ = ry - 18
             framed3(self, right, cy_, col_w, 36, P_GOLD, P_BADGE_BG)
@@ -478,6 +499,9 @@ local function request_suggestions(self)
             local dup = false
             for _, v in ipairs(f.invites) do
                 if tostring(v):upper() == tostring(u):upper() then dup = true end
+            end
+            for _, e in ipairs(f.existing or {}) do
+                if e.username:upper() == tostring(u):upper() then dup = true end
             end
             if not dup then out[#out + 1] = u end
             if #out >= MAX_SUGGESTIONS then break end
@@ -541,6 +565,17 @@ local function add_invite(self)
     for _, v in ipairs(f.invites) do
         if v:upper() == uname:upper() then
             set_msg(self, "Already on the invite list.", false)
+            rebuild(self)
+            return
+        end
+    end
+    -- ...and against the ones already sent, or the owner would re-invite
+    -- somebody the cup is already waiting on.
+    for _, e in ipairs(f.existing or {}) do
+        if e.username:upper() == uname:upper() then
+            set_msg(self, e.username .. " has already been invited.", false)
+            f.invite_buf = ""
+            f.suggestions = {}
             rebuild(self)
             return
         end
@@ -684,6 +719,15 @@ function on_message(self, message_id, message, sender)
             f.max_players = math.floor(tonumber(seed.maxPlayers) or 8)
             f.code        = tostring(seed.invitationCode or "")
             f.locked      = (tonumber(seed.joinedCount) or 0) > 1
+            -- Pre-populate the invite list with the invitations already
+            -- outstanding, so editing a live cup opens showing who has been
+            -- asked rather than an empty box that reads as "nobody invited".
+            for _, p in ipairs(seed.pending or {}) do
+                if p and p.username then
+                    f.existing[#f.existing + 1] =
+                        { username = tostring(p.username), playerId = tostring(p.playerId or "") }
+                end
+            end
             for i, v in ipairs(GPL_OPTIONS) do
                 if v == tonumber(seed.matchFormat) then f.gpl_i = i end
             end
@@ -772,6 +816,26 @@ function on_input(self, action_id, action)
                 rebuild(self)
             elseif b.id == "invite_del" then
                 table.remove(f.invites, b.data); rebuild(self)
+            elseif b.id == "invite_revoke" then
+                -- An invitation the server already holds: withdraw it there,
+                -- and only drop the row once that succeeded.
+                local e = (f.existing or {})[b.data]
+                if e and not f.revoking then
+                    f.revoking = true
+                    api.revoke_team_invitation(f.edit_id, my_id(), e.playerId, function(res)
+                        f.revoking = false
+                        if res.success then
+                            for i, v in ipairs(f.existing) do
+                                if v.playerId == e.playerId then table.remove(f.existing, i) break end
+                            end
+                            toast.success("Invitation to " .. e.username .. " withdrawn.")
+                        else
+                            toast.error((res.data and res.data.error) or res.message
+                                or "Could not withdraw that invitation.")
+                        end
+                        rebuild(self)
+                    end)
+                end
             elseif b.id == "submit" then
                 close_keyboard(self)
                 submit(self)

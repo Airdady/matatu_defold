@@ -61,8 +61,11 @@ function M.draw(self, ctx, d, a)
     track(self, ui.text(vmath.vector3(me_x, av_y - 68, 0), commas(u.balance or 0), "small", with_a(C.COL_GOLD, a)))
     track(self, ui.text(vmath.vector3(me_x, av_y - 88, 0), "YOU", "body", with_a(ctx.DLG_SEARCH, a)))
 
-    -- Central Pot Element (Re-spaced to prevent overlaps)
-    local bundle_y = av_y + 15
+    -- Central Pot Element. Centred ON the avatars' own centre line (both sit
+    -- at av_y), so the pot reads as sitting BETWEEN the two players rather
+    -- than floating above them — it used to be offset 15px up, which with the
+    -- VS gone from over it left it visibly high.
+    local bundle_y = av_y
     local bundle_h = 96
 
     local amt = tonumber((d.stake or {}).amount) or 0
