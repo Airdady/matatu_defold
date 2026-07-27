@@ -70,9 +70,10 @@ function M.draw(self, ctx, sr, reel_key)
     track(self, ui.avatar(vmath.vector3(ax, ay, 0), vmath.vector3(108, 108, 0), u.avatar or 1))
     track(self, ui.text(vmath.vector3(ax, ay - 86, 0), "YOU", "body", C.COL_GOLD))
 
-    -- Centre column: VS, plus an optional coin pot when a stake is in play.
+    -- Centre column: the coin pot when a stake is in play, otherwise "VS".
+    -- Never both — the pot between the two avatars already carries the
+    -- meaning, and the word stacked above it was just repeating it.
     if show_coins then
-        track(self, ui.text(vmath.vector3(CX, ay + 50, 0), "VS", "title", vmath.vector4(1, 0.4, 0.4, 1)))
         local pot = amt * 2
         local img = "100"
         if pot >= 2000 then img = "2000"
