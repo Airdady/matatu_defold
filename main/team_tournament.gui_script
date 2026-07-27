@@ -77,7 +77,9 @@ local PRIZE_STEP = PRIZE_STEP_BY_GAME[GameMode.GAME] or 500
 local F_NAME, F_CODE, F_INVITE = "name", "code", "invite"
 
 -- Debounce autocomplete so a fast typist fires one request, not one per key.
-local SUGGEST_DEBOUNCE = 0.28
+-- Short enough that the list keeps up with typing; long enough that a fast
+-- typist does not fire a request per keystroke.
+local SUGGEST_DEBOUNCE = 0.18
 
 local function refresh_wh()
     local m = screen.metrics()
@@ -205,6 +207,8 @@ local function fresh_form()
         suggestions = {},
         suggest_t   = nil,
         suggest_for = nil,
+        searching   = false,
+        searched    = nil,   -- the query the current `suggestions` answer
         submitting  = false,
         msg         = nil,
         msg_ok      = false,
@@ -226,6 +230,9 @@ end
 
 local function close_keyboard(self)
     self.form.focus = nil
+    -- Leaving stale suggestions up under a dismissed keyboard looks like the
+    -- field is still live.
+    self.form.suggestions, self.form.searching = {}, false
     pcall(gui.hide_keyboard)
 end
 
@@ -346,25 +353,71 @@ local function rebuild(self)
     gui.set_pivot(self.nodes[#self.nodes], gui.PIVOT_W)
     ry = ry - 20
 
-    field(self, F_INVITE, right - 58, ry - ROW / 2, col_w - 116, ROW,
-        f.invite_buf, "TYPE A USERNAME", f.focus == F_INVITE)
-    btn(self, "invite_add", right + col_w / 2 - 50, ry - ROW / 2, 96, ROW, "ADD", "primary", nil,
+    -- While the field is live, DONE sits beside ADD so dismissing the keyboard
+    -- is a visible, one-tap action. Without it the only way out was the OS back
+    -- gesture, which is what made this field so hard to leave.
+    local typing = f.focus == F_INVITE
+    local add_w  = typing and 84 or 96
+    local done_w = 78
+    local fld_w  = col_w - add_w - (typing and (done_w + 8) or 0) - 20
+    field(self, F_INVITE, right - col_w / 2 + fld_w / 2, ry - ROW / 2, fld_w, ROW,
+        f.invite_buf, "TYPE A USERNAME", typing)
+    btn(self, "invite_add", right - col_w / 2 + fld_w + 10 + add_w / 2, ry - ROW / 2,
+        add_w, ROW, "ADD", "primary", nil,
         f.invite_buf ~= "" and #f.invites < MAX_INVITES)
+    if typing then
+        btn(self, "invite_done", right + col_w / 2 - done_w / 2, ry - ROW / 2,
+            done_w, ROW, "DONE", "secondary")
+    end
     ry = ry - ROW - 8
 
-    -- Suggestions: at most MAX_SUGGESTIONS so the list never buries the form.
-    if #f.suggestions > 0 then
+    -- Suggestion list. It now reports what it is DOING — searching, nothing
+    -- found, or a set of hits — instead of silently rendering nothing, which
+    -- read as a broken field.
+    local SUG_H = 42
+    local function sug_note(msg, col)
+        track(self, ui.text(vmath.vector3(right - col_w / 2 + 4, ry - 16, 0), msg, "small", col))
+        gui.set_pivot(self.nodes[#self.nodes], gui.PIVOT_W)
+        ry = ry - 30
+    end
+
+    if typing and f.searching then
+        sug_note("Searching...", P_MUTED)
+    elseif #f.suggestions > 0 then
         for i, uname in ipairs(f.suggestions) do
             if i > MAX_SUGGESTIONS then break end
-            local sy = ry - 17
-            framed3(self, right, sy, col_w, 34, P_GOLD, P_PANEL)
-            track(self, ui.text(vmath.vector3(right - col_w / 2 + 16, sy, 0), uname, "small", P_GOLD_LIGHT))
-            gui.set_pivot(self.nodes[#self.nodes], gui.PIVOT_W)
-            local hit = track(self, ui.box(vmath.vector3(right, sy, 0), vmath.vector3(col_w, 34, 0), P_TRANSP))
+            local sy = ry - SUG_H / 2
+            track(self, ui.panel9(vmath.vector3(right, sy, 0),
+                vmath.vector3(col_w, SUG_H, 0), "container_bg"))
+
+            -- Show the part you typed in the bright accent and the rest in
+            -- cream, so it is obvious WHY each row matched.
+            local typed = #f.invite_buf
+            local head  = uname:sub(1, typed)
+            local tail  = uname:sub(typed + 1)
+            local tx = right - col_w / 2 + 16
+            local hn = track(self, ui.text(vmath.vector3(tx, sy, 0), head, "body", P_GOLD_LIGHT))
+            gui.set_pivot(hn, gui.PIVOT_W)
+            if tail ~= "" then
+                -- Approximate advance for the body face, enough to butt the
+                -- two halves together without measuring glyphs.
+                local tn = track(self, ui.text(
+                    vmath.vector3(tx + #head * 26 * 0.55, sy, 0), tail, "body", P_CREAM))
+                gui.set_pivot(tn, gui.PIVOT_W)
+            end
+
+            local pn = track(self, ui.text(vmath.vector3(right + col_w / 2 - 16, sy, 0),
+                "+ ADD", "small", P_GOLD))
+            gui.set_pivot(pn, gui.PIVOT_E)
+
+            local hit = track(self, ui.box(vmath.vector3(right, sy, 0),
+                vmath.vector3(col_w, SUG_H, 0), P_TRANSP))
             self.buttons[#self.buttons + 1] = { node = hit, id = "suggest_pick", data = uname }
-            ry = ry - 38
+            ry = ry - SUG_H - 6
         end
         ry = ry - 4
+    elseif typing and f.searched == f.invite_buf and f.invite_buf ~= "" then
+        sug_note('No player found for "' .. f.invite_buf .. '" — ADD invites them anyway.', P_MUTED)
     end
 
     if #f.invites == 0 then
@@ -406,12 +459,20 @@ end
 local function request_suggestions(self)
     local f = self.form
     local q = f.invite_buf
-    if #q < 2 then f.suggestions = {}; return end
+    -- One character is enough to start suggesting. Waiting for two meant the
+    -- list sat empty through the first keystroke and the field felt dead.
+    if #q < 1 then
+        f.suggestions, f.searching, f.searched = {}, false, nil
+        return
+    end
     f.suggest_for = q
+    f.searching = true
     api.search_usernames(q, my_id(), function(res)
         -- Drop a reply that arrived after the query moved on, so a slow
         -- earlier request can't overwrite newer suggestions.
         if self.form ~= f or f.suggest_for ~= q then return end
+        f.searching = false
+        f.searched  = q
         local out = {}
         for _, u in ipairs(((res or {}).data or {}).usernames or {}) do
             local dup = false
@@ -661,7 +722,12 @@ function on_input(self, action_id, action)
         rebuild(self)
         return true
     elseif action_id == hash("enter") and action.pressed then
-        if f.focus == F_INVITE then add_invite(self) else close_keyboard(self); rebuild(self) end
+        -- ENTER commits and DISMISSES. It used to add the invite and leave the
+        -- keyboard up, so the only way to get rid of it was the OS back
+        -- gesture — the field was effectively a trap once you started typing.
+        if f.focus == F_INVITE then add_invite(self) end
+        close_keyboard(self)
+        rebuild(self)
         return true
     end
 
@@ -701,6 +767,9 @@ function on_input(self, action_id, action)
                 add_invite(self)
             elseif b.id == "invite_add" then
                 add_invite(self)
+            elseif b.id == "invite_done" then
+                close_keyboard(self)
+                rebuild(self)
             elseif b.id == "invite_del" then
                 table.remove(f.invites, b.data); rebuild(self)
             elseif b.id == "submit" then
@@ -709,6 +778,15 @@ function on_input(self, action_id, action)
             end
             return true
         end
+    end
+
+    -- A tap that hit nothing dismisses the keyboard, the way every other text
+    -- field on a phone behaves. Returns true so the tap is spent on closing
+    -- rather than also acting on whatever is underneath.
+    if f.focus then
+        close_keyboard(self)
+        rebuild(self)
+        return true
     end
     return false
 end
