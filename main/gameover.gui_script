@@ -5,6 +5,7 @@ local ws_ok, ws = pcall(require, "modules.websocket_manager")
 local confetti_fx = require("modules.confetti_fx")
 local sound = require("modules.sound")
 local config = require("modules.config")
+local ui = require("modules.ui")
 
 -- Lowest real-money (non-Free) stake tier for the active game — Matatu moved
 -- this from 50 to 100 (Whot/Kadi keep their own lowest tier), so the bonus-
@@ -39,6 +40,10 @@ local C_AVATAR_BG = vmath.vector4(0.200, 0.200, 0.200, 0.5)
 local C_DIVIDER   = vmath.vector4(1.000, 1.000, 1.000, 0.5)
 local C_COLON     = vmath.vector4(1.000, 1.000, 1.000, 0.4)
 local C_SEP       = vmath.vector4(1.000, 1.000, 1.000, 0.3)
+-- Savings green — deliberately NOT C_NEGATIVE. The amount leaves the balance,
+-- but it goes to the player's own savings, so colouring it as a loss would be
+-- telling them the opposite of what happened.
+local C_SAVINGS   = vmath.vector4(0.200, 0.750, 0.550, 1.0) -- #33bf8c
 local C_BTN_TEXT  = vmath.vector4(0.020, 0.090, 0.110, 1.0) -- dark text on cyan
 
 local AVATAR_SIZE = 100
@@ -244,11 +249,22 @@ local function build(self)
 	self.n_opp_sum = label(vmath.vector3(0, 0, 0), "", 16, C_ORANGE, gui.PIVOT_CENTER, "helvetica_bold")
 	attach(self.n_opp_sum, 180, -95)
 
-	-- Savings auto-charge deduction (this player only — never the opponent's,
-	-- gameOverState.savingsDeducted is keyed by userId for exactly this
+	-- Savings auto-charge (this player only — never the opponent's;
+	-- gameOverState.savingsDeducted is keyed by userId for exactly that
 	-- reason). Hidden unless a deduction actually happened this game.
-	self.n_you_savings = label(vmath.vector3(0, 0, 0), "", 15, vmath.vector4(0.20, 0.75, 0.55, 1.0), gui.PIVOT_CENTER, "helvetica_bold")
-	attach(self.n_you_savings, -180, -115)
+	--
+	-- It lives with the PRIZE/POINTS/WIN BONUS breakdown rather than tucked
+	-- under the player's avatar, where it used to sit: this is money that left
+	-- the balance, so it belongs in the same place the player reads to work
+	-- out what the game cost them. The coin makes it read as coins rather than
+	-- as a score, and the wording says where they went — a bare "-500" next to
+	-- a lost stake looks like part of the loss instead of the one line on this
+	-- screen that is actually the player keeping something.
+	self.n_savings_coin = ui.image(vmath.vector3(0, 0, 0), vmath.vector3(22, 22, 0), "coin_icon")
+	attach(self.n_savings_coin, 0, 0)
+	gui.set_enabled(self.n_savings_coin, false)
+	self.n_you_savings = label(vmath.vector3(0, 0, 0), "", 16, C_SAVINGS, gui.PIVOT_W, "helvetica_bold")
+	attach(self.n_you_savings, 0, 0)
 	gui.set_enabled(self.n_you_savings, false)
 
 	-- Giant Match Scores sit beautifully in the very center between the avatars
@@ -339,6 +355,12 @@ local function apply_layout(self, has_score, has_sub, has_stats)
 		self.stat_cap_y, self.stat_val_y, self.stat_sep_y = -50, -80, -65
 	end
 
+	-- The savings row sits under the strip when there is one, and takes the
+	-- strip's place when there is not — a free game with auto-save on still
+	-- deducts, and that is precisely the case where an unexplained balance
+	-- drop looks like a bug to the player.
+	self.savings_y = has_stats and (self.stat_val_y - 30) or self.stat_cap_y
+
 	-- Buttons sit below the lowest rendered content.
 	local again_y
 	if has_score then
@@ -349,6 +371,10 @@ local function apply_layout(self, has_score, has_sub, has_stats)
 			again_y = self.stat_val_y - 45
 		else
 			again_y = self.stat_cap_y - 20
+		end
+		-- ...but never on top of the savings row, which hangs below the strip.
+		if self.show_savings_row then
+			again_y = math.min(again_y, self.savings_y - 40)
 		end
 	end
 	set(self.n_again_bg, 0, again_y)
@@ -855,6 +881,10 @@ function on_message(self, message_id, message)
 		-- so the actual render still happens after layout below.)
 		local has_stats = stats_count(balance_change, points, win_bonus) > 0
 
+		-- Set BEFORE apply_layout: the buttons have to be placed clear of this
+		-- row, and apply_layout is what places them.
+		self.show_savings_row = my_savings_deducted > 0
+
 		-- Dynamically structure and position content eliminating awkward gaps
 		apply_layout(self, has_score, subtitle ~= "", has_stats)
 
@@ -864,10 +894,31 @@ function on_message(self, message_id, message)
 		-- (t4_champion/t4_human_out), which would silently hide a real Savings
 		-- deduction on exactly the result screens where the player most needs
 		-- to see where their coins went.
-		local show_savings = my_savings_deducted > 0
+		local show_savings = self.show_savings_row
 		gui.set_enabled(self.n_you_savings, show_savings)
+		gui.set_enabled(self.n_savings_coin, show_savings)
 		if show_savings then
-			gui.set_text(self.n_you_savings, "🏦 -" .. commas(my_savings_deducted) .. " to Savings")
+			-- "added to your savings", not "-500": the coins moved between the
+			-- player's own two pockets. Phrased as a sentence rather than a
+			-- stat cell because this is the one line here that needs to
+			-- explain itself — every other number on this screen is a result.
+			local txt = commas(my_savings_deducted) .. " added to your savings"
+			gui.set_text(self.n_you_savings, txt)
+
+			-- Centre the coin+text pair as a unit. The label is PIVOT_W, so it
+			-- runs rightwards from its own origin; the group width is the coin
+			-- plus its gap plus the measured text, and both nodes are placed
+			-- from the same left edge.
+			local COIN_W, GAP = 22, 8
+			local tw = 0
+			local ok, m = pcall(gui.get_text_metrics_from_node, self.n_you_savings)
+			if ok and m then tw = (m.width or 0) * gui.get_scale(self.n_you_savings).x end
+			local total = COIN_W + GAP + tw
+			local left = -total / 2
+			gui.set_position(self.n_savings_coin,
+				vmath.vector3(left + COIN_W / 2, self.savings_y, 0))
+			gui.set_position(self.n_you_savings,
+				vmath.vector3(left + COIN_W + GAP, self.savings_y, 0))
 		end
 
 		show_stats(self, balance_change, points, win_bonus)
