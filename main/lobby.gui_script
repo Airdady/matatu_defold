@@ -148,11 +148,6 @@ local function rebuild(self)
     local grid_b = EDGE_B + PADDING + util_h + GUTTER
     local grid_t = EDGE_T - PADDING - HEADER_H
 
-    -- Right rail: open team cups. Its width is reserved out of the grid so
-    -- the mode tiles shrink to make room rather than being overdrawn.
-    local RAIL_W, show_rail, rail_l = Cups.reserve(grid_l, grid_r)
-    if show_rail then grid_r = rail_l - GUTTER end
-
     local grid_w = grid_r - grid_l
     local grid_h = grid_t - grid_b
 
@@ -266,13 +261,15 @@ local function rebuild(self)
     -- Pending invitations turn the tile's secondary action into ACCEPT and
     -- put a count in the subtitle, so a player who was invited never needs a
     -- code and can see the invite the moment they open the app.
-    -- Only invitations that can actually be accepted drive the tile: a cup
-    -- that filled up while the invite sat unopened still shows in the rail
-    -- (marked FULL) but must not put an ACCEPT button on the tile.
+    -- Only invitations that can actually be accepted drive the tile's button:
+    -- a cup that filled up while the invite sat unopened is still reported in
+    -- the subtitle, but must not offer a dead ACCEPT.
     local first_invite
-    local invites = 0
+    local invites, full_invites = 0, 0
     for _, iv in ipairs(self.invites or {}) do
-        if not iv.isFull then
+        if iv.isFull then
+            full_invites = full_invites + 1
+        else
             invites = invites + 1
             first_invite = first_invite or iv
         end
@@ -280,10 +277,10 @@ local function rebuild(self)
 
     local team_children
     if owns_cup then
-        -- The owner's cup is run entirely from this tile — it is deliberately
-        -- absent from the open-cups rail, so there is one place to manage it
-        -- rather than two that can disagree. BRACKET opens the full drawing,
-        -- which carries the rest of the controls (remove player, delete).
+        -- The owner's cup is run entirely from this tile — there is exactly one
+        -- place to manage it rather than two that can disagree. BRACKET opens
+        -- the full drawing, which carries the rest of the controls (remove
+        -- player, delete).
         team_children = {
             { id = cup_started and "team_standings" or "team_cup_start",
               label = cup_started and "BRACKET" or "START CUP", style = "primary_btn" },
@@ -312,10 +309,24 @@ local function rebuild(self)
             cup_started and "RUNNING" or "NOT STARTED",
             tonumber(my_cup.members) or 0, tonumber(my_cup.maxPlayers) or 0,
             commas(my_cup.grandPrize or 0), tostring(GameMode.CURRENCY_CODE or ""))
+        -- Running your own cup takes the tile's two buttons, so an invitation
+        -- arriving meanwhile has nowhere to put an ACCEPT. Say it is there
+        -- rather than dropping it silently — the bracket screen is where the
+        -- player goes to decide between the two.
+        if invites > 0 then
+            team_sub = team_sub .. string.format(" • +%d invite%s",
+                invites, invites == 1 and "" or "s")
+        end
     elseif invites > 0 then
         team_sub = string.format("%d pending invitation%s%s",
             invites, invites == 1 and "" or "s",
             first_invite and (" — " .. tostring(first_invite.name or "a cup")) or "")
+    elseif full_invites > 0 then
+        -- Invited, but every one of those cups filled up. Say so rather than
+        -- falling through to a generic pitch that hides the invitation.
+        team_sub = string.format("%d invitation%s — cup%s already full",
+            full_invites, full_invites == 1 and "" or "s",
+            full_invites == 1 and "" or "s")
     elseif has_team_tournament then
         team_sub = "You're in one — manage it"
     else
@@ -402,14 +413,6 @@ local function rebuild(self)
         })
     end
 
-    -- ---------------------------------------------------------------------
-    -- Right rail: open team cups (modules/lobby/cups.lua)
-    -- ---------------------------------------------------------------------
-    if show_rail then
-        Cups.draw(self, rail_l, RAIL_W, grid_t)
-    else
-        self.team_rail_node = nil
-    end
     local deco = track(self, gui.new_box_node(vmath.vector3(grid_r + 4, util_cy, 0), vmath.vector3(44, 44, 0)))
     pcall(gui.play_flipbook, deco, hash("diamonds"))
     gui.set_color(deco, vmath.vector4(0.5, 0.5, 0.5, 1))
@@ -624,12 +627,6 @@ local function handle(self, b)
         end
         app_state.team_edit = nil
         msg.post("#controller", "goto_team_tournament")
-    elseif b.id == "team_cup_up" then
-        self.team_cups_off = math.max(0, (self.team_cups_off or 0) - 1)
-        rebuild(self)
-    elseif b.id == "team_cup_down" then
-        self.team_cups_off = (self.team_cups_off or 0) + 1
-        rebuild(self)
     elseif b.id == "team_invite_accept" then
         -- No code: the invitation is the credential. b.data is the cup id.
         local id = tostring(b.data or "")
@@ -655,32 +652,6 @@ local function handle(self, b)
             end)
         end
 
-    elseif b.id == "team_cup_join" then
-        -- The card carries the tournament's own invitation code, so joining
-        -- from the rail reuses the exact same by-code endpoint as typing it.
-        local has_account = ws.current_user_data and ws.current_user_data.username
-            and ws.current_user_data.username ~= ""
-        if not has_account then
-            toast.error("Sign in first — tap PLAY ONLINE.")
-            return
-        end
-        local code = tostring(b.data or "")
-        if code == "" then
-            toast.error("This cup has no invite code — ask the owner.")
-            return
-        end
-        api.join_team_tournament({ userId = ws.current_user_data._id, code = code }, function(res)
-            if res.success then
-                local t = (res.data or {}).tournament or {}
-                local u = ws.current_user_data or {}
-                u.myTeamTournamentId = t._id
-                ws.current_user_data = u
-                toast.success("Joined " .. tostring(t.name or "the team cup") .. "!")
-                load_team_cups(self)
-            else
-                toast.error(res.message or "Could not join that cup.")
-            end
-        end)
     elseif b.id == "team_menu_join" then
         local has_account = ws.current_user_data and ws.current_user_data.username and ws.current_user_data.username ~= ""
         if not has_account then
@@ -875,38 +846,6 @@ function on_input(self, action_id, action)
     end
 
     if action_id ~= hash("touch") then return false end
-
-    -- Drag-to-scroll the team-cup rail. Handled BEFORE the button sweep so a
-    -- drag that starts on a JOIN button scrolls instead of joining, but a
-    -- clean tap (no accumulated movement) still falls through to the button.
-    local rail = self.team_rail_node
-    if rail then
-        if action.pressed and gui.pick_node(rail, action.x, action.y) then
-            self._rail_drag = { moved = 0, acc = 0 }
-        elseif self._rail_drag and not action.released then
-            local d = self._rail_drag
-            local dy = action.dy or 0
-            d.moved = d.moved + math.abs(dy)
-            d.acc = d.acc + dy
-            local step = self.team_rail_step or 94
-            -- Dragging UP (negative dy) reveals later entries.
-            while d.acc <= -step do
-                d.acc = d.acc + step
-                self.team_cups_off = (self.team_cups_off or 0) + 1
-                rebuild(self)
-            end
-            while d.acc >= step do
-                d.acc = d.acc - step
-                self.team_cups_off = math.max(0, (self.team_cups_off or 0) - 1)
-                rebuild(self)
-            end
-            if d.moved > 8 then return true end
-        elseif self._rail_drag and action.released then
-            local dragged = self._rail_drag.moved > 8
-            self._rail_drag = nil
-            if dragged then return true end
-        end
-    end
 
     if action.pressed then
         for i = #self.buttons, 1, -1 do

@@ -73,6 +73,10 @@ local CARD_W, CARD_H = 120, 140
 local function draw_day_card(self, x, y, card_day, entry, cur_day, a, reveal, pulse)
     local coins  = tonumber(entry and entry.coins) or 0
     local points = tonumber(entry and entry.points) or 0
+    -- Day 7 pays into SAVINGS rather than the spendable balance
+    -- (coins 0 / savingCoins 1000), so a card that only rendered `coins`
+    -- showed nothing for it.
+    local saving = tonumber(entry and entry.savingCoins) or 0
 
     local is_current = (card_day == cur_day)
     local is_done     = cur_day and (card_day < cur_day)
@@ -106,6 +110,14 @@ local function draw_day_card(self, x, y, card_day, entry, cur_day, a, reveal, pu
     if coins > 0 then
         local ct = track(self, ui.text(vmath.vector3(x, y + 14, 0), "+" .. commas(coins), "small", with_a(COL_GOLD, a * fade * ra)))
         gui.set_scale(ct, vmath.vector3(0.98 * rs * emphasis, 0.98 * rs * emphasis, 1))
+    end
+
+    -- Savings payout — same slot as coins, marked so it reads as savings.
+    if saving > 0 then
+        local st = track(self, ui.text(vmath.vector3(x, y + 14, 0), "+" .. commas(saving), "small", with_a(COL_GREEN, a * fade * ra)))
+        gui.set_scale(st, vmath.vector3(0.98 * rs * emphasis, 0.98 * rs * emphasis, 1))
+        local sl = track(self, ui.text(vmath.vector3(x, y - 4, 0), "SAVINGS", "small", with_a(COL_GREEN, 0.85 * a * fade * ra)))
+        gui.set_scale(sl, vmath.vector3(0.62 * rs * emphasis, 0.62 * rs * emphasis, 1))
     end
 
     -- Points reward (secondary, only if present).
@@ -159,10 +171,22 @@ local function rebuild(self)
 
         local today_coins = tonumber(today and today.coins) or 0
         local today_points = tonumber(today and today.points) or 0
+        local today_saving = tonumber(today and today.savingCoins) or 0
         local hero_pulse = 1 + 0.04 * math.sin((self.t or 0) * 3)
 
-        local hero_amount = track(self, ui.text(vmath.vector3(px, py + 70, 0), "+" .. commas(today_coins) .. " COINS", "title", with_a(COL_GOLD, a)))
+        -- On a savings day the headline IS the savings payout; showing
+        -- "+0 COINS" there read as getting nothing.
+        local hero_txt, hero_col
+        if today_saving > 0 and today_coins <= 0 then
+            hero_txt, hero_col = "+" .. commas(today_saving) .. " SAVINGS", COL_GREEN
+        else
+            hero_txt, hero_col = "+" .. commas(today_coins) .. " COINS", COL_GOLD
+        end
+        local hero_amount = track(self, ui.text(vmath.vector3(px, py + 70, 0), hero_txt, "title", with_a(hero_col, a)))
         gui.set_scale(hero_amount, vmath.vector3(0.72 * hero_pulse, 0.72 * hero_pulse, 1))
+        if today_saving > 0 and today_coins > 0 then
+            track(self, ui.text(vmath.vector3(px, py + 48, 0), "+" .. commas(today_saving) .. " SAVINGS", "body", with_a(COL_GREEN, a)))
+        end
 
         if today_points > 0 then
             track(self, ui.text(vmath.vector3(px, py + 35, 0), "+" .. commas(today_points) .. " REWARD PTS", "body", with_a(COL_CYAN, a)))
@@ -203,8 +227,16 @@ local function rebuild(self)
         self.claim_btn_pos = { x = px, y = by }
         if self.claim_result and self.claim_result.success then
             local reward = self.claim_result.reward or {}
-            local flash = string.format("+%s coins   +%s pts",
-                commas(reward.coins), commas(reward.points))
+            local parts = {}
+            if (tonumber(reward.coins) or 0) > 0 then
+                parts[#parts + 1] = "+" .. commas(reward.coins) .. " coins" end
+            if (tonumber(reward.savingCoins) or 0) > 0 then
+                parts[#parts + 1] = "+" .. commas(reward.savingCoins) .. " savings" end
+            if (tonumber(reward.points) or 0) > 0 then
+                parts[#parts + 1] = "+" .. commas(reward.points) .. " pts" end
+            -- Built from what was actually awarded: the old fixed
+            -- "+X coins  +Y pts" printed "+0 coins" on a savings-only day.
+            local flash = (#parts > 0) and table.concat(parts, "   ") or "Claimed!"
             track(self, ui.text(vmath.vector3(px, by, 0), flash, "body", with_a(COL_GREEN, a)))
         else
             local bw, bh = 280, 58

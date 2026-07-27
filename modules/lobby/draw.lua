@@ -19,13 +19,6 @@ end
 function M.clear(self)
     for _, n in ipairs(self.nodes or {}) do pcall(gui.delete_node, n) end
     self.nodes, self.buttons = {}, {}
-    -- The rail's drag surface is one of the nodes just deleted. Leaving the
-    -- reference behind means on_input's drag test runs gui.pick_node against a
-    -- DELETED node, which raises — and since on_input runs every frame, that
-    -- takes the whole lobby's input down, not just the drag. "disable" clears
-    -- without rebuilding, so this is reachable.
-    self.team_rail_node = nil
-    self._rail_drag = nil
 end
 
 function M.set_pivot(node, pivot)
