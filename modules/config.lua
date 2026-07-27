@@ -31,6 +31,16 @@ M.KEEP_ALIVE_INTERVAL = 4.0
 M.ZOMBIE_TIMEOUT = 13.0
 M.TURN_SECONDS = 30
 
+-- The server allows 35s per turn (PLAY_TIMEOUT_DURATION in be_matatu's
+-- src/matatu/websocket/state.ts) — 5s more than the pie counts down. That
+-- slack is the window in which the server decides between "the player came
+-- back" and "hand the seat to the AI", so nothing has actually gone wrong
+-- during it. The HUD spends it on a second, purple pie round labelled
+-- RECONNECTING... instead of jumping straight to the red alarm.
+--
+-- Online only: offline the AI is local and there is nobody to wait for.
+M.GRACE_SECONDS = 5
+
 -- Stake levels, in each game's own local currency (UGX/NGN/KES). Whot/Kadi
 -- are the exact conversion table for this rollout, matching be_matatu's
 -- SETTLEMENT_STAKE_LEVELS_BY_GAME (src/common/constants/gameConfig.ts) so a

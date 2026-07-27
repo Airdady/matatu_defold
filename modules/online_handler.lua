@@ -3,6 +3,7 @@ local Defs = require "modules.card_defs"
 local CV = require "modules.card_view"
 local GameMode = require "modules.game_mode"
 local BL = require "modules.board_layout"
+local config = require "modules.config"
 
 local GUI_HUD   = "#game"
 local GUI_SUIT  = "#suit_select"
@@ -52,11 +53,13 @@ function M.sync_timers(self, state)
     if tostring(current_turn) == tostring(self.my_player_id) then
         self.current_turn = "player"
         self.waiting = false
-        msg.post(GUI_HUD, "turn", { who = "player", duration = duration, expires_at = expires_at })
+        msg.post(GUI_HUD, "turn", { who = "player", duration = duration,
+            expires_at = expires_at, grace = config.GRACE_SECONDS })
     elseif current_turn ~= nil and tostring(current_turn) ~= "" then
         self.current_turn = "ai"
         self.waiting = true
-        msg.post(GUI_HUD, "turn", { who = "ai", duration = duration, expires_at = 0 })
+        msg.post(GUI_HUD, "turn", { who = "ai", duration = duration,
+            expires_at = 0, grace = config.GRACE_SECONDS })
     else
         msg.post(GUI_HUD, "stop_timers")
     end
@@ -86,7 +89,8 @@ function M.end_turn(self)
     self.is_waiting_for_server_response = true
 
     self.current_turn = "ai"
-    msg.post(GUI_HUD, "turn", { who = "ai", duration = PLAY_TIMEOUT_DURATION_S, expires_at = 0 })
+    msg.post(GUI_HUD, "turn", { who = "ai", duration = PLAY_TIMEOUT_DURATION_S,
+        expires_at = 0, grace = config.GRACE_SECONDS })
 
     self.current_turn_actions = {}
 end

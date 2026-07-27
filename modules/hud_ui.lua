@@ -8,6 +8,14 @@ local C_WHITE     = vmath.vector4(1.0, 1.0, 1.0, 1.0)
 local C_T_GREEN   = vmath.vector4(0.13, 0.77, 0.37, 0.6)
 local C_T_ORANGE  = vmath.vector4(0.96, 0.62, 0.04, 0.6)
 local C_T_RED     = vmath.vector4(0.94, 0.27, 0.27, 0.6)
+-- Grace period. The server allows more time per turn than the pie counts down
+-- (see config.GRACE_SECONDS), and that slack is when it decides between "the
+-- player came back" and "hand the seat to the AI". The ring shows it as a
+-- SECOND round in purple rather than jumping straight to the red alarm — the
+-- old behaviour said "something has gone wrong" during a window in which
+-- nothing has gone wrong yet.
+local C_T_PURPLE  = vmath.vector4(0.62, 0.35, 0.90, 0.75)
+local GRACE_LABEL = "RECONNECTING..."
 
 -- Expired-turn pulse. Once the countdown reaches zero the ring does NOT
 -- disappear: it snaps to a full red circle and breathes until the turn
@@ -110,7 +118,14 @@ function M.setup_avatars(self, message)
     pcall(function() gui.play_flipbook(self.o_avatar_img, hash("avatar_" .. tostring(o_av))) end)
 end
 
-function M.start_timer(self, is_player, duration, expires_at_ms)
+-- Put the opponent's real name back after a grace phase borrowed the label.
+local function restore_name(self)
+    if self.o_avatar_name and self.opp_display_name then
+        gui.set_text(self.o_avatar_name, self.opp_display_name)
+    end
+end
+
+function M.start_timer(self, is_player, duration, expires_at_ms, grace_seconds)
     self.total_duration = duration or 30.0
     self.is_player_turn = is_player
     self.alert_played = false
@@ -119,6 +134,13 @@ function M.start_timer(self, is_player, duration, expires_at_ms)
     -- inheriting whatever alpha the breathing animation was mid-way through.
     self.timer_expired = false
     self.pulse_t = 0
+    -- Only online turns carry a grace window; offline the AI is local and
+    -- there is nobody to wait for, so zero means "go straight to expired" and
+    -- that path is unchanged.
+    self.grace_total = tonumber(grace_seconds) or 0
+    self.timer_grace = false
+    self.grace_remaining = 0
+    restore_name(self)
 
     if expires_at_ms and expires_at_ms > 0 then
         local now_ms = socket.gettime() * 1000.0
@@ -149,10 +171,13 @@ function M.stop_timers(self)
     if self.p_timer then gui.set_enabled(self.p_timer, false) end
     if self.o_timer then gui.set_enabled(self.o_timer, false) end
     self.timer_remaining = 0
-    -- Clear the latch too: without this the pulse branch would immediately
-    -- re-enable the ring it was just asked to hide.
+    -- Clear both latches: without this the grace or pulse branch would
+    -- immediately re-enable the ring it was just asked to hide.
     self.timer_expired = false
+    self.timer_grace = false
+    self.grace_remaining = 0
     self.pulse_t = 0
+    restore_name(self)
 end
 
 -- Fully hide the persistent avatar + turn-timer chrome. Used when the board is
@@ -176,16 +201,45 @@ function M.hide_player_chrome(self)
     -- frame, so tearing the board down has to drop the latch or the timer
     -- would reappear over whatever screen comes next.
     self.timer_expired = false
+    self.timer_grace = false
+    self.grace_remaining = 0
     self.pulse_t = 0
+    restore_name(self)
 end
 
 function M.update(self, dt)
     local active_pie = self.is_player_turn and self.p_timer or self.o_timer
 
-    -- Expired and still waiting: hold a FULL red ring and pulse it. This runs
-    -- outside the countdown branch below, which only ticks while there is time
-    -- left — that guard is why the ring used to freeze on its last drawn frame
-    -- and then vanish, instead of persisting.
+    -- ── Phase 2 of 3: GRACE ───────────────────────────────────────────────
+    -- The countdown reached zero but the server has not acted yet. Rather than
+    -- raising the red alarm immediately, run a second full round in purple for
+    -- the slack the server actually allows, and say what is being waited for.
+    -- The opponent's label carries it because that is who might be
+    -- reconnecting — when the local player runs out of time they are AFK, not
+    -- disconnected, and the AI simply plays a move for them.
+    if self.timer_grace then
+        self.grace_remaining = (self.grace_remaining or 0) - dt
+        local total = (self.grace_total or 0) > 0 and self.grace_total or 1
+        local frac  = math.max(0, math.min(1, self.grace_remaining / total))
+        if active_pie then
+            gui.set_enabled(active_pie, true)
+            gui.set_fill_angle(active_pie, frac * 360)
+            gui.set_color(active_pie, C_T_PURPLE)
+        end
+        if self.grace_remaining <= 0 then
+            -- Grace spent and still nothing: NOW the alarm is earned.
+            self.timer_grace = false
+            self.timer_expired = true
+            self.pulse_t = 0
+        end
+        return
+    end
+
+    -- ── Phase 3 of 3: EXPIRED ─────────────────────────────────────────────
+    -- Grace spent and still waiting: hold a FULL red ring and pulse it. This
+    -- runs outside the countdown branch below, which only ticks while there is
+    -- time left — that guard is why the ring used to freeze on its last drawn
+    -- frame and then vanish, instead of persisting.
     if self.timer_expired then
         if active_pie then
             self.pulse_t = (self.pulse_t or 0) + dt
@@ -230,8 +284,16 @@ function M.update(self, dt)
         -- can only ever fire on the single frame the countdown ran out, no
         -- matter how long the wait for a response then lasts.
         if self.timer_remaining <= 0 then
-            self.timer_expired = true
-            self.pulse_t = 0
+            if (self.grace_total or 0) > 0 then
+                self.timer_grace = true
+                self.grace_remaining = self.grace_total
+                if not self.is_player_turn and self.o_avatar_name then
+                    gui.set_text(self.o_avatar_name, GRACE_LABEL)
+                end
+            else
+                self.timer_expired = true
+                self.pulse_t = 0
+            end
             if self.is_player_turn and not self.is_t4_mode then
                 msg.post("/controller#game_logic", "timer_expired")
             end
