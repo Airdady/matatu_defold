@@ -118,6 +118,36 @@ local function framed3(self, x, y, w, h, accent, fill)
     box(self, x, y, w - 10, h - 10, fill)
 end
 
+-- Pick the largest button font that actually FITS, instead of always reaching
+-- for btn_md. btn_md is 30px tall, so it overflowed every button shorter than
+-- that ("WITHDRAW" in a 28px pill), and a 14-character label like
+-- "INVITE PLAYERS" ran past the edges of a 190px one. Ordered largest first;
+-- the first that fits both axes wins.
+--
+-- CHAR_W is a per-character advance estimate. The display faces here (Teko /
+-- Rajdhani) are condensed, so ~0.55em is a safe over-estimate — erring high
+-- means a label drops a size rather than overflowing.
+local BTN_FONTS = { { "btn_md", 30 }, { "btn_sm", 25 }, { "small", 20 } }
+local CHAR_W    = 0.55
+local BTN_PAD_X = 26   -- breathing room inside a button, left + right
+local BTN_PAD_Y = 12
+
+local function fit_font(label, w, h)
+    local n = #tostring(label or "")
+    local avail_w, avail_h = w - BTN_PAD_X, h - BTN_PAD_Y
+    for _, f in ipairs(BTN_FONTS) do
+        if f[2] <= avail_h and n * f[2] * CHAR_W <= avail_w then return f[1] end
+    end
+    return "small"
+end
+
+-- Smallest box that comfortably holds `label` at `font_size`, never below
+-- `min_w`. Lets callers size a button to its text rather than guessing.
+local function btn_w(label, font_size, min_w)
+    return math.max(min_w or 0,
+        math.ceil(#tostring(label or "") * font_size * CHAR_W) + BTN_PAD_X)
+end
+
 local function btn(self, id, x, y, w, h, label, kind, data, enabled)
     local on = enabled ~= false
     local accent, fill, txt
@@ -126,7 +156,7 @@ local function btn(self, id, x, y, w, h, label, kind, data, enabled)
     elseif kind == "danger"  then accent, fill, txt = P_LOSS, P_B_OUTER, P_LOSS
     else accent, fill, txt = P_GOLD, P_BADGE_BG, P_CREAM end
     framed3(self, x, y, w, h, accent, fill)
-    text(self, x, y, label, "btn_md", txt)
+    text(self, x, y, label, fit_font(label, w, h), txt)
     if on then
         local hit = box(self, x, y, w, h, P_TRANSP)
         self.buttons[#self.buttons + 1] = { node = hit, id = id, data = data }
@@ -161,57 +191,108 @@ end
 ----------------------------------------------------------------------
 -- roster (pre-start)
 ----------------------------------------------------------------------
--- One person's row: avatar disc, name, a state pill, and — for the owner —
--- the action that applies to THIS list (remove from the bracket, or withdraw
+-- Sizing lives here rather than being sprinkled through the draw code, so the
+-- whole block can be made roomier by moving two numbers. The first cut packed
+-- a 26px avatar, two 20px text lines and a 28px button into a 40px row: every
+-- element touched its neighbour and the button was shorter than its own label.
+local ROW_H      = 66
+local ROW_GAP    = 10
+local COL_PAD    = 16   -- inset from the column panel's edge to its contents
+local COL_HDR_H  = 46
+local AVATAR     = 42
+local ACT_W      = 138  -- roster action button (REMOVE / WITHDRAW)
+local ACT_H      = 42
+
+-- One person's row: avatar, name, what state they are in, and — for the owner
+-- — the action that applies to THIS list (remove from the bracket, or withdraw
 -- an invitation that was never accepted).
 local function roster_row(self, cl, cy_, w, entry, kind, owner)
-    local mine = tostring(entry.playerId) == my_id()
-    framed3(self, cl + w / 2, cy_, w, 40,
-        mine and P_GOLD_LIGHT or (kind == "pending" and P_MUTED or P_GOLD),
-        mine and P_BADGE_BG or P_PANEL)
+    local mine    = tostring(entry.playerId) == my_id()
+    local pending = kind == "pending"
+    local accent  = mine and P_GOLD_LIGHT or (pending and P_MUTED or P_GOLD)
 
-    local av_x = cl + 26
-    track(self, ui.pie(vmath.vector3(av_x, cy_, 0), 15, P_B_OUTER))
-    track(self, ui.avatar(vmath.vector3(av_x, cy_, 0), vmath.vector3(26, 26, 0),
-        tonumber(entry.avatar) or 1))
+    framed3(self, cl + w / 2, cy_, w, ROW_H, accent, mine and P_BADGE_BG or P_PANEL)
 
-    text_w(self, cl + 46, cy_ + 7, short(entry.username, 16), "small",
+    -- Avatar in a framed disc, so it reads as a portrait rather than a sticker
+    -- floating on the row.
+    local av_x = cl + COL_PAD + AVATAR / 2
+    track(self, ui.pie(vmath.vector3(av_x, cy_, 0), AVATAR / 2 + 3, accent))
+    track(self, ui.pie(vmath.vector3(av_x, cy_, 0), AVATAR / 2, P_B_OUTER))
+    track(self, ui.avatar(vmath.vector3(av_x, cy_, 0),
+        vmath.vector3(AVATAR - 4, AVATAR - 4, 0), tonumber(entry.avatar) or 1))
+
+    -- Name on top in the body face, state underneath in the muted small one:
+    -- two clearly different weights instead of two identical grey lines.
+    local tx = av_x + AVATAR / 2 + 14
+    text_w(self, tx, cy_ + 12, short(entry.username, 14), "body",
         mine and P_GOLD_LIGHT or P_CREAM)
-    text_w(self, cl + 46, cy_ - 9,
-        kind == "pending" and "invited — awaiting reply" or "in the cup",
-        "small", P_MUTED)
+    text_w(self, tx, cy_ - 13,
+        pending and "Awaiting reply" or "Ready to play", "small",
+        pending and P_MUTED or P_WIN)
 
     if owner then
-        local bw = 84
-        btn(self, kind == "pending" and "invite_revoke" or "player_remove",
-            cl + w - 12 - bw / 2, cy_, bw, 28,
-            kind == "pending" and "WITHDRAW" or "REMOVE", "danger", entry.playerId)
+        btn(self, pending and "invite_revoke" or "player_remove",
+            cl + w - COL_PAD - ACT_W / 2, cy_, ACT_W, ACT_H,
+            pending and "WITHDRAW" or "REMOVE", "danger", entry.playerId)
     elseif mine then
-        text_e(self, cl + w - 12, cy_, "YOU", "small", P_GOLD_LIGHT)
+        -- A pill, not bare text, so the viewer's own row is findable at a
+        -- glance in a list of eight.
+        local pw = btn_w("YOU", 20, 64)
+        framed3(self, cl + w - COL_PAD - pw / 2, cy_, pw, 30, P_GOLD_LIGHT, P_BADGE_BG)
+        text(self, cl + w - COL_PAD - pw / 2, cy_, "YOU", "small", P_GOLD_LIGHT)
     end
 end
 
--- A titled column of rows, windowed to whatever vertical room there is.
+-- A titled column: one panel holding a header band and a windowed run of rows,
+-- with paging when the list is longer than the space. Paging beats a "+3 more"
+-- footnote — the owner needs to reach every invitee, not just the first five.
 local function roster_column(self, cl, w, top, bottom, title, list, kind, owner, empty_msg)
-    framed3(self, cl + w / 2, top - 15, w, 30, P_GOLD, P_BADGE_BG)
-    text(self, cl + w / 2, top - 15,
-        string.format("%s  (%d)", title, #list), "small", P_CREAM)
+    local ccx = cl + w / 2
+    local h   = top - bottom
 
-    local y = top - 38
+    -- Panel behind the whole column, so the rows sit *inside* something.
+    framed3(self, ccx, bottom + h / 2, w, h, P_GOLD, P_BG)
+
+    -- Header band.
+    local hdr_cy = top - COL_HDR_H / 2 - 4
+    box(self, ccx, hdr_cy, w - 12, COL_HDR_H - 6, P_BADGE_BG)
+    text_w(self, cl + COL_PAD, hdr_cy, string.upper(title), "small", P_GOLD_LIGHT)
+
+    local rows_t = top - COL_HDR_H - 8
+    local rows_b = bottom + COL_PAD
+
     if #list == 0 then
-        text(self, cl + w / 2, y - 14, empty_msg, "small", P_MUTED)
+        text_e(self, cl + w - COL_PAD, hdr_cy, "0", "body", P_MUTED)
+        text(self, ccx, (rows_t + rows_b) / 2, empty_msg, "small", P_MUTED)
         return
     end
-    local shown = 0
-    for _, e in ipairs(list) do
-        if y - 40 < bottom + (shown < #list - 1 and 18 or 0) then break end
-        roster_row(self, cl, y - 20, w, e, kind, owner)
-        y = y - 46
-        shown = shown + 1
+
+    local per_page = math.max(1, math.floor((rows_t - rows_b + ROW_GAP) / (ROW_H + ROW_GAP)))
+    self.roster_off = self.roster_off or {}
+    local max_off = math.max(0, #list - per_page)
+    local off = math.max(0, math.min(max_off, self.roster_off[kind] or 0))
+    self.roster_off[kind] = off
+
+    -- Count on the right of the header, showing the window when there is one.
+    text_e(self, cl + w - COL_PAD - (max_off > 0 and 84 or 0), hdr_cy,
+        max_off > 0
+            and string.format("%d-%d of %d", off + 1, math.min(#list, off + per_page), #list)
+            or tostring(#list),
+        "body", P_CREAM)
+
+    if max_off > 0 then
+        btn(self, "roster_up",   cl + w - COL_PAD - 58, hdr_cy, 34, 32, "^", "secondary",
+            kind, off > 0)
+        btn(self, "roster_down", cl + w - COL_PAD - 18, hdr_cy, 34, 32, "v", "secondary",
+            kind, off < max_off)
     end
-    if shown < #list then
-        text(self, cl + w / 2, y - 10,
-            string.format("+%d more", #list - shown), "small", P_MUTED)
+
+    local y = rows_t
+    for i = 1, per_page do
+        local e = list[off + i]
+        if not e then break end
+        roster_row(self, cl + COL_PAD, y - ROW_H / 2, w - COL_PAD * 2, e, kind, owner)
+        y = y - ROW_H - ROW_GAP
     end
 end
 
@@ -219,19 +300,23 @@ local function draw_roster(self, cup, owner, body_t, body_b)
     local joined  = cup.players or {}
     local pending = cup.pending or {}
 
-    local l, r = EDGE_L + 26, EDGE_R - 26
-    local gap  = 20
+    local l, r = EDGE_L + 30, EDGE_R - 30
+    local gap  = 26
     local w    = math.floor((r - l - gap) / 2)
 
-    roster_column(self, l, w, body_t, body_b, "ACCEPTED", joined, "joined", owner,
+    -- Reserve a line under the columns for the "why can't I start" note, so it
+    -- never lands on top of a row.
+    local note = owner and cup.canStart == false
+    local cols_b = body_b + (note and 30 or 0)
+
+    roster_column(self, l, w, body_t, cols_b, "Accepted", joined, "joined", owner,
         "Nobody has joined yet.")
-    roster_column(self, l + w + gap, w, body_t, body_b, "PENDING", pending, "pending", owner,
+    roster_column(self, l + w + gap, w, body_t, cols_b, "Pending", pending, "pending", owner,
         owner and "No invitations outstanding." or "No pending invitations.")
 
-    -- Why the cup cannot start yet, stated once, under both columns.
-    if owner and not cup.canStart then
+    if note then
         local need = 2 - #joined
-        text(self, CX, body_b - 6,
+        text(self, CX, body_b + 10,
             need > 0
                 and string.format("%d more player%s needed before this cup can start.",
                     need, need == 1 and "" or "s")
@@ -262,7 +347,10 @@ local function rebuild(self)
     box(self, CX, d_y - 7, VISIBLE_W, 4, STRIPE_INNER)
 
     local hy = EDGE_T - hdr_h / 2
-    btn(self, "back", EDGE_L + 78, hy, 116, 46, "BACK", "secondary")
+    -- Sized to their own labels, like the strip below, so neither gets clipped
+    -- and both sit at the same visual weight.
+    local nav_w, nav_h = btn_w("REFRESH", 25, 124), 48
+    btn(self, "back", EDGE_L + 24 + nav_w / 2, hy, nav_w, nav_h, "BACK", "secondary")
 
     local cup = self.cup
     text(self, CX, hy + 10, string.upper(cup and tostring(cup.name or "Team Cup") or "BRACKET"),
@@ -275,7 +363,8 @@ local function rebuild(self)
             tonumber(cup.matchFormat) or 3,
             #((cup.players) or {})), "small", P_MUTED)
     end
-    btn(self, "refresh", EDGE_R - 78, hy, 116, 46, "REFRESH", "secondary", nil, not self.loading)
+    btn(self, "refresh", EDGE_R - 24 - nav_w / 2, hy, nav_w, nav_h, "REFRESH",
+        "secondary", nil, not self.loading)
 
     if self.loading then
         text(self, CX, CY, "Loading bracket...", "body", P_MUTED); return
@@ -289,9 +378,9 @@ local function rebuild(self)
     -- Owner control strip along the bottom. Which controls appear depends on
     -- the phase: before the start there is a roster to fill (INVITE) and a cup
     -- to launch; after it there is a bracket to police (REMOVE PLAYER).
-    local body_b = EDGE_B + (owner and 74 or 24)
+    local body_b = EDGE_B + (owner and 92 or 30)
     if owner then
-        local by = EDGE_B + 38
+        local by = EDGE_B + 46
         local strip = {}
         if not cup.started then
             strip[#strip + 1] = { id = "cup_start", label = "START CUP",
@@ -307,12 +396,34 @@ local function rebuild(self)
             label = (self.confirm_delete and "TAP TO CONFIRM") or "DELETE CUP",
             kind = "danger" }
 
-        local bw = 190
-        local total = #strip * bw + (#strip - 1) * 14
-        local x0 = CX - total / 2 + bw / 2
-        for i, b in ipairs(strip) do
-            btn(self, b.id, x0 + (i - 1) * (bw + 14), by, bw, 44, b.label, b.kind,
-                nil, b.enabled)
+        -- Each button is sized to its own label at btn_sm rather than every
+        -- button sharing one fixed width: "INVITE PLAYERS" needs noticeably
+        -- more room than "START CUP", and a single width either cramped the
+        -- long one or left the short ones swimming.
+        local GAP, BH = 16, 52
+        local total = 0
+        for _, b in ipairs(strip) do
+            b.w = btn_w(b.label, 25, 168)
+            total = total + b.w
+        end
+        total = total + (#strip - 1) * GAP
+
+        -- Shrink to fit rather than run off a narrow screen.
+        local room = (EDGE_R - 30) - (EDGE_L + 30)
+        if total > room then
+            local scale = room / total
+            total = 0
+            for _, b in ipairs(strip) do
+                b.w = math.floor(b.w * scale)
+                total = total + b.w
+            end
+            total = total + (#strip - 1) * GAP
+        end
+
+        local x = CX - total / 2
+        for _, b in ipairs(strip) do
+            btn(self, b.id, x + b.w / 2, by, b.w, BH, b.label, b.kind, nil, b.enabled)
+            x = x + b.w + GAP
         end
         if self.remove_mode then
             text(self, CX, by + 34, "Tap a player in the bracket to remove them",
@@ -547,6 +658,7 @@ function on_message(self, message_id, message, sender)
         self.cup_id = tostring(app_state.standings_cup_id or "")
         self.cup, self.selected, self.err = nil, nil, nil
         self.col_off, self.remove_mode, self.confirm_delete = 0, false, false
+        self.roster_off = { joined = 0, pending = 0 }
         load(self)
     elseif message_id == hash("enable") then
         refresh_wh(); self._active = true; rebuild(self)
@@ -600,6 +712,14 @@ function on_input(self, action_id, action)
                         load(self)
                     end)
                 end
+            elseif b.id == "roster_up" or b.id == "roster_down" then
+                -- b.data is the column key ("joined" / "pending"), so the two
+                -- lists page independently.
+                self.roster_off = self.roster_off or {}
+                local k = tostring(b.data)
+                local d = (b.id == "roster_up") and -1 or 1
+                self.roster_off[k] = math.max(0, (self.roster_off[k] or 0) + d)
+                rebuild(self)
             elseif b.id == "player_remove" then
                 if is_owner(self) then remove_player(self, b.data) end
             elseif b.id == "invite_revoke" then
