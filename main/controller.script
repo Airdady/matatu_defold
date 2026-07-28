@@ -210,6 +210,13 @@ local PHONE_AFTER_ATTEMPTS   = 3
 -- — because a hang anywhere in it looks identical to the player.
 local CONNECT_DEADLINE_SECONDS = 10
 
+-- The interactive Google sheet gets its own, much longer window. The 10s rule
+-- above is there to bound a player staring at CONNECTING with nothing visibly
+-- happening; a player reading an account picker is not in that state, and
+-- dropping the phone screen on top of Google's own UI would be worse than the
+-- stall. Still bounded, so an abandoned sheet ends somewhere.
+local INTERACTIVE_DEADLINE_SECONDS = 60
+
 -- Interactive Google sign-in is NOT on the automatic ladder any more. A sheet
 -- the player has to read and tap through cannot fit inside a 10 second budget,
 -- and racing it against the phone screen would put two things in front of them
@@ -271,24 +278,29 @@ end
 -- by each attempt: a deadline that restarts every time the thing it is timing
 -- makes another attempt is not a deadline, and would never expire on the exact
 -- retry loop it exists to bound.
-local function arm_connect_deadline(self)
-    if self._connect_deadline_timer or self._offered_phone_login then return end
+-- seconds/force are for the interactive sheet: while the player is reading a
+-- Google account picker they are not stuck, so the 10s rule would be measuring
+-- the wrong thing and would drop the phone screen on top of the sheet.
+local function arm_connect_deadline(self, seconds, force)
+    if self._connect_deadline_timer and not force then return end
+    if self._offered_phone_login then return end
     -- _identify_ok rather than is_logged_in() for the same reason the callback
     -- below uses it: a cached session populates current_user_data before the
     -- socket has accepted it, and that boot-time auto-identify failing is the
     -- exact case in the reported log. is_logged_in() here would decline to arm
     -- the deadline on the one path that most needs it.
     if identify_ok then return end
-    auth_debug("arming %ds connect deadline", CONNECT_DEADLINE_SECONDS)
-    self._connect_deadline_timer = timer.delay(CONNECT_DEADLINE_SECONDS, false, function()
+    cancel_connect_deadline(self)
+    local window = tonumber(seconds) or CONNECT_DEADLINE_SECONDS
+    auth_debug("arming %ds connect deadline", window)
+    self._connect_deadline_timer = timer.delay(window, false, function()
         self._connect_deadline_timer = nil
-        -- _identify_ok, not is_logged_in(): current_user_data is populated the
+        -- identify_ok, not is_logged_in(): current_user_data is populated the
         -- moment a payload arrives, well before the socket has accepted it, so
         -- is_logged_in() would call a half-finished connect a success and let
         -- the stall through. Only identify_success means connected.
         if identify_ok then return end
-        offer_phone_login(self,
-            string.format("still not connected after %ds", CONNECT_DEADLINE_SECONDS))
+        offer_phone_login(self, string.format("still not connected after %ds", window))
     end)
 end
 
@@ -381,6 +393,7 @@ local function handle_login_failure(self, error_message, opts)
     -- the next attempt instead of replaying it. Runs immediately, not after a
     -- attempt budget: a sign-in that returns no auth code returns no auth code
     -- every time until the cached credential behind it is gone.
+    local forced_before = self._forced_refreshes or 0
     if opts.force_refresh then force_fresh_gpgs_session(self) end
 
     -- Rung 3 — >= rather than ==: the counter is reset by explicit taps and by
@@ -390,47 +403,87 @@ local function handle_login_failure(self, error_message, opts)
         background_auth_cleanup(self)
     end
 
-    -- Google's own sign-in UI. Only for a player who tapped PLAY ONLINE — see
-    -- the note by CONNECT_DEADLINE_SECONDS for why it is off the automatic
-    -- ladder. It handles the class of failure silent sign-in cannot reach by
-    -- definition: consent never granted, no Play Games profile, an account
-    -- that needs re-picking.
+    -- Google's own sign-in UI.
     --
-    -- The retry timer below is armed BEFORE this fires rather than skipped: a
-    -- sheet dismissed in a way that produces no callback must not stop the
-    -- ladder. This used to `return` here, which is precisely how a dismissed
-    -- sheet became a dead lobby.
-    local go_interactive = waiting and gpgs and gpgs.login and not is_logged_in()
+    -- WHY THIS CANNOT BE OPTIONAL, and why retrying silently is not a fallback
+    -- for it: a server auth code is issued against a CONSENT GRANT. Silent
+    -- sign-in can only ever re-use a grant that already exists — by
+    -- definition it cannot create one, because creating one means showing the
+    -- player a screen. So a player who has never granted offline access to
+    -- this OAuth client gets, forever:
+    --
+    --     sign-in SUCCEEDS  (that needs only the app_id)
+    --     auth code is EMPTY  (that needs the grant)
+    --
+    -- which is indistinguishable, from inside the app, from a backend fault.
+    -- No number of retries changes it. No amount of clearing caches changes
+    -- it. Only the interactive sheet can.
+    --
+    -- This is what splits users on an IDENTICAL build: whoever has the grant
+    -- works, whoever does not never will. Fresh installs, new devices, a new
+    -- Google account, cleared Play Games data — all land on the wrong side of
+    -- it, which is why it reads as "new users cannot log in".
+    --
+    -- So a missing auth code escalates here on its own, after one cheap forced
+    -- refresh has failed to explain it as a stale token. It does NOT wait for
+    -- the player to tap PLAY ONLINE — a first-run player has no reason to
+    -- suspect a tap is what is needed, and the previous version of this file
+    -- required exactly that.
+    --
+    -- forced_before, captured above rather than read now: force_fresh_gpgs_
+    -- session has already run for THIS failure, so reading the counter here
+    -- would open the sheet in the same pass that dropped the cached token and
+    -- never give the cheap fix its one attempt.
+    local consent_needed = opts.missing_auth_code and forced_before >= 1
+
+    local go_interactive = gpgs and gpgs.login and not identify_ok
+        and (waiting or (consent_needed and not self._interactive_login_done))
 
     -- Rung 3 — Play Games is not working on this device. Offer the phone
     -- number, rather than retrying silently forever behind a lobby the player
     -- cannot take online. The other trigger for this is the wall-clock
     -- deadline; whichever gets here first wins and the other is a no-op.
     --
-    -- The silent retry keeps running underneath — if Play Games starts working
-    -- it still signs them in, and phone_login cancels the retry when it
-    -- succeeds first. Whichever gets there wins; neither blocks the other.
-    if attempts >= PHONE_AFTER_ATTEMPTS and not go_interactive then
+    -- Suppressed while Google's sheet is up, in this pass and in the queued
+    -- retries behind it: dropping the profile screen on top of an account
+    -- picker the player is mid-way through is worse than the wait.
+    if attempts >= PHONE_AFTER_ATTEMPTS and not go_interactive
+       and not self._interactive_open then
         offer_phone_login(self, string.format("%d failed sign-in attempts", attempts))
     end
 
-    -- Keep trying, quietly and for as long as the app is open. Nothing here
-    -- sets auth_state = "error": a background attempt that fails is not
-    -- something to put in front of the player, and the previous behaviour of
-    -- doing so is what left the lobby stuck on TRY AGAIN.
-    local delay = silent_login_delay(attempts)
-    auth_debug("handle_login_failure: retrying silently in %.1fs", delay)
-    cancel_silent_login_retry(self)
-    self._silent_login_timer = timer.delay(delay, false, function()
-        self._silent_login_timer = nil
-        try_silent_login(self)
-    end)
-
     if go_interactive then
         self._interactive_login_done = true
-        auth_debug("escalating to interactive Google sign-in after %d silent failures", attempts)
+        self._interactive_open = true
+        auth_debug("opening interactive Google sign-in (%s) after %d attempts",
+            consent_needed and "no auth code — consent cannot be granted silently"
+                            or "player is waiting", attempts)
         self._silent_login_inflight = true
+        -- No silent retry armed alongside this one. A silent_login() firing
+        -- while the player is part-way through Google's own sign-in is a real
+        -- hazard — two sign-in flows into one callback — and the ladder does
+        -- not need it here: the sheet produces a callback that re-enters this
+        -- function, and the deadline below catches the case where it never
+        -- does.
+        --
+        -- Which is why the deadline gets a longer window rather than none. The
+        -- 10s rule exists to bound a player staring at CONNECTING with nothing
+        -- happening; someone reading an account picker is not in that state.
+        cancel_silent_login_retry(self)
+        arm_connect_deadline(self, INTERACTIVE_DEADLINE_SECONDS, true)
         gpgs.login()
+    else
+        -- Keep trying, quietly and for as long as the app is open. Nothing
+        -- here sets auth_state = "error": a background attempt that fails is
+        -- not something to put in front of the player, and the previous
+        -- behaviour of doing so is what left the lobby stuck on TRY AGAIN.
+        local delay = silent_login_delay(attempts)
+        auth_debug("handle_login_failure: retrying silently in %.1fs", delay)
+        cancel_silent_login_retry(self)
+        self._silent_login_timer = timer.delay(delay, false, function()
+            self._silent_login_timer = nil
+            try_silent_login(self)
+        end)
     end
 end
 
@@ -443,6 +496,11 @@ local function gpgs_callback(self, message_id, message)
         -- take the whole retry pipeline down with it — the exact failure mode
         -- that left the app on "connecting..." before. Treat it as a failure
         -- and let the ladder handle it.
+        -- Whatever the outcome, Google's sheet is no longer on screen — this
+        -- callback IS its result. Cleared before any branch below so the
+        -- phone fallback stops being suppressed the moment the player is back
+        -- looking at our own UI.
+        self._interactive_open = false
         if type(message) ~= "table" then
             handle_login_failure(self, "Sign-in returned nothing", { force_refresh = true })
             return
@@ -534,7 +592,7 @@ local function gpgs_callback(self, message_id, message)
                 -- walks on up the ladder to interactive sign-in and then to
                 -- the phone number.
                 handle_login_failure(self, "Missing auth code. Forcing a fresh session...",
-                    { force_refresh = true })
+                    { force_refresh = true, missing_auth_code = true })
             end
         else
             -- Sign-in failed — retry silently until we've used up the retry budget
