@@ -114,49 +114,105 @@ local function clear_session()
 end
 
 -- Sign-in is ALWAYS silent — there is no manual "SIGN IN" button anywhere in
--- the UI. If a silent attempt fails (transient network hiccup, GPGS not
--- ready yet right at boot, etc.) we retry automatically up to this many
--- times, spaced out, before quietly giving up rather than ever prompting the
--- player to tap anything.
-local MAX_SILENT_LOGIN_ATTEMPTS = 3
-local SILENT_LOGIN_RETRY_DELAY = 1.5
+-- the UI.
+--
+-- This used to be three attempts 1.5s apart. All three therefore landed
+-- inside the same ~5-second window at app start, which is exactly the window
+-- most likely to be bad: Play Services still warming up on a cold boot, or
+-- the radio still reassociating. After that it set auth_state = "error"
+-- permanently, turning the lobby's PLAY NOW into "TRY AGAIN" with nothing
+-- ever retrying behind it — the player's only route back was to tap it.
+--
+-- Google Play Games sign-in fails for plenty of reasons that have nothing to
+-- do with the player and mostly clear themselves given a little time:
+--   * Play Services not yet initialised at cold start (very common)
+--   * no network, or a captive portal
+--   * Play Services out of date / disabled / missing (some devices, and most
+--     emulators)
+--   * no Google account on the device, or the Play Games profile never set up
+--   * a cached credential that has gone stale (account removed, Play Games
+--     data cleared) — silent sign-in keeps failing until that cache is dropped
+--   * the build's SHA-1 / OAuth client not registered for this package, which
+--     fails for EVERY user of that build and is the one case retrying cannot fix
+--
+-- So: back off over minutes rather than seconds, keep going, and stay quiet
+-- about it. The retry is now open-ended with an exponential delay, and the
+-- error state is reserved for a player who actually asked to go online.
+local SILENT_LOGIN_BACKOFF = { 1.5, 3, 6, 12, 30, 60 }  -- last entry repeats
+
+-- After this many consecutive failures the cached credential is the prime
+-- suspect, so clear it once and try again from clean. Deliberately not on the
+-- first failures: a plain network hiccup must not cost the player their
+-- cached Google session (see the note in clear_session about why logging out
+-- of GPGS eagerly was a mistake).
+local CLEANUP_AFTER_ATTEMPTS = 4
+
+local function silent_login_delay(attempt)
+    return SILENT_LOGIN_BACKOFF[math.min(attempt, #SILENT_LOGIN_BACKOFF)]
+end
 
 local function try_silent_login(self)
     self._silent_login_inflight = true
     self._silent_login_attempts = (self._silent_login_attempts or 0) + 1
-    auth_debug("try_silent_login: attempt %d/%d", self._silent_login_attempts, MAX_SILENT_LOGIN_ATTEMPTS)
-    app_state.auth_state = "sending"
-    app_state.auth_error = "" -- Clean out the old error so it shows "CONNECTING..." immediately
-    msg.post("#lobby", "auth_state_changed")
+    auth_debug("try_silent_login: attempt %d", self._silent_login_attempts)
+    -- Only claim the CTA when the player is actually waiting on this. A
+    -- background attempt must leave the lobby reading PLAY NOW.
+    if self._explicit_online then
+        app_state.auth_state = "sending"
+        app_state.auth_error = ""
+        msg.post("#lobby", "auth_state_changed")
+    end
     gpgs.silent_login()
 end
 
+-- Drop everything that could be making silent sign-in fail, then retry from
+-- clean. Runs at most once per app run: if a stale cached credential is the
+-- problem this fixes it, and if it is not, doing it repeatedly just costs the
+-- player their session for nothing.
+local function background_auth_cleanup(self)
+    if self._auth_cleanup_done then return false end
+    self._auth_cleanup_done = true
+    auth_debug("background_auth_cleanup: clearing local session and GPGS cache")
+
+    pcall(api.set_auth_token, "")
+    pcall(api.clear_session)
+    pcall(ws.disconnect)
+    -- The one place logging out of GPGS is the right move. Everywhere else it
+    -- is wrong (it forces an interactive prompt next time), but by here silent
+    -- sign-in has failed several times in a row and the cached Google state is
+    -- the most likely culprit — a stale credential fails silently forever.
+    pcall(function() if gpgs and gpgs.logout then gpgs.logout() end end)
+    return true
+end
+
 local function handle_login_failure(self, error_message)
-    auth_debug("handle_login_failure: %s (attempt %d/%d)", tostring(error_message), self._silent_login_attempts or 0, MAX_SILENT_LOGIN_ATTEMPTS)
-    if (self._silent_login_attempts or 0) < MAX_SILENT_LOGIN_ATTEMPTS then
-        timer.delay(SILENT_LOGIN_RETRY_DELAY, false, function()
-            try_silent_login(self)
-        end)
-    else
-        -- If silent login is totally blocked (permissions dropped, cache wiped) and the user explicitly tapped "Play Online",
-        -- escalate to the interactive login sheet so they aren't completely soft-locked.
-        if self._explicit_online then
-            auth_debug("handle_login_failure: silent failed, escalating to interactive login")
-            self._explicit_online = false 
-            self._silent_login_inflight = false
-            app_state.auth_state = "sending"
-            app_state.auth_error = ""
-            msg.post("#lobby", "auth_state_changed")
-            gpgs.login()
-            return
-        end
-        
+    local attempts = self._silent_login_attempts or 0
+    auth_debug("handle_login_failure: %s (attempt %d)", tostring(error_message), attempts)
+
+    -- The player is waiting: escalate to the interactive sheet rather than
+    -- making them watch a silent retry they cannot see.
+    if self._explicit_online and attempts >= 2 then
+        auth_debug("handle_login_failure: player is waiting, escalating to interactive login")
+        self._explicit_online = false
         self._silent_login_inflight = false
-        app_state.auth_state = "error"
-        app_state.auth_error = error_message or "Couldn't sign in. Check your connection and try again."
+        app_state.auth_state = "sending"
+        app_state.auth_error = ""
         msg.post("#lobby", "auth_state_changed")
-        auth_debug("handle_login_failure: retry budget exhausted, giving up")
+        gpgs.login()
+        return
     end
+
+    if attempts == CLEANUP_AFTER_ATTEMPTS then
+        background_auth_cleanup(self)
+    end
+
+    -- Keep trying, quietly and for as long as the app is open. Nothing here
+    -- sets auth_state = "error": a background attempt that fails is not
+    -- something to put in front of the player, and the previous behaviour of
+    -- doing so is what left the lobby stuck on TRY AGAIN.
+    local delay = silent_login_delay(attempts)
+    auth_debug("handle_login_failure: retrying silently in %.1fs", delay)
+    timer.delay(delay, false, function() try_silent_login(self) end)
 end
 
 local function gpgs_callback(self, message_id, message)
@@ -164,6 +220,10 @@ local function gpgs_callback(self, message_id, message)
         tostring(message_id), tostring(message and message.status), tostring(message and message.error))
     if message_id == gpgs.MSG_SIGN_IN or message_id == gpgs.MSG_SILENT_SIGN_IN then
         if message.status == gpgs.STATUS_SUCCESS then
+            -- Fresh budget: a later failure (token expiry, account switch)
+            -- should start its backoff from the beginning rather than
+            -- inheriting a long delay from whatever happened at boot.
+            self._silent_login_attempts = 0
             local auth_code = gpgs.get_server_auth_code()
             auth_debug("gpgs_callback: GPGS success, auth_code_present=%s", tostring(auth_code ~= nil and auth_code ~= ""))
             if auth_code then
@@ -195,12 +255,16 @@ local function gpgs_callback(self, message_id, message)
                             return
                         end
                     end
-                    -- If we reach here, backend auth failed (e.g., user deleted on server or invalid setup).
-                    -- Wipe the local session so they aren't stuck passing a broken payload.
+                    -- Google accepted us but our own backend did not (user
+                    -- deleted server-side, a 5xx, a dropped request). Wipe the
+                    -- local session so nothing keeps sending a broken payload,
+                    -- then go back through the same backed-off silent retry as
+                    -- every other failure: a transient backend problem heals
+                    -- itself within a minute, and a permanent one costs one
+                    -- quiet request a minute rather than stranding the player
+                    -- on a TRY AGAIN they cannot act on.
                     clear_session()
-                    app_state.auth_state = "error"
-                    app_state.auth_error = result.message or "Backend auth failed"
-                    msg.post("#lobby", "auth_state_changed")
+                    handle_login_failure(self, result.message or "Backend auth failed")
                 end)
             else
                 -- Missing auth code: Handled in the background via the new unified retry flow
@@ -240,13 +304,23 @@ function init(self)
     --   2. Google requires an onResume check to resume an IMMEDIATE update
     --      that was interrupted (app killed or backgrounded mid-flow) —
     --      checkForUpdate() routes that case to resumeUpdate().
-    if gameservices then
-        window.set_listener(function(_, event)
-            if event == window.WINDOW_EVENT_FOCUS_GAINED then
-                pcall(gameservices.check_update)
-            end
-        end)
-    end
+    window.set_listener(function(_, event)
+        if event ~= window.WINDOW_EVENT_FOCUS_GAINED then return end
+        if gameservices then pcall(gameservices.check_update) end
+
+        -- Coming back to the foreground is the single best moment to retry a
+        -- failed sign-in: the player has usually just fixed the reason it
+        -- failed (turned wifi on, updated Play Services, added an account, or
+        -- simply moved somewhere with signal). Without this the retry sits on
+        -- its backoff timer, which by then can be a full minute out.
+        --
+        -- Only when there is no session and nothing already in flight, so this
+        -- never piles a second attempt on top of a running one.
+        if gpgs and not is_logged_in() and not self._silent_login_inflight then
+            auth_debug("focus regained with no session — retrying silent sign-in")
+            try_silent_login(self)
+        end
+    end)
 
     if gpgs then
         gpgs.set_callback(function(self_, mid, m) gpgs_callback(self, mid, m) end)
@@ -481,8 +555,15 @@ function init(self)
 
     table.insert(self.tokens, ws.on("auth_required", function()
         clear_session()
-        app_state.auth_state = "error"
-        app_state.auth_error = "Session expired. Try again."
+        -- An expired session is precisely what a silent sign-in fixes, and it
+        -- needs no input from the player. This used to stop dead on
+        -- "Session expired. Try again." with nothing retrying behind it, so
+        -- the only way back was for the player to notice the CTA had changed
+        -- and tap it. Rebuild in the background instead.
+        if gpgs then
+            self._silent_login_attempts = 0
+            try_silent_login(self)
+        end
         msg.post("#lobby", "auth_state_changed")
         if self.screen ~= "lobby" then show(self, "lobby") end
     end))
@@ -502,10 +583,16 @@ function init(self)
                 self._identify_recoveries, MAX_IDENTIFY_RECOVERIES)
             self._silent_login_attempts = 0
             try_silent_login(self)
-        else
-            app_state.auth_state = "error"
-            app_state.auth_error = "Connection failed."
-            msg.post("#lobby", "auth_state_changed")
+        elseif gpgs then
+            -- Past the fast-recovery budget. The cap exists so a server that
+            -- rejects every identify cannot spin — it does NOT mean give up:
+            -- hand over to the backed-off silent retry, which is slow enough
+            -- to be harmless and keeps running for as long as the app is open.
+            auth_debug("identify_error: past fast recovery, handing to backoff retry")
+            background_auth_cleanup(self)
+            timer.delay(silent_login_delay(CLEANUP_AFTER_ATTEMPTS), false, function()
+                try_silent_login(self)
+            end)
         end
         if self.screen ~= "lobby" then show(self, "lobby") end
     end))
