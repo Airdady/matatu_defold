@@ -65,17 +65,32 @@ fi
 # PER-GAME CONFIG
 # ═══════════════════════════════════════════════════════════
 # Package name + visual identity sources mirror build.sh's case statement.
-# whot, matatu and kadi are signed with the SAME keystore/alias — see build.sh's
-# Google Sign-In note: each package name still needs its OWN Android OAuth
-# client registered against that keystore's SHA-1 in Google Cloud Console, so
-# sharing the keystore is intentional, not a placeholder.
 #
-# matatu_nap is the exception, and the reason this is a per-target case rather
-# than one top-level constant: it ships the identical Matatu build under its
-# own package and its OWN keystore. Its SHA-1 therefore differs from every
-# other target's, so com.matatu.nap needs its own Android OAuth client
-# registered against THAT certificate — registering it against the shared one
-# will fail with DEVELOPER_ERROR on device.
+# SIGNING: every target has its OWN certificate. An earlier version of this
+# comment said whot, matatu and kadi shared one keystore; they do not, and
+# believing they did is what let the Google Sign-In breakage go unnoticed.
+# Verified fingerprints:
+#
+#   whot        com.matatu.pro    whot.keystore           E2:BC:73:D8:…:5A:0B
+#   matatu      com.matatu.champ  champion-keystore.jks   01:91:F3:04:…:C0:BA
+#   matatu_nap  com.matatu.nap    nap-keystore.jks        56:36:F9:1E:…:7C:98
+#   kadi        com.matatu.kadi   kadi.keystore           (file is missing)
+#
+# nap-keystore.jks is byte-identical to the original upload-keystore.jks, so
+# com.matatu.nap + 56:36:F9:1E:… is the pair this app shipped under before
+# 2026-06-26 — the one that has always worked. matatu moved to a NEW package
+# AND a NEW certificate in the same commit, giving it an identity nothing had
+# ever registered.
+#
+# EACH pair needs its own Android OAuth client in Google Cloud Console. When a
+# pair is not registered, Play Games still signs the player IN (that needs only
+# the app_id) but requestServerAuthCode() returns null — a "successful" sign-in
+# with nothing to send to the backend. It does NOT surface as DEVELOPER_ERROR,
+# which is why it reads as a server fault.
+#
+# If the app ships through Play App Signing, the certificate that matters
+# on-device is PLAY'S, not the upload keystore above: register the SHA-1 from
+# Play Console > Setup > App signing.
 case "$TARGET" in
     whot)   GAME_UPPER="WHOT";   PROJECT_TITLE="Whot"
             PACKAGE_NAME="com.matatu.pro"
@@ -135,6 +150,38 @@ if [ ! -f "$KEYSTORE_PASS" ]; then
     print_warning "Please create this file and add your key password before compiling."
     exit 1
 fi
+
+# ═══════════════════════════════════════════════════════════
+# SIGNING IDENTITY — print it, because Google Sign-In IS this pair
+# ═══════════════════════════════════════════════════════════
+# Google Play Games authorises a build by (package name + signing SHA-1). Get
+# either one wrong and the failure is silent and misleading: Play Games still
+# SIGNS THE PLAYER IN — that part only needs the app_id — but
+# requestServerAuthCode() returns null, so the app sees a successful sign-in
+# carrying nothing it can send to the backend. On device that reads as
+# "GPGS success, auth_code_present=false" and looks for all the world like a
+# server problem.
+#
+# It is invisible at build time unless something prints it, which is how the
+# matatu target shipped for a month under a package and certificate that had
+# no Android OAuth client registered against them. So: print it every time.
+if command -v keytool >/dev/null 2>&1; then
+    SHA1=$(keytool -list -v -keystore "$KEYSTORE_PATH" \
+             -storepass "$(cat "$KEYSTORE_PASS")" -alias "$KEYSTORE_ALIAS" 2>/dev/null \
+           | grep -m1 -oE 'SHA1: [0-9A-F:]+' | cut -d' ' -f2)
+    [ -z "$SHA1" ] && SHA1="(could not read — check $KEYSTORE_PASS and alias '$KEYSTORE_ALIAS')"
+else
+    SHA1="(keytool not on PATH)"
+fi
+echo ""
+echo "🔐 Signing identity for this build"
+echo "   package : $PACKAGE_NAME"
+echo "   keystore: $KEYSTORE_PATH  (alias $KEYSTORE_ALIAS)"
+echo "   SHA-1   : $SHA1"
+echo "   This exact pair needs an Android OAuth client in Google Cloud Console."
+echo "   If you ship through Play App Signing, register PLAY'S app-signing"
+echo "   SHA-1 (Play Console > Setup > App signing), not this upload one."
+echo ""
 
 print_status "Preparing Defold Release Build: $GAME_UPPER v$VERSION_NAME (Code: $VERSION_CODE)"
 
