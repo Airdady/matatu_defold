@@ -808,7 +808,9 @@ function on_message(self, message_id, message, sender)
 
     elseif message_id == hash("phone_login") then
         -- Sign in by phone number — the way in when Google Play Games cannot
-        -- work at all. Three possible answers; see api_service.phone_login.
+        -- work at all. No code, no second step: the server validates the
+        -- number, finds or creates the account, and answers with a session.
+        -- Two possible answers now, signed in or an error.
         local phone = message.phoneNumber or ""
         if phone == "" then
             msg.post("#profile", "phone_link_result", { ok = false, message = "Enter a phone number." })
@@ -817,20 +819,15 @@ function on_message(self, message_id, message, sender)
         auth_debug("phone_login: signing in with %s", phone)
         api.phone_login({ phoneNumber = phone }, function(result)
             local data = type(result.data) == "table" and result.data or {}
-            if result.success and data.requiresOtp then
-                -- Known account, device the server has not seen. A code went
-                -- to the number itself, so only whoever holds that SIM can
-                -- finish — which is the whole point of the extra step.
-                auth_debug("phone_login: code required for %s", phone)
-                msg.post("#profile", "phone_login_code_sent", { phoneNumber = phone })
-                return
-            end
             if result.success and data.token then
                 local user = type(data.user) == "table" and data.user or {}
                 user.token = data.token
                 auth_debug("phone_login: signed in (new=%s)", tostring(data.isNewUser))
                 -- Stop the background GPGS retry: we have a session now, and
-                -- a silent sign-in landing later would replace this one.
+                -- a silent sign-in landing later would replace this one. The
+                -- parked timer has to be cancelled too — clearing the flags
+                -- alone leaves a retry still scheduled to fire.
+                cancel_silent_login_retry(self)
                 self._silent_login_attempts = 0
                 self._silent_login_inflight = false
                 pcall(ws.disconnect)
@@ -843,32 +840,6 @@ function on_message(self, message_id, message, sender)
             end
             msg.post("#profile", "phone_link_result",
                 { ok = false, message = result.message or "Could not sign in with that number." })
-        end)
-
-    elseif message_id == hash("phone_login_verify") then
-        local phone = message.phoneNumber or ""
-        local code  = message.code or ""
-        if phone == "" or code == "" then
-            msg.post("#profile", "phone_link_result", { ok = false, message = "Enter the code we sent." })
-            return
-        end
-        api.verify_phone_login({ phoneNumber = phone, code = code }, function(result)
-            local data = type(result.data) == "table" and result.data or {}
-            if result.success and data.token then
-                local user = type(data.user) == "table" and data.user or {}
-                user.token = data.token
-                self._silent_login_attempts = 0
-                self._silent_login_inflight = false
-                pcall(ws.disconnect)
-                identify_and_connect(user)
-                app_state.auth_state = "done"
-                msg.post("#lobby", "auth_state_changed")
-                msg.post("#profile", "phone_link_result", { ok = true })
-                route_after_auth(self)
-                return
-            end
-            msg.post("#profile", "phone_link_result",
-                { ok = false, message = result.message or "Could not verify that code." })
         end)
 
     elseif message_id == hash("link_phone") then
