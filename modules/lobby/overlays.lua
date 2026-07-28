@@ -251,16 +251,12 @@ function M.tournament(self)
     local thr_y = T.CY - 64
     D.track(self, ui.text(vmath.vector3(T.CX, thr_y + 38, 0), is_chamber and "SCORE CAP  —  reach it and you're eliminated" or "Score cap (Elimination Chamber only)", "small", is_chamber and T.CREAM or T.MUTED))
     
-    -- Offline score-cap ladder, per game. Whot hands score far lower than
-    -- Matatu's (face value, Stars doubled, Whot = 20), so it runs a tighter
-    -- ladder opening at 100. Keep in lockstep with KNOCKOUT_CAPS_BY_GAME in
-    -- modules/online_right.lua and the backend's KNOCKOUT_SCORE_CAPS_BY_GAME.
-    local CAPS_BY_GAME = {
-        MATATU = { 200, 300, 500 },
-        WHOT   = { 100, 150, 200 },
-        KADI   = { 100, 150, 200 },
-    }
-    local caps = CAPS_BY_GAME[GameMode.GAME] or CAPS_BY_GAME.MATATU
+    -- Offline score-cap ladder. One ladder for every game, opening at 100 —
+    -- the same list the online chamber and the server use. Read from
+    -- online_right so there is a single copy: three hand-maintained ladders is
+    -- how MATATU ended up listing 200/300/500 here, 100/200/300/500 online and
+    -- 200/300/500 on the server, all at once.
+    local caps = require("modules.online_right").KNOCKOUT_CAPS
     local cap_w = 118
     local cur_cap = app_state.chamber_threshold or caps[1]
     

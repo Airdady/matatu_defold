@@ -37,22 +37,32 @@ local BATTLE_TIERS_BY_GAME = {
 }
 M.BATTLE_TIERS = BATTLE_TIERS_BY_GAME[GameMode.GAME] or BATTLE_TIERS_BY_GAME.MATATU
 
--- KNOCKOUT uses a flat low-stake ladder as its SCORE CAP (charge = cap/2).
-local KNOCKOUT_CAPS_BY_GAME = {
-    MATATU = { 100, 200, 300, 500 },
-    WHOT   = { 100, 150, 200 },
-    KADI   = { 5,   10,  15,  25  },
-}
-M.KNOCKOUT_CAPS = KNOCKOUT_CAPS_BY_GAME[GameMode.GAME] or KNOCKOUT_CAPS_BY_GAME.MATATU
+-- SCORE CAP ladder — one ladder for every game. Keep in lockstep with
+-- KNOCKOUT_SCORE_CAPS in be_matatu's common/constants/gameConfig.ts and with
+-- the offline copy in modules/lobby/overlays.lua.
+--
+-- It used to be three per-game ladders that had already drifted: MATATU listed
+-- 100/200/300/500 here but 200/300/500 offline and on the server, and KADI
+-- still read 5/10/15/25 — stake amounts, not score caps, so a Kadi chamber
+-- claimed to eliminate you at 5 points.
+M.KNOCKOUT_CAPS = { 100, 200, 250, 300 }
 
--- Which entry of the ladder above a fresh KNOCKOUT starts on. Whot opens at
--- its lowest cap (100); matatu keeps its long-standing 200. Callers must use
--- this rather than a hardcoded index, or Whot would default to 150.
-local KNOCKOUT_DEFAULT_CAP_I_BY_GAME = { MATATU = 2, WHOT = 1, KADI = 2 }
-M.KNOCKOUT_DEFAULT_CAP_I = KNOCKOUT_DEFAULT_CAP_I_BY_GAME[GameMode.GAME] or 2
+-- Per-round charge by cap. NOT cap/2: that only matches on the first two
+-- rungs (250 would be 125 and 300 would be 150). The server prices from the
+-- same table — see KNOCKOUT_CHARGE_BY_CAP — so a mismatch here shows the
+-- player one price and bills them another.
+M.KNOCKOUT_CHARGE_BY_CAP = { [100] = 50, [200] = 100, [250] = 150, [300] = 200 }
+
+function M.knockout_charge(cap)
+    return M.KNOCKOUT_CHARGE_BY_CAP[tonumber(cap) or 0] or M.KNOCKOUT_CHARGE_BY_CAP[100]
+end
+
+-- Which entry of the ladder above a fresh KNOCKOUT starts on: the first, 100,
+-- for every game. Callers must use this rather than a hardcoded index.
+M.KNOCKOUT_DEFAULT_CAP_I = 1
 
 -- KNOCKOUT is a STAKED score-cap chamber: players put up one of these stake
--- amounts, and the charge is derived from the score cap (cap/2).
+-- amounts, and the per-round charge comes from M.KNOCKOUT_CHARGE_BY_CAP.
 local KNOCKOUT_STAKES_BY_GAME = {
     MATATU = { 1000, 2000 },
     WHOT   = { 500,  1000 },
@@ -240,7 +250,10 @@ local function draw_battle_modal(self, ctx)
         track(self, ui.text(vmath.vector3(CX, fmt_y, 0), tostring(cap), "body", ctx.C.COL_WHITE))
         mkbtn(self, "bm_cap_plus", vmath.vector3(CX + step_w/2 + 34, fmt_y, 0), vmath.vector3(52, 52, 0), "+", "secondary_btn")
         track(self, ui.text(vmath.vector3(CX, fmt_y - 42, 0),
-            string.format("Charge: %d  ·  reach the cap and you're out", math.floor(cap / 2)), "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+            -- From the shared table, NOT math.floor(cap/2): the two agree only
+            -- on the first two rungs, so a 250 chamber would have advertised a
+            -- charge of 125 here while the server billed 150.
+            string.format("Charge: %d  ·  reach the cap and you're out", M.knockout_charge(cap)), "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
     else
         track(self, ui.text(vmath.vector3(CX, fmt_y + 46, 0), "GAME FORMAT", "small", C_NEUTRAL))
         mkbtn(self, "bm_fmt_minus", vmath.vector3(CX - step_w/2 - 34, fmt_y, 0), vmath.vector3(52, 52, 0), "-", "secondary_btn")
