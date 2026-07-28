@@ -36,8 +36,8 @@ M.WS_URL   = "wss://" .. M.DOMAIN .. "/" .. GameMode.PATH .. "/ws"
 -- APP_BUILD is the Android versionCode: a monotonic integer, so the server can
 -- compare it without parsing. 0 means "not stamped" (an editor/dev run), which
 -- the server treats as unknown rather than as ancient.
-M.APP_VERSION = "18.5.9"
-M.APP_BUILD   = 0
+M.APP_VERSION = "20.9.2"
+M.APP_BUILD   = 232
 
 -- Prefer what the engine was actually bundled with over the stamped constants
 -- above. release.sh passes --settings to bob.jar with the real version/code,

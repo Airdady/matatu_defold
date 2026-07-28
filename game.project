@@ -34,7 +34,7 @@ default_texture_min_filter = linear
 default_texture_mag_filter = linear
 
 [android]
-package = com.matatu.nap
+package = com.matatu.champ
 input_method = INPUT_METHOD_HIDDEN
 minimum_sdk_version = 21
 
