@@ -540,6 +540,20 @@ function on_message(self, message_id, message, sender)
         if self._active then rebuild(self) end
     elseif message_id == hash("user_data_updated") then
         if self._active then rebuild(self) end
+    elseif message_id == hash("phone_login_required") then
+        -- The controller gave up on Google sign-in (retry budget spent, or the
+        -- connect deadline expired) and routed here for a number.
+        --
+        -- decide_step() cannot work this out on its own: it reads "login" mode
+        -- off an EMPTY _id, and the stall this exists for happens with a
+        -- cached user that has a perfectly good _id and a session that simply
+        -- does not work. So the mode is stated rather than inferred.
+        self.step = "phone"
+        self.phone_mode = "login"
+        self.phone = ""
+        self._phone_saving = false
+        self._phone_error = nil
+        if self._active then rebuild(self) end
     elseif message_id == hash("phone_link_result") then
         self._phone_saving = false
         if message.ok then
