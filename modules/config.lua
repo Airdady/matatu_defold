@@ -61,6 +61,20 @@ do
     local b = tonumber(cfg("android.version_code"))
     if b and b > 0 then M.APP_BUILD = b end
 end
+-- ---------------------------------------------------------------------------
+-- SUPPORT CONTACT
+-- ---------------------------------------------------------------------------
+-- WhatsApp, not email. Players here reach support on WhatsApp; a mailto: link
+-- opens whatever mail client the device has configured, which on a lot of
+-- these phones is none at all — the tap did nothing and the player concluded
+-- there was no way to reach anyone.
+--
+-- DIGITS ONLY, with the country code and no leading '+': that is the format
+-- wa.me requires. A '+' or a space in the path silently 404s the link.
+M.SUPPORT_WHATSAPP = "256700372678"
+-- How the same number is shown to a human.
+M.SUPPORT_WHATSAPP_DISPLAY = "+256 700 372 678"
+
 M.GAME_STATE_SECRET = "a27a120adfbc9f727c187748fff44547e1ee72f09481c8a965d62ed1c02e6ea3"
 
 M.INITIAL_RECONNECT_DELAY = 1.0
