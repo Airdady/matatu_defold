@@ -97,7 +97,22 @@ local function is_logged_in()
     return ws.current_user_data and type(ws.current_user_data._id) == "string" and ws.current_user_data._id ~= ""
 end
 
+-- Set ONLY by identify_success, cleared by clear_session. This is the app's
+-- one true "connected" signal, and it is deliberately not is_logged_in():
+-- current_user_data is populated the moment a payload arrives — from a cached
+-- session at boot, or from the backend verify — well before the socket has
+-- accepted it. Treating that as connected is what let a rejected IDENTIFY
+-- read as a success and sit on "connecting..." indefinitely.
+--
+-- File-local rather than on self, because clear_session() has no self and it
+-- is one of the two places that must reset it.
+local identify_ok = false
+
 local function clear_session()
+    -- The session is gone, so the next connect attempt is a fresh one and the
+    -- deadline must be allowed to arm again. Left true, a single successful
+    -- identify at boot would disable the deadline for the whole app run.
+    identify_ok = false
     ws.current_user_data = nil
     pcall(api.set_auth_token, "")
     pcall(api.save_session, {})
@@ -144,7 +159,13 @@ end
 -- So: back off over minutes rather than seconds, keep going, and stay quiet
 -- about it. The retry is now open-ended with an exponential delay, and the
 -- error state is reserved for a player who actually asked to go online.
-local SILENT_LOGIN_BACKOFF = { 1.5, 3, 6, 12, 30, 60 }  -- last entry repeats
+-- The first three delays are deliberately short: the phone fallback is offered
+-- on the third failure, and it has to land inside the 10 second deadline below
+-- rather than after it. 0 + 1 + 2 puts the third attempt around t=3s, leaving
+-- room for the round trips themselves. The long tail is for the retries that
+-- keep running quietly UNDERNEATH the phone screen, where being patient costs
+-- the player nothing.
+local SILENT_LOGIN_BACKOFF = { 1, 2, 6, 12, 30, 60 }  -- last entry repeats
 
 -- THE ESCALATION LADDER
 --
@@ -171,9 +192,29 @@ local SILENT_LOGIN_BACKOFF = { 1.5, 3, 6, 12, 30, 60 }  -- last entry repeats
 -- nothing transient about it, so it forces a fresh Google session on the spot
 -- (see force_fresh_gpgs_session) instead of waiting three attempts to try the
 -- one thing that can change the answer.
-local CLEANUP_AFTER_ATTEMPTS     = 3
-local INTERACTIVE_AFTER_ATTEMPTS = 4
-local PHONE_AFTER_ATTEMPTS       = 5
+local CLEANUP_AFTER_ATTEMPTS = 2
+local PHONE_AFTER_ATTEMPTS   = 3
+
+-- A HARD DEADLINE, because counting attempts is not enough.
+--
+-- An attempt that never calls back is not a failure the ladder can count, so
+-- no attempt-based rule can bound it — and that is exactly the shape of the
+-- stall being reported: sign-in or the backend verify goes out, nothing comes
+-- back, and the counter sits where it is while the lobby reads CONNECTING
+-- forever.
+--
+-- So there are two independent triggers for the phone fallback and whichever
+-- fires first wins: PHONE_AFTER_ATTEMPTS failed attempts, or this many
+-- seconds of wall clock since connecting began. The clock covers the WHOLE
+-- pipeline — Play Games sign-in, the backend verify, and the socket identify
+-- — because a hang anywhere in it looks identical to the player.
+local CONNECT_DEADLINE_SECONDS = 10
+
+-- Interactive Google sign-in is NOT on the automatic ladder any more. A sheet
+-- the player has to read and tap through cannot fit inside a 10 second budget,
+-- and racing it against the phone screen would put two things in front of them
+-- at once. It still fires when the player taps PLAY ONLINE — they are present
+-- and waiting, so there is no deadline to violate.
 
 -- Clamp at BOTH ends. The upper clamp is the "last entry repeats" rule; the
 -- lower one matters just as much, because a caller reaching here with attempt
@@ -196,8 +237,64 @@ local function cancel_silent_login_retry(self)
     end
 end
 
+-- Show the phone number as the way in. Once per run, and never over a session
+-- that already works. Returns whether it actually did anything, so callers can
+-- log the reason that won rather than guessing.
+local function offer_phone_login(self, why)
+    if self._offered_phone_login then return false end
+    -- identify_ok, NOT is_logged_in(). A cached session at boot makes
+    -- is_logged_in() true immediately, so guarding on it here would refuse to
+    -- offer the fallback on precisely the path that stalls: cached session
+    -- present, IDENTIFY rejected, nothing usable behind it.
+    if identify_ok then return false end
+    self._offered_phone_login = true
+    auth_debug("offering phone sign-in — %s", tostring(why))
+    show(self, "profile")
+    -- And tell it to ASK for a number rather than work it out. The profile
+    -- screen picks its mode from whether the cached user has an _id, which on
+    -- this path it does — the session simply does not work. Without this it
+    -- would show the ordinary profile step and the player would still have no
+    -- route online. Posted after show() so it lands after screen_enter's own
+    -- decide_step.
+    msg.post("#profile", "phone_login_required")
+    return true
+end
+
+local function cancel_connect_deadline(self)
+    if self._connect_deadline_timer then
+        pcall(timer.cancel, self._connect_deadline_timer)
+        self._connect_deadline_timer = nil
+    end
+end
+
+-- Armed once when connecting begins and left to run. Deliberately NOT re-armed
+-- by each attempt: a deadline that restarts every time the thing it is timing
+-- makes another attempt is not a deadline, and would never expire on the exact
+-- retry loop it exists to bound.
+local function arm_connect_deadline(self)
+    if self._connect_deadline_timer or self._offered_phone_login then return end
+    -- _identify_ok rather than is_logged_in() for the same reason the callback
+    -- below uses it: a cached session populates current_user_data before the
+    -- socket has accepted it, and that boot-time auto-identify failing is the
+    -- exact case in the reported log. is_logged_in() here would decline to arm
+    -- the deadline on the one path that most needs it.
+    if identify_ok then return end
+    auth_debug("arming %ds connect deadline", CONNECT_DEADLINE_SECONDS)
+    self._connect_deadline_timer = timer.delay(CONNECT_DEADLINE_SECONDS, false, function()
+        self._connect_deadline_timer = nil
+        -- _identify_ok, not is_logged_in(): current_user_data is populated the
+        -- moment a payload arrives, well before the socket has accepted it, so
+        -- is_logged_in() would call a half-finished connect a success and let
+        -- the stall through. Only identify_success means connected.
+        if identify_ok then return end
+        offer_phone_login(self,
+            string.format("still not connected after %ds", CONNECT_DEADLINE_SECONDS))
+    end)
+end
+
 local function try_silent_login(self)
     cancel_silent_login_retry(self)
+    arm_connect_deadline(self)
     self._silent_login_inflight = true
     self._silent_login_attempts = (self._silent_login_attempts or 0) + 1
     auth_debug("try_silent_login: attempt %d", self._silent_login_attempts)
@@ -293,41 +390,28 @@ local function handle_login_failure(self, error_message, opts)
         background_auth_cleanup(self)
     end
 
-    -- Rung 4 — hand it to Google's own sign-in UI, once per run.
+    -- Google's own sign-in UI. Only for a player who tapped PLAY ONLINE — see
+    -- the note by CONNECT_DEADLINE_SECONDS for why it is off the automatic
+    -- ladder. It handles the class of failure silent sign-in cannot reach by
+    -- definition: consent never granted, no Play Games profile, an account
+    -- that needs re-picking.
     --
-    -- Everything before this rung is a variation on "ask again with less
-    -- cached state", and there is a whole class of failure that does not
-    -- answer to it: consent never granted, the Play Games profile never
-    -- created, an account that needs re-picking. Silent sign-in cannot fix any
-    -- of those by definition — it is silent — so at some point the player has
-    -- to be shown the sheet.
-    --
-    -- The retry timer below is still armed BEFORE this call rather than
-    -- skipped: if the sheet is dismissed in a way that produces no callback at
-    -- all, the ladder has to keep moving instead of stalling on a screen the
-    -- player has already walked away from. This used to `return` here, which
-    -- is precisely how a dismissed sheet became a dead lobby.
-    --
-    -- Once per run for the BACKGROUND escalation. A player who taps PLAY
-    -- ONLINE is asking for it, so `waiting` bypasses the latch — but it still
-    -- sets it, so the background rung never re-opens a sheet the player has
-    -- just dismissed by hand.
-    local go_interactive = gpgs and gpgs.login and not is_logged_in()
-        and (waiting or (attempts >= INTERACTIVE_AFTER_ATTEMPTS
-                         and not self._interactive_login_done))
+    -- The retry timer below is armed BEFORE this fires rather than skipped: a
+    -- sheet dismissed in a way that produces no callback must not stop the
+    -- ladder. This used to `return` here, which is precisely how a dismissed
+    -- sheet became a dead lobby.
+    local go_interactive = waiting and gpgs and gpgs.login and not is_logged_in()
 
-    -- Rung 5 — Play Games is not going to work on this device. Offer the phone
-    -- number instead, once, rather than retrying silently forever behind a
-    -- lobby the player cannot take online.
+    -- Rung 3 — Play Games is not working on this device. Offer the phone
+    -- number, rather than retrying silently forever behind a lobby the player
+    -- cannot take online. The other trigger for this is the wall-clock
+    -- deadline; whichever gets here first wins and the other is a no-op.
     --
     -- The silent retry keeps running underneath — if Play Games starts working
     -- it still signs them in, and phone_login cancels the retry when it
     -- succeeds first. Whichever gets there wins; neither blocks the other.
-    if attempts >= PHONE_AFTER_ATTEMPTS and not go_interactive
-       and not self._offered_phone_login and not is_logged_in() then
-        self._offered_phone_login = true
-        auth_debug("offering phone sign-in — GPGS has failed %d times", attempts)
-        show(self, "profile")
+    if attempts >= PHONE_AFTER_ATTEMPTS and not go_interactive then
+        offer_phone_login(self, string.format("%d failed sign-in attempts", attempts))
     end
 
     -- Keep trying, quietly and for as long as the app is open. Nothing here
@@ -530,6 +614,10 @@ function init(self)
         -- own reconnect backoff retries automatically; nothing here blocks
         -- or gates the lobby UI on the outcome.
         auth_debug("init: cached session found, auto-identifying to mark online")
+        -- Armed before the connect, not after: this is the path the reported
+        -- stall took — cached session, auto-identify, IDENTIFY rejected, and
+        -- then a silent-login rebuild that never landed.
+        arm_connect_deadline(self)
         identify_and_connect(cached)
 
         -- Mandatory profile fields (avatar/username, and phone number for
@@ -563,9 +651,7 @@ function init(self)
             -- disabled — real on plenty of handsets, and on most emulators).
             -- There is nothing to retry, so go straight to the phone sign-in
             -- rather than sitting signed out forever.
-            auth_debug("init: gpgs unavailable, offering phone sign-in")
-            self._offered_phone_login = true
-            show(self, "profile")
+            offer_phone_login(self, "Play Games is not available on this device")
         end
     end
 
@@ -577,6 +663,11 @@ function init(self)
 
     table.insert(self.tokens, ws.on("identify_success", function()
         self._identify_recoveries = 0
+        -- The only signal that means CONNECTED. Everything earlier — a token,
+        -- a user payload, a socket that opened — can still be followed by a
+        -- rejection, so the deadline stays armed until this fires.
+        identify_ok = true
+        cancel_connect_deadline(self)
         if self._restore_pending then
             self._restore_pending = false
             app_state.auth_state = "idle"
@@ -872,11 +963,16 @@ function on_message(self, message_id, message, sender)
                 self._restore_pending = true
                 app_state.auth_state = "verifying"
                 msg.post("#lobby", "auth_state_changed")
+                -- Both of these branches sit on identify_success, which is
+                -- exactly the signal that can fail to arrive. The deadline is
+                -- what stops CONNECTING... from being permanent.
+                arm_connect_deadline(self)
             else
                 self._restore_pending = true
                 -- Visually switch the lobby button to "CONNECTING..."
                 app_state.auth_state = "verifying"
                 msg.post("#lobby", "auth_state_changed")
+                arm_connect_deadline(self)
                 -- ACTUALLY trigger the connection now that the button was tapped
                 identify_and_connect(ws.current_user_data)
             end
