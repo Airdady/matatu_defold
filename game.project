@@ -42,12 +42,6 @@ minimum_sdk_version = 21
 app_id = 413944711733
 use_saved_games = 0
 request_server_auth_code = 1
-; Ask Play Games for a NEW server auth code rather than replaying a cached
-; one. A cached code that has already been redeemed (or has expired) comes
-; back as an empty string, which looks exactly like a successful sign-in with
-; nothing to send to our backend — the "signed in but auth_code_present=false"
-; state seen in device logs. Forcing a refresh costs one extra round trip and
-; removes that failure mode.
 force_refresh_token = 1
 client_id = 413944711733-obti4e9cb3eu0jal7ol59s62lv0nkc7e.apps.googleusercontent.com
 client_token = 413944711733-obti4e9cb3eu0jal7ol59s62lv0nkc7e.apps.googleusercontent.com
