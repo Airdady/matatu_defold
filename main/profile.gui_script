@@ -69,6 +69,31 @@ local function validate_phone(p)
     return true, ""
 end
 
+-- This step now serves three jobs, all of them "type digits on a keypad":
+--   "link"  attach a number to an already-signed-in account (the original)
+--   "login" sign IN by number, when Google Play Games cannot work at all
+--   "code"  the 6-digit SMS code, asked for only when an existing account is
+--           being claimed from a device the server has not seen before
+--
+-- One keypad, three modes, rather than a second screen that would have to
+-- re-solve the same layout and keyboard problems.
+local function phone_mode(self) return self.phone_mode or "link" end
+
+local function validate_code(c)
+    c = c or ""
+    if not c:match("^%d%d%d%d%d%d$") then return false, "Enter the 6-digit code." end
+    return true, ""
+end
+
+local function step_valid(self)
+    if phone_mode(self) == "code" then return validate_code(self.phone) end
+    return validate_phone(self.phone)
+end
+
+local function step_max_digits(self)
+    return phone_mode(self) == "code" and 6 or 9
+end
+
 local BAD = { "fuck","shit","bitch","cunt","dick","pussy","admin","sex","nude" }
 local function validate(name)
     name = (name or ""):gsub("^%s*(.-)%s*$", "%1")
@@ -126,9 +151,15 @@ end
 -- otherwise it's just attached fresh — either way this screen's job is
 -- done once the request succeeds.
 local function rebuild_phone_step(self, d_y)
-    local ok, msg_txt = validate_phone(self.phone)
+    local ok, msg_txt = step_valid(self)
 
-    track(self, ui.text(vmath.vector3(CX, EDGE_T - 40, 0), "VERIFY YOUR PHONE", "subtitle1", P_GOLD))
+    local TITLES = {
+        link  = "VERIFY YOUR PHONE",
+        login = "SIGN IN WITH YOUR NUMBER",
+        code  = "ENTER THE CODE WE SENT",
+    }
+    track(self, ui.text(vmath.vector3(CX, EDGE_T - 40, 0),
+        TITLES[phone_mode(self)] or TITLES.link, "subtitle1", P_GOLD))
 
     local cont_btn = track(self, ui.box(vmath.vector3(EDGE_R - 110, EDGE_T - 40, 0), vmath.vector3(170, 48, 0),
         (ok and not self._phone_saving) and P_GOLD or P_BADGE_BG))
@@ -206,7 +237,8 @@ local function rebuild_phone_step(self, d_y)
     local chip_w = 78
     local chip_x = CX - (card_w - pad)/2 + 14 + chip_w/2
     track(self, ui.box(vmath.vector3(chip_x, input_cy, 0), vmath.vector3(chip_w, input_h - 20, 0), P_BADGE_BG))
-    local chip_t = track(self, ui.text(vmath.vector3(chip_x, input_cy, 0), "+256", "subtitle2", P_GOLD_LIGHT))
+    local chip_t = track(self, ui.text(vmath.vector3(chip_x, input_cy, 0),
+        phone_mode(self) == "code" and "CODE" or "+256", "subtitle2", P_GOLD_LIGHT))
     gui.set_scale(chip_t, vmath.vector3(0.6, 0.6, 1))
 
     local digits_x = chip_x + chip_w/2 + 20
@@ -475,6 +507,17 @@ end
 -- means it reliably reappears on every login/reconnect until satisfied.
 local function decide_step(self)
     local u = ws.current_user_data or {}
+    -- No account at all: this screen is the WAY IN, not a profile step. It is
+    -- reached when Google Play Games could not sign the player in — Play
+    -- Services missing or disabled, no Google account, an OAuth client not
+    -- registered for the build — so the number is the only credential
+    -- available. Keep whatever mode a code step already put us in.
+    if (u._id or "") == "" then
+        self.step = "phone"
+        if self.phone_mode ~= "code" then self.phone_mode = "login" end
+        return
+    end
+    self.phone_mode = "link"
     if app_state.phone_required() and not app_state.phone_complete(u) then
         self.step = "phone"
     else
@@ -506,6 +549,17 @@ function on_message(self, message_id, message, sender)
         if self._active then rebuild(self) end
     elseif message_id == hash("user_data_updated") then
         if self._active then rebuild(self) end
+    elseif message_id == hash("phone_login_code_sent") then
+        -- Existing account being claimed from a device the server has not
+        -- seen. Same keypad, six digits, and the number is remembered so the
+        -- verify call still knows which account is being confirmed.
+        self._phone_saving = false
+        self._phone_error = nil
+        self._login_phone = message.phoneNumber or self._login_phone
+        self.phone_mode = "code"
+        self.step = "phone"
+        self.phone = ""
+        rebuild(self)
     elseif message_id == hash("phone_link_result") then
         self._phone_saving = false
         if message.ok then
@@ -537,25 +591,37 @@ end
 
 local function handle(self, b)
     if b.id == "phone_link" then
-        local ok = validate_phone(self.phone)
+        local ok = step_valid(self)
         if ok and not self._phone_saving then
             self._phone_saving = true
             self._phone_error = nil
-            -- self.phone is the 9 local digits only (no leading "0") — the
-            -- backend's own storage format is 07XXXXXXXX (be_matatu's
-            -- normalizeUgPhone), so prepend it here rather than relying on
-            -- the server to guess/normalize an ambiguous wire format.
-            msg.post("#controller", "link_phone", { phoneNumber = "0" .. self.phone })
+            local mode = phone_mode(self)
+            if mode == "code" then
+                msg.post("#controller", "phone_login_verify",
+                    { phoneNumber = self._login_phone or "", code = self.phone })
+            elseif mode == "login" then
+                -- Remembered so the code step, which replaces self.phone with
+                -- the 6 digits, still knows which number it is confirming.
+                self._login_phone = "0" .. self.phone
+                msg.post("#controller", "phone_login", { phoneNumber = self._login_phone })
+            else
+                -- self.phone is the 9 local digits only (no leading "0") — the
+                -- backend's own storage format is 07XXXXXXXX (be_matatu's
+                -- normalizeUgPhone), so prepend it here rather than relying on
+                -- the server to guess/normalize an ambiguous wire format.
+                msg.post("#controller", "link_phone", { phoneNumber = "0" .. self.phone })
+            end
             rebuild(self)
         end
     elseif b.id:sub(1,2) == "p_" then
         if b.id == "p_back" then
             self.phone = self.phone:sub(1,-2)
-        elseif #self.phone < 9 then
+        elseif #self.phone < step_max_digits(self) then
             -- The +256 chip already implies the leading "0" — ignore a "0"
             -- tapped as the very first digit instead of letting the player
-            -- type a number that can never pass validate_phone().
-            if not (self.phone == "" and b.data == "0") then
+            -- type a number that can never pass validate_phone(). A CODE can
+            -- legitimately start with 0, so the rule is phone-only.
+            if phone_mode(self) == "code" or not (self.phone == "" and b.data == "0") then
                 self.phone = self.phone .. b.data
             end
         end

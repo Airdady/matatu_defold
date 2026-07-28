@@ -206,6 +206,21 @@ local function handle_login_failure(self, error_message)
         background_auth_cleanup(self)
     end
 
+    -- Past the cleanup and still failing, with no session to fall back on:
+    -- Google Play Games is not going to work on this device. Offer the phone
+    -- number instead, once, rather than retrying silently forever behind a
+    -- lobby the player cannot take online.
+    --
+    -- The silent retry above keeps running underneath — if Play Games starts
+    -- working it still signs them in, and phone_login cancels the retry when
+    -- it succeeds first. Whichever gets there wins; neither blocks the other.
+    if attempts > CLEANUP_AFTER_ATTEMPTS and not self._offered_phone_login
+       and not is_logged_in() then
+        self._offered_phone_login = true
+        auth_debug("offering phone sign-in — GPGS has failed %d times", attempts)
+        show(self, "profile")
+    end
+
     -- Keep trying, quietly and for as long as the app is open. Nothing here
     -- sets auth_state = "error": a background attempt that fails is not
     -- something to put in front of the player, and the previous behaviour of
@@ -377,7 +392,13 @@ function init(self)
         if gpgs then
             try_silent_login(self)
         else
-            auth_debug("init: gpgs unavailable, staying signed out")
+            -- No Play Games at all on this device (Play Services absent or
+            -- disabled — real on plenty of handsets, and on most emulators).
+            -- There is nothing to retry, so go straight to the phone sign-in
+            -- rather than sitting signed out forever.
+            auth_debug("init: gpgs unavailable, offering phone sign-in")
+            self._offered_phone_login = true
+            show(self, "profile")
         end
     end
 
@@ -725,6 +746,71 @@ function on_message(self, message_id, message, sender)
         app_state.auth_state = "idle"
         msg.post("#lobby", "auth_state_changed")
         show(self, "lobby")
+
+    elseif message_id == hash("phone_login") then
+        -- Sign in by phone number — the way in when Google Play Games cannot
+        -- work at all. Three possible answers; see api_service.phone_login.
+        local phone = message.phoneNumber or ""
+        if phone == "" then
+            msg.post("#profile", "phone_link_result", { ok = false, message = "Enter a phone number." })
+            return
+        end
+        auth_debug("phone_login: signing in with %s", phone)
+        api.phone_login({ phoneNumber = phone }, function(result)
+            local data = type(result.data) == "table" and result.data or {}
+            if result.success and data.requiresOtp then
+                -- Known account, device the server has not seen. A code went
+                -- to the number itself, so only whoever holds that SIM can
+                -- finish — which is the whole point of the extra step.
+                auth_debug("phone_login: code required for %s", phone)
+                msg.post("#profile", "phone_login_code_sent", { phoneNumber = phone })
+                return
+            end
+            if result.success and data.token then
+                local user = type(data.user) == "table" and data.user or {}
+                user.token = data.token
+                auth_debug("phone_login: signed in (new=%s)", tostring(data.isNewUser))
+                -- Stop the background GPGS retry: we have a session now, and
+                -- a silent sign-in landing later would replace this one.
+                self._silent_login_attempts = 0
+                self._silent_login_inflight = false
+                pcall(ws.disconnect)
+                identify_and_connect(user)
+                app_state.auth_state = "done"
+                msg.post("#lobby", "auth_state_changed")
+                msg.post("#profile", "phone_link_result", { ok = true })
+                route_after_auth(self)
+                return
+            end
+            msg.post("#profile", "phone_link_result",
+                { ok = false, message = result.message or "Could not sign in with that number." })
+        end)
+
+    elseif message_id == hash("phone_login_verify") then
+        local phone = message.phoneNumber or ""
+        local code  = message.code or ""
+        if phone == "" or code == "" then
+            msg.post("#profile", "phone_link_result", { ok = false, message = "Enter the code we sent." })
+            return
+        end
+        api.verify_phone_login({ phoneNumber = phone, code = code }, function(result)
+            local data = type(result.data) == "table" and result.data or {}
+            if result.success and data.token then
+                local user = type(data.user) == "table" and data.user or {}
+                user.token = data.token
+                self._silent_login_attempts = 0
+                self._silent_login_inflight = false
+                pcall(ws.disconnect)
+                identify_and_connect(user)
+                app_state.auth_state = "done"
+                msg.post("#lobby", "auth_state_changed")
+                msg.post("#profile", "phone_link_result", { ok = true })
+                route_after_auth(self)
+                return
+            end
+            msg.post("#profile", "phone_link_result",
+                { ok = false, message = result.message or "Could not verify that code." })
+        end)
 
     elseif message_id == hash("link_phone") then
         local phone = message.phoneNumber or ""
