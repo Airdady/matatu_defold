@@ -42,6 +42,14 @@
 # Console before Sign-In will work for that game. If a game's Sign-In starts
 # failing right after switching its package here, that registration is the
 # first thing to check.
+#
+# [gpgs] force_refresh_token = 1 asks Play Games for a NEW server auth code
+# instead of replaying a cached one. A cached code that has already been
+# redeemed, or has expired, comes back as an EMPTY STRING — which on the
+# device looks exactly like a successful sign-in with nothing to send to the
+# backend ("GPGS success, auth_code_present=false" in the auth debug trail).
+# The refresh costs one extra round trip and removes that failure mode.
+# It lives in game.project, which has no comment syntax, so the note is here.
 # ==========================================================
 
 set -e
@@ -145,6 +153,35 @@ awk -v t="$PROJECT_TITLE" -v p="$PACKAGE_NAME" '
 
 echo "✅ game.project -> title = $PROJECT_TITLE"
 echo "✅ game.project -> [android] package = $PACKAGE_NAME"
+
+# game.project is NOT an ini file, whatever it looks like. Bob's parser
+# (Project.loadPropertiesData) accepts exactly two line shapes — "[section]"
+# and "key = value" — and has no comment syntax at all. A "#" or ";" line
+# fails the whole build with a bare "Could not parse: .../game.project" and no
+# line number, which is a genuinely miserable thing to debug, so catch it here
+# where we can say which line is wrong.
+#
+# This also runs after the rewrites above, so a malformed awk/sed edit is
+# caught before bob rather than by it.
+bad_line=""
+while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+        # Comment markers first: "; force_refresh_token = 1" contains an "="
+        # and would otherwise pass as a key/value line.
+        \#*|\;*|" "*\#*|" "*\;*) bad_line="$line"; break ;;
+        ""|\[*\])                continue ;;
+        *=*)                     continue ;;
+        *)                       bad_line="$line"; break ;;
+    esac
+done < game.project
+if [ -n "$bad_line" ]; then
+    echo "❌ game.project has a line bob cannot parse:"
+    echo "     $bad_line"
+    echo "   Only [section] headers and key = value lines are allowed."
+    echo "   There is no comment syntax — '#' and ';' lines break the build."
+    exit 1
+fi
+echo "✅ game.project parses"
 echo "ℹ️  Make sure ${PACKAGE_NAME} is registered as an Android OAuth client for Google Sign-In (see note above) before relying on it for this game."
 
 # ==========================================================
