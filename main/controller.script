@@ -8,8 +8,14 @@ local SCREENS = { "lobby", "auth", "profile", "online", "themes", "payments", "t
 -- Online" tap, GPGS callback, backend verify, WS identify) — every step logs
 -- here so a stuck/looping session can be diagnosed from device logs instead
 -- of guessed at.
+-- Never let the debug trail be the thing that kills the pipeline it is there
+-- to explain. A nil where a %d/%f was expected makes string.format raise, and
+-- because these calls sit inside gpgs_callback and the retry path, that error
+-- unwinds the callback and the retry timer is never scheduled — the app then
+-- sits on "connecting..." forever. Logging is best-effort by construction.
 local function auth_debug(fmt, ...)
-    print(string.format("[AUTH-DEBUG] " .. fmt, ...))
+    local ok, line = pcall(string.format, "[AUTH-DEBUG] " .. fmt, ...)
+    print(ok and line or ("[AUTH-DEBUG] " .. tostring(fmt) .. " <unformattable args>"))
 end
 
 local function show(self, screen)
@@ -147,11 +153,29 @@ local SILENT_LOGIN_BACKOFF = { 1.5, 3, 6, 12, 30, 60 }  -- last entry repeats
 -- of GPGS eagerly was a mistake).
 local CLEANUP_AFTER_ATTEMPTS = 4
 
+-- Clamp at BOTH ends. The upper clamp is the "last entry repeats" rule; the
+-- lower one matters just as much, because a caller reaching here with attempt
+-- 0 (or nil) would index SILENT_LOGIN_BACKOFF[0] -> nil, and a nil delay both
+-- fails to format in the log line and blows up timer.delay. The retry would
+-- never be scheduled and sign-in would stall permanently.
 local function silent_login_delay(attempt)
-    return SILENT_LOGIN_BACKOFF[math.min(attempt, #SILENT_LOGIN_BACKOFF)]
+    local i = math.max(1, math.min(tonumber(attempt) or 1, #SILENT_LOGIN_BACKOFF))
+    return SILENT_LOGIN_BACKOFF[i]
+end
+
+-- A retry parked on a timer is not an attempt in flight. Anything that wants
+-- to start a fresh attempt right now (the player tapping PLAY ONLINE, focus
+-- returning to the app) cancels the pending one first so the two cannot run
+-- as a pair.
+local function cancel_silent_login_retry(self)
+    if self._silent_login_timer then
+        pcall(timer.cancel, self._silent_login_timer)
+        self._silent_login_timer = nil
+    end
 end
 
 local function try_silent_login(self)
+    cancel_silent_login_retry(self)
     self._silent_login_inflight = true
     self._silent_login_attempts = (self._silent_login_attempts or 0) + 1
     auth_debug("try_silent_login: attempt %d", self._silent_login_attempts)
@@ -189,6 +213,14 @@ local function handle_login_failure(self, error_message)
     local attempts = self._silent_login_attempts or 0
     auth_debug("handle_login_failure: %s (attempt %d)", tostring(error_message), attempts)
 
+    -- This attempt is over. Leaving the flag set — which is what used to
+    -- happen on every path except the two below — permanently latched the
+    -- app: try_silent_login sets it, nothing cleared it again, and from then
+    -- on every PLAY ONLINE tap hit the "already in flight, ignoring duplicate
+    -- tap" branch and did nothing at all. The lobby sat on CONNECTING with a
+    -- button that no longer responded.
+    self._silent_login_inflight = false
+
     -- The player is waiting: escalate to the interactive sheet rather than
     -- making them watch a silent retry they cannot see.
     if self._explicit_online and attempts >= 2 then
@@ -202,7 +234,10 @@ local function handle_login_failure(self, error_message)
         return
     end
 
-    if attempts == CLEANUP_AFTER_ATTEMPTS then
+    -- >= rather than ==: the counter is reset by explicit taps and by the
+    -- identify-error recovery path, so an exact match is a window that can be
+    -- stepped straight over. background_auth_cleanup is already once-per-run.
+    if attempts >= CLEANUP_AFTER_ATTEMPTS then
         background_auth_cleanup(self)
     end
 
@@ -227,7 +262,11 @@ local function handle_login_failure(self, error_message)
     -- doing so is what left the lobby stuck on TRY AGAIN.
     local delay = silent_login_delay(attempts)
     auth_debug("handle_login_failure: retrying silently in %.1fs", delay)
-    timer.delay(delay, false, function() try_silent_login(self) end)
+    cancel_silent_login_retry(self)
+    self._silent_login_timer = timer.delay(delay, false, function()
+        self._silent_login_timer = nil
+        try_silent_login(self)
+    end)
 end
 
 local function gpgs_callback(self, message_id, message)
@@ -235,13 +274,26 @@ local function gpgs_callback(self, message_id, message)
         tostring(message_id), tostring(message and message.status), tostring(message and message.error))
     if message_id == gpgs.MSG_SIGN_IN or message_id == gpgs.MSG_SILENT_SIGN_IN then
         if message.status == gpgs.STATUS_SUCCESS then
-            -- Fresh budget: a later failure (token expiry, account switch)
-            -- should start its backoff from the beginning rather than
-            -- inheriting a long delay from whatever happened at boot.
-            self._silent_login_attempts = 0
             local auth_code = gpgs.get_server_auth_code()
-            auth_debug("gpgs_callback: GPGS success, auth_code_present=%s", tostring(auth_code ~= nil and auth_code ~= ""))
-            if auth_code then
+            -- "" is TRUTHY in Lua, so a bare `if auth_code then` sent an empty
+            -- code to the backend as though it were a real one and burned the
+            -- attempt on a request that could only ever 401.
+            local have_code = type(auth_code) == "string" and auth_code ~= ""
+            auth_debug("gpgs_callback: GPGS success, auth_code_present=%s", tostring(have_code))
+            if have_code then
+                -- Fresh budget: a later failure (token expiry, account switch)
+                -- should start its backoff from the beginning rather than
+                -- inheriting a long delay from whatever happened at boot.
+                --
+                -- This reset used to sit above, on bare sign-in success. That
+                -- was wrong in the one case that matters: signing in fine but
+                -- getting NO server auth code re-entered the failure path at
+                -- attempt 0 every single time, so (a) the backoff never grew,
+                -- (b) CLEANUP_AFTER_ATTEMPTS was never reached, so the stale
+                -- Google credential was never cleared, and (c) the phone-number
+                -- fallback was never offered. Signing in is not the goal; a
+                -- code we can send to our own backend is.
+                self._silent_login_attempts = 0
                 app_state.auth_state = "verifying"
                 msg.post("#lobby", "auth_state_changed")
                 api.gpgs_login(auth_code, function(result)
@@ -282,7 +334,14 @@ local function gpgs_callback(self, message_id, message)
                     handle_login_failure(self, result.message or "Backend auth failed")
                 end)
             else
-                -- Missing auth code: Handled in the background via the new unified retry flow
+                -- Signed in, but Play Games handed back no server auth code.
+                -- Calling silent_login() again on its own cannot fix this: it
+                -- replays the same cached Google state and returns the same
+                -- empty code forever. The counter is deliberately left to keep
+                -- climbing (see above) so this walks into
+                -- background_auth_cleanup, which logs out of GPGS and forces a
+                -- genuinely fresh token on the next attempt, and then into the
+                -- phone-number fallback if even that does not produce a code.
                 handle_login_failure(self, "Missing auth code. Retrying...")
             end
         else
