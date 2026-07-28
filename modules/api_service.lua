@@ -213,30 +213,16 @@ end
 -- Services missing/disabled/out of date, no Google account, an OAuth client
 -- not registered for the build).
 --
--- payload = { phoneNumber, deviceId }. Three possible answers:
+-- No SMS code anywhere in this flow. payload = { phoneNumber, deviceId },
+-- and there are only two answers:
 --   { success, isNewUser = true,  token, user }  account created, signed in
---   { success, isNewUser = false, token, user }  known account on THIS device
---   { success, requiresOtp = true }              known account, new device —
---                                                a code was sent, call
---                                                M.verify_phone_login next
--- The split is deliberate: a phone number is not a secret, so it alone must
--- not hand over an account that holds withdrawable coins. See the route.
+--   { success, isNewUser = false, token, user }  known account, signed in
+-- A valid number is the whole credential, on any device. See the route for
+-- what that costs.
 function M.phone_login(payload, cb)
     payload = payload or {}
     payload.deviceId = payload.deviceId or M.get_device_id()
     request("POST", "/auth/phone", payload, function(result)
-        if result.success and result.data and result.data.token then
-            M.set_auth_token(result.data.token)
-        end
-        if cb then cb(result) end
-    end)
-end
-
--- Second half of the different-device path. payload = { phoneNumber, code }
-function M.verify_phone_login(payload, cb)
-    payload = payload or {}
-    payload.deviceId = payload.deviceId or M.get_device_id()
-    request("POST", "/auth/phone/verify", payload, function(result)
         if result.success and result.data and result.data.token then
             M.set_auth_token(result.data.token)
         end
