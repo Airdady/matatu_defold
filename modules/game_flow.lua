@@ -627,6 +627,13 @@ local function slim_results(res)
         rewards                  = two_player_map(res.rewards),
         currentScores            = two_player_map(res.currentScores),
         cardTotals               = two_player_map(res.cardTotals),
+        -- Same userId-keyed shape as `rewards`. It was missing, and this is a
+        -- WHITELIST — every field not named here is dropped on the way to the
+        -- game-over dialog. So the dialog's savings row could never appear in
+        -- ANY mode, however correct the row itself was: the number never
+        -- arrived. Adding a field to gameOverState on the server is not
+        -- enough on its own; it has to be listed here too.
+        savingsDeducted          = two_player_map(res.savingsDeducted),
     }
     if type(res.stake) == "table" then
         out.stake = { amount = res.stake.amount, charge = res.stake.charge, points = res.stake.points }
