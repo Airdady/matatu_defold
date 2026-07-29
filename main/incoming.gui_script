@@ -131,6 +131,34 @@ local BAN_DESC    = vmath.vector4(0.42, 0.56, 0.68, 1.00)
 local BAN_AV_BG   = vmath.vector4(0.10, 0.14, 0.18, 1.00)
 local BAN_TRACK   = vmath.vector4(0.12, 0.19, 0.27, 1.00)
 local BAN_ACCEPT  = vmath.vector4(0.00, 0.90, 0.63, 0.30)
+
+-- CHAMPIONSHIP badge. Red on purpose: this banner already carries ordinary
+-- battles and one-level tournaments, and they look identical to a run at the
+-- multi-level ladder. Accepting one costs a level of real progress, so it
+-- should not be indistinguishable from a casual invite.
+local BAN_CHAMP_BG = vmath.vector4(0.78, 0.12, 0.16, 1.00)
+local BAN_CHAMP_TX = vmath.vector4(1.00, 0.94, 0.94, 1.00)
+
+-- Matches MIN_LEVELS_FOR_PUSH / MIN_TOURNAMENT_LEVELS_FOR_ANNOUNCEMENT on the
+-- server. Kept as its own constant rather than "more than one level", so the
+-- badge means the same thing here as "championship" means there.
+local MIN_CHAMPIONSHIP_LEVELS = 7
+
+-- levels arrives either as an array of level definitions or, on older
+-- documents, as a bare count. Same normalisation the server does — a mismatch
+-- would badge a different set of invites than the server treats as the
+-- championship.
+local function level_count(t)
+    local levels = type(t) == "table" and t.levels or nil
+    if type(levels) == "table" then return #levels end
+    local n = tonumber(levels)
+    if n and n > 0 then return n end
+    return 1
+end
+
+local function is_championship(tourney)
+    return level_count(tourney) >= MIN_CHAMPIONSHIP_LEVELS
+end
 local BAN_DECLINE = vmath.vector4(0.12, 0.19, 0.27, 0.85)
 
 local function draw_banner(self, d, a)
@@ -141,6 +169,18 @@ local function draw_banner(self, d, a)
 
     track(self, ui.box(vmath.vector3(m.CX, cy, 0), vmath.vector3(bw, BAN_H, 0), with_a(BAN_PANEL, a)))
     track(self, ui.box(vmath.vector3(m.CX, top, 0), vmath.vector3(bw, 3, 0), with_a(BAN_RULE, a)))
+
+    -- Sits ON the top rule, centred. A fixed position rather than trailing the
+    -- title: the title carries a player name of unpredictable length, and the
+    -- right-hand side is already crowded by H2H and the two buttons, so
+    -- anything flowed from either end eventually collides with something.
+    if d.championship then
+        local pill_w, pill_h = 148, 22
+        track(self, ui.box(vmath.vector3(m.CX, top, 0), vmath.vector3(pill_w, pill_h, 0),
+            with_a(BAN_CHAMP_BG, a)))
+        track(self, ui.text(vmath.vector3(m.CX, top, 0), "[CHAMPIONSHIP]", "small",
+            with_a(BAN_CHAMP_TX, a)))
+    end
 
     -- Sender avatar (framed disc) on the left.
     local av_x = m.L + 48
@@ -306,6 +346,7 @@ function on_message(self, message_id, message)
         local disp_name = sender.username or (r.user or {}).username or "A player"
 
         local title, desc
+        local championship = false
         if is_tb then
             -- Same wording as the online screen's inline banner so the two
             -- surfaces read identically.
@@ -316,6 +357,11 @@ function on_message(self, message_id, message)
             desc = "Best of " .. (tonumber(tourney.matchFormat) or 3)
                 .. "   -   " .. (amount > 0 and (commas(amount) .. " Coins") or "Practice Mode")
             disp_name = (type(raw) == "table" and (raw.tournamentName or raw.name)) or "Tournament Match"
+
+            -- A BATTLE is never the championship however many levels its
+            -- document happens to carry — checking levels alone would badge
+            -- knockouts that share the same shape.
+            championship = kind == "TOURNAMENT" and is_championship(tourney)
         end
 
         open_dialog(self, {
@@ -326,6 +372,7 @@ function on_message(self, message_id, message)
             opponent_id = (r.user or {})._id,
             h2h         = (type(raw) == "table" and raw.headToHead) or nil,
             banner      = banner,
+            championship = championship,
             title       = title,
             desc        = desc,
         })
