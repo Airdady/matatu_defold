@@ -154,6 +154,41 @@ awk -v t="$PROJECT_TITLE" -v p="$PACKAGE_NAME" '
 echo "✅ game.project -> title = $PROJECT_TITLE"
 echo "✅ game.project -> [android] package = $PACKAGE_NAME"
 
+# ---------------- WHICH BACKEND ----------------
+# API_HOST=dev.matatuleague.com ./build.sh matatu
+#
+# Written into [network] api_host, which modules/config.lua reads at startup.
+# Set nothing and the build goes to production — the default is the safe one on
+# purpose, because "forgot to set it" must not be the case that ships a test
+# build to live players.
+#
+# The key is written for THIS build and removed again at the end (see the trap
+# below), so a dev host can never be committed by accident and a checkout is
+# never quietly pointed somewhere other than it looks.
+restore_api_host() {
+    if grep -q '^api_host = ' game.project 2>/dev/null; then
+        grep -v '^api_host = ' game.project > game.project.tmp && mv game.project.tmp game.project
+        echo "ℹ️  game.project -> api_host removed (back to production)"
+    fi
+}
+trap restore_api_host EXIT
+
+if [ -n "$API_HOST" ]; then
+    # Under [network], which game.project already has. Appending anywhere else
+    # would land the key in whatever section happened to precede it.
+    awk -v h="$API_HOST" '
+        /^\[network\]/ { print; print "api_host = " h; done=1; next }
+        /^api_host[[:space:]]*=/ { next }
+        { print }
+        END { if (!done) { print ""; print "[network]"; print "api_host = " h } }
+    ' game.project > game.project.tmp && mv game.project.tmp game.project
+    echo "🧪 game.project -> [network] api_host = $API_HOST"
+    echo "⚠️  THIS BUILD TALKS TO $API_HOST, NOT PRODUCTION."
+else
+    restore_api_host
+    echo "🌐 Backend: production (api.matatuleague.com)"
+fi
+
 # game.project is NOT an ini file, whatever it looks like. Bob's parser
 # (Project.loadPropertiesData) accepts exactly two line shapes — "[section]"
 # and "key = value" — and has no comment syntax at all. A "#" or ";" line
