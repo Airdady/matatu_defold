@@ -264,6 +264,23 @@ end
 -- the banner, and threading them through as trailing nils was how the old
 -- signature grew unreadable.
 local function open_dialog(self, d)
+    -- REPLACING an unanswered request.
+    --
+    -- A second request arriving before the first is answered overwrites
+    -- self.dialog, and the player never sees the first one again. Leaving its
+    -- request_id unanswered means the opponent sits watching a spinner until
+    -- the server's own timeout expires — for a request that vanished off this
+    -- screen seconds ago. Decline it now: that is what would have happened at
+    -- its own 10-second mark anyway, just sooner and honestly.
+    --
+    -- Not for a cup invitation: it has no socket request behind it, and
+    -- nobody is waiting on the answer.
+    local prev = self.dialog
+    if prev and not prev.cup_invite and prev.request_id and prev.request_id ~= ""
+       and prev.request_id ~= d.request_id then
+        pcall(ws.decline_game_request, prev.request_id)
+    end
+
     -- A cup invitation runs on a different clock: nobody is sitting waiting on
     -- the answer, so it gets a long window and, crucially, expires by HIDING
     -- rather than by answering (see update()).
@@ -285,10 +302,28 @@ local function open_dialog(self, d)
         accept_label = d.accept_label, decline_label = d.decline_label,
     }
     self.dlg_alpha = 0
-    -- Claim top input priority. The FULL dialog is modal, so nothing beneath
-    -- it may act on a tap; the top banner is deliberately non-disruptive and
-    -- makes no claim, letting whatever is underneath carry on.
-    if not self.dialog.banner then app_state.modal_open("incoming") end
+    -- Claim top input priority, or RELEASE it. Both directions, every time.
+    --
+    -- This used to only ever claim, and that is what froze the app.
+    --
+    -- A full dialog claims "incoming" in the modal registry. A banner
+    -- deliberately does not, because it is non-disruptive and play carries on
+    -- underneath it. But when a banner REPLACED a full dialog — a tournament
+    -- invite landing while a plain game request was still on screen, which is
+    -- exactly what happens when requests arrive in a burst — the claim from
+    -- the dialog it replaced was left standing.
+    --
+    -- Every screen in the app begins its on_input with
+    -- `if app_state.input_blocked() then return false end`, and that is true
+    -- while ANY claim is held. So the visible thing was a banner that lets
+    -- taps through, and the actual state was: nothing anywhere responds. No
+    -- error, nothing on screen to explain it, and no way out but restarting
+    -- the app.
+    if self.dialog.banner then
+        app_state.modal_close("incoming")
+    else
+        app_state.modal_open("incoming")
+    end
     -- Audible cue when an opponent's challenge arrives. EVERY incoming request
     -- (normal, battle, tournament, knockout — full dialog or top banner) uses
     -- the same request.ogg cue (snd_notify on the sibling controller object).
@@ -368,6 +403,23 @@ function update(self, dt)
     -- Countdown ALWAYS runs (no _active gate): this overlay is live on every
     -- screen, so the dialog fade-in + 10s auto-decline must advance regardless
     -- of which screen is showing underneath.
+    -- WATCHDOG. Nothing on screen must never mean nothing responds.
+    --
+    -- The claim above and every close() below are meant to keep these two in
+    -- step, and the paths that broke it are fixed. This is here anyway,
+    -- because the cost of the two disagreeing is not a glitch — it is an app
+    -- that accepts no input at all, on any screen, with nothing visible to
+    -- explain it and no recovery but a restart. That is worth one comparison
+    -- per frame.
+    --
+    -- Deliberately one-directional: it only ever RELEASES a claim nothing is
+    -- showing for. Claiming from here would paper over a genuine bug in
+    -- open_dialog instead of leaving it to be found.
+    if not self.dialog and app_state.modals and app_state.modals["incoming"] then
+        print("[INCOMING] releasing a stale modal claim with no dialog on screen")
+        app_state.modal_close("incoming")
+    end
+
     if self.dialog then
         self.dlg_alpha = math.min(1, (self.dlg_alpha or 0) + dt * 4)
         self.dialog.time_left = (self.dialog.time_left or 10) - dt
