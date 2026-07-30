@@ -19,6 +19,8 @@ local ws     = require("modules.websocket_manager")
 local screen = require("modules.screen")
 local app_state = require("modules.app_state")
 local dialog_incoming = require("modules.dialog_incoming")
+local api    = require("modules.api_service")
+local toast  = require("modules.toast")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local CX, CY = 640, 360
@@ -139,6 +141,23 @@ local BAN_ACCEPT  = vmath.vector4(0.00, 0.90, 0.63, 0.30)
 local BAN_CHAMP_BG = vmath.vector4(0.78, 0.12, 0.16, 1.00)
 local BAN_CHAMP_TX = vmath.vector4(1.00, 0.94, 0.94, 1.00)
 
+-- TEAM CUP badge. Purple, matching the lobby tile's accent, so an invitation
+-- to somebody's cup is not mistaken at a glance for a match starting now —
+-- the two arrive on the same strip and are answered on very different clocks.
+local BAN_CUP_BG = vmath.vector4(0.596, 0.298, 0.796, 1.00)
+local BAN_CUP_TX = vmath.vector4(1.00, 0.97, 1.00, 1.00)
+
+-- How long a cup invitation stays on the strip.
+--
+-- Much longer than a game request's 10s, and — the part that matters — it
+-- expires by HIDING, never by answering. A game request has to be resolved
+-- either way, because an opponent is sitting there waiting; an invitation to a
+-- cup that fills over hours has nobody waiting on it, and auto-declining one
+-- the player merely did not look at in ten seconds would throw away the thing
+-- the push notification was sent to deliver. The invitation stays on the TEAM
+-- CUPS tile regardless.
+local CUP_BANNER_SECONDS = 15
+
 -- Matches MIN_LEVELS_FOR_PUSH / MIN_TOURNAMENT_LEVELS_FOR_ANNOUNCEMENT on the
 -- server. Kept as its own constant rather than "more than one level", so the
 -- badge means the same thing here as "championship" means there.
@@ -180,6 +199,12 @@ local function draw_banner(self, d, a)
             with_a(BAN_CHAMP_BG, a)))
         track(self, ui.text(vmath.vector3(m.CX, top, 0), "[CHAMPIONSHIP]", "small",
             with_a(BAN_CHAMP_TX, a)))
+    elseif d.cup_invite then
+        local pill_w, pill_h = 120, 22
+        track(self, ui.box(vmath.vector3(m.CX, top, 0), vmath.vector3(pill_w, pill_h, 0),
+            with_a(BAN_CUP_BG, a)))
+        track(self, ui.text(vmath.vector3(m.CX, top, 0), "[TEAM CUP]", "small",
+            with_a(BAN_CUP_TX, a)))
     end
 
     -- Sender avatar (framed disc) on the left.
@@ -195,10 +220,13 @@ local function draw_banner(self, d, a)
         tostring(d.desc or ""), "small", with_a(BAN_DESC, a))), gui.PIVOT_W)
 
     -- Actions on the right, in the same order as the online screen's banner.
+    -- Labels are overridable because a cup invitation is not answered the way
+    -- a match request is: there is no opponent waiting, so the left-hand button
+    -- puts it off rather than turning it down.
     mkbtn(self, "decline", vmath.vector3(m.R - 225, cy, 0), vmath.vector3(120, 46, 0),
-        "DECLINE", with_a(BAN_DECLINE, a), nil, "btn_md", with_a(COL_MID, a))
+        d.decline_label or "DECLINE", with_a(BAN_DECLINE, a), nil, "btn_md", with_a(COL_MID, a))
     mkbtn(self, "accept",  vmath.vector3(m.R - 90,  cy, 0), vmath.vector3(120, 46, 0),
-        "ACCEPT",  with_a(BAN_ACCEPT,  a), nil, "btn_md", with_a(COL_WHITE, a))
+        d.accept_label or "ACCEPT",  with_a(BAN_ACCEPT,  a), nil, "btn_md", with_a(COL_WHITE, a))
 
     if d.h2h then draw_h2h_row(self, m.R - 430, cy, h2h_view(d.h2h), a) end
 
@@ -236,15 +264,25 @@ end
 -- the banner, and threading them through as trailing nils was how the old
 -- signature grew unreadable.
 local function open_dialog(self, d)
+    -- A cup invitation runs on a different clock: nobody is sitting waiting on
+    -- the answer, so it gets a long window and, crucially, expires by HIDING
+    -- rather than by answering (see update()).
+    local window = d.cup_invite and CUP_BANNER_SECONDS or 10
     self.dialog = {
         kind = "incoming",
         name = d.name, stake = d.stake or {}, request_id = d.request_id,
-        avatar = tonumber(d.avatar) or 1, time_left = 10, max_time = 10,
+        avatar = tonumber(d.avatar) or 1, time_left = window, max_time = window,
         opponent_id = d.opponent_id and tostring(d.opponent_id) or nil, h2h = d.h2h,
         -- Tournament / battle / knockout invites render as the top banner; a
         -- plain game request always gets the full dialog (set in on_message).
         banner = d.banner and true or false,
         title = d.title, desc = d.desc,
+        championship = d.championship and true or false,
+        -- Team cup invitation: no request_id, answered over HTTP rather than
+        -- the socket, and never auto-declined.
+        cup_invite = d.cup_invite and true or false,
+        cup_id = d.cup_id,
+        accept_label = d.accept_label, decline_label = d.decline_label,
     }
     self.dlg_alpha = 0
     -- Claim top input priority. The FULL dialog is modal, so nothing beneath
@@ -292,6 +330,33 @@ function init(self)
         ws.on("game_start", function()
             msg.post(ME, "incoming_clear", {})
         end),
+        -- Team cups. The invitation is a decision, so it takes the same banner
+        -- an incoming tournament request takes; a join is ambient news about a
+        -- cup you are already in, so it takes a toast and nothing else.
+        --
+        -- Both post back to ME rather than acting here: these callbacks run in
+        -- the socket owner's context, and building the banner from there would
+        -- touch gui.* from the wrong script.
+        ws.on("cup_invite", function(d)
+            msg.post(ME, "cup_invite", {
+                cup_id  = tostring((d or {}).cupId or ""),
+                name    = tostring((d or {}).name or "Team Cup"),
+                owner   = tostring((d or {}).ownerUsername or ""),
+                avatar  = tonumber((d or {}).ownerAvatar) or 1,
+                prize   = tonumber((d or {}).grandPrize) or 0,
+                members = tonumber((d or {}).members) or 0,
+                max     = tonumber((d or {}).maxPlayers) or 0,
+            })
+        end),
+        ws.on("cup_event", function(d)
+            msg.post(ME, "cup_event", {
+                event   = tostring((d or {}).event or ""),
+                name    = tostring((d or {}).name or "the cup"),
+                who     = tostring((d or {}).actorUsername or "A player"),
+                members = tonumber((d or {}).members) or 0,
+                max     = tonumber((d or {}).maxPlayers) or 0,
+            })
+        end),
     }
 end
 
@@ -307,10 +372,21 @@ function update(self, dt)
         self.dlg_alpha = math.min(1, (self.dlg_alpha or 0) + dt * 4)
         self.dialog.time_left = (self.dialog.time_left or 10) - dt
         if self.dialog.time_left <= 0 then
-            if self.dialog.request_id and self.dialog.request_id ~= "" then
+            -- A game request MUST be answered either way — an opponent is
+            -- sitting there waiting on it, and silence would hang them.
+            --
+            -- A cup invitation has nobody waiting: cups fill over hours. Timing
+            -- one out as a DECLINE would throw away the thing the push
+            -- notification was sent to deliver, for the crime of not looking at
+            -- the screen for fifteen seconds. It expires by hiding; the
+            -- invitation is still on the TEAM CUPS tile, and the next connect
+            -- replays it.
+            if not self.dialog.cup_invite
+               and self.dialog.request_id and self.dialog.request_id ~= "" then
                 ws.decline_game_request(self.dialog.request_id)
             end
             self.dialog = nil
+            app_state.modal_close("incoming")
         end
         rebuild(self)
     end
@@ -378,6 +454,50 @@ function on_message(self, message_id, message)
         })
 
 
+    elseif message_id == hash("cup_invite") then
+        -- Never over a live one. A game request has ten seconds and an opponent
+        -- waiting on the other end; an invitation to a cup that fills over
+        -- hours can wait for the next IDENTIFY replay, which is guaranteed.
+        if self.dialog then return end
+        local cup_id = tostring((message or {}).cup_id or "")
+        if cup_id == "" then return end
+
+        local prize = tonumber(message.prize) or 0
+        local seats = ""
+        if (tonumber(message.max) or 0) > 0 then
+            seats = string.format("   -   %d/%d players", tonumber(message.members) or 0, tonumber(message.max) or 0)
+        end
+
+        open_dialog(self, {
+            name          = message.name,
+            avatar        = message.avatar,
+            banner        = true,
+            cup_invite    = true,
+            cup_id        = cup_id,
+            title         = "TEAM CUP  -  " .. (message.owner ~= "" and tostring(message.owner):upper() or "INVITATION"),
+            desc          = (prize > 0 and (commas(prize) .. " Coins prize") or "Team cup invitation") .. seats,
+            accept_label  = "JOIN",
+            -- Not DECLINE. There is no decline endpoint for an invitation and
+            -- there should not be one — putting the banner away is not the
+            -- same as turning the cup down, and the tile still carries it.
+            decline_label = "LATER",
+        })
+
+    elseif message_id == hash("cup_event") then
+        -- Ambient news about a cup this player is already in. No decision, so
+        -- no banner: a toast, and it never interrupts whatever they are doing.
+        local who  = tostring((message or {}).who or "A player")
+        local name = tostring((message or {}).name or "the cup")
+        local max  = tonumber(message.max) or 0
+        local seats = max > 0 and string.format(" (%d/%d)", tonumber(message.members) or 0, max) or ""
+        if message.event == "STARTED" then
+            toast.success(name .. " has started - good luck!")
+        elseif message.event == "JOINED" then
+            toast.info(who .. " joined " .. name .. seats)
+        elseif message.event == "LEFT" then
+            toast.info(who .. " left " .. name .. seats)
+        end
+
     elseif message_id == hash("incoming_clear") then
         -- Clear if the event targets the dialog we're showing (or carries no id).
         local rid = message and message.request_id
@@ -398,15 +518,46 @@ function on_input(self, action_id, action)
             local b = self.buttons[i]
             if gui.pick_node(b.node, action.x, action.y) then
                 local id = b.id
+                local cup = self.dialog and self.dialog.cup_invite and self.dialog.cup_id or nil
                 if id == "accept" then
-                    if self.dialog and self.dialog.request_id and self.dialog.request_id ~= "" then
+                    if cup then
+                        -- Joining a cup is an HTTP call, not a socket message:
+                        -- the cup is owned by the tournament controller, and
+                        -- the accept endpoint is the same one the lobby tile
+                        -- uses. Answered with a toast either way — the banner
+                        -- is already gone by the time the reply lands.
+                        local uid = tostring(ws.get_current_user_id() or "")
+                        api.accept_team_invitation(cup, uid, function(res)
+                            if res.success then
+                                local t = (res.data or {}).tournament or {}
+                                local u = ws.current_user_data or {}
+                                u.myTeamTournamentId = t._id or cup
+                                u.myTeamTournamentIsOwner = false
+                                ws.current_user_data = u
+                                toast.success("You're in " .. tostring(t.name or "the cup") .. "!")
+                                -- The server's JOINED broadcast deliberately
+                                -- skips the joiner, so nothing else would tell
+                                -- the tile behind this banner that its numbers
+                                -- moved.
+                                pcall(msg.post, "#lobby", "cups_changed")
+                            else
+                                toast.error((res.data and res.data.error) or res.message
+                                    or "Could not join that cup.")
+                            end
+                        end)
+                    elseif self.dialog and self.dialog.request_id and self.dialog.request_id ~= "" then
                         ws.accept_game_request(self.dialog.request_id)
                     end
                     self.dialog = nil
                     app_state.modal_close("incoming")
                     rebuild(self)
                 elseif id == "decline" then
-                    if self.dialog and self.dialog.request_id and self.dialog.request_id ~= "" then
+                    -- LATER on a cup invitation sends nothing at all. There is
+                    -- no decline endpoint and there should not be one: the
+                    -- invitation stays on the TEAM CUPS tile, and putting a
+                    -- banner away is not the same as turning an invitation
+                    -- down.
+                    if not cup and self.dialog and self.dialog.request_id and self.dialog.request_id ~= "" then
                         ws.decline_game_request(self.dialog.request_id)
                     end
                     self.dialog = nil

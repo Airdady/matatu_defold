@@ -564,6 +564,20 @@ local function parse_message(json_string)
     if d.success and M.current_savings_status then
       M.current_savings_status.autoCharge = { enabled = d.enabled, amount = d.amount }
     end
+  elseif t == "TEAM_CUP_EVENT" then
+    -- Somebody joined the cup, or the owner started it. News about a cup this
+    -- player is already IN, carrying no decision — so it surfaces as a toast
+    -- and never as a banner. Not parked on M: a toast that has been shown is
+    -- finished, and keeping the last one around only invites a screen to
+    -- replay it on its next rebuild.
+    emit("cup_event", d or {})
+  elseif t == "TEAM_CUP_INVITE" then
+    -- An invitation IS a decision, so this one gets the top banner. Arrives
+    -- live when the invite is sent, and again for every un-acted-on invitation
+    -- right after IDENTIFY (d.pending marks the replayed ones) — a push can be
+    -- silenced or swiped away, so the replay is what actually guarantees the
+    -- player sees it when they open the app.
+    emit("cup_invite", d or {})
   elseif t == "TRANSACTION_COMPLETED" then
     emit("transaction_completed", d)
   elseif t == "TRANSACTION_FAILED" then

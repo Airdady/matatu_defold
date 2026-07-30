@@ -259,10 +259,15 @@ local function rebuild(self)
     -- and above the offline modes. CREATE and JOIN are their own buttons
     -- directly on the tile so both are reachable in a single tap, instead
     -- of tapping the tile to open a separate CREATE/JOIN BY CODE picker
-    -- first (STATE_TEAM_MENU / draw_team_menu are still used for the
-    -- has_team_tournament case below, since there is nothing to create or
-    -- join once you are already in one). CREATE now opens the dedicated
-    -- team-tournament screen rather than an in-lobby dialog.
+    -- first. CREATE now opens the dedicated team-tournament screen rather
+    -- than an in-lobby dialog.
+    --
+    -- OPEN, for a player already in somebody else's cup, goes to that cup's
+    -- bracket. It used to open the CREATE / JOIN BY CODE picker, which was the
+    -- one menu that could not apply: the comment here even said "there is
+    -- nothing to create or join once you are already in one" while routing to
+    -- exactly that. Reported as "it tells me I'm in one, then OPEN offers me
+    -- create and join again".
     -- -----------------------------------------------------------------------
     local has_team_tournament = ws.current_user_data and ws.current_user_data.myTeamTournamentId
         and tostring(ws.current_user_data.myTeamTournamentId) ~= ""
@@ -571,7 +576,27 @@ local function handle(self, b)
         msg.post("#controller", "goto_game")
 
     elseif b.id == "team_action_open" then
-        set_state(self, STATE_TEAM_MENU)
+        -- Straight to the bracket of the cup they are in. Falls back to the
+        -- CREATE / JOIN picker only when there turns out to be no cup after
+        -- all — a stale myTeamTournamentId left over from a cup its owner
+        -- deleted, which is the one case where creating or joining IS the
+        -- thing to offer.
+        -- Resolved from the live cup list first, not from the cached
+        -- myTeamTournamentId: the list is refetched on every screen entry, so
+        -- a cup its owner has since deleted simply is not in it, and the
+        -- fallback below then offers the right thing instead of opening a
+        -- bracket for something that no longer exists.
+        local id
+        for _, t in ipairs(self.team_cups or {}) do
+            if t.isOwner or t.hasJoined then id = t._id break end
+        end
+        id = id or (ws.current_user_data or {}).myTeamTournamentId
+        if id and tostring(id) ~= "" then
+            app_state.standings_cup_id = tostring(id)
+            msg.post("#controller", "goto_standings")
+        else
+            set_state(self, STATE_TEAM_MENU)
+        end
 
     elseif b.id == "team_cup_start" then
         -- b.data is set when the tap came from a rail card; the tile's own
@@ -774,8 +799,25 @@ function init(self)
         app_state.chamber_threshold = GameMode.is_matatu() and 200 or 100
     end
 
+    -- Cup membership changes underneath this screen — somebody joins, the
+    -- owner starts it — and the tile's "3/8 players" line is read straight off
+    -- a list fetched on screen entry. Without this the toast and the tile
+    -- disagree until the player leaves the lobby and comes back.
+    --
+    -- Posted to ME rather than reloading here: the callback runs in the socket
+    -- owner's context, and load_team_cups ends in a rebuild that touches gui.*.
+    local ME = msg.url("#")
+    self._ws_tokens = {
+        ws.on("cup_event",  function() msg.post(ME, "cups_changed") end),
+        ws.on("cup_invite", function() msg.post(ME, "cups_changed") end),
+    }
+
     msg.post(".", "acquire_input_focus")
     rebuild(self)
+end
+
+function final(self)
+    for _, t in ipairs(self._ws_tokens or {}) do pcall(ws.off, t) end
 end
 
 function update(self, dt)
@@ -831,6 +873,17 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("disable") then
         clear(self)
         
+    elseif message_id == hash("cups_changed") then
+        -- Only while the lobby is the screen on show. app_state.current_screen
+        -- rather than a new _active flag: controller.show() already maintains
+        -- it, and load_team_cups ends in a rebuild — firing that against a
+        -- disabled component would spend a request and rebuild nodes nobody is
+        -- looking at, and screen_enter refetches anyway when they come back.
+        --
+        -- Refetch rather than patch the count in place: the event carries one
+        -- cup's numbers and the tile reads the whole list.
+        if app_state.current_screen == "lobby" then load_team_cups(self) end
+
     elseif message_id == hash("auth_state_changed") then
         -- Just repaint. This used to post "play_online" whenever sign-in
         -- completed, which force-navigated to the online screen — fine when
