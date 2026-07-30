@@ -116,6 +116,38 @@ function M.mode(self, cfg)
         local hit = D.track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), T.TRANSP))
         self.buttons[#self.buttons + 1] = { node = hit, id = cfg.btn_id, data = cfg.btn_data }
     end
+
+    -- A SECOND, independent action sitting beside the CTA — a different way of
+    -- doing the tile's job rather than a variation on it. Signing in by phone
+    -- number is the case this exists for: it is not "PLAY NOW but slower", it
+    -- is the other credential, and burying it behind a Google failure meant
+    -- players only ever reached it by being unable to reach anything else.
+    --
+    -- Registered AFTER the tile's own hit node on purpose. The lobby picks
+    -- buttons back to front, so anything added earlier would be swallowed by
+    -- the full-tile hit region that covers it.
+    if cfg.alt_cta_label and cfg.alt_cta_id then
+        -- Wider than the CTA and anchored to the same right edge, so the two
+        -- line up as one stack of actions. The extra width is not decoration:
+        -- the CTA's 160 is sized for "PLAY NOW", and a label naming the other
+        -- credential does not fit in it at the caption font.
+        local alt_w, alt_h = math.min(210, math.max(120, w - 40)), 40
+        local alt_x = x + w/2 - 16 - alt_w/2
+        -- ABOVE the CTA, not below it. The CTA already sits 50px off the tile
+        -- floor and is 46 tall, which leaves 27px underneath — not enough for
+        -- a tappable second row. Stacking upwards keeps both inside the tile
+        -- and leaves PLAY NOW where players already look for it.
+        local alt_y = y - h/2 + 50 + 46
+        -- Outlined rather than filled, so the primary CTA stays the primary
+        -- CTA. Two solid pills would read as a choice between equals, and for
+        -- a player whose Play Games works it is not one.
+        D.track(self, ui.box(vmath.vector3(alt_x, alt_y, 0), vmath.vector3(alt_w, alt_h, 0), T.GOLD))
+        D.track(self, ui.box(vmath.vector3(alt_x, alt_y, 0), vmath.vector3(alt_w - 3, alt_h - 3, 0), T.DARK))
+        local n_alt = D.track(self, ui.text(vmath.vector3(alt_x, alt_y, 0), cfg.alt_cta_label, "small", T.CREAM))
+        pcall(gui.set_scale, n_alt, vmath.vector3(0.8, 0.8, 1))
+        local alt_hit = D.track(self, ui.box(vmath.vector3(alt_x, alt_y, 0), vmath.vector3(alt_w, alt_h, 0), T.TRANSP))
+        self.buttons[#self.buttons + 1] = { node = alt_hit, id = cfg.alt_cta_id }
+    end
 end
 
 -- ---------------------------------------------------------------------------

@@ -55,6 +55,22 @@ local function build_auth(self)
     else
         ktext(self, vmath.vector3(CX, CY, 0), "Connecting...", 24, C_STATE)
     end
+
+    -- The other credential, offered here at all times — including while this
+    -- screen still says "Connecting...".
+    --
+    -- This screen is where a player ends up when Play Games is not working for
+    -- them, and the one thing it could not do until now was let them stop
+    -- waiting on it. Waiting is precisely what does not help the failure that
+    -- keeps coming back: sign-in succeeds, the server auth code comes back
+    -- empty because no consent grant exists, and silent sign-in can never
+    -- create one. Retrying that reproduces it forever; a phone number does not
+    -- go through it at all.
+    local py = (s == "error") and (CY - 130) or (CY - 90)
+    local pb = track(self, ui.box(vmath.vector3(CX, py, 0), vmath.vector3(300, 56, 0), vmath.vector4(0.784, 0.580, 0.235, 1)))
+    track(self, ui.box(vmath.vector3(CX, py, 0), vmath.vector3(296, 52, 0), vmath.vector4(0.05, 0.04, 0.03, 1)))
+    ktext(self, vmath.vector3(CX, py, 0), "USE PHONE NUMBER", 20, C_CREAM)
+    self.buttons[#self.buttons+1] = { node = pb, id = "phone_signin" }
 end
 
 function init(self)
@@ -105,6 +121,9 @@ function on_input(self, action_id, action)
                     msg.post("#controller", "auth_cancel")
                 elseif b.id == "retry_silent_login" then
                     msg.post("#controller", "auth_retry_silent_login")
+                elseif b.id == "phone_signin" then
+                    self._active = false
+                    msg.post("#controller", "goto_phone_login")
                 end
                 return true
             end

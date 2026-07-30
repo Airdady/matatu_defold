@@ -158,6 +158,21 @@ local function rebuild_phone_step(self, d_y)
         (ok and not self._phone_saving) and P_DARK_TXT or P_MUTED))
     self.buttons[#self.buttons+1] = { node = cont_btn, id = "phone_link" }
 
+    -- A way out, in LOGIN mode only.
+    --
+    -- The distinction is which of the two modes is mandatory. "link" is the
+    -- account-completion step every Matatu player must pass, and it has never
+    -- had a back button because there is nowhere to go back TO. "login" is now
+    -- something a player can choose from the lobby, and a screen you can enter
+    -- deliberately but not leave is a trap — they would be stuck on a keypad
+    -- with no number they wanted to type and no route to the offline modes.
+    if phone_mode(self) == "login" then
+        framed(self, EDGE_L + 90, EDGE_T - 40, 140, 44, P_BORDER, 1, P_PANEL)
+        local back_btn = track(self, ui.box(vmath.vector3(EDGE_L + 90, EDGE_T - 40, 0), vmath.vector3(140, 44, 0), vmath.vector4(0,0,0,0.001)))
+        track(self, ui.text(vmath.vector3(EDGE_L + 90, EDGE_T - 40, 0), "< BACK", "subtitle2", P_CREAM_DIM))
+        self.buttons[#self.buttons+1] = { node = back_btn, id = "phone_cancel" }
+    end
+
     -- ── Content card: explanation + input + keypad share one bordered
     -- panel (mirrors gold_avatar_frame's layered-border elevation) instead
     -- of floating loose on the raw background. Sized top-down first, then
@@ -626,6 +641,13 @@ local function handle(self, b)
         end
     elseif b.id == "back" then
         if validate(self.username) then msg.post("#controller", "goto_online") end
+    elseif b.id == "phone_cancel" then
+        -- Back to the lobby, not to "online": there is no session behind this
+        -- screen, so the online lobby has nothing to show. The offline modes
+        -- are there, and PLAY NOW restarts Play Games sign-in.
+        self.phone = ""
+        self._phone_error = nil
+        msg.post("#controller", "goto_lobby")
     elseif b.id == "avatar" then
         self.avatar = b.data
         rebuild(self)

@@ -244,9 +244,29 @@ local function cancel_silent_login_retry(self)
     end
 end
 
+-- Put the number keypad on screen. No guards at all — this is the routing
+-- half, shared by the automatic fallback below and by the player choosing
+-- phone sign-in outright from the lobby or the auth screen.
+local function show_phone_login(self)
+    show(self, "profile")
+    -- And tell it to ASK for a number rather than work it out. The profile
+    -- screen picks its mode from whether the cached user has an _id, which on
+    -- the fallback path it does — the session simply does not work. Without
+    -- this it would show the ordinary profile step and the player would still
+    -- have no route online. Posted after show() so it lands after
+    -- screen_enter's own decide_step.
+    msg.post("#profile", "phone_login_required")
+end
+
 -- Show the phone number as the way in. Once per run, and never over a session
 -- that already works. Returns whether it actually did anything, so callers can
 -- log the reason that won rather than guessing.
+--
+-- This is the AUTOMATIC route only — the app deciding, after the ladder has
+-- run out, that Play Games is not going to work here. The player asking for it
+-- deliberately goes through goto_phone_login below and is subject to none of
+-- these guards: "once per run" describes how often the app may interrupt
+-- somebody, not how often somebody may choose.
 local function offer_phone_login(self, why)
     if self._offered_phone_login then return false end
     -- identify_ok, NOT is_logged_in(). A cached session at boot makes
@@ -256,14 +276,7 @@ local function offer_phone_login(self, why)
     if identify_ok then return false end
     self._offered_phone_login = true
     auth_debug("offering phone sign-in — %s", tostring(why))
-    show(self, "profile")
-    -- And tell it to ASK for a number rather than work it out. The profile
-    -- screen picks its mode from whether the cached user has an _id, which on
-    -- this path it does — the session simply does not work. Without this it
-    -- would show the ordinary profile step and the player would still have no
-    -- route online. Posted after show() so it lands after screen_enter's own
-    -- decide_step.
-    msg.post("#profile", "phone_login_required")
+    show_phone_login(self)
     return true
 end
 
@@ -436,7 +449,12 @@ local function handle_login_failure(self, error_message, opts)
     -- never give the cheap fix its one attempt.
     local consent_needed = opts.missing_auth_code and forced_before >= 1
 
+    -- _phone_login_chosen: the player went to the number keypad deliberately
+    -- rather than being sent there. Google's sheet must not open on top of a
+    -- screen they picked, and the silent retry below must not sign them in as
+    -- somebody else while they are still typing.
     local go_interactive = gpgs and gpgs.login and not identify_ok
+        and not self._phone_login_chosen
         and (waiting or (consent_needed and not self._interactive_login_done))
 
     -- Rung 3 — Play Games is not working on this device. Offer the phone
@@ -472,6 +490,14 @@ local function handle_login_failure(self, error_message, opts)
         cancel_silent_login_retry(self)
         arm_connect_deadline(self, INTERACTIVE_DEADLINE_SECONDS, true)
         gpgs.login()
+    elseif self._phone_login_chosen then
+        -- The player is on the keypad because they chose to be. Retrying
+        -- underneath is what the automatic fallback wants (Play Games might
+        -- recover), but here it would resolve an argument the player has
+        -- already settled — and a silent success routes straight past the
+        -- screen they are typing into. PLAY NOW restarts Google sign-in if
+        -- they change their mind.
+        auth_debug("handle_login_failure: phone sign-in was chosen, standing down")
     else
         -- Keep trying, quietly and for as long as the app is open. Nothing
         -- here sets auth_state = "error": a background attempt that fails is
@@ -640,7 +666,12 @@ function init(self)
         --
         -- Only when there is no session and nothing already in flight, so this
         -- never piles a second attempt on top of a running one.
-        if gpgs and not is_logged_in() and not self._silent_login_inflight then
+        -- Not while the player is on the number keypad by their own choice:
+        -- coming back from the SMS app or the contacts list is the most
+        -- likely reason focus returns there, and signing them in with Google
+        -- at that moment would throw away what they were mid-way through.
+        if gpgs and not is_logged_in() and not self._silent_login_inflight
+           and not self._phone_login_chosen then
             auth_debug("focus regained with no session — retrying silent sign-in")
             try_silent_login(self)
         end
@@ -976,7 +1007,14 @@ function init(self)
 end
 
 function on_message(self, message_id, message, sender)
-    if message_id == hash("goto_lobby") then show(self, "lobby")
+    if message_id == hash("goto_lobby") then
+        -- Leaving the keypad ends the choice that stood Play Games down. It
+        -- does not restart sign-in by itself — nothing is scheduled any more —
+        -- but PLAY NOW and the next return to the foreground are free to try
+        -- again, which is what stops backing out of phone login from leaving
+        -- the player signed out with nothing working behind the lobby.
+        self._phone_login_chosen = false
+        show(self, "lobby")
     elseif message_id == hash("goto_game") then show(self, "game")
     elseif message_id == hash("goto_online") then
         if is_logged_in() then show(self, "online") else show(self, "lobby") end
@@ -999,8 +1037,30 @@ function on_message(self, message_id, message, sender)
         if is_logged_in() then show(self, "profile") else show(self, "lobby") end
     elseif message_id == hash("goto_auth") then show(self, "auth")
 
+    elseif message_id == hash("goto_phone_login") then
+        -- The player picked the number instead of Play Games. This is an
+        -- auth method in its own right, not a fallback, so none of the
+        -- fallback's guards apply: not "once per run", not "only if Google
+        -- has already failed", not "only if there is no session".
+        auth_debug("goto_phone_login: player chose phone sign-in")
+        self._phone_login_chosen = true
+        -- Nothing armed behind this screen. A parked silent retry firing
+        -- while they type would either navigate them away mid-entry or drop
+        -- the automatic fallback on top of the screen they already asked for.
+        cancel_silent_login_retry(self)
+        cancel_connect_deadline(self)
+        self._offered_phone_login = true
+        self._explicit_online = false
+        app_state.auth_state = "idle"
+        msg.post("#lobby", "auth_state_changed")
+        show_phone_login(self)
+
     elseif message_id == hash("play_online") then
         self._explicit_online = true
+        -- Tapping PLAY NOW is how a player changes their mind back: Play
+        -- Games is live again from here, including the retries the phone
+        -- choice stood down.
+        self._phone_login_chosen = false
         auth_debug("play_online tapped: user_id=%s socket_connected=%s is_identified=%s inflight=%s",
             tostring(ws.current_user_data and ws.current_user_data._id), tostring(ws.socket_connected),
             tostring(ws.is_identified), tostring(self._silent_login_inflight))
@@ -1059,6 +1119,7 @@ function on_message(self, message_id, message, sender)
         -- retries the same silent flow with a fresh budget — never a
         -- manual/interactive Google sign-in prompt.
         if gpgs and not self._silent_login_inflight then
+            self._phone_login_chosen = false
             self._silent_login_attempts = 0
             try_silent_login(self)
         end
@@ -1092,6 +1153,9 @@ function on_message(self, message_id, message, sender)
                 cancel_silent_login_retry(self)
                 self._silent_login_attempts = 0
                 self._silent_login_inflight = false
+                -- The choice has been honoured. If THIS session goes wrong
+                -- later the ordinary ladder should be free to run again.
+                self._phone_login_chosen = false
                 pcall(ws.disconnect)
                 identify_and_connect(user)
                 app_state.auth_state = "done"

@@ -197,7 +197,8 @@ local function rebuild(self)
     -- read "RANKED ACCOUNT" instead of prompting sign-in.
     local has_username = ws.current_user_data and ws.current_user_data.username and ws.current_user_data.username ~= ""
     local user_txt = has_username and ws.current_user_data.username or "GUEST"
-    local sub_txt  = has_username and "RANKED ACCOUNT" or "TAP 'PLAY ONLINE' TO SIGN IN"
+    -- Two ways in now, so the hint no longer names only one of them.
+    local sub_txt  = has_username and "RANKED ACCOUNT" or "SIGN IN WITH GOOGLE OR YOUR NUMBER"
 
     local n_guest = track(self, ui.text(vmath.vector3(grid_r, h_y, 0), user_txt, "title", C_CREAM))
     set_pivot(n_guest, gui.PIVOT_E)
@@ -224,6 +225,19 @@ local function rebuild(self)
         sub_text = app_state.auth_error ~= "" and tostring(app_state.auth_error):upper() or "CONNECTION FAILED"
     end
 
+    -- Phone number as an auth method in its own right, standing beside Play
+    -- Games rather than behind it. It used to be reachable only after Google
+    -- had failed three times or the connect deadline had expired, which meant
+    -- the players it exists for — no Play Services, no Google account, a
+    -- consent grant that silent sign-in can never create — had to sit through
+    -- a failure they could not interpret before being offered the thing that
+    -- would have worked immediately.
+    --
+    -- Offered on has_username, the same test the header uses for GUEST, so the
+    -- button and the "sign in" hint above it always agree. A player who is
+    -- already signed in is not shown a second way to sign in.
+    local show_phone_signin = not has_username
+
     mode_tile(self, {
         x = play_cx, y = row_a_cy, w = play_w, h = row_a_h,
         accent      = C_RED,
@@ -236,6 +250,8 @@ local function rebuild(self)
         season_deadline  = self.season_deadline_text,
         cta_label   = cta_text,
         btn_id      = "play_online",
+        alt_cta_label = show_phone_signin and "USE PHONE NUMBER" or nil,
+        alt_cta_id    = show_phone_signin and "phone_signin" or nil,
     })
 
     -- -----------------------------------------------------------------------
@@ -517,6 +533,13 @@ local function handle(self, b)
 
     if b.id == "play_online" then
         go_online(self)
+
+    elseif b.id == "phone_signin" then
+        -- Straight to the keypad. Deliberately NOT routed through go_online:
+        -- that blocks while auth_state is sending/verifying, which is exactly
+        -- when a player who has given up on Play Games wants this button to
+        -- work.
+        msg.post("#controller", "goto_phone_login")
 
     elseif b.id == "quick_play" then
         app_state.mode = "offline"
