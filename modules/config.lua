@@ -3,48 +3,14 @@ local GameMode = require "modules.game_mode"
 
 local M = {}
 
--- ---------------------------------------------------------------------------
--- WHICH BACKEND
--- ---------------------------------------------------------------------------
--- Production by default, always. A build that says nothing about where it is
--- pointed goes to the live server — the alternative (dev by default, switched
--- to production at release time) puts the dangerous mistake on the path
--- somebody takes without thinking about it.
---
--- A test build overrides it from game.project rather than by editing this
--- file:
---
---     API_HOST=dev.matatuleague.com ./build.sh matatu
---
--- build.sh writes [network] api_host into game.project for that build only and
--- restores the file afterwards, so a dev host can never be committed by
--- accident, and a checkout is never quietly pointed somewhere else than it
--- looks. See docs/dev-environment.md in be_matatu for the server side.
-local PRODUCTION_HOST = "api.matatuleague.com"
+-- Detect if we are running in an HTML5 Web Browser
+local is_web = sys.get_sys_info().system_name == "HTML5"
 
--- Read here rather than reusing the cfg() helper further down: this runs at
--- require time, before that block, and everything in the app requires this
--- module. Same pcall discipline for the same reason — sys.get_config was
--- deprecated in favour of sys.get_config_string, and a missing key must fall
--- back to production, never abort config.lua on startup.
-local function config_string(key)
-    local ok, v = pcall(function()
-        if sys.get_config_string then return sys.get_config_string(key, "") end
-        return sys.get_config(key)
-    end)
-    return (ok and v) or ""
-end
-
-local host_override = config_string("network.api_host")
-M.DOMAIN = (host_override ~= "" and host_override) or PRODUCTION_HOST
-M.IS_PRODUCTION_BACKEND = M.DOMAIN == PRODUCTION_HOST
-
--- Say it out loud at startup. A build talking to the wrong backend behaves
--- almost normally — it just cannot see any of the accounts or games you expect
--- — and this one line is the difference between noticing in ten seconds and
--- debugging a phantom for an hour.
-if not M.IS_PRODUCTION_BACKEND then
-    print("[CONFIG] *** NON-PRODUCTION BACKEND: " .. tostring(M.DOMAIN) .. " ***")
+-- If in a browser, talk to localhost. If on Android/Mac, use the network IP.
+if is_web then
+    M.DOMAIN = "api.matatuleague.com"
+else
+    M.DOMAIN = "api.matatuleague.com"
 end
 
 -- Endpoints follow the active game (see modules/game_mode.lua). The backend
