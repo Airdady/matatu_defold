@@ -81,9 +81,15 @@ extern "C" JNIEXPORT void JNICALL Java_com_defold_android_firebaseauth_FirebaseA
         JNIEnv* env, jclass clazz, jint level, jstring message)
 {
     const char* msg = env->GetStringUTFChars(message, 0);
-    if (level == 1)      dmLogError("FirebaseAuth [JAVA ERROR]: %s", msg);
-    else if (level == 2) dmLogWarning("FirebaseAuth [JAVA WARN]: %s", msg);
-    else                 dmLogInfo("FirebaseAuth [JAVA INFO]: %s", msg);
+    
+    if (level == 1) {
+        dmLogError("FirebaseAuth [JAVA ERROR]: %s", msg);
+    } else if (level == 2) {
+        dmLogWarning("FirebaseAuth [JAVA WARN]: %s", msg);
+    } else {
+        dmLogInfo("FirebaseAuth [JAVA INFO]: %s", msg);
+    }
+    
     env->ReleaseStringUTFChars(message, msg);
 }
 

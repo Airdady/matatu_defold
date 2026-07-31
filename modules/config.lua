@@ -8,9 +8,9 @@ local is_web = sys.get_sys_info().system_name == "HTML5"
 
 -- If in a browser, talk to localhost. If on Android/Mac, use the network IP.
 if is_web then
-    M.DOMAIN = "api.matatuleague.com"
+    M.DOMAIN = "simple-maggot-expert.ngrok-free.app"
 else
-    M.DOMAIN = "api.matatuleague.com"
+    M.DOMAIN = "simple-maggot-expert.ngrok-free.ap"
 end
 
 -- Endpoints follow the active game (see modules/game_mode.lua). The backend
