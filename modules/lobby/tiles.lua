@@ -140,7 +140,7 @@ function M.mode(self, cfg)
         local alt_y = y - h/2 + 50 + 46
         -- Outlined rather than filled, so the primary CTA stays the primary
         -- CTA. Two solid pills would read as a choice between equals, and for
-        -- a player whose Play Games works it is not one.
+        -- a player whose Google sign-in works it is not one.
         D.track(self, ui.box(vmath.vector3(alt_x, alt_y, 0), vmath.vector3(alt_w, alt_h, 0), T.GOLD))
         D.track(self, ui.box(vmath.vector3(alt_x, alt_y, 0), vmath.vector3(alt_w - 3, alt_h - 3, 0), T.DARK))
         local n_alt = D.track(self, ui.text(vmath.vector3(alt_x, alt_y, 0), cfg.alt_cta_label, "small", T.CREAM))

@@ -38,35 +38,51 @@ local function build_auth(self)
     ktext(self, vmath.vector3(44, 720 - 40, 0), "X", 26, C_STATE)
     self.buttons[#self.buttons+1] = { node = cb, id = "cancel" }
 
-    ktext(self, vmath.vector3(CX, CY + 120, 0), "GOOGLE PLAY GAMES", 32, C_CREAM)
+    ktext(self, vmath.vector3(CX, CY + 140, 0), "SIGN IN", 32, C_CREAM)
 
-    -- Sign-in is always silent — there is no manual "SIGN IN" button here.
-    -- controller.script retries automatically a few times on failure; this
-    -- screen only ever shows a status line, plus a quiet "TRY AGAIN" once
-    -- the retry budget is exhausted.
     local s = app_state.auth_state
+    if s == "error" and app_state.auth_error ~= "" then
+        ktext(self, vmath.vector3(CX, CY + 90, 0), tostring(app_state.auth_error):upper(), 18, vmath.vector4(1, 0.4, 0.4, 1))
+    elseif s ~= "error" then
+        ktext(self, vmath.vector3(CX, CY + 90, 0), "Connecting...", 20, C_STATE)
+    end
+
+    -- SIGN IN WITH GOOGLE — a real button, which this screen did not have.
+    --
+    -- Sign-in used to be silent and only silent: the comment here said so, and
+    -- the screen offered nothing but a status line and, eventually, TRY AGAIN.
+    -- That was a reasonable design for Play Games, where an interactive prompt
+    -- was a last resort. It is the wrong one for Firebase, where the account
+    -- picker is the ordinary way a person signs in and is the thing that
+    -- CREATES the consent a silent attempt can only ever reuse.
+    --
+    -- It is the primary action on the screen, drawn filled, because a player
+    -- who has got this far has already waited through a silent attempt that
+    -- did not work.
+    local gy = CY + 10
+    local gb = track(self, ui.box(vmath.vector3(CX, gy, 0), vmath.vector3(320, 64, 0), vmath.vector4(1, 1, 1, 1)))
+    -- The G, in Google's blue, standing in for the mark. Deliberately not an
+    -- imitation of the official button: the brand guidelines are specific
+    -- about the real one, and a near-miss is worse than an honest plain button.
+    ktext(self, vmath.vector3(CX - 120, gy, 0), "G", 30, vmath.vector4(0.259, 0.522, 0.957, 1))
+    ktext(self, vmath.vector3(CX + 16, gy, 0), "SIGN IN WITH GOOGLE", 20, vmath.vector4(0.13, 0.13, 0.13, 1))
+    self.buttons[#self.buttons+1] = { node = gb, id = "google_signin" }
+
     if s == "error" then
-        if app_state.auth_error ~= "" then
-            ktext(self, vmath.vector3(CX, CY + 20, 0), tostring(app_state.auth_error):upper(), 18, vmath.vector4(1, 0.4, 0.4, 1))
-        end
-        local btn = track(self, ui.box(vmath.vector3(CX, CY - 40, 0), vmath.vector3(280, 64, 0), C_ACCENT))
-        ktext(self, vmath.vector3(CX, CY - 40, 0), "TRY AGAIN", 24, C_CREAM)
+        local btn = track(self, ui.box(vmath.vector3(CX, CY - 60, 0), vmath.vector3(280, 52, 0), C_ACCENT))
+        ktext(self, vmath.vector3(CX, CY - 60, 0), "TRY AGAIN", 20, C_CREAM)
         self.buttons[#self.buttons+1] = { node = btn, id = "retry_silent_login" }
-    else
-        ktext(self, vmath.vector3(CX, CY, 0), "Connecting...", 24, C_STATE)
     end
 
     -- The other credential, offered here at all times — including while this
     -- screen still says "Connecting...".
     --
-    -- This screen is where a player ends up when Play Games is not working for
-    -- them, and the one thing it could not do until now was let them stop
-    -- waiting on it. Waiting is precisely what does not help the failure that
-    -- keeps coming back: sign-in succeeds, the server auth code comes back
-    -- empty because no consent grant exists, and silent sign-in can never
-    -- create one. Retrying that reproduces it forever; a phone number does not
-    -- go through it at all.
-    local py = (s == "error") and (CY - 130) or (CY - 90)
+    -- This screen is where a player ends up when Google sign-in is not working
+    -- for them, and the one thing it could not do until now was let them stop
+    -- waiting on it. Some devices have no Google account at all, and no amount
+    -- of retrying invents one; a phone number does not go through Google at
+    -- all.
+    local py = (s == "error") and (CY - 130) or (CY - 70)
     local pb = track(self, ui.box(vmath.vector3(CX, py, 0), vmath.vector3(300, 56, 0), vmath.vector4(0.784, 0.580, 0.235, 1)))
     track(self, ui.box(vmath.vector3(CX, py, 0), vmath.vector3(296, 52, 0), vmath.vector4(0.05, 0.04, 0.03, 1)))
     ktext(self, vmath.vector3(CX, py, 0), "USE PHONE NUMBER", 20, C_CREAM)
@@ -119,6 +135,8 @@ function on_input(self, action_id, action)
             if b.node and gui.pick_node(b.node, action.x, action.y) then
                 if b.id == "cancel" then
                     msg.post("#controller", "auth_cancel")
+                elseif b.id == "google_signin" then
+                    msg.post("#controller", "google_signin")
                 elseif b.id == "retry_silent_login" then
                     msg.post("#controller", "auth_retry_silent_login")
                 elseif b.id == "phone_signin" then

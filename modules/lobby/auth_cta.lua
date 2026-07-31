@@ -14,7 +14,7 @@
 --
 -- That is not a rare shape. Silent sign-in retries quietly and open-endedly and
 -- deliberately never sets auth_state to "error" any more, so a player it can
--- never satisfy — a stale Play Games credential, an account the backend
+-- never satisfy — a stale Google credential, an account the backend
 -- rejects, no Play Services at all — sees no failure to react to. The tile
 -- says PLAY NOW, the tap does nothing they can see, and with the button hidden
 -- there was no other route in.

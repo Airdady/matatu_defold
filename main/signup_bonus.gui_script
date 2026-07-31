@@ -8,7 +8,7 @@
 -- Unlike daily_bonus/season_results this isn't driven by a websocket push —
 -- controller.script posts "show_signup_bonus" directly right after a
 -- POST /auth/google response comes back with isNewUser = true (see
--- gpgs_callback in controller.script). Follows the same global-overlay
+-- handle_auth_result in controller.script). Follows the same global-overlay
 -- pattern otherwise: acquire input focus, fully blocking modal, defers to
 -- the season-complete and daily-bonus modals (both higher priority, and the
 -- latter only momentarily on a brand new account) if either is showing.

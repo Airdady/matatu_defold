@@ -71,7 +71,7 @@ end
 
 -- This step serves two jobs, both of them "type digits on a keypad":
 --   "link"  attach a number to an already-signed-in account (the original)
---   "login" sign IN by number, when Google Play Games cannot work at all
+--   "login" sign IN by number, when Google sign-in cannot work at all
 --
 -- There is no longer a third "code" mode: sign-in issues no SMS code, so a
 -- valid number is the whole of the input and CONTINUE goes straight through
@@ -644,7 +644,7 @@ local function handle(self, b)
     elseif b.id == "phone_cancel" then
         -- Back to the lobby, not to "online": there is no session behind this
         -- screen, so the online lobby has nothing to show. The offline modes
-        -- are there, and PLAY NOW restarts Play Games sign-in.
+        -- are there, and PLAY NOW restarts Google sign-in.
         self.phone = ""
         self._phone_error = nil
         msg.post("#controller", "goto_lobby")

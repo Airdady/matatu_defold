@@ -1,0 +1,11 @@
+dependencies {
+    // Firebase Authentication. Pinned via the BoM so the auth artifact and
+    // everything it pulls in are a set that Google tested together — the
+    // versions do not move independently.
+    implementation platform('com.google.firebase:firebase-bom:33.7.0')
+    implementation 'com.google.firebase:firebase-auth'
+
+    // Google Sign-In. This is what actually produces the Google ID token that
+    // Firebase then exchanges for a session.
+    implementation 'com.google.android.gms:play-services-auth:21.3.0'
+}

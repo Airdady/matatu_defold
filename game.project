@@ -3,7 +3,6 @@ title = Matatu
 version = 18.5.9
 bundle_resources = /bundle
 dependencies#0 = https://github.com/defold/extension-websocket/archive/refs/tags/4.2.3.zip
-dependencies#1 = https://github.com/defold/extension-gpgs/archive/refs/tags/4.2.0.zip
 
 [bootstrap]
 main_collection = /main/main.collectionc
@@ -46,6 +45,32 @@ force_refresh_token = 1
 client_id = 413944711733-obti4e9cb3eu0jal7ol59s62lv0nkc7e.apps.googleusercontent.com
 client_token = 413944711733-obti4e9cb3eu0jal7ol59s62lv0nkc7e.apps.googleusercontent.com
 
+[firebase]
+; Firebase Authentication, read by the firebaseauth native extension.
+;
+; These four values are what google-services.json normally supplies. Defold does
+; not apply the Google Services Gradle plugin, so that file's generated string
+; resources do not exist in this build and FirebaseOptions is constructed by
+; hand instead — see firebaseauth/src/FirebaseAuthDefold.java.
+;
+; Where each one comes from, in the Firebase console under
+; Project settings ▸ General ▸ Your apps ▸ the Android app:
+;   api_key        "Web API Key" (starts AIza…)
+;   app_id         "App ID" (1:413944711733:android:…)
+;   project_id     already correct below
+;   web_client_id  Authentication ▸ Sign-in method ▸ Google ▸ Web SDK
+;                  configuration ▸ Web client ID
+;
+; api_key and app_id are the two that must be filled in. The extension refuses
+; to initialise without them and says which is missing rather than failing later
+; inside a sign-in attempt.
+project_id = matatu-7aba6
+api_key =
+app_id =
+; The same web OAuth client the GPGS flow already used and the backend already
+; verifies against — one value, not a second one to keep in step. The extension
+; falls back to gpgs.client_id if this is blank, so they cannot drift apart.
+web_client_id = 413944711733-obti4e9cb3eu0jal7ol59s62lv0nkc7e.apps.googleusercontent.com
 
 [websocket]
 debug = 0

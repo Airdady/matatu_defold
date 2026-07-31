@@ -18,7 +18,7 @@
 --
 -- Silent sign-in retries quietly and open-endedly and deliberately never sets
 -- auth_state to "error" any more, so there is no failure state on screen. A
--- player it can never satisfy — a stale Play Games credential, an account the
+-- player it can never satisfy — a stale Google credential, an account the
 -- backend rejects, a device with no Play Services — sees a tile that says
 -- PLAY NOW, taps it, and watches nothing happen. With the button hidden there
 -- was no second route in and nothing to explain the first one.
