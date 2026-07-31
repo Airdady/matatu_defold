@@ -25,6 +25,7 @@ local D      = require("modules.lobby.draw")
 local Tiles  = require("modules.lobby.tiles")
 local Season = require("modules.lobby.season")
 local Cups   = require("modules.lobby.cups")
+local AuthCta = require("modules.lobby.auth_cta")
 
 -- Local aliases keep the rest of this file reading as it did before the split.
 local track     = D.track
@@ -233,10 +234,11 @@ local function rebuild(self)
     -- a failure they could not interpret before being offered the thing that
     -- would have worked immediately.
     --
-    -- Offered on has_username, the same test the header uses for GUEST, so the
-    -- button and the "sign in" hint above it always agree. A player who is
-    -- already signed in is not shown a second way to sign in.
-    local show_phone_signin = not has_username
+    -- WHEN it is offered: any time the player is not actually online. The rule
+    -- lives in modules/lobby/auth_cta.lua, with the reasoning and a test —
+    -- the previous version of it was `not has_username`, which hid the backup
+    -- from exactly the players who needed it.
+    local show_phone_signin = AuthCta.should_offer_phone_login(ws.current_user_data, ws.is_identified)
 
     mode_tile(self, {
         x = play_cx, y = row_a_cy, w = play_w, h = row_a_h,
@@ -250,7 +252,7 @@ local function rebuild(self)
         season_deadline  = self.season_deadline_text,
         cta_label   = cta_text,
         btn_id      = "play_online",
-        alt_cta_label = show_phone_signin and "USE PHONE NUMBER" or nil,
+        alt_cta_label = show_phone_signin and "LOGIN WITH PHONE" or nil,
         alt_cta_id    = show_phone_signin and "phone_signin" or nil,
     })
 

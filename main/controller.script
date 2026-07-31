@@ -764,6 +764,14 @@ function init(self)
             route_after_auth(self)
             return
         end
+        -- Repaint the lobby even on the silent path. Only the explicit
+        -- "Play Online" flow above used to, which was harmless while nothing
+        -- on the tile depended on being connected — but the LOGIN WITH PHONE
+        -- backup is shown until ws.is_identified, so without this a player
+        -- who signed in silently at boot would keep being offered a second
+        -- way to sign in until something else happened to rebuild.
+        msg.post("#lobby", "auth_state_changed")
+
         -- Silent boot-time identify (no explicit "Play Online" tap): still
         -- auto-resume an in-progress game. IDENTIFY's own response already
         -- carries the active game state when there is one (see
@@ -916,6 +924,12 @@ function init(self)
     forward("savings_status",           "#online", "ws_savings_status")
     forward("savings_exchange_result",  "#online", "ws_savings_exchange_result")
     forward("savings_settings_updated", "#online", "ws_savings_settings_updated")
+
+    -- The other half of showing LOGIN WITH PHONE until ws.is_identified: a
+    -- drop clears that flag, and a player sitting on the lobby when it happens
+    -- needs the backup back. Only "#online" was told before, which is the one
+    -- screen they are not on.
+    forward("disconnected",           "#lobby", "auth_state_changed")
 
     forward("savings_status",           "#payments", "ws_savings_status")
     forward("savings_exchange_result",  "#payments", "ws_savings_exchange_result")
