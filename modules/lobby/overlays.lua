@@ -95,70 +95,8 @@ function M.tutorial(self)
 end
 
 function M.consent(self)
-    if not self.consent_active then return end
-    local phase = self.consent_phase or "ask"
-
-    local scrim = D.track(self, ui.cover(T.LOGICAL_W, T.LOGICAL_H, vmath.vector4(0, 0, 0, 0.85)))
-    self.buttons[#self.buttons + 1] = { node = scrim, id = "consent_block" }
-
-    local pw, ph = 680, 470
-    D.track(self, ui.box(vmath.vector3(T.CX, T.CY, 0), vmath.vector3(pw, ph, 0), T.BORDER))
-    D.track(self, ui.box(vmath.vector3(T.CX, T.CY, 0), vmath.vector3(pw - 2, ph - 2, 0), T.TILE))
-    
-    local strip_col = (phase == "done") and T.CONSENT_DONE or T.CONSENT_ACCENT
-    D.track(self, ui.box(vmath.vector3(T.CX, T.CY + ph / 2 - 3, 0), vmath.vector3(pw, 6, 0), strip_col))
-
-    local av_y = T.CY + ph / 2 - 84
-    local frame_col = (phase == "done") and T.CONSENT_DONE or T.CONSENT_ACCENT
-    D.track(self, ui.box(vmath.vector3(T.CX, av_y, 0), vmath.vector3(104, 104, 0), frame_col))
-    D.track(self, ui.box(vmath.vector3(T.CX, av_y, 0), vmath.vector3(100, 100, 0), T.CONSENT_DARK))
-    local av = D.track(self, ui.avatar(vmath.vector3(T.CX, av_y, 0), vmath.vector3(92, 92, 0), akira.avatar()))
-    
-    if phase == "installing" then
-        gui.animate(av, "scale", vmath.vector3(1.07, 1.07, 1), gui.EASING_INOUTSINE, 0.45, 0, nil, gui.PLAYBACK_LOOP_PINGPONG)
-    elseif phase == "done" then
-        gui.set_scale(av, vmath.vector3(0.85, 0.85, 1))
-        gui.animate(av, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTBACK, 0.4)
-    end
-
-    if phase == "ask" then
-        D.track(self, ui.text(vmath.vector3(T.CX, av_y - 78, 0), "MEET AKIRA - YOUR AI HELPER", "subtitle2", T.CREAM, 26 / 34))
-        local lines = { "Akira plays your turns whenever you go offline", "or run out of time, so you never lose your", "entry tokens. Install Akira to protect your games." }
-        local ly = av_y - 122
-        for _, line in ipairs(lines) do
-            D.track(self, ui.text(vmath.vector3(T.CX, ly, 0), line, "body", T.CONSENT_BODY, 19 / 28))
-            ly = ly - 32
-        end
-        local by = T.CY - ph / 2 + 60
-        local inst = D.track(self, ui.box(vmath.vector3(T.CX + 140, by, 0), vmath.vector3(248, 58, 0), T.CONSENT_ACCENT))
-        D.track(self, ui.text(vmath.vector3(T.CX + 140, by - 2, 0), "INSTALL AKIRA", "subtitle2", T.CONSENT_DARK, 20 / 34))
-        self.buttons[#self.buttons + 1] = { node = inst, id = "consent_install" }
-        local later = D.track(self, ui.box(vmath.vector3(T.CX - 140, by, 0), vmath.vector3(248, 58, 0), T.CONSENT_NEUTRAL))
-        D.track(self, ui.text(vmath.vector3(T.CX - 140, by - 2, 0), "NOT NOW", "subtitle2", T.CONSENT_BODY, 20 / 34))
-        self.buttons[#self.buttons + 1] = { node = later, id = "consent_later" }
-
-    elseif phase == "installing" then
-        D.track(self, ui.text(vmath.vector3(T.CX, av_y - 78, 0), "INSTALLING AKIRA", "subtitle2", T.CREAM, 26 / 34))
-        local bar_w = 480
-        local bar_y = av_y - 130
-        D.track(self, ui.box(vmath.vector3(T.CX, bar_y, 0), vmath.vector3(bar_w, 10, 0), T.CONSENT_NEUTRAL))
-        local fill = ui.box(vmath.vector3(T.CX - bar_w / 2, bar_y, 0), vmath.vector3(1, 10, 0), T.CONSENT_ACCENT)
-        gui.D.set_pivot(fill, gui.PIVOT_W)
-        D.track(self, fill)
-        self._install_fill   = fill
-        self._install_bar_w  = bar_w
-        self._install_pct    = D.track(self, ui.text(vmath.vector3(T.CX, bar_y - 34, 0), "0%", "subtitle2", T.CONSENT_ACCENT, 20 / 34))
-        self._install_status = D.track(self, ui.text(vmath.vector3(T.CX, bar_y - 68, 0), INSTALL_STEPS[1].label, "body", T.CONSENT_BODY, 17 / 28))
-
-    else -- done
-        D.track(self, ui.text(vmath.vector3(T.CX, av_y - 78, 0), "AKIRA INSTALLED", "subtitle2", T.CONSENT_DONE, 26 / 34))
-        D.track(self, ui.text(vmath.vector3(T.CX, av_y - 118, 0), "Akira now guards your seat whenever you", "body", T.CONSENT_BODY, 19 / 28))
-        D.track(self, ui.text(vmath.vector3(T.CX, av_y - 150, 0), "drop or time out. Good luck out there!", "body", T.CONSENT_BODY, 19 / 28))
-        local by = T.CY - ph / 2 + 60
-        local done_btn = D.track(self, ui.box(vmath.vector3(T.CX, by, 0), vmath.vector3(248, 58, 0), T.CONSENT_DONE))
-        D.track(self, ui.text(vmath.vector3(T.CX, by - 2, 0), "DONE", "subtitle2", T.CONSENT_DARK, 20 / 34))
-        self.buttons[#self.buttons + 1] = { node = done_btn, id = "consent_done" }
-    end
+    -- Akira consent dialogue removed
+    return
 end
 
 function M.ai_select(self)

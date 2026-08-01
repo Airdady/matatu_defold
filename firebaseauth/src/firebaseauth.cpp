@@ -297,10 +297,7 @@ static dmExtension::Result InitializeFirebaseAuth(dmExtension::Params* params)
     const char* apiKey    = Cfg(params->m_ConfigFile, "firebase.api_key", "");
     const char* appId     = Cfg(params->m_ConfigFile, "firebase.app_id", "");
     const char* projectId = Cfg(params->m_ConfigFile, "firebase.project_id", "");
-    // Falls back to the GPGS client id, which for this project is the same web
-    // OAuth client — one value, already correct, in one place.
-    const char* webClient = Cfg(params->m_ConfigFile, "firebase.web_client_id",
-                                Cfg(params->m_ConfigFile, "gpgs.client_id", ""));
+    const char* webClient = Cfg(params->m_ConfigFile, "firebase.web_client_id", "");
 
     jstring jApiKey  = env->NewStringUTF(apiKey);
     jstring jAppId   = env->NewStringUTF(appId);

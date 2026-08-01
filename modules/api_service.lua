@@ -208,29 +208,7 @@ function M.firebase_login(id_token, cb)
     end)
 end
 
--- DEPRECATED: Google Play Games serverAuthCode sign-in.
---
--- Superseded by firebase_login above. Kept only so this build can still talk to
--- a backend that has not been deployed yet; nothing calls it once Firebase is
--- initialised.
-function M.gpgs_login(server_auth_code, cb)
-    -- Changed 'authCode' to 'serverAuthCode' to match the backend exactly
-    local payload = {
-        serverAuthCode = server_auth_code,
-        deviceId       = M.get_device_id()
-    }
 
-    -- Directs to the standard GPGS login endpoint on your backend
-    request("POST", "/auth/google", payload, function(result)
-        -- Changed 'idToken' to 'token' to match backend's generated JWT
-        if result.success and result.data and result.data.token then
-            M.set_auth_token(result.data.token)
-        end
-        if cb then
-            cb(result)
-        end
-    end)
-end
 
 -- Old-account migration: link a phone number to the just-authenticated
 -- Google account. Requires the Bearer token already set via set_auth_token

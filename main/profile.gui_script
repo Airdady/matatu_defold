@@ -513,16 +513,6 @@ end
 -- means it reliably reappears on every login/reconnect until satisfied.
 local function decide_step(self)
     local u = ws.current_user_data or {}
-    -- No account at all: this screen is the WAY IN, not a profile step. It is
-    -- reached when Google Play Games could not sign the player in — Play
-    -- Services missing or disabled, no Google account, an OAuth client not
-    -- registered for the build — so the number is the only credential
-    -- available.
-    if (u._id or "") == "" then
-        self.step = "phone"
-        self.phone_mode = "login"
-        return
-    end
     self.phone_mode = "link"
     if app_state.phone_required() and not app_state.phone_complete(u) then
         self.step = "phone"
@@ -555,20 +545,7 @@ function on_message(self, message_id, message, sender)
         if self._active then rebuild(self) end
     elseif message_id == hash("user_data_updated") then
         if self._active then rebuild(self) end
-    elseif message_id == hash("phone_login_required") then
-        -- The controller gave up on Google sign-in (retry budget spent, or the
-        -- connect deadline expired) and routed here for a number.
-        --
-        -- decide_step() cannot work this out on its own: it reads "login" mode
-        -- off an EMPTY _id, and the stall this exists for happens with a
-        -- cached user that has a perfectly good _id and a session that simply
-        -- does not work. So the mode is stated rather than inferred.
-        self.step = "phone"
-        self.phone_mode = "login"
-        self.phone = ""
-        self._phone_saving = false
-        self._phone_error = nil
-        if self._active then rebuild(self) end
+
     elseif message_id == hash("phone_link_result") then
         self._phone_saving = false
         if message.ok then
@@ -604,18 +581,10 @@ local function handle(self, b)
         if ok and not self._phone_saving then
             self._phone_saving = true
             self._phone_error = nil
-            if phone_mode(self) == "login" then
-                -- One request, one answer: a valid number signs the player
-                -- straight in, finding the account or creating it.
-                self._login_phone = "0" .. self.phone
-                msg.post("#controller", "phone_login", { phoneNumber = self._login_phone })
-            else
-                -- self.phone is the 9 local digits only (no leading "0") — the
-                -- backend's own storage format is 07XXXXXXXX (be_matatu's
-                -- normalizeUgPhone), so prepend it here rather than relying on
-                -- the server to guess/normalize an ambiguous wire format.
-                msg.post("#controller", "link_phone", { phoneNumber = "0" .. self.phone })
-            end
+            -- self.phone is the 9 local digits only (no leading "0") — the
+            -- backend's own storage format is 07XXXXXXXX (be_matatu's
+            -- normalizeUgPhone), so prepend it here.
+            msg.post("#controller", "link_phone", { phoneNumber = "0" .. self.phone })
             rebuild(self)
         end
     elseif b.id:sub(1,2) == "p_" then

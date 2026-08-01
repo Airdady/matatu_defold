@@ -189,28 +189,9 @@ local SILENT_LOGIN_BACKOFF = { 1, 2, 6, 12, 30, 60 }  -- last entry repeats
 -- (see force_fresh_auth_session) instead of waiting three attempts to try the
 -- one thing that can change the answer.
 local CLEANUP_AFTER_ATTEMPTS = 2
-local PHONE_AFTER_ATTEMPTS   = 3
 
--- A HARD DEADLINE, because counting attempts is not enough.
---
--- An attempt that never calls back is not a failure the ladder can count, so
--- no attempt-based rule can bound it — and that is exactly the shape of the
--- stall being reported: sign-in or the backend verify goes out, nothing comes
--- back, and the counter sits where it is while the lobby reads CONNECTING
--- forever.
---
--- So there are two independent triggers for the phone fallback and whichever
--- fires first wins: PHONE_AFTER_ATTEMPTS failed attempts, or this many
--- seconds of wall clock since connecting began. The clock covers the WHOLE
--- pipeline — Google sign-in, the backend verify, and the socket identify
--- — because a hang anywhere in it looks identical to the player.
+-- A HARD DEADLINE to prevent indefinite connecting state.
 local CONNECT_DEADLINE_SECONDS = 10
-
--- The interactive Google sheet gets its own, much longer window. The 10s rule
--- above is there to bound a player staring at CONNECTING with nothing visibly
--- happening; a player reading an account picker is not in that state, and
--- dropping the phone screen on top of Google's own UI would be worse than the
--- stall. Still bounded, so an abandoned sheet ends somewhere.
 local INTERACTIVE_DEADLINE_SECONDS = 60
 
 -- Interactive Google sign-in is NOT on the automatic ladder any more. A sheet
@@ -240,42 +221,6 @@ local function cancel_silent_login_retry(self)
     end
 end
 
--- Put the number keypad on screen. No guards at all — this is the routing
--- half, shared by the automatic fallback below and by the player choosing
--- phone sign-in outright from the lobby or the auth screen.
-local function show_phone_login(self)
-    show(self, "profile")
-    -- And tell it to ASK for a number rather than work it out. The profile
-    -- screen picks its mode from whether the cached user has an _id, which on
-    -- the fallback path it does — the session simply does not work. Without
-    -- this it would show the ordinary profile step and the player would still
-    -- have no route online. Posted after show() so it lands after
-    -- screen_enter's own decide_step.
-    msg.post("#profile", "phone_login_required")
-end
-
--- Show the phone number as the way in. Once per run, and never over a session
--- that already works. Returns whether it actually did anything, so callers can
--- log the reason that won rather than guessing.
---
--- This is the AUTOMATIC route only — the app deciding, after the ladder has
--- run out, that Google sign-in is not going to work here. The player asking for it
--- deliberately goes through goto_phone_login below and is subject to none of
--- these guards: "once per run" describes how often the app may interrupt
--- somebody, not how often somebody may choose.
-local function offer_phone_login(self, why)
-    if self._offered_phone_login then return false end
-    -- identify_ok, NOT is_logged_in(). A cached session at boot makes
-    -- is_logged_in() true immediately, so guarding on it here would refuse to
-    -- offer the fallback on precisely the path that stalls: cached session
-    -- present, IDENTIFY rejected, nothing usable behind it.
-    if identify_ok then return false end
-    self._offered_phone_login = true
-    auth_debug("offering phone sign-in — %s", tostring(why))
-    show_phone_login(self)
-    return true
-end
-
 local function cancel_connect_deadline(self)
     if self._connect_deadline_timer then
         pcall(timer.cancel, self._connect_deadline_timer)
@@ -283,33 +228,22 @@ local function cancel_connect_deadline(self)
     end
 end
 
--- Armed once when connecting begins and left to run. Deliberately NOT re-armed
--- by each attempt: a deadline that restarts every time the thing it is timing
--- makes another attempt is not a deadline, and would never expire on the exact
--- retry loop it exists to bound.
--- seconds/force are for the interactive sheet: while the player is reading a
--- Google account picker they are not stuck, so the 10s rule would be measuring
--- the wrong thing and would drop the phone screen on top of the sheet.
 local function arm_connect_deadline(self, seconds, force)
     if self._connect_deadline_timer and not force then return end
-    if self._offered_phone_login then return end
-    -- _identify_ok rather than is_logged_in() for the same reason the callback
-    -- below uses it: a cached session populates current_user_data before the
-    -- socket has accepted it, and that boot-time auto-identify failing is the
-    -- exact case in the reported log. is_logged_in() here would decline to arm
-    -- the deadline on the one path that most needs it.
     if identify_ok then return end
     cancel_connect_deadline(self)
     local window = tonumber(seconds) or CONNECT_DEADLINE_SECONDS
     auth_debug("arming %ds connect deadline", window)
     self._connect_deadline_timer = timer.delay(window, false, function()
         self._connect_deadline_timer = nil
-        -- identify_ok, not is_logged_in(): current_user_data is populated the
-        -- moment a payload arrives, well before the socket has accepted it, so
-        -- is_logged_in() would call a half-finished connect a success and let
-        -- the stall through. Only identify_success means connected.
         if identify_ok then return end
-        offer_phone_login(self, string.format("still not connected after %ds", window))
+        auth_debug("connect deadline (%ds) expired without connection", window)
+        self._silent_login_inflight = false
+        if self._explicit_online or app_state.auth_state == "sending" or app_state.auth_state == "verifying" then
+            app_state.auth_state = "error"
+            app_state.auth_error = "Connection timed out"
+            msg.post("#lobby", "auth_state_changed")
+        end
     end)
 end
 
@@ -399,9 +333,8 @@ local function handle_login_failure(self, error_message, opts)
     self._silent_login_inflight = false
 
     -- The player is waiting: escalate to the interactive sheet rather than
-    -- making them watch a silent retry they cannot see. Same rung as 4 below,
-    -- reached sooner because someone is actually looking at it.
-    local waiting = self._explicit_online and attempts >= 2
+    -- making them watch a silent retry they cannot see.
+    local waiting = self._explicit_online and attempts >= 1
     if waiting then
         auth_debug("handle_login_failure: player is waiting, escalating to interactive login")
         self._explicit_online = false
@@ -457,26 +390,8 @@ local function handle_login_failure(self, error_message, opts)
     -- never give the cheap fix its one attempt.
     local consent_needed = opts.missing_auth_code and forced_before >= 1
 
-    -- _phone_login_chosen: the player went to the number keypad deliberately
-    -- rather than being sent there. Google's sheet must not open on top of a
-    -- screen they picked, and the silent retry below must not sign them in as
-    -- somebody else while they are still typing.
     local go_interactive = fbauth.available and not identify_ok
-        and not self._phone_login_chosen
         and (waiting or (consent_needed and not self._interactive_login_done))
-
-    -- Rung 3 — Google sign-in is not working on this device. Offer the phone
-    -- number, rather than retrying silently forever behind a lobby the player
-    -- cannot take online. The other trigger for this is the wall-clock
-    -- deadline; whichever gets here first wins and the other is a no-op.
-    --
-    -- Suppressed while Google's sheet is up, in this pass and in the queued
-    -- retries behind it: dropping the profile screen on top of an account
-    -- picker the player is mid-way through is worse than the wait.
-    if attempts >= PHONE_AFTER_ATTEMPTS and not go_interactive
-       and not self._interactive_open then
-        offer_phone_login(self, string.format("%d failed sign-in attempts", attempts))
-    end
 
     if go_interactive then
         self._interactive_login_done = true
@@ -485,32 +400,10 @@ local function handle_login_failure(self, error_message, opts)
             consent_needed and "no auth code — consent cannot be granted silently"
                            or "player is waiting", attempts)
         self._silent_login_inflight = true
-        -- No silent retry armed alongside this one. A silent_login() firing
-        -- while the player is part-way through Google's own sign-in is a real
-        -- hazard — two sign-in flows into one callback — and the ladder does
-        -- not need it here: the sheet produces a callback that re-enters this
-        -- function, and the deadline below catches the case where it never
-        -- does.
-        --
-        -- Which is why the deadline gets a longer window rather than none. The
-        -- 10s rule exists to bound a player staring at CONNECTING with nothing
-        -- happening; someone reading an account picker is not in that state.
         cancel_silent_login_retry(self)
         arm_connect_deadline(self, INTERACTIVE_DEADLINE_SECONDS, true)
         fbauth.login(function(result) handle_auth_result(self, result) end)
-    elseif self._phone_login_chosen then
-        -- The player is on the keypad because they chose to be. Retrying
-        -- underneath is what the automatic fallback wants (Google sign-in might
-        -- recover), but here it would resolve an argument the player has
-        -- already settled — and a silent success routes straight past the
-        -- screen they are typing into. PLAY NOW restarts Google sign-in if
-        -- they change their mind.
-        auth_debug("handle_login_failure: phone sign-in was chosen, standing down")
     else
-        -- Keep trying, quietly and for as long as the app is open. Nothing
-        -- here sets auth_state = "error": a background attempt that fails is
-        -- not something to put in front of the player, and the previous
-        -- behaviour of doing so is what left the lobby stuck on TRY AGAIN.
         local delay = silent_login_delay(attempts)
         auth_debug("handle_login_failure: retrying silently in %.1fs", delay)
         cancel_silent_login_retry(self)
@@ -555,7 +448,9 @@ handle_auth_result = function(self, result)
             auth_debug("handle_auth_result: BUILD MISCONFIGURED (%s) — %s",
                 tostring(result.code), tostring(result.error))
             self._silent_login_inflight = false
-            offer_phone_login(self, "sign-in is not configured for this build")
+            app_state.auth_state = "error"
+            app_state.auth_error = "Sign-in misconfigured"
+            msg.post("#lobby", "auth_state_changed")
             return
         end
 
@@ -672,13 +567,7 @@ function init(self)
         if event ~= window.WINDOW_EVENT_FOCUS_GAINED then return end
 
         -- Only when there is no session and nothing already in flight, so this
-        -- never piles a second attempt on top of a running one.
-        -- Not while the player is on the number keypad by their own choice:
-        -- coming back from the SMS app or the contacts list is the most
-        -- likely reason focus returns there, and signing them in with Google
-        -- at that moment would throw away what they were mid-way through.
-        if fbauth.available and not is_logged_in() and not self._silent_login_inflight
-           and not self._phone_login_chosen then
+        if fbauth.available and not is_logged_in() and not self._silent_login_inflight then
             auth_debug("focus regained with no session — retrying silent sign-in")
             try_silent_login(self)
         end
@@ -739,11 +628,7 @@ function init(self)
         if fbauth.available then
             try_silent_login(self)
         else
-            -- Firebase sign-in is not available at all: an editor/desktop run,
-            -- or a build where the extension failed to initialise. There is
-            -- nothing to retry, so go straight to the phone sign-in rather
-            -- than sitting signed out forever.
-            offer_phone_login(self, "Google sign-in is not available on this device")
+            auth_debug("init: Firebase auth not available on this platform")
         end
     end
 
@@ -1025,12 +910,6 @@ end
 
 function on_message(self, message_id, message, sender)
     if message_id == hash("goto_lobby") then
-        -- Leaving the keypad ends the choice that stood Google sign-in down. It
-        -- does not restart sign-in by itself — nothing is scheduled any more —
-        -- but PLAY NOW and the next return to the foreground are free to try
-        -- again, which is what stops backing out of phone login from leaving
-        -- the player signed out with nothing working behind the lobby.
-        self._phone_login_chosen = false
         show(self, "lobby")
     elseif message_id == hash("goto_game") then show(self, "game")
     elseif message_id == hash("goto_online") then
@@ -1054,30 +933,10 @@ function on_message(self, message_id, message, sender)
         if is_logged_in() then show(self, "profile") else show(self, "lobby") end
     elseif message_id == hash("goto_auth") then show(self, "auth")
 
-    elseif message_id == hash("goto_phone_login") then
-        -- The player picked the number instead of Google. This is an
-        -- auth method in its own right, not a fallback, so none of the
-        -- fallback's guards apply: not "once per run", not "only if Google
-        -- has already failed", not "only if there is no session".
-        auth_debug("goto_phone_login: player chose phone sign-in")
-        self._phone_login_chosen = true
-        -- Nothing armed behind this screen. A parked silent retry firing
-        -- while they type would either navigate them away mid-entry or drop
-        -- the automatic fallback on top of the screen they already asked for.
-        cancel_silent_login_retry(self)
-        cancel_connect_deadline(self)
-        self._offered_phone_login = true
-        self._explicit_online = false
-        app_state.auth_state = "idle"
-        msg.post("#lobby", "auth_state_changed")
-        show_phone_login(self)
+
 
     elseif message_id == hash("play_online") then
         self._explicit_online = true
-        -- Tapping PLAY NOW is how a player changes their mind back: Firebase
-        -- is live again from here, including the retries the phone
-        -- choice stood down.
-        self._phone_login_chosen = false
         auth_debug("play_online tapped: user_id=%s socket_connected=%s is_identified=%s inflight=%s",
             tostring(ws.current_user_data and ws.current_user_data._id), tostring(ws.socket_connected),
             tostring(ws.is_identified), tostring(self._silent_login_inflight))
@@ -1140,7 +999,6 @@ function on_message(self, message_id, message, sender)
         -- the only route in on a device where no Google account is signed in
         -- yet, because the picker is where one gets added.
         if fbauth.available then
-            self._phone_login_chosen = false
             self._interactive_open = true
             self._interactive_login_done = true
             self._silent_login_inflight = true
@@ -1154,7 +1012,6 @@ function on_message(self, message_id, message, sender)
             fbauth.login(function(result) handle_auth_result(self, result) end)
         else
             auth_debug("google_signin: Firebase auth not available on this device")
-            offer_phone_login(self, "Google sign-in is not available on this device")
         end
 
     elseif message_id == hash("auth_retry_silent_login") then
@@ -1197,9 +1054,6 @@ function on_message(self, message_id, message, sender)
                 cancel_silent_login_retry(self)
                 self._silent_login_attempts = 0
                 self._silent_login_inflight = false
-                -- The choice has been honoured. If THIS session goes wrong
-                -- later the ordinary ladder should be free to run again.
-                self._phone_login_chosen = false
                 pcall(ws.disconnect)
                 identify_and_connect(user)
                 app_state.auth_state = "done"

@@ -25,7 +25,6 @@ local D      = require("modules.lobby.draw")
 local Tiles  = require("modules.lobby.tiles")
 local Season = require("modules.lobby.season")
 local Cups   = require("modules.lobby.cups")
-local AuthCta = require("modules.lobby.auth_cta")
 
 -- Local aliases keep the rest of this file reading as it did before the split.
 local track     = D.track
@@ -41,9 +40,7 @@ local C_DARK, C_TRANSP, C_MUTED = T.DARK, T.TRANSP, T.MUTED
 local C_COPPER, C_TAN           = T.GOLD, T.GOLD
 local C_U_TEAM, C_DISABLED      = T.TEAM, T.DISABLED
 
-local CONSENT_PANEL, CONSENT_ACCENT = T.CONSENT_PANEL, T.CONSENT_ACCENT
-local CONSENT_BODY_C, CONSENT_DARK  = T.CONSENT_BODY, T.CONSENT_DARK
-local CONSENT_NEUTRAL, CONSENT_DONE = T.CONSENT_NEUTRAL, T.CONSENT_DONE
+
 
 local LOGICAL_W, LOGICAL_H = T.LOGICAL_W, T.LOGICAL_H
 local GUTTER, PADDING, HEADER_H = T.GUTTER, T.PADDING, T.HEADER_H
@@ -110,14 +107,11 @@ local Overlays = require("modules.lobby.overlays")
 local tutorial_seen      = Overlays.tutorial_seen
 local mark_tutorial_seen = Overlays.mark_tutorial_seen
 local draw_tutorial      = Overlays.tutorial
-local draw_consent       = Overlays.consent
 local draw_ai_select     = Overlays.ai_select
 local draw_tournament    = Overlays.tournament
 local draw_team_menu     = Overlays.team_menu
 local draw_team_join     = Overlays.team_join
 local TUTORIAL_PAGES     = Overlays.TUTORIAL_PAGES
-local INSTALL_STEPS      = Overlays.INSTALL_STEPS
-local INSTALL_DURATION   = Overlays.INSTALL_DURATION
 local TEAM_CODE_MAX      = Overlays.TEAM_CODE_MAX
 
 -- Forward reference: the rail's loader repaints once its request lands.
@@ -220,25 +214,11 @@ local function rebuild(self)
     
     if is_connecting then
         cta_text = "CONNECTING..."
-        sub_text = "Authenticating with Google Play Games..."
+        sub_text = "Signing in with Firebase..."
     elseif app_state.auth_state == "error" then
         cta_text = "TRY AGAIN"
         sub_text = app_state.auth_error ~= "" and tostring(app_state.auth_error):upper() or "CONNECTION FAILED"
     end
-
-    -- Phone number as an auth method in its own right, standing beside Play
-    -- Games rather than behind it. It used to be reachable only after Google
-    -- had failed three times or the connect deadline had expired, which meant
-    -- the players it exists for — no Play Services, no Google account, a
-    -- consent grant that silent sign-in can never create — had to sit through
-    -- a failure they could not interpret before being offered the thing that
-    -- would have worked immediately.
-    --
-    -- WHEN it is offered: any time the player is not actually online. The rule
-    -- lives in modules/lobby/auth_cta.lua, with the reasoning and a test —
-    -- the previous version of it was `not has_username`, which hid the backup
-    -- from exactly the players who needed it.
-    local show_phone_signin = AuthCta.should_offer_phone_login(ws.current_user_data, ws.is_identified)
 
     mode_tile(self, {
         x = play_cx, y = row_a_cy, w = play_w, h = row_a_h,
@@ -252,8 +232,6 @@ local function rebuild(self)
         season_deadline  = self.season_deadline_text,
         cta_label   = cta_text,
         btn_id      = "play_online",
-        alt_cta_label = show_phone_signin and "LOGIN WITH PHONE" or nil,
-        alt_cta_id    = show_phone_signin and "phone_signin" or nil,
     })
 
     -- -----------------------------------------------------------------------
@@ -454,7 +432,6 @@ local function rebuild(self)
     end
 
     draw_tutorial(self)
-    draw_consent(self)
 end
 
 -- ---------------------------------------------------------------------------
@@ -480,27 +457,12 @@ local function go_online(self)
         return -- Block multiple taps whilst already attempting connection
     end
 
-    local has_account = ws.current_user_data and ws.current_user_data.username and ws.current_user_data.username ~= ""
-
-    -- If they are a guest AND the auth state hasn't succeeded, trigger the Google Play sign in.
-    if not has_account and app_state.auth_state ~= "done" then
-        app_state.auth_state = "sending"
-        msg.post("#controller", "auth_retry_silent_login") -- Re-uses controller's native login routing
-        rebuild(self)
-    else
-        -- Already have an account/authenticated, proceed immediately
-        msg.post("#controller", "play_online")
-    end
+    msg.post("#controller", "play_online")
 end
 
 local function handle(self, b)
     -- Prevent clicks from falling through the overlays
-    if b.id == "consent_block" or b.id == "tut_block" or b.id == "dialog_block" then return end
-
-    if     b.id == "consent_install" then self.consent_phase = "installing"; self._install_t = 0; rebuild(self); return
-    elseif b.id == "consent_done"    then self.consent_active = false; rebuild(self); return
-    elseif b.id == "consent_later"   then self.consent_active = false; rebuild(self); return
-    end
+    if b.id == "tut_block" or b.id == "dialog_block" then return end
 
     if     b.id == "tut_skip"   then self.tutorial_active = false; mark_tutorial_seen(); rebuild(self); return
     elseif b.id == "tut_back"   then self.tut_page = math.max(1, (self.tut_page or 1) - 1); rebuild(self); return
@@ -540,13 +502,6 @@ local function handle(self, b)
 
     if b.id == "play_online" then
         go_online(self)
-
-    elseif b.id == "phone_signin" then
-        -- Straight to the keypad. Deliberately NOT routed through go_online:
-        -- that blocks while auth_state is sending/verifying, which is exactly
-        -- when a player who has given up on Play Games wants this button to
-        -- work.
-        msg.post("#controller", "goto_phone_login")
 
     elseif b.id == "quick_play" then
         app_state.mode = "offline"
@@ -782,8 +737,7 @@ function init(self)
     self.state               = STATE_LOBBY
     self.tut_page            = 1
     self.tutorial_active     = not tutorial_seen()
-    self.consent_active      = not akira.installed()
-    self.consent_phase       = "ask"
+    self.consent_active      = false
     self._season_tick        = 0
 
     -- Force idle state on boot so it waits for user interaction
@@ -831,26 +785,7 @@ function update(self, dt)
         if self.season_text ~= prev then rebuild(self) end
     end
 
-    if self.consent_active and self.consent_phase == "installing" then
-        self._install_t = (self._install_t or 0) + dt
-        local p = math.min(1, self._install_t / INSTALL_DURATION)
-        if self._install_fill then gui.set_size(self._install_fill, vmath.vector3(math.max(1, 480 * p), 10, 0)) end
-        if self._install_pct then gui.set_text(self._install_pct, string.format("%d%%", math.floor(p * 100))) end
-        if self._install_status then
-            local label = INSTALL_STEPS[1].label
-            if     p >= 0.75 then label = INSTALL_STEPS[3].label
-            elseif p >= 0.40 then label = INSTALL_STEPS[2].label end
-            gui.set_text(self._install_status, label)
-        end
-        if p >= 1 then
-            akira.set_installed()
-            self.consent_phase   = "done"
-            self._install_fill   = nil
-            self._install_pct    = nil
-            self._install_status = nil
-            rebuild(self)
-        end
-    end
+
 end
 
 function on_message(self, message_id, message, sender)
