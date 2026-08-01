@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.Intent;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 
 import com.google.android.gms.auth.api.signin.GoogleSignIn;
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount;
@@ -55,6 +56,8 @@ import com.google.firebase.auth.GoogleAuthProvider;
  */
 public class FirebaseAuthDefold {
 
+    private static final String TAG = "FirebaseAuth";
+
     // Any value not already claimed by another extension. GameServices uses
     // 7001 for its in-app update flow, and a collision would route this
     // extension's results into that one's handler.
@@ -83,6 +86,9 @@ public class FirebaseAuthDefold {
      */
     public boolean init(String apiKey, String appId, String projectId, String webClientId) {
         try {
+            String pkg = activity != null ? activity.getPackageName() : "unknown";
+            Log.i(TAG, "init: package=" + pkg + ", projectId=" + projectId + ", webClientId=" + webClientId + ", appId=" + appId);
+
             if (isBlank(apiKey))      { nativeLog(1, "firebase.api_key is not set in game.project"); return false; }
             if (isBlank(appId))       { nativeLog(1, "firebase.app_id is not set in game.project"); return false; }
             if (isBlank(projectId))   { nativeLog(1, "firebase.project_id is not set in game.project"); return false; }
@@ -116,10 +122,12 @@ public class FirebaseAuthDefold {
             googleClient = GoogleSignIn.getClient(activity, gso);
 
             ready = true;
-            nativeLog(0, "FirebaseAuth ready (project " + projectId + ")");
+            Log.i(TAG, "init: ready for package " + pkg + ", project " + projectId);
+            nativeLog(0, "FirebaseAuth ready (project " + projectId + ", pkg " + pkg + ")");
             return true;
         } catch (Exception | NoClassDefFoundError e) {
             ready = false;
+            Log.e(TAG, "init error: " + e.getMessage(), e);
             nativeLog(1, "FirebaseAuth failed to initialise: " + e.getMessage());
             return false;
         }
@@ -133,13 +141,17 @@ public class FirebaseAuthDefold {
     public void login() {
         if (!guardReady()) return;
         try {
+            Log.i(TAG, "login: initiating Google account picker for pkg " + activity.getPackageName());
             // Signed out of Google first so the picker actually appears. Without
             // it the client silently reuses the last account, which makes "sign
             // in as somebody else" impossible on a shared phone — and shared
             // phones are the normal case here.
-            googleClient.signOut().addOnCompleteListener(activity, t ->
-                    activity.startActivityForResult(googleClient.getSignInIntent(), RC_SIGN_IN));
+            googleClient.signOut().addOnCompleteListener(activity, t -> {
+                Log.i(TAG, "login: launching GoogleSignInIntent (RC " + RC_SIGN_IN + ")");
+                activity.startActivityForResult(googleClient.getSignInIntent(), RC_SIGN_IN);
+            });
         } catch (Exception e) {
+            Log.e(TAG, "login launch exception: " + e.getMessage(), e);
             fail("sign-in-launch-failed", e.getMessage());
         }
     }
@@ -158,22 +170,27 @@ public class FirebaseAuthDefold {
             if (current != null) {
                 // Firebase already holds the session. Its own refresh token
                 // does the work; Google does not need to be consulted at all.
+                Log.i(TAG, "silentLogin: existing Firebase user found: " + current.getUid());
                 emitToken(current, false);
                 return;
             }
 
+            Log.i(TAG, "silentLogin: querying googleClient.silentSignIn()...");
             googleClient.silentSignIn().addOnCompleteListener(activity, task -> {
                 if (!task.isSuccessful()) {
                     Exception e = task.getException();
                     // Expected, not broken: no account on the device, or one
                     // that has never granted consent. The caller offers a
                     // button rather than treating it as an error.
+                    Log.w(TAG, "silentLogin: no cached Google session (" + (e != null ? e.getMessage() : "null") + ")");
                     fail("no-silent-session", e != null ? e.getMessage() : "no cached Google session");
                     return;
                 }
+                Log.i(TAG, "silentLogin: silent Google sign-in succeeded, exchanging with Firebase...");
                 exchangeWithFirebase(task.getResult(), false);
             });
         } catch (Exception e) {
+            Log.e(TAG, "silentLogin error: " + e.getMessage(), e);
             fail("silent-sign-in-failed", e.getMessage());
         }
     }
@@ -182,16 +199,22 @@ public class FirebaseAuthDefold {
     public void handleSignInResult(Intent data) {
         if (!guardReady()) return;
         try {
+            Log.i(TAG, "handleSignInResult: received intent data");
             Task<GoogleSignInAccount> task = GoogleSignIn.getSignedInAccountFromIntent(data);
             GoogleSignInAccount account = task.getResult(ApiException.class);
+            Log.i(TAG, "handleSignInResult: GoogleSignInAccount resolved for " + account.getEmail());
             exchangeWithFirebase(account, true);
         } catch (ApiException e) {
             // getStatusCode is the useful part. 12501 is the player backing
             // out, 7 is the network, 10 is a misconfigured OAuth client — three
             // completely different problems that "sign-in failed" cannot tell
             // apart, and the third one fails for every user of the build.
-            fail("google-" + e.getStatusCode(), e.getMessage());
+            Log.e(TAG, "handleSignInResult ApiException: code=" + e.getStatusCode() + ", status=" + e.getStatus() + ", message=" + e.getMessage(), e);
+            String detail = "google-" + e.getStatusCode();
+            String msg = (e.getStatus() != null && e.getStatus().getStatusMessage() != null) ? e.getStatus().getStatusMessage() : (e.getMessage() != null ? e.getMessage() : detail);
+            fail(detail, msg);
         } catch (Exception e) {
+            Log.e(TAG, "handleSignInResult unexpected exception: " + e.getMessage(), e);
             fail("sign-in-result-failed", e.getMessage());
         }
     }
@@ -200,8 +223,10 @@ public class FirebaseAuthDefold {
         try {
             if (auth != null) auth.signOut();
             if (googleClient != null) googleClient.signOut();
+            Log.i(TAG, "logout: signed out");
             nativeLog(0, "FirebaseAuth signed out");
         } catch (Exception e) {
+            Log.e(TAG, "logout error: " + e.getMessage(), e);
             nativeLog(1, "FirebaseAuth sign-out error: " + e.getMessage());
         }
     }
@@ -227,19 +252,27 @@ public class FirebaseAuthDefold {
             // A sign-in that "succeeded" without a token means requestIdToken
             // was given a client id Google does not accept for this app. It is
             // silent and total: every user of the build hits it.
-            fail("no-id-token", "Google returned no ID token — check firebase.web_client_id");
+            Log.e(TAG, "exchangeWithFirebase: Google returned null or blank ID token! Check firebase.web_client_id and SHA-1");
+            fail("no-id-token", "Google returned no ID token — check firebase.web_client_id and SHA-1");
             return;
         }
 
+        Log.i(TAG, "exchangeWithFirebase: authenticating with Firebase using Google credential for " + account.getEmail());
         AuthCredential credential = GoogleAuthProvider.getCredential(account.getIdToken(), null);
         auth.signInWithCredential(credential).addOnCompleteListener(activity, task -> {
             if (!task.isSuccessful()) {
                 Exception e = task.getException();
+                Log.e(TAG, "exchangeWithFirebase: Firebase rejected credential: " + (e != null ? e.getMessage() : "unknown"), e);
                 fail("firebase-credential-rejected", e != null ? e.getMessage() : "unknown");
                 return;
             }
             FirebaseUser user = auth.getCurrentUser();
-            if (user == null) { fail("no-user-after-sign-in", "Firebase returned no user"); return; }
+            if (user == null) {
+                Log.e(TAG, "exchangeWithFirebase: Firebase returned no user after sign in");
+                fail("no-user-after-sign-in", "Firebase returned no user");
+                return;
+            }
+            Log.i(TAG, "exchangeWithFirebase: Firebase sign-in successful! uid=" + user.getUid());
             emitToken(user, forceRefresh);
         });
     }
@@ -254,12 +287,15 @@ public class FirebaseAuthDefold {
      * not, would key accounts on the wrong identity.
      */
     private void emitToken(FirebaseUser user, boolean forceRefresh) {
+        Log.i(TAG, "emitToken: fetching Firebase ID token (forceRefresh=" + forceRefresh + ")...");
         user.getIdToken(forceRefresh).addOnCompleteListener(activity, (Task<GetTokenResult> task) -> {
             if (!task.isSuccessful() || task.getResult() == null || isBlank(task.getResult().getToken())) {
                 Exception e = task.getException();
+                Log.e(TAG, "emitToken failed: " + (e != null ? e.getMessage() : "null"), e);
                 fail("token-fetch-failed", e != null ? e.getMessage() : "no token returned");
                 return;
             }
+            Log.i(TAG, "emitToken: successfully acquired Firebase token for " + user.getUid());
             post(() -> onAuthSuccess(
                     task.getResult().getToken(),
                     safe(user.getUid()),
@@ -271,11 +307,13 @@ public class FirebaseAuthDefold {
 
     private boolean guardReady() {
         if (ready) return true;
+        Log.e(TAG, "guardReady: FirebaseAuth did not initialise — check [firebase] in game.project");
         fail("not-initialised", "FirebaseAuth did not initialise — check the [firebase] section of game.project");
         return false;
     }
 
     private void fail(String code, String message) {
+        Log.e(TAG, "fail: [" + code + "] " + message);
         nativeLog(2, "FirebaseAuth " + code + ": " + message);
         post(() -> onAuthFailure(code, safe(message)));
     }

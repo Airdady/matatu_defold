@@ -63,11 +63,13 @@ case "$TARGET" in
     whot)   GAME_UPPER="WHOT";   PROJECT_TITLE="Whot"
             PACKAGE_NAME="com.matatu.pro"
             ICON_SVG="tools/icons/whot.svg";   ICON_BG="#C42B2B,#6E1414"
-            LOGO_SVG="tools/logos/whot.svg" ;;
+            LOGO_SVG="tools/logos/whot.svg"
+            KEYSTORE_PATH="./whot.keystore"; KEYSTORE_PASS="./whot.pass.txt"; KEYSTORE_ALIAS="matatu_alias" ;;
     matatu) GAME_UPPER="MATATU"; PROJECT_TITLE="Matatu"
             PACKAGE_NAME="com.matatu.champ"
             ICON_SVG="tools/icons/matatu.svg"; ICON_BG="#4a3020,#2b1810"
-            LOGO_SVG="tools/logos/matatu.svg" ;;
+            LOGO_SVG="tools/logos/matatu.svg"
+            KEYSTORE_PATH="./champion-keystore.jks"; KEYSTORE_PASS="./champion-keystore.pass.txt"; KEYSTORE_ALIAS="upload" ;;
     # Same GAME as matatu above — same M.GAME, same endpoints, same rules, same
     # gameplay. A separate shipping target: its own package name, its own
     # keystore (see release.sh) and its own launcher icon, so the two Matatu
@@ -79,17 +81,16 @@ case "$TARGET" in
             # tools/logos/matatu_nap.svg in and this picks it up with no code
             # change — the icon above is already nap's own.
             LOGO_SVG="tools/logos/matatu.svg"
-            # `if`, not `[ -f ] && ...`: these scripts run under `set -e`, and a
-            # trailing test that fails is a non-zero exit from the case branch,
-            # which would abort the whole build whenever the file is absent —
-            # i.e. in exactly the normal case this fallback exists for.
             if [ -f "tools/logos/matatu_nap.svg" ]; then
                 LOGO_SVG="tools/logos/matatu_nap.svg"
-            fi ;;
+            fi
+            KEYSTORE_PATH="./nap-keystore.jks"; KEYSTORE_PASS="./nap-keystore.pass.txt"
+            KEYSTORE_ALIAS="${NAP_KEYSTORE_ALIAS:-upload}" ;;
     kadi)   GAME_UPPER="KADI";   PROJECT_TITLE="Kadi"
             PACKAGE_NAME="com.matatu.kadi"
             ICON_SVG="tools/icons/kadi.svg";   ICON_BG="#12503a,#0a2e20"
-            LOGO_SVG="tools/logos/kadi.svg" ;;
+            LOGO_SVG="tools/logos/kadi.svg"
+            KEYSTORE_PATH="./kadi.keystore"; KEYSTORE_PASS="./kadi.pass.txt"; KEYSTORE_ALIAS="matatu_alias" ;;
     *)
         echo "❌ Unknown target '$TARGET' — expected: whot | matatu | matatu_nap | kadi"
         exit 1
@@ -104,7 +105,7 @@ BUNDLE_DIR="./bundles/android_debug_${TARGET}"
 MAIN_ACTIVITY=""
 
 # Log filters
-LOG_FILTER="defold|DEBUG|Lua|lua|AndroidRuntime|crash|CRASH|FATAL|Exception"
+LOG_FILTER="defold|FirebaseAuth|AUTH|DEBUG|Lua|lua|AndroidRuntime|crash|CRASH|FATAL|Exception"
 
 # Architectures
 ARCHITECTURES="armv7-android,arm64-android"
@@ -240,6 +241,16 @@ echo "=========================================================="
 echo "🔨 Building APK..."
 echo "=========================================================="
 
+KEYSTORE_ARGS=()
+if [ -n "$KEYSTORE_PATH" ] && [ -f "$KEYSTORE_PATH" ] && [ -f "$KEYSTORE_PASS" ]; then
+    KEYSTORE_ARGS=(
+        -ks "$KEYSTORE_PATH"
+        -ksp "$KEYSTORE_PASS"
+        -ksa "$KEYSTORE_ALIAS"
+    )
+    echo "🔑 Signing with keystore: $KEYSTORE_PATH (alias: $KEYSTORE_ALIAS)"
+fi
+
 java --enable-native-access=ALL-UNNAMED \
     -jar bob.jar \
     --archive \
@@ -247,7 +258,8 @@ java --enable-native-access=ALL-UNNAMED \
     --architectures "$ARCHITECTURES" \
     --variant debug \
     --bundle-output "$BUNDLE_DIR" \
-    resolve build bundle
+    "${KEYSTORE_ARGS[@]}" \
+    build bundle
 
 echo "✅ Build completed"
 
@@ -258,7 +270,7 @@ echo "✅ Build completed"
 echo ""
 echo "🔍 Searching APK..."
 
-APK_PATH=$(find "$BUNDLE_DIR" -name "*.apk" | head -n 1)
+APK_PATH=$(find "$BUNDLE_DIR" ./build/default -name "*.apk" 2>/dev/null | head -n 1)
 
 if [ -z "$APK_PATH" ]; then
     echo "❌ APK not found!"

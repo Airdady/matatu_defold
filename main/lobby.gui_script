@@ -192,8 +192,7 @@ local function rebuild(self)
     -- read "RANKED ACCOUNT" instead of prompting sign-in.
     local has_username = ws.current_user_data and ws.current_user_data.username and ws.current_user_data.username ~= ""
     local user_txt = has_username and ws.current_user_data.username or "GUEST"
-    -- Two ways in now, so the hint no longer names only one of them.
-    local sub_txt  = has_username and "RANKED ACCOUNT" or "SIGN IN WITH GOOGLE OR YOUR NUMBER"
+    local sub_txt  = has_username and "RANKED ACCOUNT" or "SIGN IN WITH GOOGLE"
 
     local n_guest = track(self, ui.text(vmath.vector3(grid_r, h_y, 0), user_txt, "title", C_CREAM))
     set_pivot(n_guest, gui.PIVOT_E)

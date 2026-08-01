@@ -440,24 +440,28 @@ handle_auth_result = function(self, result)
     if not result.success then
         -- THE BUILD IS WRONG, not the device and not the player. A mismatched
         -- OAuth client or a missing config value fails for every user of the
-        -- build, and no amount of retrying will change it. The old flow
-        -- treated this exactly like a network blip and retried it forever,
-        -- quietly, which is why "it just says connecting" had no answer in the
-        -- logs. Go straight to the number, and say why in the log.
+        -- build, and no amount of retrying will change it.
         if kind == "broken" then
+            local err_desc = string.format("Misconfigured (%s)", tostring(result.code or "unknown"))
+            if result.error and result.error ~= "" and result.error ~= result.code then
+                err_desc = string.format("Error (%s): %s", tostring(result.code or "unknown"), tostring(result.error))
+            end
             auth_debug("handle_auth_result: BUILD MISCONFIGURED (%s) — %s",
                 tostring(result.code), tostring(result.error))
+            print(string.format("[AUTH-ERROR] Sign-in failed: %s | code=%s | msg=%s",
+                err_desc, tostring(result.code), tostring(result.error)))
             self._silent_login_inflight = false
             app_state.auth_state = "error"
-            app_state.auth_error = "Sign-in misconfigured"
+            app_state.auth_error = err_desc
             msg.post("#lobby", "auth_state_changed")
             return
         end
 
         -- Nothing is wrong: no account on the device, no cached session, or
-        -- the player closed the picker. The ladder still runs, because the
-        -- player may be waiting on it, but this is not an error to report.
-        handle_login_failure(self, result.error or "Couldn't sign in. Check your connection and try again.")
+        -- the player closed the picker.
+        local fail_msg = result.error or "Couldn't sign in. Check your connection and try again."
+        print(string.format("[AUTH-INFO] Login failure: code=%s | msg=%s", tostring(result.code), tostring(fail_msg)))
+        handle_login_failure(self, fail_msg)
         return
     end
 
@@ -616,17 +620,22 @@ function init(self)
             show(self, "lobby")
         end
     else
-        -- No local session cached: sign in SILENTLY right now. Sign-in in
-        -- this app is always automatic — there is no manual "SIGN IN" button
-        -- anywhere in the UI — so waiting for a "Play Online" tap left a
-        -- fresh install with no session at all, and every authenticated call
-        -- it made in the meantime went out with no user behind it.
-        -- try_silent_login retries on its own and gives up quietly, so this
-        -- can never block or gate the lobby.
-        auth_debug("init: no cached session, starting silent sign-in")
+        -- No local session cached: open Firebase account selection immediately on app launch
+        -- so the player gets prompted right away without needing to first tap Play Online.
+        auth_debug("init: no cached session, opening Firebase sign-in prompt")
         show(self, "lobby")
         if fbauth.available then
-            try_silent_login(self)
+            self._interactive_open = true
+            self._interactive_login_done = true
+            self._silent_login_inflight = true
+            self._silent_login_attempts = 0
+            self._forced_refreshes = 0
+            app_state.auth_state = "sending"
+            app_state.auth_error = ""
+            msg.post("#lobby", "auth_state_changed")
+            cancel_silent_login_retry(self)
+            arm_connect_deadline(self, INTERACTIVE_DEADLINE_SECONDS, true)
+            fbauth.login(function(result) handle_auth_result(self, result) end)
         else
             auth_debug("init: Firebase auth not available on this platform")
         end
@@ -1077,12 +1086,18 @@ function on_message(self, message_id, message, sender)
                 local data = result.data
                 local merged_user = type(data.user) == "table" and data.user or {}
                 if data.merged then
-                    if data.token then merged_user.token = data.token end
+                    if data.token then
+                        merged_user.token = data.token
+                        api.set_auth_token(data.token)
+                    end
                     -- Account identity changed to the OLD (now-linked)
-                    -- account — cleanly drop the current socket (still
-                    -- identified server-side as the just-superseded
-                    -- duplicate) and reconnect fresh as the migrated
-                    -- account, exactly like a normal login.
+                    -- account — persist the merged account locally and
+                    -- reconnect fresh on the socket.
+                    ws.current_user_data = merged_user
+                    api.save_session(merged_user)
+                    for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile", "lobby" }) do
+                        msg.post("#" .. s, "user_data_updated")
+                    end
                     pcall(ws.disconnect)
                     identify_and_connect(merged_user)
                 else
@@ -1094,6 +1109,9 @@ function on_message(self, message_id, message, sender)
                     for k, v in pairs(merged_user) do u[k] = v end
                     ws.current_user_data = u
                     api.save_session(u)
+                    for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile", "lobby" }) do
+                        msg.post("#" .. s, "user_data_updated")
+                    end
                 end
                 msg.post("#profile", "phone_link_result", { ok = true, merged = data.merged and true or false })
             else
