@@ -10,7 +10,7 @@ local is_web = sys.get_sys_info().system_name == "HTML5"
 if is_web then
     M.DOMAIN = "simple-maggot-expert.ngrok-free.app"
 else
-    M.DOMAIN = "simple-maggot-expert.ngrok-free.ap"
+    M.DOMAIN = "simple-maggot-expert.ngrok-free.app"
 end
 
 -- Endpoints follow the active game (see modules/game_mode.lua). The backend

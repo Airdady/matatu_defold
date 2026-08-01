@@ -37,14 +37,6 @@ package = com.matatu.champ
 input_method = INPUT_METHOD_HIDDEN
 minimum_sdk_version = 23
 
-[gpgs]
-app_id = 431938576253
-use_saved_games = 0
-request_server_auth_code = 1
-force_refresh_token = 1
-client_id = 431938576253-53tdml3h9mrjb1eb6562k56ogqo9gsef.apps.googleusercontent.com
-client_token = 431938576253-53tdml3h9mrjb1eb6562k56ogqo9gsef.apps.googleusercontent.com
-
 [firebase]
 project_id = matatu-7aba6
 api_key = AIzaSyBwKWUFvhd5_vKPcxc3ViL_SotOqjA3wjU

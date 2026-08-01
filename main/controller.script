@@ -6,7 +6,7 @@ local fbauth    = require("modules.firebase_auth")
 local SCREENS = { "lobby", "auth", "profile", "online", "themes", "payments", "tournaments", "team_tournament", "standings", "game" }
 
 -- Debug trail for the sign-in/connect pipeline (boot silent-login, "Play
--- Online" tap, GPGS callback, backend verify, WS identify) — every step logs
+-- Online" tap, Firebase callback, backend verify, WS identify) — every step logs
 -- here so a stuck/looping session can be diagnosed from device logs instead
 -- of guessed at.
 -- Never let the debug trail be the thing that kills the pipeline it is there
@@ -77,13 +77,6 @@ local function identify_and_connect(user)
     local token = user.idToken or user.token or ""
     if token ~= "" then api.set_auth_token(token) end
     api.save_session(user)
-
-    if gameservices then
-        local external_id = user._id or user.localId or ""
-        if external_id ~= "" then
-            gameservices.onesignal_login(external_id)
-        end
-    end
 
     local id = user._id or user.localId or ""
     auth_debug("identify_and_connect: id=%s username=%s", tostring(id), tostring(user.username))
@@ -182,7 +175,7 @@ local SILENT_LOGIN_BACKOFF = { 1, 2, 6, 12, 30, 60 }  -- last entry repeats
 -- So each rung does something DIFFERENT rather than the same thing later:
 --
 --   1..2  retry silent. Covers everything transient, costs nothing.
---   3     full cleanup — drop the local session AND log out of GPGS, so the
+--   3     full cleanup — drop the local session AND log out of Firebase/Google, so the
 --         next silent attempt has no cached anything to replay.
 --   4     Google's own interactive sign-in. Once per run. This is the rung
 --         that fixes "the cache is not the problem, the account state is":
@@ -490,7 +483,7 @@ local function handle_login_failure(self, error_message, opts)
         self._interactive_open = true
         auth_debug("opening interactive Google sign-in (%s) after %d attempts",
             consent_needed and "no auth code — consent cannot be granted silently"
-                            or "player is waiting", attempts)
+                           or "player is waiting", attempts)
         self._silent_login_inflight = true
         -- No silent retry armed alongside this one. A silent_login() firing
         -- while the player is part-way through Google's own sign-in is a real
@@ -669,30 +662,15 @@ function init(self)
         msg.post("#" .. s, "disable")
     end
 
-    if gameservices then gameservices.check_update() end
-
     -- Re-check whenever the app comes back to the foreground, not just at
-    -- cold start. Two reasons, both of which produced "the update didn't show
-    -- for me":
-    --
-    --   1. getAppUpdateInfo() answers from the Play Store app's cached
-    --      metadata, which refreshes on Play's schedule. A player who opened
-    --      the app before that refresh got "no update available" and, with a
-    --      single check at init, would never be asked again for as long as the
-    --      app stayed resident.
-    --   2. Google requires an onResume check to resume an IMMEDIATE update
-    --      that was interrupted (app killed or backgrounded mid-flow) —
-    --      checkForUpdate() routes that case to resumeUpdate().
+    -- cold start. Coming back to the foreground is the single best moment
+    -- to retry a failed sign-in: the player has usually just fixed the reason
+    -- it failed (turned wifi on, updated Play Services, added an account, or
+    -- simply moved somewhere with signal). Without this the retry sits on
+    -- its backoff timer, which by then can be a full minute out.
     window.set_listener(function(_, event)
         if event ~= window.WINDOW_EVENT_FOCUS_GAINED then return end
-        if gameservices then pcall(gameservices.check_update) end
 
-        -- Coming back to the foreground is the single best moment to retry a
-        -- failed sign-in: the player has usually just fixed the reason it
-        -- failed (turned wifi on, updated Play Services, added an account, or
-        -- simply moved somewhere with signal). Without this the retry sits on
-        -- its backoff timer, which by then can be a full minute out.
-        --
         -- Only when there is no session and nothing already in flight, so this
         -- never piles a second attempt on top of a running one.
         -- Not while the player is on the number keypad by their own choice:
@@ -705,11 +683,6 @@ function init(self)
             try_silent_login(self)
         end
     end)
-
-    -- No callback registration here any more. GPGS delivered results through a
-    -- single global handler that every sign-in in the app shared; Firebase
-    -- takes the callback at the call site, so the answer goes back to whoever
-    -- asked the question.
 
     local cached = api.load_session()
     if cached and (cached._id or "") ~= "" then
@@ -1101,8 +1074,8 @@ function on_message(self, message_id, message, sender)
 
     elseif message_id == hash("play_online") then
         self._explicit_online = true
-        -- Tapping PLAY NOW is how a player changes their mind back: Play
-        -- Games is live again from here, including the retries the phone
+        -- Tapping PLAY NOW is how a player changes their mind back: Firebase
+        -- is live again from here, including the retries the phone
         -- choice stood down.
         self._phone_login_chosen = false
         auth_debug("play_online tapped: user_id=%s socket_connected=%s is_identified=%s inflight=%s",
@@ -1217,7 +1190,7 @@ function on_message(self, message_id, message, sender)
                 local user = type(data.user) == "table" and data.user or {}
                 user.token = data.token
                 auth_debug("phone_login: signed in (new=%s)", tostring(data.isNewUser))
-                -- Stop the background GPGS retry: we have a session now, and
+                -- Stop the background retry: we have a session now, and
                 -- a silent sign-in landing later would replace this one. The
                 -- parked timer has to be cancelled too — clearing the flags
                 -- alone leaves a retry still scheduled to fire.
@@ -1292,11 +1265,6 @@ function on_message(self, message_id, message, sender)
                 user.avatar      = message.avatar
                 ws.current_user_data = user
                 api.save_session(user)
-
-                if gameservices then
-                    local external_id = user._id or user.localId or ""
-                    if external_id ~= "" then gameservices.onesignal_login(external_id) end
-                end
 
                 for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile", "lobby" }) do
                     msg.post("#" .. s, "user_data_updated")
