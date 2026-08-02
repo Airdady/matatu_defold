@@ -666,6 +666,7 @@ local schedule_reconnect -- forward decl
 local function on_connected()
   print("[WS] connected")
   M.socket_connected = true
+  M.reconnect_exhausted = false
   is_connecting = false
   reconnect_attempts = 0
   current_reconnect_delay = config.INITIAL_RECONNECT_DELAY
@@ -706,6 +707,7 @@ schedule_reconnect = function()
   reconnect_attempts = reconnect_attempts + 1
   if reconnect_attempts > config.MAX_RECONNECT_ATTEMPTS then
     print("[WS] max reconnect attempts reached")
+    M.reconnect_exhausted = true
     emit("reconnect_failed")
     return
   end

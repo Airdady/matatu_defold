@@ -301,7 +301,7 @@ local function open_dialog(self, d)
         cup_id = d.cup_id,
         accept_label = d.accept_label, decline_label = d.decline_label,
     }
-    self.dlg_alpha = 0
+    self.dlg_alpha = 1
     -- Claim top input priority, or RELEASE it. Both directions, every time.
     --
     -- This used to only ever claim, and that is what froze the app.
@@ -421,26 +421,26 @@ function update(self, dt)
     end
 
     if self.dialog then
-        self.dlg_alpha = math.min(1, (self.dlg_alpha or 0) + dt * 4)
+        local need_reb = false
+
         self.dialog.time_left = (self.dialog.time_left or 10) - dt
+        local cur_sec = math.floor(math.max(0, self.dialog.time_left))
+        if cur_sec ~= self.dialog._last_sec then
+            self.dialog._last_sec = cur_sec
+            need_reb = true
+        end
+
         if self.dialog.time_left <= 0 then
-            -- A game request MUST be answered either way — an opponent is
-            -- sitting there waiting on it, and silence would hang them.
-            --
-            -- A cup invitation has nobody waiting: cups fill over hours. Timing
-            -- one out as a DECLINE would throw away the thing the push
-            -- notification was sent to deliver, for the crime of not looking at
-            -- the screen for fifteen seconds. It expires by hiding; the
-            -- invitation is still on the TEAM CUPS tile, and the next connect
-            -- replays it.
             if not self.dialog.cup_invite
                and self.dialog.request_id and self.dialog.request_id ~= "" then
                 ws.decline_game_request(self.dialog.request_id)
             end
             self.dialog = nil
             app_state.modal_close("incoming")
+            need_reb = true
         end
-        rebuild(self)
+
+        if need_reb then rebuild(self) end
     end
 end
 

@@ -303,14 +303,14 @@ end
 
 -- ── Dialog / Banner Lifecycle ─────────────────────────────────────────────────
 local function open_dialog(self, kind, name, stake, request_id, avatar, opponent_id, h2h)
-    self.dialog, self.dlg_alpha = { kind = kind, name = name, stake = stake or {}, request_id = request_id, avatar = tonumber(avatar) or 1, time_left = 10, max_time = 10, opponent_id = opponent_id and tostring(opponent_id) or nil, h2h = h2h }, 0
+    self.dialog, self.dlg_alpha = { kind = kind, name = name, stake = stake or {}, request_id = request_id, avatar = tonumber(avatar) or 1, time_left = 10, max_time = 10, opponent_id = opponent_id and tostring(opponent_id) or nil, h2h = h2h }, 1
     -- Audible cue when an opponent's challenge arrives.
     if kind == "incoming" then play_snd("snd_notify") end
     if self._active then rebuild(self) end
 end
 local function open_banner(self, raw)
     local sender_av = (type(raw.sender) == "table" and tonumber(raw.sender.avatar)) or 1
-    local b = { title = ((raw.gameType or "TOURNAMENT") == "BATTLE" and "BATTLE  -  " or "TOURNAMENT  -  ") .. ((type(raw.sender) == "table" and raw.sender.username) or "Opponent"):upper(), desc = "Best of " .. (tonumber((type(raw.tournament) == "table" and raw.tournament.matchFormat) or 3) or 3) .. "   -   " .. (((tonumber(((type(raw.tournament) == "table" and raw.tournament.stake) or raw.stake or {}).amount) or 0) > 0) and commas(tonumber(((type(raw.tournament) == "table" and raw.tournament.stake) or raw.stake or {}).amount) or 0).." Coins" or "Practice Mode"), request_id = raw.requestId or "", avatar = sender_av, time_left = 10, max_time = 10, alpha = 0, y_off = 1, h2h = raw.headToHead }
+    local b = { title = ((raw.gameType or "TOURNAMENT") == "BATTLE" and "BATTLE  -  " or "TOURNAMENT  -  ") .. ((type(raw.sender) == "table" and raw.sender.username) or "Opponent"):upper(), desc = "Best of " .. (tonumber((type(raw.tournament) == "table" and raw.tournament.matchFormat) or 3) or 3) .. "   -   " .. (((tonumber(((type(raw.tournament) == "table" and raw.tournament.stake) or raw.stake or {}).amount) or 0) > 0) and commas(tonumber(((type(raw.tournament) == "table" and raw.tournament.stake) or raw.stake or {}).amount) or 0).." Coins" or "Practice Mode"), request_id = raw.requestId or "", avatar = sender_av, time_left = 10, max_time = 10, alpha = 1, y_off = 0, h2h = raw.headToHead }
     if h2h_view(raw.headToHead) and h2h_view(raw.headToHead).opp_winrate then b.desc = b.desc .. "   -   WR " .. math.floor(h2h_view(raw.headToHead).opp_winrate + 0.5) .. "%" end
     self.banners = self.banners or {}; for _, ex in ipairs(self.banners) do if b.request_id ~= "" and ex.request_id == b.request_id then return end end
     table.insert(self.banners, b)
@@ -347,38 +347,40 @@ end
 function update(self, dt)
     if not self._active then return end
 
-    -- All overlay animations (banners, the lottery search reel, and the
-    -- request dialog) advance in ONE pass and trigger AT MOST one rebuild per
-    -- frame. The previous version early-returned after rebuilding for banners,
-    -- which starved (and visually restarted) any dialog/search animating
-    -- underneath them — the "banner on top breaks other dialogs" bug.
     local need_rebuild = false
 
     -- ── Banners (inline tournament/battle invites) ────────────────────────
     if self.banners and #self.banners > 0 then
         local expired = {}
         for _, b in ipairs(self.banners) do
-            b.alpha, b.y_off, b.time_left = math.min(1, (b.alpha or 0) + dt * 5), math.max(0, (b.y_off or 0) - dt * 4), (b.time_left or 10) - dt
+            b.time_left = (b.time_left or 10) - dt
+            local cur_sec = math.floor(math.max(0, b.time_left))
+            if cur_sec ~= b._last_sec then
+                b._last_sec = cur_sec
+                need_rebuild = true
+            end
+
             if b.time_left <= 0 then table.insert(expired, b) end
         end
         for _, b in ipairs(expired) do
             if b.request_id and b.request_id ~= "" then ws.decline_game_request(b.request_id) end
             for i = #self.banners, 1, -1 do if self.banners[i].request_id == b.request_id then table.remove(self.banners, i) end end
             if #self.banners == 0 then self.banners = nil end
+            need_rebuild = true
         end
-        need_rebuild = true
     end
 
-    -- ── First-time "Tap a player..." typing hint (see init()) ─────────────
+    -- ── First-time "Tap a player..." typing hint (direct node update, zero rebuild) ─
     if self._tap_hint_active then
         self._tap_hint_t = (self._tap_hint_t or 0) + dt
-        need_rebuild = true
-    end
-
-    -- ── Savings modal typing effect (see draw_savings_info in online_right.lua) ──
-    if self.savings_info_open and not self._savings_type_done then
-        self._savings_type_t = (self._savings_type_t or 0) + dt
-        need_rebuild = true
+        local n = math.floor(self._tap_hint_t / 0.035)
+        local HINT_TEXT = "Tap a player to request a game. If they decline, try another!"
+        if n >= #HINT_TEXT then
+            self._tap_hint_active = false
+            if self.tap_hint_node then pcall(gui.set_text, self.tap_hint_node, HINT_TEXT) end
+        else
+            if self.tap_hint_node then pcall(gui.set_text, self.tap_hint_node, string.sub(HINT_TEXT, 1, n) .. "_") end
+        end
     end
 
     -- ── Lottery opponent-search reel ──────────────────────────────────────
@@ -390,24 +392,33 @@ function update(self, dt)
 
     -- ── Request dialog (incoming / outgoing) ──────────────────────────────
     if self.dialog then
-        self.dlg_alpha, self.dialog.time_left = math.min(1, (self.dlg_alpha or 0) + dt * 4), (self.dialog.time_left or 10) - dt
+        self.dialog.time_left = (self.dialog.time_left or 10) - dt
+        local cur_sec = math.floor(math.max(0, self.dialog.time_left))
+        if cur_sec ~= self.dialog._last_sec then
+            self.dialog._last_sec = cur_sec
+            need_rebuild = true
+        end
+
         if self.dialog.time_left <= 0 then
             if self.dialog.kind == "incoming" and self.dialog.request_id then ws.decline_game_request(self.dialog.request_id) end
             self.dialog, self.list_scroll = nil, 0
+            need_rebuild = true
         end
-        need_rebuild = true
+    end
+
+    -- ── Debounced Rebuild Coalescing for rapid socket bursts ──────────────
+    if self._rebuild_pending then
+        self._rebuild_pending_t = (self._rebuild_pending_t or 0) + dt
+        if self._rebuild_pending_t >= 0.08 then
+            self._rebuild_pending = false
+            self._rebuild_pending_t = 0
+            need_rebuild = true
+        end
     end
 
     if need_rebuild then rebuild(self); return end
 
-    self._tick = self._tick + dt
-    if self._tick >= 1 then self._tick = 0; update_season(self); rebuild(self) end
-
-    -- Periodic fallback so the standings panel doesn't go stale even when no
-    -- online-users change happens to fire (e.g. someone already online
-    -- earns points from a game elsewhere without a fresh join/leave event) —
-    -- the ws_online_users-triggered request above covers the common case
-    -- faster than this on its own.
+    -- Periodic fallback so the standings panel doesn't go stale (request rank quietly every 20s)
     self._rank_tick = (self._rank_tick or 0) + dt
     if self._rank_tick >= 20 then
         self._rank_tick = 0
@@ -451,29 +462,18 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("enable") then refresh_wh(); self._active = true
     elseif message_id == hash("disable") then self._active = false; clear(self)
     elseif message_id == hash("ws_identify") then
-        -- The screen_enter request is gated on ws.is_identified already being
-        -- true at that exact moment — if IDENTIFY was still in flight (or the
-        -- socket reconnected) when this screen was entered, that request was
-        -- silently skipped and nothing ever retried it, leaving the online
-        -- users list permanently empty even once identify actually completed.
-        -- controller.script already forwards identify_success here as
-        -- ws_identify; this was previously unhandled.
         if self._active then
             pcall(ws.request_online_users)
             pcall(ws.request_rank)
-            rebuild(self)
+            self._rebuild_pending = true
         end
     elseif message_id == hash("layout_changed") or message_id == hash("user_data_updated") or message_id == hash("ws_online_users") or message_id == hash("ws_connected") or message_id == hash("ws_disconnected") then
-        if self._active then rebuild(self) end
-        -- A change in who's online (someone joining/leaving, e.g. a brand-new
-        -- user who just got their signup bonus) is exactly when this client's
-        -- own "player above/below me" standings snapshot is most likely to be
-        -- stale — ask for a fresh one instead of waiting on the periodic tick.
+        if self._active then self._rebuild_pending = true end
         if message_id == hash("ws_online_users") and self._active and ws.is_identified then
             pcall(ws.request_rank)
         end
     elseif message_id == hash("ws_rank_update") then
-        if self._active then rebuild(self) end
+        if self._active then self._rebuild_pending = true end
     elseif message_id == hash("ws_game_request") then
         -- Plain incoming requests are rendered by the GLOBAL overlay
         -- (main/incoming.gui_script). The inline tournament/battle banner is only

@@ -628,7 +628,7 @@ local function rebuild_body(self)
     local tip_title = track(self, ui.text(vmath.vector3(tip_cx - tip_w/2 + 20, tip_cy + 42, 0), "PRO TIP", "small", vmath.vector4(1, 0.84, 0, 1)))
     gui.set_pivot(tip_title, gui.PIVOT_W)
     
-    local tips = { "Online Multiplayer", "Exit anytime on Quarter Finals", "Progress saved between seasons" }
+    local tips = { "Online Multiplayer", "Only joined players will participate only", "Progress saved between seasons" }
     for ti, tip in ipairs(tips) do
         local tip_node = track(self, ui.text(vmath.vector3(tip_cx - tip_w/2 + 20, tip_cy + 14 - (ti - 1) * 22, 0), "• " .. tip, "small", vmath.vector4(0.9, 0.9, 0.9, 0.85)))
         gui.set_pivot(tip_node, gui.PIVOT_W)
@@ -1014,10 +1014,12 @@ local function handle(self, b)
                 return
             end
 
-            -- Defer the visual coin deduction until an opponent is actually
-            -- found (ws_match_found) instead of playing it up front — a failed
-            -- search shouldn't have already animated coins leaving the balance.
-            self.pending_stake_deduction = cost
+            -- Deduct entry fee immediately upon starting the tournament climb
+            if cost > 0 then
+                u.balance = math.max(0, balance - cost)
+                if self.top_left_balance_lbl then gui.set_text(self.top_left_balance_lbl, commas(u.balance)) end
+                play_deduction_animation(self)
+            end
             self.play_disabled = true
             self.is_moving = true -- Lock UI inputs
 

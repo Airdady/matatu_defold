@@ -70,6 +70,7 @@ function M.draw(self, ctx)
 
     local helper = txtL(self, title_l, hcy - 12, hint_shown, "small", C.COL_GOLD)
     gui.set_scale(helper, vmath.vector3(1.1, 1.1, 1))
+    self.tap_hint_node = helper
 
     local cy = top - hdr_h
 
@@ -266,7 +267,10 @@ function M.draw(self, ctx)
 
     -- MATH FIX: Used + self.list_scroll here instead of subtraction. Positive scroll offset follows natural UI rules.
     local y = list_top - row_h/2 + self.list_scroll
-    for i, pu in ipairs(rows) do
+    local min_i = math.max(1, math.floor((y - row_h/2 - list_top) / step) + 1)
+    local max_i = math.min(#rows, math.floor((y + row_h/2 - list_bottom) / step) + 1)
+    for i = min_i, max_i do
+        local pu = rows[i]
         local row_cy = y - (i-1) * step
         if row_cy + row_h/2 >= list_bottom and row_cy - row_h/2 <= list_top then
             local playing = pu.gameId and pu.gameId ~= ""

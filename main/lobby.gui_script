@@ -213,13 +213,17 @@ local function rebuild(self)
     -- that isn't registered. Once identify_success fires (ws.is_identified),
     -- the lobby repaints and the tile becomes fully interactive.
     local has_cached_user = ws.current_user_data and (ws.current_user_data._id or "") ~= ""
-    local waiting_for_connect = has_cached_user and not ws.is_identified
+    local is_exhausted = ws.reconnect_exhausted == true
+    local waiting_for_connect = has_cached_user and not ws.is_identified and not is_exhausted
 
     local cta_text = "PLAY NOW"
     local sub_text = "Real players • Live coin stakes"
     local is_connecting = app_state.auth_state == "sending" or app_state.auth_state == "verifying"
     
-    if waiting_for_connect then
+    if is_exhausted then
+        cta_text = "RETRY"
+        sub_text = "Offline • Tap to reconnect"
+    elseif waiting_for_connect then
         cta_text = "CONNECTING..."
         sub_text = "Verifying your account..."
     elseif is_connecting then
@@ -232,9 +236,9 @@ local function rebuild(self)
 
     mode_tile(self, {
         x = play_cx, y = row_a_cy, w = play_w, h = row_a_h,
-        accent      = C_RED,
-        top_left    = "LIVE",
-        blink_tl    = true,
+        accent      = (is_exhausted or waiting_for_connect) and C_MUTED or C_RED,
+        top_left    = is_exhausted and "OFFLINE" or "LIVE",
+        blink_tl    = not is_exhausted and not waiting_for_connect,
         top_left_2  = "MULTI PLAYER",
         title       = "PLAY ONLINE",
         sub         = sub_text,
@@ -242,7 +246,7 @@ local function rebuild(self)
         season_deadline  = self.season_deadline_text,
         cta_label   = cta_text,
         btn_id      = "play_online",
-        disabled    = waiting_for_connect,
+        disabled    = is_exhausted or waiting_for_connect,
     })
 
     -- -----------------------------------------------------------------------
@@ -347,15 +351,15 @@ local function rebuild(self)
 
     mode_tile(self, {
         x = team_cx, y = row_a_cy, w = team_w, h = row_a_h,
-        accent      = C_U_TEAM,
-        top_left    = "ONLINE",
+        accent      = (is_exhausted or waiting_for_connect) and C_MUTED or C_U_TEAM,
+        top_left    = is_exhausted and "OFFLINE" or "ONLINE",
         top_left_2  = "TEAM",
         title       = "TEAM CUPS",
-        sub         = waiting_for_connect and "Connecting..." or team_sub,
+        sub         = is_exhausted and "Offline • Tap to retry" or (waiting_for_connect and "Connecting..." or team_sub),
         cta_label   = (has_team_tournament and not owns_cup) and "OPEN" or nil,
         btn_id      = (has_team_tournament and not owns_cup) and "team_action_open" or nil,
-        child_buttons = team_children,
-        disabled    = waiting_for_connect,
+        child_buttons = is_exhausted and nil or team_children,
+        disabled    = is_exhausted or waiting_for_connect,
     })
 
     -- -----------------------------------------------------------------------
@@ -425,10 +429,6 @@ local function rebuild(self)
             disabled = u.disabled, locked_hint = u.locked_hint, disabled_id = u.disabled_id,
         })
     end
-
-    local deco = track(self, gui.new_box_node(vmath.vector3(grid_r + 4, util_cy, 0), vmath.vector3(44, 44, 0)))
-    pcall(gui.play_flipbook, deco, hash("diamonds"))
-    gui.set_color(deco, vmath.vector4(0.5, 0.5, 0.5, 1))
 
     -- -----------------------------------------------------------------------
     -- Draw Active Overlays on top of the main Lobby UI
