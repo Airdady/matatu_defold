@@ -10,6 +10,7 @@ import android.media.AudioAttributes;
 import android.media.RingtoneManager;
 import android.net.Uri;
 import android.os.Build;
+import android.text.Html;
 import android.util.Log;
 
 import androidx.core.app.NotificationCompat;
@@ -73,6 +74,36 @@ public class MatatuFirebaseMessagingService extends FirebaseMessagingService {
     }
 
     /**
+     * Renders the small set of HTML tags Android notifications support.
+     *
+     * The server wraps a player's name in <b> so it stands out from the sentence
+     * around it, which is the one word in an invite that actually identifies
+     * who is asking. Passed through as a plain String those tags render
+     * LITERALLY — the player reads "&lt;b&gt;Mubarak&lt;/b&gt; challenged you" —
+     * so parsing here is not decoration, it is what stops the markup leaking
+     * into the copy.
+     *
+     * Falls back to the raw string on any failure. A name that is not bold is a
+     * cosmetic loss; a notification that fails to build is a missed invite.
+     */
+    private static CharSequence richText(String s) {
+        if (s == null) return "";
+        // Nothing to parse. Skips the work for the majority of notifications and
+        // avoids Html.fromHtml's entity handling touching copy that never asked
+        // for it — an ampersand in a username should stay an ampersand.
+        if (s.indexOf('<') < 0) return s;
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                return Html.fromHtml(s, Html.FROM_HTML_MODE_LEGACY);
+            }
+            return Html.fromHtml(s);
+        } catch (Exception e) {
+            Log.w(TAG, "richText failed, showing raw: " + e.getMessage());
+            return s;
+        }
+    }
+
+    /**
      * Constructs and displays a rich heads-up notification with action buttons.
      */
     public static void displayRichNotification(Context context, String type, String title, String body, Map<String, String> data) {
@@ -123,9 +154,11 @@ public class MatatuFirebaseMessagingService extends FirebaseMessagingService {
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(context, channelId)
                 .setSmallIcon(smallIcon)
-                .setContentTitle(title)
-                .setContentText(body)
-                .setStyle(new NotificationCompat.BigTextStyle().bigText(body).setBigContentTitle(title))
+                .setContentTitle(richText(title))
+                .setContentText(richText(body))
+                .setStyle(new NotificationCompat.BigTextStyle()
+                        .bigText(richText(body))
+                        .setBigContentTitle(richText(title)))
                 .setColor(BRAND_COLOR)
                 .setContentIntent(contentPendingIntent)
                 .setAutoCancel(true)
@@ -155,7 +188,7 @@ public class MatatuFirebaseMessagingService extends FirebaseMessagingService {
                     acceptIntent,
                     pendingIntentFlags
             );
-            builder.addAction(android.R.drawable.ic_media_play, "⚔️ Accept", acceptPendingIntent);
+            builder.addAction(android.R.drawable.ic_media_play, "Accept", acceptPendingIntent);
 
             // 2. DECLINE ACTION (Dismisses notification cleanly via receiver)
             Intent declineIntent = new Intent(context, NotificationActionReceiver.class);
@@ -170,7 +203,7 @@ public class MatatuFirebaseMessagingService extends FirebaseMessagingService {
                     declineIntent,
                     pendingIntentFlags
             );
-            builder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "✕ Decline", declinePendingIntent);
+            builder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Decline", declinePendingIntent);
 
         } else if ("DAILY_BONUS_REMINDER".equalsIgnoreCase(type)) {
             builder.setCategory(NotificationCompat.CATEGORY_PROMO);
@@ -183,7 +216,7 @@ public class MatatuFirebaseMessagingService extends FirebaseMessagingService {
                     claimIntent,
                     pendingIntentFlags
             );
-            builder.addAction(android.R.drawable.ic_input_add, "🎁 Claim Bonus", claimPendingIntent);
+            builder.addAction(android.R.drawable.ic_input_add, "Claim Bonus", claimPendingIntent);
 
         } else if ("TOURNAMENT_OPEN".equalsIgnoreCase(type) || "TOURNAMENT_CLOSING_SOON".equalsIgnoreCase(type)) {
             builder.setCategory(NotificationCompat.CATEGORY_EVENT);
@@ -196,7 +229,7 @@ public class MatatuFirebaseMessagingService extends FirebaseMessagingService {
                     tourneyIntent,
                     pendingIntentFlags
             );
-            builder.addAction(android.R.drawable.ic_dialog_map, "🏆 Join Battle", tourneyPendingIntent);
+            builder.addAction(android.R.drawable.ic_dialog_map, "Join Battle", tourneyPendingIntent);
 
         } else if ("SAVINGS_MILESTONE".equalsIgnoreCase(type)) {
             builder.setCategory(NotificationCompat.CATEGORY_STATUS);
@@ -209,7 +242,7 @@ public class MatatuFirebaseMessagingService extends FirebaseMessagingService {
                     savingsIntent,
                     pendingIntentFlags
             );
-            builder.addAction(android.R.drawable.ic_menu_view, "🏦 View Vault", savingsPendingIntent);
+            builder.addAction(android.R.drawable.ic_menu_view, "View Vault", savingsPendingIntent);
 
         } else if ("PRIZE_CONGRATULATIONS".equalsIgnoreCase(type)) {
             builder.setCategory(NotificationCompat.CATEGORY_STATUS);
@@ -222,7 +255,7 @@ public class MatatuFirebaseMessagingService extends FirebaseMessagingService {
                     prizeIntent,
                     pendingIntentFlags
             );
-            builder.addAction(android.R.drawable.ic_menu_agenda, "🎉 View Prize", prizePendingIntent);
+            builder.addAction(android.R.drawable.ic_menu_agenda, "View Prize", prizePendingIntent);
         }
 
         NotificationManagerCompat notificationManager = NotificationManagerCompat.from(context);
