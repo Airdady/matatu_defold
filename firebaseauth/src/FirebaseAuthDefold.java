@@ -87,8 +87,16 @@ public class FirebaseAuthDefold {
             fetchFcmToken();
 
             ready = true;
+            // The package name is printed because Firebase keys its Android
+            // app registration on it, and a mismatch between this and the
+            // package the Firebase project was registered under is invisible
+            // with hand-built FirebaseOptions — initialisation succeeds and
+            // then every sign-in fails with DEVELOPER_ERROR, which mentions no
+            // packages at all. One line in logcat turns a day of guessing into
+            // a glance.
             Log.i(TAG, "init: ready for package " + pkg + ", project " + projectId);
-            nativeLog(0, "FirebaseAuth & FCM ready (project " + projectId + ", pkg " + pkg + ")");
+            nativeLog(0, "FirebaseAuth & FCM ready (project " + projectId
+                    + ", pkg " + pkg + ", appId " + appId + ")");
             return true;
         } catch (Exception | NoClassDefFoundError e) {
             ready = false;
@@ -218,9 +226,30 @@ public class FirebaseAuthDefold {
             Log.i(TAG, "handleSignInResult: GoogleSignInAccount resolved for " + account.getEmail());
             exchangeWithFirebase(account, true);
         } catch (ApiException e) {
-            Log.e(TAG, "handleSignInResult ApiException: code=" + e.getStatusCode() + ", status=" + e.getStatus() + ", message=" + e.getMessage(), e);
+            // getStatusCode is the useful part. 12501 is the player backing
+            // out, 7 is the network, 10 is a misconfigured OAuth client — three
+            // completely different problems that "sign-in failed" cannot tell
+            // apart, and the third one fails for every user of the build.
+            Log.e(TAG, "handleSignInResult ApiException: code=" + e.getStatusCode()
+                    + ", status=" + e.getStatus() + ", message=" + e.getMessage(), e);
+
+            // 10 gets the explanation spelled out. DEVELOPER_ERROR means Google
+            // has no OAuth client matching this app's package name AND signing
+            // certificate, and the message it ships with says none of that —
+            // which is how it gets mistaken for a transient failure and retried
+            // for hours.
+            if (e.getStatusCode() == 10) {
+                nativeLog(1, "DEVELOPER_ERROR: Google has no OAuth client for package "
+                        + activity.getPackageName() + " with this build's signing certificate. "
+                        + "Register the SHA-1 of the keystore this APK is signed with "
+                        + "(debug and release are different certificates) against the Android "
+                        + "app in the Firebase console, and check the package names match.");
+            }
+
             String detail = "google-" + e.getStatusCode();
-            String msg = (e.getStatus() != null && e.getStatus().getStatusMessage() != null) ? e.getStatus().getStatusMessage() : (e.getMessage() != null ? e.getMessage() : detail);
+            String msg = (e.getStatus() != null && e.getStatus().getStatusMessage() != null)
+                    ? e.getStatus().getStatusMessage()
+                    : (e.getMessage() != null ? e.getMessage() : detail);
             fail(detail, msg);
         } catch (Exception e) {
             Log.e(TAG, "handleSignInResult unexpected exception: " + e.getMessage(), e);
