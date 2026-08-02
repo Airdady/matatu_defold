@@ -66,6 +66,7 @@ M.IDENTIFY_RESEND_SECONDS = 5
 --    connecting_for    seconds the current attempt has been in flight
 --    since_identify    seconds since IDENTIFY was last sent
 --    has_cached_identity  a saved session exists on disk
+--    reconnect_scheduled  a retry is already on the clock
 -- @return "idle"    nothing is wanted
 --         "adopt"   no identity in memory, but one is cached: load it
 --         "connect" open the socket
@@ -116,6 +117,13 @@ function M.next_action(s)
         end
         return "wait"
     end
+
+    -- A retry is already on the clock. Connecting anyway would make this a
+    -- SECOND retry loop running beside schedule_reconnect's, which is how a
+    -- struggling server gets hit every two seconds by every client at once.
+    -- The backoff is capped instead (see schedule_reconnect), so waiting here
+    -- costs a player seconds, not the half-minute it used to.
+    if s.reconnect_scheduled then return "wait" end
 
     return "connect"
 end

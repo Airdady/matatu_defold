@@ -688,6 +688,10 @@ local function start_keep_alive()
   end)
 end
 
+-- The longest gap between reconnect attempts while a player is waiting to be
+-- identified. config.MAX_RECONNECT_DELAY (30s) still applies once nobody is.
+local WAITING_RECONNECT_MAX = 3
+
 local schedule_reconnect -- forward decl
 
 local function on_connected()
@@ -738,7 +742,22 @@ schedule_reconnect = function()
     emit("reconnect_failed")
     return
   end
-  current_reconnect_delay = math.min(config.INITIAL_RECONNECT_DELAY * (config.RECONNECT_BACKOFF ^ (reconnect_attempts - 1)), config.MAX_RECONNECT_DELAY)
+  -- THE CAP DEPENDS ON WHETHER ANYBODY IS WAITING.
+  --
+  -- The 30s ceiling is right for an idle app whose socket dropped: nothing is
+  -- on screen, and hammering a server that is already struggling helps nobody.
+  --
+  -- It is quite wrong for a player who has just signed in and is looking at
+  -- CONNECTING. The backoff runs 1, 1.5, 2.25, 3.4, 5, 7.6, 11.4, 17, 25.6 and
+  -- then 30 a time, so nine losing attempts put the next one over a minute
+  -- out with the identity queued the whole while - which is exactly the
+  -- "identify takes more than a minute" report, as arithmetic.
+  --
+  -- So while there is an identity waiting to be registered, the ceiling drops
+  -- to a few seconds. It rises again the moment they are identified.
+  local waiting = pending_identity ~= nil and not M.is_identified
+  local ceiling = waiting and WAITING_RECONNECT_MAX or config.MAX_RECONNECT_DELAY
+  current_reconnect_delay = math.min(config.INITIAL_RECONNECT_DELAY * (config.RECONNECT_BACKOFF ^ (reconnect_attempts - 1)), ceiling)
   print(string.format("[WS] reconnecting in %.1fs (attempt %d)", current_reconnect_delay, reconnect_attempts))
   reconnect_handle = timer.delay(current_reconnect_delay, false, function()
     reconnect_handle = nil
@@ -927,6 +946,7 @@ local function reconcile()
     connecting_for      = now_s() - (connecting_since or 0),
     since_identify      = now_s() - (last_identify_sent or 0),
     has_cached_identity = has_cached_identity(),
+    reconnect_scheduled = reconnect_handle ~= nil,
   })
 
   if action == "adopt" then
