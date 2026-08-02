@@ -15,6 +15,20 @@ static char*   g_CachedFcmToken = NULL;
 
 static dmScript::LuaCallbackInfo* g_Callback = NULL;
 
+// The FCM token arrives on its OWN schedule, and that is the whole problem this
+// solves. FirebaseMessaging.getToken() is asynchronous and typically lands well
+// after the app has booted, identified and gone quiet — so anything that reads
+// the cached token at a fixed moment (as IDENTIFY did) reads an empty string on
+// most cold starts and never learns otherwise.
+//
+// A separate listener, kept for the life of the app rather than consumed like
+// the one-shot sign-in callback, because a token can also ROTATE: a reinstall,
+// a restore to a new handset, or a data clear issues a new one, and pushes to
+// the old one silently go nowhere.
+static dmScript::LuaCallbackInfo* g_FcmCallback = NULL;
+static char*        g_PendingFcmToken = NULL;
+static dmMutex::HMutex g_FcmMutex = 0;
+
 static const int RC_SIGN_IN = 7011;
 
 struct AuthResult
@@ -83,6 +97,15 @@ extern "C" JNIEXPORT void JNICALL Java_com_defold_android_firebaseauth_FirebaseA
     }
     g_CachedFcmToken = Dup(env, token);
     dmLogInfo("FirebaseAuth [FCM]: Registration token received natively");
+
+    // Queue it for Lua as well. Caching alone was the bug: the token was held
+    // in C++ where nothing could learn it had arrived, so the one place that
+    // read it had already read "" and moved on.
+    {
+        DM_MUTEX_SCOPED_LOCK(g_FcmMutex);
+        if (g_PendingFcmToken) free(g_PendingFcmToken);
+        g_PendingFcmToken = strdup(g_CachedFcmToken ? g_CachedFcmToken : "");
+    }
 }
 
 extern "C" JNIEXPORT void JNICALL Java_com_defold_android_firebaseauth_FirebaseAuthDefold_onAuthSuccess(
@@ -205,6 +228,27 @@ static int GetFcmToken(lua_State* L)
     return 1;
 }
 
+// Register a listener called whenever a token arrives — at boot, and again on
+// every rotation. Deliberately NOT the one-shot sign-in callback: this one has
+// to survive for the life of the app.
+static int SetFcmListener(lua_State* L)
+{
+    DM_LUA_STACK_CHECK(L, 0);
+    if (g_FcmCallback) { dmScript::DestroyCallback(g_FcmCallback); g_FcmCallback = NULL; }
+    if (!lua_isnil(L, 1)) g_FcmCallback = dmScript::CreateCallback(L, 1);
+
+    // A token that arrived BEFORE the listener was registered must not be lost.
+    // The fetch is kicked off at extension init, so on a warm start it can and
+    // does beat the game's own boot — and the listener would then wait forever
+    // for an event that already happened.
+    if (g_FcmCallback && g_CachedFcmToken && g_CachedFcmToken[0] != '\0')
+    {
+        DM_MUTEX_SCOPED_LOCK(g_FcmMutex);
+        if (!g_PendingFcmToken) g_PendingFcmToken = strdup(g_CachedFcmToken);
+    }
+    return 0;
+}
+
 static int FetchFcmToken(lua_State* L)
 {
     DM_LUA_STACK_CHECK(L, 0);
@@ -229,6 +273,7 @@ static const luaL_reg Module_methods[] =
     {"is_available",    IsAvailable},
     {"get_fcm_token",   GetFcmToken},
     {"fetch_fcm_token", FetchFcmToken},
+    {"set_fcm_listener", SetFcmListener},
     {NULL, NULL}
 };
 
@@ -262,8 +307,38 @@ static void Deliver(const AuthResult& r)
     dmScript::TeardownCallback(g_Callback);
 }
 
+static void DeliverFcmToken()
+{
+    char* token = NULL;
+    {
+        DM_MUTEX_SCOPED_LOCK(g_FcmMutex);
+        if (!g_PendingFcmToken) return;
+        token = g_PendingFcmToken;
+        g_PendingFcmToken = NULL;
+    }
+
+    if (g_FcmCallback && dmScript::IsCallbackValid(g_FcmCallback))
+    {
+        lua_State* L = dmScript::GetCallbackLuaContext(g_FcmCallback);
+        DM_LUA_STACK_CHECK(L, 0);
+        if (dmScript::SetupCallback(g_FcmCallback))
+        {
+            lua_pushstring(L, token);
+            if (lua_pcall(L, 2, 0, 0) != 0)
+            {
+                dmLogError("FirebaseAuth FCM callback error: %s", lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
+            dmScript::TeardownCallback(g_FcmCallback);
+        }
+    }
+    free(token);
+}
+
 static dmExtension::Result UpdateFirebaseAuth(dmExtension::Params* params)
 {
+    DeliverFcmToken();
+
     dmArray<AuthResult> batch;
     {
         DM_MUTEX_SCOPED_LOCK(g_Mutex);
@@ -292,6 +367,7 @@ static const char* Cfg(dmConfigFile::HConfig config, const char* key, const char
 static dmExtension::Result InitializeFirebaseAuth(dmExtension::Params* params)
 {
     g_Mutex = dmMutex::New();
+    g_FcmMutex = dmMutex::New();
     g_Pending.SetCapacity(4);
 
     dmAndroid::ThreadAttacher attacher;
@@ -358,6 +434,16 @@ static dmExtension::Result FinalizeFirebaseAuth(dmExtension::Params* params)
         g_Mutex = 0;
     }
 
+    if (g_FcmCallback) { dmScript::DestroyCallback(g_FcmCallback); g_FcmCallback = NULL; }
+    if (g_FcmMutex)
+    {
+        {
+            DM_MUTEX_SCOPED_LOCK(g_FcmMutex);
+            if (g_PendingFcmToken) { free(g_PendingFcmToken); g_PendingFcmToken = NULL; }
+        }
+        dmMutex::Delete(g_FcmMutex);
+        g_FcmMutex = 0;
+    }
     if (g_CachedFcmToken) { free(g_CachedFcmToken); g_CachedFcmToken = NULL; }
     if (g_AuthObj)   { env->DeleteGlobalRef(g_AuthObj);   g_AuthObj = NULL; }
     if (g_AuthClass) { env->DeleteGlobalRef(g_AuthClass); g_AuthClass = NULL; }

@@ -104,6 +104,23 @@ check("named, not blank", called and called.code, "not-available")
 check("id_token is a string", type(called and called.id_token), "string")
 
 print("")
+print("The FCM token path")
+-- The bug this covers: getToken() is asynchronous and kicked off at extension
+-- init, while IDENTIFY reads whatever is cached at the instant it fires. On a
+-- cold start that is almost always nothing — boot, session restore and identify
+-- all happen inside the window the fetch is still open — so IDENTIFY carried no
+-- token, and nothing sent one afterwards because the arrival was cached in C++
+-- where no Lua code could learn of it. The backend then held no token for that
+-- install and the player silently received no push at all.
+check("a listener can be registered", pcall(fb.on_fcm_token, function() end), true)
+check("registering off-device does not error", pcall(fb.on_fcm_token, function() end), true)
+check("fetch does not error off-device", pcall(fb.fetch_fcm_token), true)
+-- Callers concatenate and compare this. A nil would raise at the call site
+-- rather than at the mistake.
+check("get returns a string when unavailable", type(fb.get_fcm_token()), "string")
+check("and that string is empty, not 'nil'", fb.get_fcm_token(), "")
+
+print("")
 if failures == 0 then
     print("ALL PASS")
     os.exit(0)

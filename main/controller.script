@@ -629,6 +629,58 @@ function init(self)
             auth_debug("focus regained with no session — retrying silent sign-in")
             try_silent_login(self)
         end
+
+        -- Ask for the registration token again. FCM rotates it — a reinstall, a
+        -- restore onto a new handset, or clearing app data all issue a new one —
+        -- and pushes to the retired token fail silently, so a stale token is
+        -- indistinguishable from a player who turned notifications off. Nothing
+        -- else would ever notice: the token is fetched once at extension init
+        -- and then never again for the life of the install.
+        --
+        -- Cheap when nothing has changed: getToken() returns the cached value
+        -- and the listener below drops it as a duplicate.
+        pcall(fbauth.fetch_fcm_token)
+    end)
+
+    -- THE PUSH TOKEN ACTUALLY REACHING THE BACKEND.
+    --
+    -- It did not, reliably. FirebaseMessaging.getToken() is asynchronous and
+    -- kicked off at extension init, while IDENTIFY reads whatever is cached at
+    -- the instant it fires — which on a cold start is almost always nothing,
+    -- because boot, cached-session restore and identify all happen inside the
+    -- window the token fetch is still open. IDENTIFY then sent no token, and
+    -- nothing sent one afterwards: the arrival was cached in C++ where no Lua
+    -- code could learn of it. api.update_fcm_token and the backend's
+    -- /auth/fcm-token route both already existed and had no caller.
+    --
+    -- So the token is now pushed when it ARRIVES rather than pulled when we
+    -- happen to want it.
+    self._fcm_token_sent = nil
+    fbauth.on_fcm_token(function(token)
+        -- Same token twice is the common case — every focus regain re-asks and
+        -- usually gets the value it already had. Sending it again would be a
+        -- request per foreground for no change.
+        if self._fcm_token_sent == token then return end
+
+        local uid = ws.current_user_data and ws.current_user_data._id or nil
+        if not uid or uid == "" then
+            -- Not identified yet. Nothing is lost: identify() reads the cached
+            -- token itself, and by the time it runs the value is there.
+            auth_debug("fcm token arrived before sign-in; identify will carry it")
+            return
+        end
+
+        auth_debug("fcm token arrived post-identify; forwarding to backend")
+        api.update_fcm_token(uid, token, function(result)
+            if result and result.success then
+                self._fcm_token_sent = token
+            else
+                -- Left unset so the next focus regain retries. A token the
+                -- backend never stored is a player who silently receives no
+                -- push at all.
+                auth_debug("fcm token update failed: %s", tostring(result and result.message))
+            end
+        end)
     end)
 
     local cached = api.load_session()

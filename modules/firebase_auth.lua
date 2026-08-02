@@ -133,4 +133,25 @@ function M.fetch_fcm_token()
     pcall(ext.fetch_fcm_token)
 end
 
+--- Called every time a registration token arrives.
+--
+-- WHY A LISTENER AND NOT JUST get_fcm_token()
+--
+-- getToken() is asynchronous and usually finishes AFTER the app has booted,
+-- identified and gone quiet. Anything that reads the cached token at one fixed
+-- moment — which is what IDENTIFY did — reads an empty string on most cold
+-- starts and never finds out otherwise, so the backend ends up holding no token
+-- for that install and the player silently stops receiving push.
+--
+-- It also fires on ROTATION. A token changes on reinstall, on a restore to a
+-- new handset, and when app data is cleared; pushes to the old one go nowhere
+-- and nothing reports an error, so a stale token is indistinguishable from a
+-- player who has notifications turned off.
+function M.on_fcm_token(fn)
+    if not M.available or not ext.set_fcm_listener then return end
+    pcall(ext.set_fcm_listener, function(_, token)
+        if type(token) == "string" and token ~= "" then fn(token) end
+    end)
+end
+
 return M
