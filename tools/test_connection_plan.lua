@@ -75,7 +75,15 @@ check("still, right up to the line",
 check("past it, force it down",
     plan({ is_connecting = true, connecting_for = P.CONNECT_STALL_SECONDS }), "unstick")
 check("and long past it", plan({ is_connecting = true, connecting_for = 600 }), "unstick")
-check("stall window", P.CONNECT_STALL_SECONDS, 3.5)
+-- The number itself, asserted, because getting it WRONG does not degrade
+-- gracefully — it starves. Below a real handshake time every attempt on a slow
+-- link is torn down before it can finish and the player never gets online at
+-- all (see the slow-handshake case in test_first_login_timing.lua). Above the
+-- extension's own 8s timeout, this only ever fires for a connect that reported
+-- nothing whatsoever, which is exactly what it is for.
+check("stall window", P.CONNECT_STALL_SECONDS, 10)
+-- Stated as a relationship as well as a value.
+check("comfortably above a slow handshake", P.CONNECT_STALL_SECONDS > 8, true)
 
 print("")
 print("The ordinary path")
