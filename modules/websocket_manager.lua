@@ -879,18 +879,62 @@ end
 local RECONCILE_INTERVAL = 2
 local reconcile_handle = nil
 
+-- Where a cached session comes from. Supplied by controller.script at boot so
+-- this module does not have to require api_service (which requires config,
+-- which is a cycle waiting to happen).
+--
+-- This is what makes "the app is open and there is a cached user" enough, on
+-- its own, to get signed in. The identity used to exist only if some
+-- controller path had remembered to call identify(), so whether IDENTIFY ever
+-- fired depended on which route the app took through boot, resume, a failed
+-- sign-in or a cleared flag. Now it is a property of the state.
+local identity_provider = nil
+
+function M.set_identity_provider(fn)
+  identity_provider = fn
+  M.start_reconciler()
+end
+
+local function adopt_cached_identity()
+  if not identity_provider then return false end
+  local ok, cached = pcall(identity_provider)
+  if not ok or type(cached) ~= "table" then return false end
+  local id = tostring(cached._id or cached.localId or "")
+  if id == "" then return false end
+
+  print("[WS] adopting cached session for " .. id .. " - identifying without a sign-in")
+  if type(M.current_user_data) ~= "table" or (M.current_user_data._id or "") == "" then
+    M.current_user_data = cached
+  end
+  M.identify(id, cached.username or "Player",
+    { amount = tonumber(cached.balance) or 0, charge = 0 }, "UG")
+  return true
+end
+
+local function has_cached_identity()
+  if not identity_provider then return false end
+  local ok, cached = pcall(identity_provider)
+  return ok and type(cached) == "table" and tostring(cached._id or cached.localId or "") ~= ""
+end
+
 local function reconcile()
   local action = conn_plan.next_action({
-    identity         = pending_identity,
-    update_required  = M.update_required,
-    socket_connected = M.socket_connected,
-    is_connecting    = is_connecting,
-    is_identified    = M.is_identified,
-    connecting_for   = now_s() - (connecting_since or 0),
-    since_identify   = now_s() - (last_identify_sent or 0),
+    identity            = pending_identity,
+    update_required     = M.update_required,
+    socket_connected    = M.socket_connected,
+    is_connecting       = is_connecting,
+    is_identified       = M.is_identified,
+    connecting_for      = now_s() - (connecting_since or 0),
+    since_identify      = now_s() - (last_identify_sent or 0),
+    has_cached_identity = has_cached_identity(),
   })
 
-  if action == "identify" then
+  if action == "adopt" then
+    -- identify() sets pending_identity and kicks this loop again, so the next
+    -- tick proceeds straight to connect/identify.
+    adopt_cached_identity()
+
+  elseif action == "identify" then
     -- A socket with no identity on it. This is the state that used to be able
     -- to last for ever; re-sending costs one small frame.
     send_identify("reconciler")

@@ -65,7 +65,9 @@ M.IDENTIFY_RESEND_SECONDS = 5
 --    is_identified     the server has accepted us
 --    connecting_for    seconds the current attempt has been in flight
 --    since_identify    seconds since IDENTIFY was last sent
+--    has_cached_identity  a saved session exists on disk
 -- @return "idle"    nothing is wanted
+--         "adopt"   no identity in memory, but one is cached: load it
 --         "connect" open the socket
 --         "identify" send IDENTIFY
 --         "unstick" the attempt has hung: force it down, then reconnect
@@ -73,12 +75,26 @@ M.IDENTIFY_RESEND_SECONDS = 5
 function M.next_action(s)
     s = s or {}
 
-    -- Nobody to be. A signed-out app holds no socket open.
-    if not s.identity then return "idle" end
-
-    -- Terminal. Every reconnect re-runs the handshake that produced the
-    -- refusal, so the loop would only burn battery behind the update screen.
+    -- FIRST, because it outranks everything including adopting a session.
+    -- Every reconnect re-runs the handshake that produced the refusal, so the
+    -- loop would only burn battery behind the update screen — and adopting a
+    -- cached identity to do it with is worse, not better.
     if s.update_required then return "idle" end
+
+    -- Nobody to be YET, but a session on disk. Adopt it.
+    --
+    -- This is what makes "the app is open and there is a cached user" enough,
+    -- on its own, to get signed in. Previously the identity only existed if
+    -- some controller path had remembered to call identify() — so whether
+    -- IDENTIFY ever fired depended on which route the app happened to take
+    -- through boot, resume, a failed sign-in or a cleared flag. Sourcing it
+    -- from the cache here makes it a property of the state instead of of the
+    -- path.
+    if not s.identity then
+        if s.has_cached_identity then return "adopt" end
+        -- Nobody to be. A signed-out app holds no socket open.
+        return "idle"
+    end
 
     -- Done. This is the state the whole module exists to reach.
     if s.is_identified then return "idle" end

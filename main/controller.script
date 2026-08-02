@@ -778,6 +778,20 @@ function init(self)
         end)
     end)
 
+    -- WHERE THE CONNECTION LAYER GETS AN IDENTITY, WITH NO HELP FROM HERE.
+    --
+    -- Registered before anything else so it is in place whatever route boot
+    -- takes. The reconciler asks for this whenever it finds no identity in
+    -- memory, so "the app is open and there is a cached user" is now enough on
+    -- its own to be signed in.
+    --
+    -- That used to depend on a controller path remembering to call
+    -- identify_and_connect — and there are several: boot, the Play Online tap,
+    -- focus regained, the identify_error recovery, the post-sign-in callback.
+    -- Miss any one and the app sits on CONNECTING with a perfectly good
+    -- session on disk, which is exactly what was reported.
+    ws.set_identity_provider(function() return api.load_session() end)
+
     local cached = api.load_session()
     if cached and (cached._id or "") ~= "" then
         local token = cached.idToken or cached.token or ""

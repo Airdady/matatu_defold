@@ -353,6 +353,10 @@ end
 
 -- Cups this player was invited to but has not joined. No code needed to
 -- accept one — being on the cup's allowedUsers IS the credential.
+-- DEPRECATED. Invitations arrive on the user object now (ws.current_user_data
+-- .teamInvitations), attached by the server to both the sign-in response and
+-- the IDENTIFY reply — see modules/lobby/cups.lua. Nothing in the app calls
+-- this any more; it is kept only so a rollback does not have to restore it.
 function M.list_team_invitations(user_id, cb)
     request("GET", "/tournaments/team/invitations?userId=" .. urlencode(user_id), nil, cb)
 end

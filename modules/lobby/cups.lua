@@ -26,30 +26,53 @@ function M.my_owned_cup(self)
     return nil
 end
 
--- Pull this player's pending invitations, plus the active-cup list the tile
--- reads to find the cup they own. Two cheap calls on screen entry rather
--- than polling.
+-- Invitations come from the USER OBJECT, not from a request.
+--
+-- The server attaches them to the same payload that carries tournaments,
+-- battles and balance, on both sign-in and IDENTIFY, so by the time a player
+-- is signed in the app already knows who has invited them.
+--
+-- The call this replaces was the one part of the lobby with its own round
+-- trip, its own failure mode and its own timing. On a cold start it raced the
+-- sign-in that produces the very userId it took as a parameter, and when it
+-- lost that race the tile showed nothing — indistinguishable from having no
+-- invitations at all.
+function M.invitations()
+    local u = ws.current_user_data or {}
+    local list = u.teamInvitations
+    return type(list) == "table" and list or {}
+end
+
+-- Pull the active-cup list the tile reads to find the cup this player owns.
+-- One call on screen entry rather than polling; invitations no longer need one
+-- at all.
 function M.load(self, on_loaded)
     if self.team_cups_loading then return end
     self.team_cups_loading = true
     local uid = tostring((ws.current_user_data or {})._id or "")
+    -- Read before the request as well as after: the user object already has
+    -- them, so the tile is correct on the very first paint instead of after a
+    -- round trip.
+    self.invites = M.invitations()
     api.list_active_team_tournaments(uid, function(res)
+        self.team_cups_loading = false
         self.team_cups = ((res or {}).data or {}).tournaments or {}
-        api.list_team_invitations(uid, function(ires)
-            self.team_cups_loading = false
-            self.invites = ((ires or {}).data or {}).invitations or {}
+        self.invites = M.invitations()
         -- Unlike the other screens, lobby has no self._active flag — gating on
         -- one would silently never repaint, leaving the tile stuck on
         -- "Loading..." forever. self.nodes is the real signal that the screen
         -- is currently built.
-            if self.nodes and on_loaded then on_loaded(self) end
-        end)
+        if self.nodes and on_loaded then on_loaded(self) end
     end)
 end
 
 -- How many invitations are waiting — the tile shows this as a badge.
 function M.invite_count(self)
-    return #(self.invites or {})
+    -- Falls back to the user object so a tile painted before load() has run
+    -- still shows the badge.
+    local list = self.invites
+    if type(list) ~= "table" then list = M.invitations() end
+    return #list
 end
 
 return M
