@@ -10,13 +10,18 @@ local M = {}
 
 -- ── Prize helpers (shared by draw and by the right panel's badge) ─────────────
 
-local DEFAULT_PRIZES = {
-    { rank = "#1",     amount = "70,000", min_pos = 1,  max_pos = 1  },
-    { rank = "#2",     amount = "30,000", min_pos = 2,  max_pos = 2  },
-    { rank = "#3",     amount = "10,000", min_pos = 3,  max_pos = 3  },
-    { rank = "#4-10",  amount = "5,000",  min_pos = 4,  max_pos = 10 },
-    { rank = "#11-20", amount = "1,000",  min_pos = 11, max_pos = 20 },
-}
+-- NO HARDCODED PRIZE TABLE.
+--
+-- There used to be one here: 70,000 / 30,000 / 10,000 / 5,000 / 1,000, shown
+-- whenever the payload did not match the exact shape build_prizes expects. It
+-- was a THIRD set of numbers — the database has `rewards` and
+-- `standingsPrizes`, and this agreed with neither — presented to players as
+-- the prize table, indistinguishable from the real thing because a plausible
+-- list of amounts looks exactly like a plausible list of amounts.
+--
+-- An empty panel is the honest answer when the server has not said yet. It is
+-- also self-correcting: the table appears the moment IDENTIFY lands, which is
+-- seconds, whereas a wrong number stays wrong until somebody notices it.
 
 function M.build_prizes(commas_fn)
     local u = ws.current_user_data or {}
@@ -39,11 +44,8 @@ function M.build_prizes(commas_fn)
         end
         return out
     end
-    local out = {}
-    for i, p in ipairs(DEFAULT_PRIZES) do
-        out[i] = { rank = p.rank, amount = p.amount, suffix = "", min_pos = p.min_pos, max_pos = p.max_pos }
-    end
-    return out
+    -- Nothing usable from the server yet. Show nothing rather than invent it.
+    return {}
 end
 
 function M.active_tier_index(prizes, pos)
@@ -162,7 +164,10 @@ function M.draw(self, ctx)
 
     -- ── Season Bonuses Container ──────────────────────────────────────────────
     local num_bonuses = #prizes
-    local b_list_h = num_bonuses * C.ROW_H_BONUS
+    -- One row's height even when there are none, so the panel keeps its shape
+    -- and holds the "waiting" line below instead of collapsing to a bare title
+    -- that reads as a broken container.
+    local b_list_h = math.max(num_bonuses, 1) * C.ROW_H_BONUS
     local b_cont_h = pad_top + title_space + b_list_h + pad_bot
 
     -- Draw Container Background
@@ -185,6 +190,16 @@ function M.draw(self, ctx)
     local my_pos = tonumber((ws.current_user_data or {}).position) or -1
     local active = M.active_tier_index(prizes, my_pos)
     local row_h_bonus = C.ROW_H_BONUS
+
+    if num_bonuses == 0 then
+        -- The server has not sent the table yet. Said plainly rather than
+        -- filled in with invented amounts, which is what this panel used to do
+        -- — and a wrong prize table is worse than a late one, because nothing
+        -- about it looks wrong.
+        local waiting = txtL(self, cx - inner_pw/2 + C.INNER_PAD, cy - row_h_bonus/2,
+            "Loading prizes...", "body", C.COL_DIM)
+        gui.set_scale(waiting, vmath.vector3(0.9, 0.9, 1))
+    end
 
     for i, p in ipairs(prizes) do
         local tier_col = C.TIER_COLORS[math.min(i, #C.TIER_COLORS)]
