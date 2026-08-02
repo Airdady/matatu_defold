@@ -143,6 +143,12 @@ public class MatatuFirebaseMessagingService extends FirebaseMessagingService {
             Intent acceptIntent = (Intent) launchIntent.clone();
             acceptIntent.setAction("com.matatu.champ.ACTION_ACCEPT_GAME");
             acceptIntent.putExtra("push_action", "accept");
+            // The requestId travels WITH the action. Without it the app knows
+            // the player pressed Accept but not what they accepted, which is a
+            // launch into the lobby and an invite that quietly expires.
+            if (data != null && data.containsKey("requestId")) {
+                acceptIntent.putExtra("push_request_id", data.get("requestId"));
+            }
             PendingIntent acceptPendingIntent = PendingIntent.getActivity(
                     context,
                     notificationId + 1,

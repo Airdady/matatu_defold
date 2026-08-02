@@ -249,6 +249,48 @@ static int SetFcmListener(lua_State* L)
     return 0;
 }
 
+// The notification button the player pressed, if any. Returns action, requestId
+// — or nil when the app was opened normally.
+//
+// Read once: the Java side clears the extra, because Android hands the same
+// intent back for the life of the activity and a value left in place would make
+// every focus regain look like a fresh press.
+static int ConsumePendingAction(lua_State* L)
+{
+    DM_LUA_STACK_CHECK(L, 2);
+    if (g_AuthObj == NULL) { lua_pushnil(L); lua_pushnil(L); return 2; }
+
+    dmAndroid::ThreadAttacher attacher;
+    JNIEnv* env = attacher.GetEnv();
+    jmethodID m = env->GetMethodID(g_AuthClass, "consumePendingAction", "()Ljava/lang/String;");
+    jstring jres = (jstring)env->CallObjectMethod(g_AuthObj, m);
+    if (jres == NULL) { lua_pushnil(L); lua_pushnil(L); return 2; }
+
+    const char* c = env->GetStringUTFChars(jres, 0);
+    if (c == NULL || c[0] == '\0')
+    {
+        if (c) env->ReleaseStringUTFChars(jres, c);
+        lua_pushnil(L); lua_pushnil(L);
+        return 2;
+    }
+
+    // "action|requestId" — split on the first separator only, since a request id
+    // is opaque and could in principle contain one.
+    const char* bar = strchr(c, '|');
+    if (bar == NULL)
+    {
+        lua_pushstring(L, c);
+        lua_pushnil(L);
+    }
+    else
+    {
+        lua_pushlstring(L, c, (size_t)(bar - c));
+        if (bar[1] == '\0') lua_pushnil(L); else lua_pushstring(L, bar + 1);
+    }
+    env->ReleaseStringUTFChars(jres, c);
+    return 2;
+}
+
 static int FetchFcmToken(lua_State* L)
 {
     DM_LUA_STACK_CHECK(L, 0);
@@ -274,6 +316,7 @@ static const luaL_reg Module_methods[] =
     {"get_fcm_token",   GetFcmToken},
     {"fetch_fcm_token", FetchFcmToken},
     {"set_fcm_listener", SetFcmListener},
+    {"consume_pending_action", ConsumePendingAction},
     {NULL, NULL}
 };
 

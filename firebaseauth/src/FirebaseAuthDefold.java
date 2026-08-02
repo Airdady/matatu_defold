@@ -133,6 +133,39 @@ public class FirebaseAuthDefold {
         return cachedFcmToken != null ? cachedFcmToken : "";
     }
 
+    /**
+     * The notification button the player pressed to get here, if any.
+     *
+     * Returns "action|requestId" (either part may be empty), or "" when the app
+     * was opened normally.
+     *
+     * READ ONCE. The extra is cleared from the intent on the way out, because
+     * Android hands the same intent back for the life of the activity — left in
+     * place, every focus regain for the rest of the session would look like a
+     * fresh Accept press and re-accept a game that finished an hour ago.
+     */
+    public String consumePendingAction() {
+        try {
+            if (activity == null) return "";
+            Intent intent = activity.getIntent();
+            if (intent == null) return "";
+
+            String action = intent.getStringExtra("push_action");
+            if (isBlank(action)) return "";
+
+            String requestId = intent.getStringExtra("push_request_id");
+            intent.removeExtra("push_action");
+            intent.removeExtra("push_request_id");
+            activity.setIntent(intent);
+
+            Log.i(TAG, "consumePendingAction: " + action + " (request " + requestId + ")");
+            return action + "|" + (requestId == null ? "" : requestId);
+        } catch (Exception e) {
+            Log.w(TAG, "consumePendingAction failed: " + e.getMessage());
+            return "";
+        }
+    }
+
     public boolean isSignedIn() {
         return auth != null && auth.getCurrentUser() != null;
     }

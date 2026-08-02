@@ -269,6 +269,55 @@ local function arm_connect_deadline(self, seconds, force)
     end)
 end
 
+-- ACTING ON A NOTIFICATION BUTTON.
+--
+-- The Accept button on a game-request push launches the app with the action and
+-- the request id attached to the intent. Until now nothing read them: the app
+-- opened on the lobby and the invite sat there until it expired, which looks
+-- exactly like a button that does not work.
+--
+-- Accepting needs a live socket, so it cannot be done at the instant the app
+-- starts — identify has not happened yet. The request is parked and replayed
+-- once the connection is up, which is also what makes it survive the sign-in
+-- that a cold start has to do first.
+local pending_push_action = nil
+
+local function run_push_action(self, action, request_id)
+    if action == "accept" and request_id then
+        auth_debug("push action: accepting game request %s", tostring(request_id))
+        ws.accept_game_request(request_id)
+        -- Straight to the table. Accepting and then leaving them on the lobby
+        -- is the same dead end as not accepting at all.
+        app_state.mode = "online"
+        show(self, "online")
+    elseif action == "claim_daily_bonus" then
+        show(self, "online")
+        pcall(msg.post, "#online", "open_daily_bonus")
+    elseif action == "open_tournament" then
+        show(self, "tournaments")
+    elseif action == "open_savings" then
+        show(self, "payments")
+    elseif action == "open_standings" then
+        show(self, "standings")
+    end
+end
+
+local function handle_push_action(self)
+    local action, request_id = fbauth.consume_pending_action()
+    if not action then return end
+
+    -- Held until the socket is up. accept_game_request queues onto a connection
+    -- that does not exist yet at boot, and a queued accept that is never sent is
+    -- an invite the player watched themselves accept and then expire.
+    if action == "accept" and not identify_ok then
+        auth_debug("push action: accept parked until the socket is up (%s)", tostring(request_id))
+        pending_push_action = { action = action, request_id = request_id }
+        return
+    end
+
+    run_push_action(self, action, request_id)
+end
+
 -- Forward-declared, because it and the retry ladder call each other: a
 -- failure here re-enters handle_login_failure, and that schedules another
 -- try_silent_login. Declared local rather than left global so it does not
@@ -630,6 +679,9 @@ function init(self)
             try_silent_login(self)
         end
 
+        -- Did they get here by pressing a notification button?
+        handle_push_action(self)
+
         -- Ask for the registration token again. FCM rotates it — a reinstall, a
         -- restore onto a new handset, or clearing app data all issue a new one —
         -- and pushes to the retired token fail silently, so a stale token is
@@ -655,6 +707,10 @@ function init(self)
     --
     -- So the token is now pushed when it ARRIVES rather than pulled when we
     -- happen to want it.
+    -- And at boot, which is the cold-start case: the app was not running when
+    -- the notification arrived, so pressing Accept launched it from scratch.
+    handle_push_action(self)
+
     self._fcm_token_sent = nil
     fbauth.on_fcm_token(function(token)
         -- Same token twice is the common case — every focus regain re-asks and
@@ -767,6 +823,16 @@ function init(self)
             route_after_auth(self)
             return
         end
+        -- A notification button pressed before the socket existed. Replayed
+        -- here rather than at boot, because that is the first moment an accept
+        -- can actually reach the server.
+        if pending_push_action then
+            local p = pending_push_action
+            pending_push_action = nil
+            auth_debug("push action: replaying parked %s", tostring(p.action))
+            run_push_action(self, p.action, p.request_id)
+        end
+
         -- Repaint the lobby even on the silent path. Only the explicit
         -- "Play Online" flow above used to, which was harmless while nothing
         -- on the tile depended on being connected — but the LOGIN WITH PHONE

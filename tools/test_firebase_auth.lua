@@ -121,6 +121,17 @@ check("get returns a string when unavailable", type(fb.get_fcm_token()), "string
 check("and that string is empty, not 'nil'", fb.get_fcm_token(), "")
 
 print("")
+print("The notification button the player pressed")
+-- Accept on a game-request push launches the app with the action and the
+-- request id on the intent. Nothing read them until now: the app opened on the
+-- lobby and the invite sat there until it expired, which is indistinguishable
+-- from a button that does not work.
+local a, r = fb.consume_pending_action()
+check("nothing pressed, off-device", a, nil)
+check("and no request id either", r, nil)
+check("does not error when unavailable", pcall(fb.consume_pending_action), true)
+
+print("")
 if failures == 0 then
     print("ALL PASS")
     os.exit(0)

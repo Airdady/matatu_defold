@@ -154,4 +154,23 @@ function M.on_fcm_token(fn)
     end)
 end
 
+--- The notification button the player pressed to open the app, if any.
+--
+-- @return action, request_id  — both nil when the app was opened normally.
+--
+-- READ ONCE. The native side clears the intent extra as it hands this over,
+-- because Android returns the same intent for the life of the activity: left in
+-- place, every focus regain for the rest of the session would look like a fresh
+-- Accept press and re-accept a game that finished an hour ago.
+function M.consume_pending_action()
+    if not M.available or not ext.consume_pending_action then return nil, nil end
+    local ok, action, request_id = pcall(ext.consume_pending_action)
+    if not ok then return nil, nil end
+    -- "" is TRUTHY in Lua, so an empty action has to be compared rather than
+    -- tested, or "no button was pressed" reads as a button press with no name.
+    if type(action) ~= "string" or action == "" then return nil, nil end
+    if type(request_id) ~= "string" or request_id == "" then request_id = nil end
+    return action, request_id
+end
+
 return M
