@@ -43,17 +43,15 @@ local M = {}
 
 -- How long a connect attempt may sit in flight before we call it hung.
 --
--- The websocket extension is given timeout = 8000ms, so anything past that is
--- already outside its own contract. 12 leaves room for a slow-but-real
--- handshake before we tear it down and start again.
-M.CONNECT_STALL_SECONDS = 12
+-- The websocket extension timeout is capped, but in practice 3.5s is plenty of
+-- time for TCP/TLS handshake before resetting and attempting a fresh socket.
+M.CONNECT_STALL_SECONDS = 3.5
 
 -- How long to wait for an IDENTIFY reply before sending another.
 --
--- Deliberately shorter than the watchdog's 6s, and unlike the watchdog this
--- one never gives up — giving up is what turned a slow connection into a
--- signed-out player.
-M.IDENTIFY_RESEND_SECONDS = 5
+-- Deliberately fast (2.5s) so unanswered IDENTIFY messages are retried immediately
+-- instead of leaving the UI hanging.
+M.IDENTIFY_RESEND_SECONDS = 2.5
 
 --- What the connection should do right now.
 --

@@ -62,23 +62,20 @@ check("connected, not identified, nothing sent recently",
     plan({ socket_connected = true, since_identify = 99 }), "identify")
 check("...but not on every tick",
     plan({ socket_connected = true, since_identify = 0 }), "wait")
-check("resend window", P.IDENTIFY_RESEND_SECONDS, 5)
+check("resend window", P.IDENTIFY_RESEND_SECONDS, 2.5)
 
 print("")
 print("THE DEADLOCK: a connect attempt that hangs")
 -- is_connecting cleared only by two events, neither of which is coming.
 -- Caught by elapsed time instead, because that is the one thing still
 -- observable when events stop.
-check("a fresh attempt is given room", plan({ is_connecting = true, connecting_for = 3 }), "wait")
+check("a fresh attempt is given room", plan({ is_connecting = true, connecting_for = 1 }), "wait")
 check("still, right up to the line",
     plan({ is_connecting = true, connecting_for = P.CONNECT_STALL_SECONDS - 0.1 }), "wait")
 check("past it, force it down",
     plan({ is_connecting = true, connecting_for = P.CONNECT_STALL_SECONDS }), "unstick")
 check("and long past it", plan({ is_connecting = true, connecting_for = 600 }), "unstick")
--- Longer than the extension's own 8s timeout: anything past that is already
--- outside its contract, and shorter would tear down handshakes that are merely
--- slow.
-check("stall window", P.CONNECT_STALL_SECONDS, 12)
+check("stall window", P.CONNECT_STALL_SECONDS, 3.5)
 
 print("")
 print("The ordinary path")

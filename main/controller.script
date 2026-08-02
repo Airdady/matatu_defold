@@ -594,6 +594,10 @@ handle_auth_result = function(self, result)
                 app_state.auth_state = "done"
                 msg.post("#lobby", "auth_state_changed")
 
+                -- Connect and identify IMMEDIATELY so the WebSocket IDENTIFY is put on the
+                -- wire with 0ms delay.
+                identify_and_connect(user)
+
                 -- Mark _explicit_online so route_after_auth sends to online screen
                 -- when this is a fresh interactive sign-in (not just a cached session
                 -- boot), or navigate to profile if profile is incomplete.
@@ -606,13 +610,6 @@ handle_auth_result = function(self, result)
                     -- Silent boot-time login: stay on lobby, just repaint.
                     show(self, "lobby")
                 end
-
-                -- Connect + identify AFTER navigation. The socket is async —
-                -- it does not block the screen transition above. If already
-                -- connected (cached session path), ws.identify() sends IDENTIFY
-                -- immediately on the live socket; if not, ws.connect() opens it
-                -- and on_connected() sends it once open.
-                identify_and_connect(user)
                 return
             end
         end
@@ -836,8 +833,10 @@ function init(self)
         end
     else
         -- No local session cached: open Firebase account selection immediately on app launch
-        -- so the player gets prompted right away without needing to first tap Play Online.
-        auth_debug("init: no cached session, opening Firebase sign-in prompt")
+        -- and start the WebSocket connection concurrently in the background so it is
+        -- connected and ready the moment Firebase sign-in completes.
+        auth_debug("init: no cached session, connecting socket and opening Firebase sign-in prompt")
+        ws.connect()
         show(self, "lobby")
         if fbauth.available then
             self._interactive_open = true
@@ -1406,6 +1405,9 @@ function on_message(self, message_id, message, sender)
                 user.avatar      = message.avatar
                 ws.current_user_data = user
                 api.save_session(user)
+
+                ws.identify(uid, user.username or message.username,
+                    { amount = user.balance or 0, charge = 0 }, "UG")
 
                 for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile", "lobby" }) do
                     msg.post("#" .. s, "user_data_updated")

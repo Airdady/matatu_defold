@@ -158,7 +158,7 @@ end
 -- the UI sat on CONNECTING forever with no way out. Resend a couple of
 -- times, then surface it as an identify failure so the auth layer can
 -- recover instead of hanging.
-local IDENTIFY_TIMEOUT   = 6
+local IDENTIFY_TIMEOUT   = 2.5
 local IDENTIFY_MAX_TRIES = 3
 local identify_timer     = nil
 local identify_tries     = 0
@@ -225,10 +225,22 @@ function M.identify(id, username, stake, country)
   print(string.format("[WS-DEBUG] identify() called: id=%s socket_connected=%s (%s)",
     tostring(id), tostring(M.socket_connected), M.socket_connected and "sending IDENTIFY now" or "queued for on_connected"))
   identify_tries = 0
-  send_identify("identify() called")
-  arm_identify_watchdog()
-  -- Kick the reconciler rather than sequencing connect() here. Callers say WHO
-  -- they are; getting there is this module's problem.
+  reconnect_attempts = 0
+  M.reconnect_exhausted = false
+
+  if M.socket_connected then
+    send_identify("identify() called")
+    arm_identify_watchdog()
+  else
+    if is_connecting and (now_s() - (connecting_since or 0)) >= 3.0 then
+      is_connecting = false
+      connection = nil
+    end
+    if not is_connecting then
+      M.connect()
+    end
+    arm_identify_watchdog()
+  end
   M.start_reconciler()
 end
 
@@ -690,7 +702,7 @@ end
 
 -- The longest gap between reconnect attempts while a player is waiting to be
 -- identified. config.MAX_RECONNECT_DELAY (30s) still applies once nobody is.
-local WAITING_RECONNECT_MAX = 3
+local WAITING_RECONNECT_MAX = 1.5
 
 local schedule_reconnect -- forward decl
 
@@ -788,6 +800,11 @@ function M.connect()
   if M.update_required then
     print("[WS] connect() refused: update required")
     return
+  end
+  if is_connecting and (now_s() - (connecting_since or 0)) >= 3.5 then
+    print("[WS] clearing stale is_connecting")
+    is_connecting = false
+    connection = nil
   end
   if is_connecting or M.socket_connected then
     print(string.format("[WS-DEBUG] connect() no-op: is_connecting=%s socket_connected=%s",
@@ -895,7 +912,7 @@ end
 --
 -- This cannot deadlock the same way: it re-derives what to do from observable
 -- state on every tick, so nothing depends on an event arriving.
-local RECONCILE_INTERVAL = 2
+local RECONCILE_INTERVAL = 1
 local reconcile_handle = nil
 
 -- Where a cached session comes from. Supplied by controller.script at boot so
