@@ -55,6 +55,7 @@ local ws_callback_fn
 ws_callback_fn = nil
 local outcomes, connect_latency = {}, 0.2
 local attempt = 0
+local connected_count = 0
 local sent = {}        -- { at = seconds, type = "IDENTIFY" }
 
 websocket = {
@@ -69,7 +70,12 @@ websocket = {
         local conn = { id = attempt }
         if outcome == "hang" then return conn end
         timer.delay(connect_latency, false, function()
+            -- A socket the app has closed delivers nothing more. Modelled,
+            -- because the whole point of closing an abandoned attempt is that
+            -- it stops arriving late and giving the app a second live socket.
+            if conn.closed then return end
             if outcome == "ok" then
+                connected_count = connected_count + 1
                 cb(nil, conn, { event = websocket.EVENT_CONNECTED })
             else
                 cb(nil, conn, { event = websocket.EVENT_ERROR, message = "refused" })
@@ -88,7 +94,7 @@ websocket = {
             id = payload:match('"_id"%s*:%s*"([^"]*)"'),
         }
     end,
-    disconnect = function() end,
+    disconnect = function(conn) if conn then conn.closed = true end end,
 }
 
 -- Advance the virtual clock, firing timers in order.
@@ -144,7 +150,7 @@ local function sign_in(opts)
     -- next_timer is deliberately NOT reset: ids must stay unique across
     -- cases, or a cancel carried over from the previous one lands on an
     -- unrelated timer in the fresh table.
-    NOW, timers, attempt, sent = 0, {}, 0, {}
+    NOW, timers, attempt, sent, connected_count = 0, {}, 0, {}, 0
     outcomes = opts.outcomes or {}
     connect_latency = opts.connect_latency or 0.2
     fresh_module()
@@ -289,6 +295,32 @@ check("adopted from cache and re-identified", tr2 ~= nil, true)
 -- itself. The bounded loop in reconcile() is therefore belt-and-braces for
 -- actions that have no such re-entry, not the thing making this case fast.
 check("adopting leads straight on to connecting", (tr2 or 999) - dropped2 <= 0.5, true)
+
+print("")
+print("A SLOW BUT WORKING HANDSHAKE IS NOT KILLED FOR BEING SLOW")
+-- CONNECT_STALL_SECONDS decides when an in-flight attempt is declared hung.
+-- Set it below what a real handshake takes on a bad link and the app tears
+-- down connections that were about to succeed, over and over, and a player on
+-- rural 3G never gets online at all — the opposite of the bug it exists for.
+--
+-- Five seconds of TCP+TLS is unremarkable on a congested cell.
+sign_in({ connect_latency = 5 })
+-- 12s, not 30: past the 10s stall window and the 5s handshake, but short of
+-- the zombie watchdog at 13s. A reconnect it triggers is legitimate, and
+-- counting it would make the single-socket assertion below meaningless.
+advance(12)
+local tslow = first_identify_at()
+print(string.format("      (IDENTIFY sent at %ss, stall window is %ss)",
+    tostring(tslow and math.floor(tslow) or "never"),
+    tostring(require("modules.connection_plan").CONNECT_STALL_SECONDS)))
+check("a slow link still gets identified", tslow ~= nil, true)
+-- Generous: what matters is that it converges rather than churning for ever.
+check("without churning indefinitely", (tslow or 999) <= 12, true)
+-- And with ONE socket, not two. Abandoning an attempt without closing it left
+-- the old handshake to complete a moment later and fire on_connected for a
+-- socket the app had already replaced — two live connections, and the server
+-- holding two registrations for one player.
+check("and with a single live socket", connected_count, 1)
 
 print("")
 print("NO CACHE AT ALL: IDENTIFY BY DEVICE ID")

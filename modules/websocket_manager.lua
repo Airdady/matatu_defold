@@ -63,6 +63,24 @@ local last_rx_time = now_s()
 
 local KEY_BYTES = util.hex_to_bytes(config.GAME_STATE_SECRET)
 
+-- Close a socket attempt we are abandoning.
+--
+-- Declaring an attempt hung and opening a fresh one leaves the old one live:
+-- `connection` is overwritten, but the socket underneath is not closed and the
+-- extension goes on driving its callback. On a link slower than the stall
+-- window that is not hypothetical — the abandoned handshake completes a moment
+-- later, on_connected fires for it, and the app ends up with two sockets and
+-- the server with two registrations for one player.
+--
+-- Best-effort by construction: the whole reason we are here is that this
+-- socket is not behaving.
+local function close_orphan_socket()
+  if connection and websocket and websocket.disconnect then
+    pcall(websocket.disconnect, connection)
+  end
+  connection = nil
+end
+
 -- ── pub/sub ─────────────────────────────────────────────────────────────────
 local listeners = {} -- event -> { id -> fn }
 local next_listener_id = 0
@@ -186,7 +204,11 @@ local function arm_identify_watchdog()
         if M.is_identified or not pending_identity then return end
         if identify_tries < IDENTIFY_MAX_TRIES then
             identify_tries = identify_tries + 1
-            print(string.format("[WS-DEBUG] IDENTIFY unanswered after %ds, resending (%d/%d)",
+            -- %.1f, not %d. IDENTIFY_TIMEOUT is a fraction of a second now,
+            -- and "%d" with a non-integer raises on Lua 5.3+ — inside the
+            -- watchdog's own timer callback, which is the one thing that must
+            -- not be able to die.
+            print(string.format("[WS-DEBUG] IDENTIFY unanswered after %.1fs, resending (%d/%d)",
                 IDENTIFY_TIMEOUT, identify_tries, IDENTIFY_MAX_TRIES))
             send_identify("watchdog")
             arm_identify_watchdog()
@@ -267,9 +289,9 @@ function M.identify(id, username, stake, country)
     send_identify("identify() called")
     arm_identify_watchdog()
   else
-    if is_connecting and (now_s() - (connecting_since or 0)) >= 3.0 then
+    if is_connecting and (now_s() - (connecting_since or 0)) >= conn_plan.CONNECT_STALL_SECONDS then
       is_connecting = false
-      connection = nil
+      close_orphan_socket()
     end
     if not is_connecting then
       M.connect()
@@ -865,10 +887,10 @@ function M.connect()
     print("[WS] connect() refused: update required")
     return
   end
-  if is_connecting and (now_s() - (connecting_since or 0)) >= 3.5 then
+  if is_connecting and (now_s() - (connecting_since or 0)) >= conn_plan.CONNECT_STALL_SECONDS then
     print("[WS] clearing stale is_connecting")
     is_connecting = false
-    connection = nil
+    close_orphan_socket()
   end
   if is_connecting or M.socket_connected then
     print(string.format("[WS-DEBUG] connect() no-op: is_connecting=%s socket_connected=%s",
@@ -1059,7 +1081,7 @@ local function reconcile_step()
     print(string.format("[WS] connect attempt hung for %.0fs with no event - retrying",
       now_s() - (connecting_since or 0)))
     is_connecting = false
-    connection = nil
+    close_orphan_socket()
     M.connect()
   end
 

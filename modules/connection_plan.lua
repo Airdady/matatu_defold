@@ -43,9 +43,28 @@ local M = {}
 
 -- How long a connect attempt may sit in flight before we call it hung.
 --
--- The websocket extension timeout is capped, but in practice 3.5s is plenty of
--- time for TCP/TLS handshake before resetting and attempting a fresh socket.
-M.CONNECT_STALL_SECONDS = 3.5
+-- THIS ONE MUST BE LONGER THAN A REAL HANDSHAKE, and it is the only constant
+-- here where being aggressive backfires completely.
+--
+-- It was 3.5s, on the reasoning that a handshake takes less than that. On a
+-- congested cell it does not: five seconds of TCP+TLS is unremarkable. And the
+-- failure is not "one slow connect" — it is permanent. Every attempt gets torn
+-- down at 3.5s, the replacement takes just as long and is torn down too, and a
+-- player on a slow link never gets online at all. That is measured, not
+-- feared: tools/test_first_login_timing.lua's slow-handshake case goes from
+-- "identified at 5s" to "never" at 3.5s.
+--
+-- It hid behind a second bug for a while. Abandoned attempts were not closed,
+-- so the "hung" socket completed a moment later anyway and the app limped on
+-- with two live connections. Closing them properly is what made the starvation
+-- visible.
+--
+-- The extension is given timeout = 8000ms, so a connect that is genuinely
+-- going to fail reports by then on its own. This is purely the backstop for
+-- the case where NO event ever arrives, and 10s sits just above the
+-- extension's own contract: late enough never to kill a handshake that was
+-- going to resolve either way, early enough that a true hang costs seconds.
+M.CONNECT_STALL_SECONDS = 10
 
 -- How long to wait for an IDENTIFY reply before sending another.
 --
