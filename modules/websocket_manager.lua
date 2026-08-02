@@ -5,6 +5,7 @@
 --        and derives the sender id from currentTurn so opponent moves animate.
 
 local config = require("modules.config")
+local conn_plan = require("modules.connection_plan")
 local json_util = require("modules.json_util")
 local util = require("modules.util")
 local aes = require("modules.aes")
@@ -39,6 +40,12 @@ M.current_savings_status = nil
 
 local connection = nil
 local is_connecting = false
+-- Wall-clock of the moment `is_connecting` went true, and of the last IDENTIFY
+-- put on the wire. The reconciler judges both by elapsed time rather than by
+-- an event, because the bug it exists for is precisely an event that never
+-- arrives.
+local connecting_since = 0
+local last_identify_sent = 0
 local is_manual_disconnect = false
 local reconnect_attempts = 0
 local current_reconnect_delay = config.INITIAL_RECONNECT_DELAY
@@ -161,6 +168,16 @@ local function cancel_identify_watchdog()
 end
 M.cancel_identify_watchdog = cancel_identify_watchdog
 
+-- The ONE place IDENTIFY goes on the wire, so last_identify_sent cannot drift
+-- from reality. Three separate call sites used to send it, and the reconciler's
+-- "have I sent one recently" question has to be answerable for all of them.
+local function send_identify(why)
+    if not pending_identity or not M.socket_connected then return false end
+    last_identify_sent = now_s()
+    print("[WS-DEBUG] sending IDENTIFY (" .. tostring(why) .. ")")
+    return M.send_message("IDENTIFY", pending_identity)
+end
+
 local function arm_identify_watchdog()
     cancel_identify_watchdog()
     if not pending_identity then return end
@@ -171,7 +188,7 @@ local function arm_identify_watchdog()
             identify_tries = identify_tries + 1
             print(string.format("[WS-DEBUG] IDENTIFY unanswered after %ds, resending (%d/%d)",
                 IDENTIFY_TIMEOUT, identify_tries, IDENTIFY_MAX_TRIES))
-            if M.socket_connected then M.send_message("IDENTIFY", pending_identity) end
+            send_identify("watchdog")
             arm_identify_watchdog()
         else
             print("[WS-DEBUG] IDENTIFY never answered — reporting identify_error (timeout)")
@@ -208,10 +225,11 @@ function M.identify(id, username, stake, country)
   print(string.format("[WS-DEBUG] identify() called: id=%s socket_connected=%s (%s)",
     tostring(id), tostring(M.socket_connected), M.socket_connected and "sending IDENTIFY now" or "queued for on_connected"))
   identify_tries = 0
-  if M.socket_connected then
-    M.send_message("IDENTIFY", pending_identity)
-  end
+  send_identify("identify() called")
   arm_identify_watchdog()
+  -- Kick the reconciler rather than sequencing connect() here. Callers say WHO
+  -- they are; getting there is this module's problem.
+  M.start_reconciler()
 end
 
 -- Clear the queued identity without disconnecting. Used when a session is
@@ -683,7 +701,7 @@ local function on_connected()
   emit("connected")
   print(string.format("[WS-DEBUG] on_connected: pending_identity=%s", tostring(pending_identity ~= nil)))
   if pending_identity then
-    M.send_message("IDENTIFY", pending_identity)
+    send_identify("socket opened")
     arm_identify_watchdog()
   end
 end
@@ -775,6 +793,7 @@ function M.connect()
       .. "&b=" .. tostring(config.APP_BUILD or 0)
   print("[WS] connecting to " .. url)
   is_connecting = true
+  connecting_since = now_s()
   is_manual_disconnect = false
 
   local params = { timeout = 8000 }
@@ -808,11 +827,23 @@ function M.retry_connection()
     pcall(timer.cancel, reconnect_handle)
     reconnect_handle = nil
   end
+  -- A deliberate tap must not be swallowed by a stale in-flight flag. The
+  -- reconciler would clear this itself, but only after the stall window, and
+  -- somebody who just pressed RETRY is owed an attempt now.
+  if is_connecting and (now_s() - (connecting_since or 0)) >= conn_plan.CONNECT_STALL_SECONDS then
+    is_connecting = false
+    connection = nil
+  end
   M.connect()
+  M.start_reconciler()
 end
 
 function M.disconnect()
   is_manual_disconnect = true
+  -- Cleared here too. A disconnect requested WHILE an attempt is in flight
+  -- otherwise leaves is_connecting true with no event coming to clear it, and
+  -- the next connect() is a no-op until the reconciler's stall timer notices.
+  is_connecting = false
   stop_keep_alive()
   cancel_identify_watchdog()
   pending_identity = nil      -- never replay a stale identity on the next connect
@@ -821,6 +852,80 @@ function M.disconnect()
   connection = nil
   M.socket_connected = false
   M.is_identified = false
+end
+
+-- ── THE RECONCILER ──────────────────────────────────────────────────────────
+--
+-- One loop whose whole job is to make the world match "we want to be signed in
+-- as X". It replaces a sequence that five separate components had to perform
+-- in the right order, each assuming the one before it had happened, with
+-- nobody responsible for noticing when an assumption broke.
+--
+-- The failure that shipped: M.connect() no-ops while `is_connecting` is true,
+-- and that flag is cleared ONLY by on_connected and on_disconnected. A socket
+-- attempt that neither connects nor reports a failure — a hung TLS handshake,
+-- an OEM dropping it silently, the app suspending mid-connect — leaves it true
+-- for the rest of the process. connect() is then permanently a no-op,
+-- schedule_reconnect never runs (it only fires from on_disconnected), and the
+-- queued IDENTIFY sits there for ever. The identify watchdog cannot help: its
+-- resend is itself guarded on socket_connected.
+--
+-- That is "Firebase returns 200, every field is populated, and IDENTIFY never
+-- gets executed". Most likely on a FIRST login, because that is when a fresh
+-- socket is opened straight after a token fetch and an HTTPS round trip.
+--
+-- This cannot deadlock the same way: it re-derives what to do from observable
+-- state on every tick, so nothing depends on an event arriving.
+local RECONCILE_INTERVAL = 2
+local reconcile_handle = nil
+
+local function reconcile()
+  local action = conn_plan.next_action({
+    identity         = pending_identity,
+    update_required  = M.update_required,
+    socket_connected = M.socket_connected,
+    is_connecting    = is_connecting,
+    is_identified    = M.is_identified,
+    connecting_for   = now_s() - (connecting_since or 0),
+    since_identify   = now_s() - (last_identify_sent or 0),
+  })
+
+  if action == "identify" then
+    -- A socket with no identity on it. This is the state that used to be able
+    -- to last for ever; re-sending costs one small frame.
+    send_identify("reconciler")
+
+  elseif action == "connect" then
+    M.connect()
+
+  elseif action == "unstick" then
+    -- The attempt has hung past anything the extension's own 8s timeout could
+    -- explain, and no event is coming to clear it. Force the flag down and let
+    -- the next tick open a fresh one.
+    print(string.format("[WS] connect attempt hung for %.0fs with no event - retrying",
+      now_s() - (connecting_since or 0)))
+    is_connecting = false
+    connection = nil
+    M.connect()
+  end
+end
+
+-- Idempotent. Started the first time an identity is set and left running: the
+-- ticks are almost all no-ops ("idle" or "wait"), and a loop that stops itself
+-- is a loop that has to be restarted correctly by everything that might need
+-- it — which is the class of bug this exists to remove.
+function M.start_reconciler()
+  if reconcile_handle then return end
+  reconcile_handle = timer.delay(RECONCILE_INTERVAL, true, function()
+    local ok, err = pcall(reconcile)
+    if not ok then print("[WS] reconciler error: " .. tostring(err)) end
+  end)
+end
+
+-- Test seam, and used by disconnect(): a repeating timer keeps the process
+-- alive and would go on reconnecting a session that was deliberately ended.
+function M.stop_reconciler()
+  if reconcile_handle then pcall(timer.cancel, reconcile_handle); reconcile_handle = nil end
 end
 
 function M.get_active_game() return M.active_game_state end

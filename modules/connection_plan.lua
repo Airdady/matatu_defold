@@ -1,0 +1,107 @@
+-- modules/connection_plan.lua
+-- THE ONE PLACE THAT DECIDES WHAT THE CONNECTION SHOULD DO NEXT.
+--
+-- THE MESS THIS REPLACES
+--
+-- "Being signed in" was a sequence that five different things had to perform
+-- in the right order, and nobody owned it:
+--
+--   controller.script   identify_and_connect(user): identify() then connect()
+--   websocket_manager   pending_identity, queued if the socket is not up yet
+--   on_connected        sends the queued IDENTIFY
+--   the watchdog        resends it three times, then gives up
+--   schedule_reconnect  reopens the socket, on its own backoff
+--
+-- Each step is fine and the whole is not, because every one of them assumes
+-- the step before it happened. When any assumption breaks there is no
+-- component whose job is to notice.
+--
+-- The one that shipped: M.connect() no-ops while `is_connecting` is true, and
+-- `is_connecting` is cleared ONLY by on_connected and on_disconnected. If the
+-- socket attempt neither connects nor reports a failure — a hung TLS
+-- handshake, an OEM silently dropping the socket, the app suspending
+-- mid-connect — that flag stays true for the rest of the process. From then
+-- on connect() is permanently a no-op, schedule_reconnect never runs (it only
+-- fires from on_disconnected), and the queued IDENTIFY sits there. Meanwhile
+-- the identify watchdog burns its three tries doing nothing, because its
+-- resend is itself guarded on `socket_connected`.
+--
+-- That is the reported symptom exactly: POST /auth/firebase returns 200, the
+-- app has every field it needs, and IDENTIFY is never sent. Most likely on a
+-- FIRST login, because that is when a fresh socket is opened straight after a
+-- token fetch and an HTTPS round trip, with the radio at its busiest.
+--
+-- THE REPLACEMENT
+--
+-- Stop sequencing. Record who we want to be, and let one reconciler run on a
+-- timer until the world matches: connect if there is no socket, send IDENTIFY
+-- if there is a socket but no identity, and force a hung attempt down so it
+-- can be retried. It cannot deadlock, because it re-derives what to do from
+-- observable state every tick instead of relying on an event that may never
+-- arrive.
+local M = {}
+
+-- How long a connect attempt may sit in flight before we call it hung.
+--
+-- The websocket extension is given timeout = 8000ms, so anything past that is
+-- already outside its own contract. 12 leaves room for a slow-but-real
+-- handshake before we tear it down and start again.
+M.CONNECT_STALL_SECONDS = 12
+
+-- How long to wait for an IDENTIFY reply before sending another.
+--
+-- Deliberately shorter than the watchdog's 6s, and unlike the watchdog this
+-- one never gives up — giving up is what turned a slow connection into a
+-- signed-out player.
+M.IDENTIFY_RESEND_SECONDS = 5
+
+--- What the connection should do right now.
+--
+-- @param s  observable state:
+--    identity          who we want to be (nil when signed out)
+--    update_required   the build is refused; nothing is worth trying
+--    socket_connected  the socket is up
+--    is_connecting     an attempt is in flight
+--    is_identified     the server has accepted us
+--    connecting_for    seconds the current attempt has been in flight
+--    since_identify    seconds since IDENTIFY was last sent
+-- @return "idle"    nothing is wanted
+--         "connect" open the socket
+--         "identify" send IDENTIFY
+--         "unstick" the attempt has hung: force it down, then reconnect
+--         "wait"    something is legitimately in flight
+function M.next_action(s)
+    s = s or {}
+
+    -- Nobody to be. A signed-out app holds no socket open.
+    if not s.identity then return "idle" end
+
+    -- Terminal. Every reconnect re-runs the handshake that produced the
+    -- refusal, so the loop would only burn battery behind the update screen.
+    if s.update_required then return "idle" end
+
+    -- Done. This is the state the whole module exists to reach.
+    if s.is_identified then return "idle" end
+
+    if s.socket_connected then
+        -- A socket with no identity on it is the case that used to be able to
+        -- last for ever. Re-sending costs one small frame.
+        if (tonumber(s.since_identify) or math.huge) >= M.IDENTIFY_RESEND_SECONDS then
+            return "identify"
+        end
+        return "wait"
+    end
+
+    if s.is_connecting then
+        -- The deadlock, caught by elapsed time rather than by an event that
+        -- may never come.
+        if (tonumber(s.connecting_for) or 0) >= M.CONNECT_STALL_SECONDS then
+            return "unstick"
+        end
+        return "wait"
+    end
+
+    return "connect"
+end
+
+return M
