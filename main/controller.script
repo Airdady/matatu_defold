@@ -2,6 +2,7 @@ local ws        = require("modules.websocket_manager")
 local api       = require("modules.api_service")
 local app_state = require("modules.app_state")
 local fbauth    = require("modules.firebase_auth")
+local identify_recovery = require("modules.identify_recovery")
 
 local SCREENS = { "lobby", "auth", "profile", "online", "themes", "payments", "tournaments", "team_tournament", "standings", "game" }
 
@@ -697,8 +698,22 @@ function init(self)
 
         if event ~= window.WINDOW_EVENT_FOCUS_GAINED then return end
 
+        -- COMING BACK WITH A SESSION ALREADY IN HAND.
+        --
+        -- The common case by far: the app was backgrounded, the socket went
+        -- with it, and the cached user id is sitting right there. That needs
+        -- an IDENTIFY, not a sign-in — the id was resolved once by a Google
+        -- sign-in on this device and it does not expire. Firing Firebase here
+        -- would spend a token fetch and an HTTP round trip to re-derive
+        -- something the app already knows, and would fail on a device that
+        -- happens to be offline at the moment of return, when a plain
+        -- reconnect would have worked perfectly well a second later.
+        if is_logged_in() and not ws.is_identified then
+            auth_debug("focus regained with a cached session — re-identifying, no sign-in")
+            identify_and_connect(ws.current_user_data)
+
         -- Only when there is no session and nothing already in flight, so this
-        if fbauth.available and not is_logged_in() and not self._silent_login_inflight then
+        elseif fbauth.available and not is_logged_in() and not self._silent_login_inflight then
             auth_debug("focus regained with no session — retrying silent sign-in")
             try_silent_login(self)
         end
@@ -1059,9 +1074,44 @@ function init(self)
     -- CONNECTING screen and no button to press. Bounded so a server that
     -- rejects every identify can't spin.
     local MAX_IDENTIFY_RECOVERIES = 2
-    table.insert(self.tokens, ws.on("identify_error", function()
-        clear_session()
+    table.insert(self.tokens, ws.on("identify_error", function(_, reason)
+        -- THE CACHED SESSION IS NOT THROWN AWAY FOR A TIMEOUT.
+        --
+        -- This used to call clear_session() unconditionally, first thing —
+        -- wiping the saved session and the auth token — and then rebuild the
+        -- whole identity through a Firebase silent login. A token fetch, an
+        -- HTTP round trip and a fresh backend match, to re-derive a user id
+        -- the app already had written down and had just been using.
+        --
+        -- And it fired on the wrong thing. Two of the three emitters mean the
+        -- server REFUSED this identity; the third is the client's own watchdog
+        -- giving up after IDENTIFY went unanswered. Nobody refused anything in
+        -- that case — the socket dropped, the server was slow, or it handled
+        -- the reconnect down a branch that forgot to reply. Treating it as a
+        -- rejection meant a network blip cost a full re-authentication, and on
+        -- a device that could not reach Firebase at that moment it cost the
+        -- session outright: the player was signed out by a hiccup.
+        --
+        -- So a timeout re-sends IDENTIFY against the id we already hold. Only
+        -- a rejection escalates. See modules/identify_recovery.lua.
+        local cached = ws.current_user_data
+        local has_cache = type(cached) == "table" and (cached._id or "") ~= ""
         self._identify_recoveries = (self._identify_recoveries or 0) + 1
+        local plan = identify_recovery.plan(reason, self._identify_recoveries - 1, has_cache)
+
+        if plan == "reidentify" then
+            auth_debug("identify_error (%s): re-identifying from cache, session kept (%d/%d)",
+                tostring(reason), self._identify_recoveries, identify_recovery.MAX_REIDENTIFY)
+            app_state.auth_state = "verifying"
+            msg.post("#lobby", "auth_state_changed")
+            arm_connect_deadline(self)
+            identify_and_connect(cached)
+            return
+        end
+
+        auth_debug("identify_error (%s): identity rejected or out of budget, rebuilding",
+            tostring(reason))
+        clear_session()
         if fbauth.available and self._identify_recoveries <= MAX_IDENTIFY_RECOVERIES then
             auth_debug("identify_error: rebuilding session via silent login (%d/%d)",
                 self._identify_recoveries, MAX_IDENTIFY_RECOVERIES)

@@ -174,9 +174,14 @@ local function arm_identify_watchdog()
             if M.socket_connected then M.send_message("IDENTIFY", pending_identity) end
             arm_identify_watchdog()
         else
-            print("[WS-DEBUG] IDENTIFY never answered — reporting identify_error")
+            print("[WS-DEBUG] IDENTIFY never answered — reporting identify_error (timeout)")
             identify_tries = 0
-            emit("identify_error", "Could not sign you in. Retrying...")
+            -- "timeout", and the distinction is the whole point. Nobody
+            -- rejected this identity — the socket dropped, the server was slow,
+            -- or it handled the reconnect down a branch that forgot to reply.
+            -- The cached session is UNTESTED, not refused, and throwing it away
+            -- here is what turned a network blip into a full re-authentication.
+            emit("identify_error", "Could not sign you in. Retrying...", "timeout")
         end
     end)
 end
@@ -604,7 +609,9 @@ local function parse_message(json_string)
     print("[WS-DEBUG] IDENTIFY_ERROR received: " .. tostring(d.message))
     cancel_identify_watchdog()
     M.is_identified = false
-    emit("identify_error", d.message or "Authentication Failed")
+    -- "rejected": the server looked at this identity and refused it. This is
+    -- the one that genuinely has to be rebuilt.
+    emit("identify_error", d.message or "Authentication Failed", "rejected")
   elseif t == "ERROR" then
     -- handleIdentify answers an unknown/stale user id with a generic ERROR
     -- ("User not found"), not IDENTIFY_ERROR. Treated as a plain error it
@@ -615,7 +622,9 @@ local function parse_message(json_string)
     if not M.is_identified and pending_identity then
       print("[WS-DEBUG] ERROR while un-identified, treating as identify failure: " .. tostring(d.message))
       cancel_identify_watchdog()
-      emit("identify_error", d.message or "Could not sign you in.")
+      -- Also a rejection: the server answered, and what it said was that this
+      -- id is not one it knows.
+      emit("identify_error", d.message or "Could not sign you in.", "rejected")
     else
       emit("error", d.message or "Error")
     end
