@@ -873,6 +873,21 @@ function init(self)
         end))
     end
 
+    -- The server resolved us from the DEVICE id, having been given no user id.
+    -- Cache what it sent back: without this the app re-resolves by device on
+    -- every single launch, and every screen that reads the cached session
+    -- before the socket answers still sees nothing.
+    table.insert(self.tokens, ws.on("identity_resolved_by_device", function(user)
+        if type(user) ~= "table" or (user._id or "") == "" then return end
+        auth_debug("identified by device id as %s - caching the session",
+            tostring(user._id))
+        ws.current_user_data = user
+        local tok = user.token or user.idToken or ""
+        if tok ~= "" then api.set_auth_token(tok) end
+        pcall(api.save_session, user)
+        msg.post("#lobby", "auth_state_changed")
+    end))
+
     table.insert(self.tokens, ws.on("identify_success", function()
         self._identify_recoveries = 0
         -- The only signal that means CONNECTED. Everything earlier — a token,

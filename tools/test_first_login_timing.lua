@@ -47,11 +47,12 @@ sys = {
     save = function() return true end,
 }
 
+local ws_callback_fn
 -- Scriptable socket. `outcomes` is consumed one entry per connect attempt:
 --   "ok"      connects after `connect_latency`
 --   "error"   reports EVENT_ERROR after `connect_latency`
 --   "hang"    never reports anything at all
-local ws_callback_fn = nil
+ws_callback_fn = nil
 local outcomes, connect_latency = {}, 0.2
 local attempt = 0
 local sent = {}        -- { at = seconds, type = "IDENTIFY" }
@@ -78,7 +79,14 @@ websocket = {
     end,
     send = function(_conn, payload)
         local t = payload:match('"type"%s*:%s*"([^"]+)"')
-        sent[#sent + 1] = { at = NOW, type = t }
+        sent[#sent + 1] = {
+            at = NOW, type = t, raw = payload,
+            -- Pulled out of the JSON by hand rather than decoded: the harness
+            -- has no json decoder, and these two fields are what the device
+            -- path is actually about.
+            deviceId = payload:match('"deviceId"%s*:%s*"([^"]*)"'),
+            id = payload:match('"_id"%s*:%s*"([^"]*)"'),
+        }
     end,
     disconnect = function() end,
 }
@@ -101,6 +109,13 @@ local function advance(seconds)
     end
     NOW = target
 end
+
+-- api_service is pulled in lazily (through pcall) for the device id and the
+-- FCM token. Stubbed here so the harness controls what the device reports.
+local DEVICE_ID = "device-abcdef123456"
+package.loaded["modules.api_service"] = {
+    get_device_id = function() return DEVICE_ID end,
+}
 
 -- Reloaded per case rather than reset. websocket_manager keeps reconnect
 -- counters, a pending reconnect handle and the identity in module locals with
@@ -276,11 +291,54 @@ check("adopted from cache and re-identified", tr2 ~= nil, true)
 check("adopting leads straight on to connecting", (tr2 or 999) - dropped2 <= 0.5, true)
 
 print("")
-print("NO SESSION MEANS NO SOCKET")
+print("NO CACHE AT ALL: IDENTIFY BY DEVICE ID")
+-- The remaining hole, and the reason CONNECTING could stick for a returning
+-- player: with no cached session the client had NOTHING to send, so it sent
+-- nothing. A fresh install over an old one, a cleared cache, or a session
+-- wiped by a transient failure all land here — and the device id, which the
+-- app has always had, identifies the player perfectly well.
+sign_in({ boot_only = true, cached = nil })
+advance(1)
+local td = first_identify_at()
+print(string.format("      (IDENTIFY sent at %ss)", tostring(td and math.floor(td) or "never")))
+check("it identifies anyway", td ~= nil, true)
+check("instantly", (td or 999) <= 0.5, true)
+
+local function last_identify_payload()
+    for i = #sent, 1, -1 do
+        if sent[i].type == "IDENTIFY" then return sent[i] end
+    end
+end
+check("carrying the device id", (last_identify_payload() or {}).deviceId, DEVICE_ID)
+check("and no user id, because there is none", (last_identify_payload() or {}).id, "")
+
+print("")
+print("...and it stops asking once the server says it does not know us")
+-- The answer cannot change until somebody signs in, so re-asking every few
+-- seconds is just noise on a device that has genuinely never had an account.
+-- Fed through the real socket callback rather than a test-only export, so it
+-- travels the same path a server message actually does.
+ws_callback_fn(nil, {}, {
+    event = websocket.EVENT_MESSAGE,
+    message = '{"type":"IDENTIFY_UNKNOWN","data":{"message":"nope"}}',
+})
+local before = #sent
+advance(30)
+local extra = 0
+for i = before + 1, #sent do
+    if sent[i].type == "IDENTIFY" then extra = extra + 1 end
+end
+check("no further device identifies", extra, 0)
+
+print("")
+print("NO DEVICE ID EITHER MEANS NO SOCKET")
+-- The only case left where holding a socket open buys nothing.
+DEVICE_ID = ""
 sign_in({ boot_only = true, cached = nil })
 advance(20)
 check("nothing is sent", first_identify_at(), nil)
 check("and no socket is opened", attempt, 0)
+DEVICE_ID = "device-abcdef123456"
 
 print("")
 if failures == 0 then

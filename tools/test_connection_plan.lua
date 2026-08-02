@@ -108,11 +108,33 @@ check("but not when the build is refused",
     plan({ identity = NONE, has_cached_identity = true, update_required = true }), "idle")
 
 print("")
+print("NO CACHE EITHER: THE DEVICE ID IS STILL AN IDENTITY")
+-- The last hole, and why CONNECTING could stick for a returning player: with
+-- no cached session the client had NOTHING to send, so it sent nothing. The
+-- device id is generated on first run, is already on the User document and
+-- does not expire — for a returning player it identifies them exactly as well
+-- as their user id does.
+check("nothing in memory, nothing cached, but a device: identify by it",
+    plan({ identity = NONE, has_device_identity = true }), "adopt_device")
+-- Order matters. A cached session names the account; the device only implies
+-- it, and on a shared or reinstalled handset those can differ.
+check("a cached session is preferred over the device",
+    plan({ identity = NONE, has_cached_identity = true, has_device_identity = true }), "adopt")
+check("once the server says it does not know this device, stop asking",
+    plan({ identity = NONE, has_device_identity = true, device_identity_refused = true }), "idle")
+-- The refusal must not silence a real session that turns up afterwards.
+check("a refusal does not block a cached session",
+    plan({ identity = NONE, has_cached_identity = true,
+           has_device_identity = true, device_identity_refused = true }), "adopt")
+check("nor a refused build",
+    plan({ identity = NONE, has_device_identity = true, update_required = true }), "idle")
+
+print("")
 print("Nothing is wanted without an identity")
 -- A signed-out app holds no socket open. This is also what makes the loop safe
 -- to leave running for the life of the process: with no identity every tick is
 -- a no-op.
-check("no identity and NO cache either", plan({ identity = NONE }), "idle")
+check("no identity, no cache, no device", plan({ identity = NONE }), "idle")
 check("no identity even with a socket up",
     plan({ identity = NONE, socket_connected = true }), "idle")
 check("no identity, mid-connect", plan({ identity = NONE, is_connecting = true }), "idle")

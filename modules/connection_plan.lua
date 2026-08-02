@@ -65,8 +65,11 @@ M.IDENTIFY_RESEND_SECONDS = 2.5
 --    since_identify    seconds since IDENTIFY was last sent
 --    has_cached_identity  a saved session exists on disk
 --    reconnect_scheduled  a retry is already on the clock
+--    has_device_identity  the app has a usable device id
+--    device_identity_refused  the server has said it does not know this device
 -- @return "idle"    nothing is wanted
 --         "adopt"   no identity in memory, but one is cached: load it
+--         "adopt_device" nothing cached either: identify by device id
 --         "connect" open the socket
 --         "identify" send IDENTIFY
 --         "unstick" the attempt has hung: force it down, then reconnect
@@ -91,6 +94,22 @@ function M.next_action(s)
     -- path.
     if not s.identity then
         if s.has_cached_identity then return "adopt" end
+        -- NOTHING CACHED, BUT THE APP STILL KNOWS ITS OWN DEVICE.
+        --
+        -- The device id is generated on first run, is already stored on the
+        -- User document, and does not expire — so for a returning player it
+        -- identifies them exactly as well as their user id does. Sending it is
+        -- what makes a cold, cacheless open work at all: a fresh install after
+        -- a reinstall, a cleared cache, or a session wiped by a transient
+        -- failure used to leave the client with NOTHING to send, so it sent
+        -- nothing and the player sat on CONNECTING for ever.
+        --
+        -- Once the server has said it does not know this device, stop asking.
+        -- The answer will not change until somebody signs in, and a sign-in
+        -- clears the flag by identifying with a real user id.
+        if s.has_device_identity and not s.device_identity_refused then
+            return "adopt_device"
+        end
         -- Nobody to be. A signed-out app holds no socket open.
         return "idle"
     end

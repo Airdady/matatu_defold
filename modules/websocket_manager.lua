@@ -204,7 +204,34 @@ local function arm_identify_watchdog()
 end
 M.arm_identify_watchdog = arm_identify_watchdog
 
+-- The device id, which the app always has. Read lazily through pcall for the
+-- same reason the FCM token is: api_service requires config, and requiring it
+-- from here at load time is a cycle waiting to happen.
+local function device_id()
+  local id = ""
+  pcall(function()
+    local api = require("modules.api_service")
+    if api and api.get_device_id then id = tostring(api.get_device_id() or "") end
+  end)
+  return id
+end
+
+-- A device id short enough to collide is not one. Some builds have returned
+-- "" or "unknown" when theirs was unavailable, and sending THAT would ask the
+-- server to match on a value every such device shares.
+local function usable_device_id()
+  local id = device_id()
+  return #id >= 8 and id or ""
+end
+M.usable_device_id = usable_device_id
+
+-- Latched when the server says it knows nothing about this device. Stops the
+-- reconciler re-asking the same unanswerable question every few seconds; a
+-- sign-in clears it by calling identify() with a real user id.
+M.device_identity_refused = false
+
 function M.identify(id, username, stake, country)
+  id = tostring(id or "")
   M.current_user_id = id
   local fcm_token = ""
   pcall(function()
@@ -214,8 +241,16 @@ function M.identify(id, username, stake, country)
     end
   end)
 
+  -- A real user id clears the refusal: whatever the server did not recognise
+  -- before, it is being given something different now.
+  if id ~= "" then M.device_identity_refused = false end
+
   pending_identity = {
     _id = id,
+    -- ALWAYS sent, even alongside a user id. It is what lets the server resume
+    -- a returning player who has no cached session, and it keeps the stored
+    -- deviceId fresh for the ones who do.
+    deviceId = usable_device_id(),
     username = username,
     stake = stake or { amount = 0, charge = 0 },
     country = country or "",
@@ -402,6 +437,20 @@ local function parse_message(json_string)
     end
     for k, v in pairs(user_payload) do M.current_user_data[k] = v end
     if M.current_user_data._id then M.current_user_id = M.current_user_data._id end
+
+    -- Identified WITHOUT having sent a user id: the server resolved us from
+    -- the device id. The user it sent back is now the identity, and
+    -- pending_identity has to carry it, or the next reconnect goes out
+    -- device-only again and re-resolves something already known.
+    if pending_identity and (pending_identity._id or "") == ""
+       and (M.current_user_id or "") ~= "" then
+      pending_identity._id = M.current_user_id
+      pending_identity.username = M.current_user_data.username or pending_identity.username
+      M.device_identity_refused = false
+      print("[WS] device identify resolved to user " .. tostring(M.current_user_id))
+      emit("identity_resolved_by_device", M.current_user_data)
+    end
+
     emit("user_updated", M.current_user_data)
 
     local gs = M.extract_game_state(d)
@@ -635,6 +684,21 @@ local function parse_message(json_string)
     emit("transaction_completed", d)
   elseif t == "TRANSACTION_FAILED" then
     emit("transaction_failed", d.reason or "Failed")
+  elseif t == "IDENTIFY_UNKNOWN" then
+    -- The server knows nothing about this device and we offered no user id.
+    -- NOT a failure and NOT a rejection: there is no session to rebuild, this
+    -- device has simply never signed in. Latched so the reconciler stops
+    -- asking a question whose answer cannot change until somebody does.
+    print("[WS] server does not recognise this device - a sign-in is needed")
+    cancel_identify_watchdog()
+    M.device_identity_refused = true
+    -- The queued identity has to go as well as the flag. Left in place, the
+    -- reconciler still sees an identity it has not registered and goes on
+    -- re-sending it every few seconds — the latch only guards the branch that
+    -- CREATES a device identity, not one already sitting there.
+    M.reset_identity()
+    emit("identify_unknown_device", d.message or "No account on this device yet")
+
   elseif t == "IDENTIFY_ERROR" then
     print("[WS-DEBUG] IDENTIFY_ERROR received: " .. tostring(d.message))
     cancel_identify_watchdog()
@@ -964,12 +1028,21 @@ local function reconcile_step()
     since_identify      = now_s() - (last_identify_sent or 0),
     has_cached_identity = has_cached_identity(),
     reconnect_scheduled = reconnect_handle ~= nil,
+    has_device_identity = usable_device_id() ~= "",
+    device_identity_refused = M.device_identity_refused,
   })
 
   if action == "adopt" then
     -- identify() sets pending_identity and kicks this loop again, so the next
     -- tick proceeds straight to connect/identify.
     adopt_cached_identity()
+
+  elseif action == "adopt_device" then
+    -- No user id anywhere, but the app knows its own device. Identify with
+    -- that alone and let the server resolve who it belongs to; the reply
+    -- carries the user back and the client caches it from there.
+    print("[WS] no cached session - identifying by device id")
+    M.identify("", "Player", { amount = 0, charge = 0 }, "UG")
 
   elseif action == "identify" then
     -- A socket with no identity on it. This is the state that used to be able
