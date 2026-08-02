@@ -6,11 +6,15 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
+import android.graphics.Typeface;
 import android.media.AudioAttributes;
 import android.media.RingtoneManager;
 import android.net.Uri;
 import android.os.Build;
 import android.text.Html;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
+import android.text.style.StyleSpan;
 import android.util.Log;
 
 import androidx.core.app.NotificationCompat;
@@ -92,14 +96,62 @@ public class MatatuFirebaseMessagingService extends FirebaseMessagingService {
         // avoids Html.fromHtml's entity handling touching copy that never asked
         // for it — an ampersand in a username should stay an ampersand.
         if (s.indexOf('<') < 0) return s;
+
+        CharSequence out = s;
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                return Html.fromHtml(s, Html.FROM_HTML_MODE_LEGACY);
-            }
-            return Html.fromHtml(s);
+            out = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N
+                    ? Html.fromHtml(s, Html.FROM_HTML_MODE_LEGACY)
+                    : Html.fromHtml(s);
         } catch (Exception e) {
-            Log.w(TAG, "richText failed, showing raw: " + e.getMessage());
-            return s;
+            Log.w(TAG, "richText: HTML parse failed: " + e.getMessage());
+        }
+
+        // LAST RESORT. If anything at all went wrong — a parser that left the
+        // tags in place, an OEM with its own idea of fromHtml, a server sending
+        // markup this build does not know — the player must NEVER read
+        // "<b>Mubarak</b>". Losing the bold is invisible; showing the tags is
+        // the bug being reported.
+        if (out.toString().contains("<b>") || out.toString().contains("</b>")) {
+            Log.w(TAG, "richText: tags survived parsing, stripping them");
+            return s.replaceAll("<[^>]*>", "");
+        }
+        return out;
+    }
+
+    /**
+     * Bold one substring of an otherwise plain sentence.
+     *
+     * THE REASON THIS EXISTS RATHER THAN MORE HTML
+     *
+     * Emboldening by shipping "<b>name</b>" and parsing it on arrival has one
+     * failure mode, and it is the worst one available: when the parsing does not
+     * happen, the player reads the markup. That is what was reported.
+     *
+     * A span cannot fail that way. The server sends the sentence as PLAIN TEXT
+     * plus the exact substring to embolden, and the weight is applied here. There
+     * are no tags to leak, nothing to escape, and no dependence on Html.fromHtml
+     * behaving the same on every OEM — the worst case is a name that is not bold.
+     *
+     * Falls back to the plain string whenever the substring is absent, which also
+     * makes it safe against an older server that still sends markup: richText
+     * above has already dealt with that by then.
+     */
+    private static CharSequence applyBold(CharSequence text, String boldText) {
+        if (text == null) return "";
+        if (boldText == null || boldText.trim().isEmpty()) return text;
+
+        String plain = text.toString();
+        int at = plain.indexOf(boldText);
+        if (at < 0) return text;
+
+        try {
+            SpannableStringBuilder sb = new SpannableStringBuilder(plain);
+            sb.setSpan(new StyleSpan(Typeface.BOLD), at, at + boldText.length(),
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            return sb;
+        } catch (Exception e) {
+            Log.w(TAG, "applyBold failed, showing plain: " + e.getMessage());
+            return text;
         }
     }
 
@@ -152,12 +204,28 @@ public class MatatuFirebaseMessagingService extends FirebaseMessagingService {
         Uri defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
         long[] vibrationPattern = new long[]{0, 450, 200, 450};
 
+        // Two passes, in this order, and both are defensive rather than
+        // decorative.
+        //
+        //   richText   handles a body that still arrives as markup — an older
+        //              server, or any path this build does not know about — and
+        //              strips the tags outright if parsing leaves them behind.
+        //              Whatever happens, no player reads "<b>Mubarak</b>".
+        //   applyBold  the way it is meant to work now: a plain sentence plus
+        //              the substring to embolden, weighted with a span. Nothing
+        //              to leak and nothing to escape.
+        //
+        // Together they mean the name is bold when everything lines up, plain
+        // when it does not, and never raw markup either way.
+        String boldText = data != null ? data.get("boldText") : null;
+        CharSequence styledBody = applyBold(richText(body), boldText);
+
         NotificationCompat.Builder builder = new NotificationCompat.Builder(context, channelId)
                 .setSmallIcon(smallIcon)
                 .setContentTitle(richText(title))
-                .setContentText(richText(body))
+                .setContentText(styledBody)
                 .setStyle(new NotificationCompat.BigTextStyle()
-                        .bigText(richText(body))
+                        .bigText(styledBody)
                         .setBigContentTitle(richText(title)))
                 .setColor(BRAND_COLOR)
                 .setContentIntent(contentPendingIntent)
