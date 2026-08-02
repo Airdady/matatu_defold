@@ -14,6 +14,7 @@ local util           = require "modules.game_util"
 local BL             = require "modules.board_layout"
 local RE             = require "modules.rules_eval"
 local Tut            = require "modules.tutorial"
+local RQ             = require "modules.reshuffle_queue"
 
 -- Tutorial hooks must never be able to break live play: route every call
 -- through pcall so a walkthrough bug can only ever no-op.
@@ -315,7 +316,6 @@ function M.draw_to_hand(self, hand, is_player, count, done)
     local placed      = 0
     local launched    = 0
     local finished    = false
-    local reshuffling = false
     -- Fixed for the whole batch — see layout_hand's geometry_n note. Without
     -- this, a multi-card draw (e.g. a stacked penalty) reflowed the WHOLE
     -- hand's spacing/arc on every single card, restarting every
@@ -340,26 +340,28 @@ function M.draw_to_hand(self, hand, is_player, count, done)
         if seq ~= self._seq then finish(); return end
 
         if #self.deck == 0 then
-            -- Check "a reshuffle is already in flight" BEFORE "is there
-            -- nothing left to reshuffle" — reshuffle_deck drains
-            -- self.played_cards down to just the top card on its very first
-            -- line, long before its ~1.1-1.3s of animation actually finishes
-            -- and refills self.deck. Every OTHER staggered place_one() call
-            -- that lands while that reshuffle is still animating (near-
-            -- guaranteed, since draws are staggered only 0.13s apart) used to
-            -- see that temporarily-drained played_cards and mistake it for
-            -- "genuinely nothing left to recycle," finishing the draw early
-            -- with fewer cards than requested instead of waiting for the
-            -- reshuffle already in progress to deliver them.
-            if reshuffling then
-                timer.delay(0.05, false, place_one); return
+            -- "Is a reshuffle already running" is asked FIRST, and it is asked
+            -- of the BOARD rather than of this draw.
+            --
+            -- reshuffle_deck empties played_cards on its first line, then spends
+            -- ~1.3s animating before the cards reach the deck. Throughout that
+            -- window the board looks exactly like "nothing left to recycle".
+            -- This check used to consult a flag local to each draw_to_hand call,
+            -- which cannot see a reshuffle another draw started — and overlapping
+            -- draws are the normal case here, not an edge one: a penalty stack
+            -- resolving while the opponent draws, a General Market, any Whot
+            -- pick-2 chain. The second batch saw the drained pile, called it an
+            -- exhausted deck, and finished short.
+            if RQ.is_running(self) then
+                RQ.wait(self, function()
+                    if seq == self._seq then place_one() else finish() end
+                end)
+                return
             end
-            if #self.played_cards <= 1 then
+            if not RQ.can_recycle(self.played_cards) then
                 finish(); return
             end
-            reshuffling = true
             M.reshuffle_deck(self, function()
-                reshuffling = false
                 if seq == self._seq then place_one() else finish() end
             end)
             return
@@ -417,7 +419,32 @@ end
 -- Reshuffle
 ----------------------------------------------------------------------
 function M.reshuffle_deck(self, done)
-    if #self.played_cards <= 1 then if done then done() end return end
+    -- Only one at a time, board-wide. Two overlapping reshuffles each end by
+    -- assigning self.deck, so whichever finishes last wins and the other's cards
+    -- are referenced by nothing at all — not the deck, not the pile. That is
+    -- how the deck "drains completely": the cards do not run out, they are
+    -- discarded by the second writer.
+    --
+    -- A second caller is not turned away, it is QUEUED. Turning it away would
+    -- hand it the drained board it is trying to escape.
+    if not RQ.begin(self) then
+        RQ.wait(self, done)
+        return
+    end
+
+    -- From here every exit MUST go through release(), including the abandoned
+    -- ones. A reshuffle dropped without releasing leaves the flag set forever,
+    -- and every future draw then waits on a reshuffle that will never finish —
+    -- the same frozen game by a different route.
+    local released = false
+    local function release()
+        if released then return end
+        released = true
+        if done then pcall(done) end
+        RQ.finish(self)
+    end
+
+    if not RQ.can_recycle(self.played_cards) then release(); return end
     log("Reshuffling deck...")
 
     local seq = self._seq
@@ -476,10 +503,14 @@ function M.reshuffle_deck(self, done)
     end
 
     timer.delay(0.28, false, function()
-        if seq ~= self._seq then return end
+        -- A sequence bump means the round was torn down mid-animation. The
+        -- cards are about to be rebuilt from scratch, so there is nothing to
+        -- salvage — but the waiters still have to be answered or their draws
+        -- hang for the life of the board.
+        if seq ~= self._seq then release(); return end
 
         self.animate_shuffle(recycled, function()
-            if seq ~= self._seq then return end
+            if seq ~= self._seq then release(); return end
             self.play_sound("MoveDeck")
 
             for _, c in ipairs(stub) do
@@ -492,7 +523,7 @@ function M.reshuffle_deck(self, done)
 
             local tuck_delay = (existing_n > 0) and 0.04 or 0.18
             timer.delay(tuck_delay, false, function()
-                if seq ~= self._seq then return end
+                if seq ~= self._seq then release(); return end
                 for _, c in ipairs(under) do
                     local idx = index_of_card[c]
                     go.set(c.id, "scale", CARD_SCALE)
@@ -501,17 +532,22 @@ function M.reshuffle_deck(self, done)
                     go.animate(c.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_INOUTCUBIC, 0.45)
                 end
 
-                self.deck = final_deck
+                -- MERGED, not assigned. Assignment silently discarded anything
+                -- that reached the deck during the animation; serialising
+                -- reshuffles should mean nothing does, but that is exactly what
+                -- the original code assumed, and being wrong costs cards that
+                -- then exist in no collection at all.
+                self.deck = RQ.merge_deck(self.deck, final_deck)
 
                 timer.delay(0.55, false, function()
-                    if seq ~= self._seq then return end
+                    if seq ~= self._seq then release(); return end
                     -- Drop the preserved top card from its temporary "above
                     -- the sweep" z (set above, before the recycled cards'
                     -- animation started) down to its real resting depth,
                     -- now that nothing is animating above it anymore.
                     go.set(top.id, "position.z", Z_PILE + 0.001)
                     BL.restack_deck(self)
-                    if done then done() end
+                    release()
                 end)
             end)
         end)
