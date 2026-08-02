@@ -1,0 +1,341 @@
+package com.defold.android.firebaseauth;
+
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.Context;
+import android.content.Intent;
+import android.graphics.Color;
+import android.media.AudioAttributes;
+import android.media.RingtoneManager;
+import android.net.Uri;
+import android.os.Build;
+import android.util.Log;
+
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
+
+import com.google.firebase.messaging.FirebaseMessagingService;
+import com.google.firebase.messaging.RemoteMessage;
+
+import java.util.Map;
+import java.util.Random;
+
+/**
+ * High-Priority, Rich Interactive Firebase Messaging Service.
+ * Formats notification layouts, heads-up banners, vibration patterns,
+ * and adds actionable Accept / Decline buttons (Notifee design style).
+ */
+public class MatatuFirebaseMessagingService extends FirebaseMessagingService {
+
+    private static final String TAG = "MatatuFCM";
+
+    public static final String CHANNEL_GAME_REQUESTS = "game_requests";
+    public static final String CHANNEL_DAILY_REWARDS = "daily_rewards";
+    public static final String CHANNEL_TOURNAMENTS = "prizes_and_tournaments";
+    public static final String CHANNEL_SAVINGS = "account_and_savings";
+    public static final String CHANNEL_GENERAL = "general_channel";
+
+    private static final int BRAND_COLOR = 0xFFFF8C00; // Matatu Amber Gold
+
+    @Override
+    public void onNewToken(String token) {
+        super.onNewToken(token);
+        Log.i(TAG, "New FCM Token received: " + token);
+        try {
+            FirebaseAuthDefold.onFcmTokenReceived(token);
+        } catch (Throwable t) {
+            Log.w(TAG, "Could not relay token to native layer: " + t.getMessage());
+        }
+    }
+
+    @Override
+    public void onMessageReceived(RemoteMessage remoteMessage) {
+        super.onMessageReceived(remoteMessage);
+        Log.i(TAG, "FCM Message received from: " + remoteMessage.getFrom());
+
+        try {
+            Map<String, String> data = remoteMessage.getData();
+            RemoteMessage.Notification notif = remoteMessage.getNotification();
+
+            String type = data.containsKey("type") ? data.get("type") : "GENERAL";
+            String title = notif != null && notif.getTitle() != null
+                    ? notif.getTitle()
+                    : (data.containsKey("title") ? data.get("title") : "Matatu");
+            String body = notif != null && notif.getBody() != null
+                    ? notif.getBody()
+                    : (data.containsKey("body") ? data.get("body") : "");
+
+            displayRichNotification(this, type, title, body, data);
+        } catch (Exception e) {
+            Log.e(TAG, "Error displaying incoming push notification: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Constructs and displays a rich heads-up notification with action buttons.
+     */
+    public static void displayRichNotification(Context context, String type, String title, String body, Map<String, String> data) {
+        ensureNotificationChannels(context);
+
+        String channelId = resolveChannelId(type);
+        int notificationId = new Random().nextInt(100000) + 1000;
+
+        Intent launchIntent = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
+        if (launchIntent == null) {
+            launchIntent = new Intent(Intent.ACTION_MAIN);
+            launchIntent.setPackage(context.getPackageName());
+        }
+        launchIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        launchIntent.putExtra("push_type", type);
+        launchIntent.putExtra("notification_id", notificationId);
+
+        // Populate extra data from payload
+        if (data != null) {
+            for (Map.Entry<String, String> entry : data.entrySet()) {
+                launchIntent.putExtra(entry.getKey(), entry.getValue());
+            }
+        }
+
+        int pendingIntentFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            pendingIntentFlags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+
+        PendingIntent contentPendingIntent = PendingIntent.getActivity(
+                context,
+                notificationId,
+                launchIntent,
+                pendingIntentFlags
+        );
+
+        // Resolve notification icon
+        int smallIcon = context.getResources().getIdentifier("app_logo", "drawable", context.getPackageName());
+        if (smallIcon == 0) {
+            smallIcon = context.getResources().getIdentifier("ic_launcher", "mipmap", context.getPackageName());
+        }
+        if (smallIcon == 0) {
+            smallIcon = android.R.drawable.ic_dialog_info;
+        }
+
+        Uri defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+        long[] vibrationPattern = new long[]{0, 450, 200, 450};
+
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, channelId)
+                .setSmallIcon(smallIcon)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(body).setBigContentTitle(title))
+                .setColor(BRAND_COLOR)
+                .setContentIntent(contentPendingIntent)
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_MAX) // Maximum importance (Heads-Up)
+                .setDefaults(NotificationCompat.DEFAULT_ALL)
+                .setVibrate(vibrationPattern)
+                .setLights(BRAND_COLOR, 1000, 500)
+                .setSound(defaultSoundUri);
+
+        // Add contextual interactive buttons according to notification type
+        if ("GAME_REQUEST".equalsIgnoreCase(type)) {
+            builder.setCategory(NotificationCompat.CATEGORY_CALL); // High priority call/invite heads-up
+
+            // 1. ACCEPT ACTION (Launches game directly into match)
+            Intent acceptIntent = (Intent) launchIntent.clone();
+            acceptIntent.setAction("com.matatu.champ.ACTION_ACCEPT_GAME");
+            acceptIntent.putExtra("push_action", "accept");
+            PendingIntent acceptPendingIntent = PendingIntent.getActivity(
+                    context,
+                    notificationId + 1,
+                    acceptIntent,
+                    pendingIntentFlags
+            );
+            builder.addAction(android.R.drawable.ic_media_play, "⚔️ Accept", acceptPendingIntent);
+
+            // 2. DECLINE ACTION (Dismisses notification cleanly via receiver)
+            Intent declineIntent = new Intent(context, NotificationActionReceiver.class);
+            declineIntent.setAction(NotificationActionReceiver.ACTION_DECLINE);
+            declineIntent.putExtra(NotificationActionReceiver.EXTRA_NOTIFICATION_ID, notificationId);
+            if (data != null && data.containsKey("requestId")) {
+                declineIntent.putExtra(NotificationActionReceiver.EXTRA_REQUEST_ID, data.get("requestId"));
+            }
+            PendingIntent declinePendingIntent = PendingIntent.getBroadcast(
+                    context,
+                    notificationId + 2,
+                    declineIntent,
+                    pendingIntentFlags
+            );
+            builder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "✕ Decline", declinePendingIntent);
+
+        } else if ("DAILY_BONUS_REMINDER".equalsIgnoreCase(type)) {
+            builder.setCategory(NotificationCompat.CATEGORY_PROMO);
+
+            Intent claimIntent = (Intent) launchIntent.clone();
+            claimIntent.putExtra("push_action", "claim_daily_bonus");
+            PendingIntent claimPendingIntent = PendingIntent.getActivity(
+                    context,
+                    notificationId + 1,
+                    claimIntent,
+                    pendingIntentFlags
+            );
+            builder.addAction(android.R.drawable.ic_input_add, "🎁 Claim Bonus", claimPendingIntent);
+
+        } else if ("TOURNAMENT_OPEN".equalsIgnoreCase(type) || "TOURNAMENT_CLOSING_SOON".equalsIgnoreCase(type)) {
+            builder.setCategory(NotificationCompat.CATEGORY_EVENT);
+
+            Intent tourneyIntent = (Intent) launchIntent.clone();
+            tourneyIntent.putExtra("push_action", "open_tournament");
+            PendingIntent tourneyPendingIntent = PendingIntent.getActivity(
+                    context,
+                    notificationId + 1,
+                    tourneyIntent,
+                    pendingIntentFlags
+            );
+            builder.addAction(android.R.drawable.ic_dialog_map, "🏆 Join Battle", tourneyPendingIntent);
+
+        } else if ("SAVINGS_MILESTONE".equalsIgnoreCase(type)) {
+            builder.setCategory(NotificationCompat.CATEGORY_STATUS);
+
+            Intent savingsIntent = (Intent) launchIntent.clone();
+            savingsIntent.putExtra("push_action", "open_savings");
+            PendingIntent savingsPendingIntent = PendingIntent.getActivity(
+                    context,
+                    notificationId + 1,
+                    savingsIntent,
+                    pendingIntentFlags
+            );
+            builder.addAction(android.R.drawable.ic_menu_view, "🏦 View Vault", savingsPendingIntent);
+
+        } else if ("PRIZE_CONGRATULATIONS".equalsIgnoreCase(type)) {
+            builder.setCategory(NotificationCompat.CATEGORY_STATUS);
+
+            Intent prizeIntent = (Intent) launchIntent.clone();
+            prizeIntent.putExtra("push_action", "open_standings");
+            PendingIntent prizePendingIntent = PendingIntent.getActivity(
+                    context,
+                    notificationId + 1,
+                    prizeIntent,
+                    pendingIntentFlags
+            );
+            builder.addAction(android.R.drawable.ic_menu_agenda, "🎉 View Prize", prizePendingIntent);
+        }
+
+        NotificationManagerCompat notificationManager = NotificationManagerCompat.from(context);
+        try {
+            notificationManager.notify(notificationId, builder.build());
+            Log.i(TAG, "Notification #" + notificationId + " (" + type + ") dispatched successfully");
+        } catch (SecurityException se) {
+            Log.w(TAG, "Notification permission not granted: " + se.getMessage());
+        }
+    }
+
+    private static String resolveChannelId(String type) {
+        if (type == null) return CHANNEL_GENERAL;
+        switch (type.toUpperCase()) {
+            case "GAME_REQUEST":
+                return CHANNEL_GAME_REQUESTS;
+            case "DAILY_BONUS_REMINDER":
+                return CHANNEL_DAILY_REWARDS;
+            case "TOURNAMENT_OPEN":
+            case "TOURNAMENT_CLOSING_SOON":
+            case "PRIZE_CONGRATULATIONS":
+                return CHANNEL_TOURNAMENTS;
+            case "SAVINGS_MILESTONE":
+            case "BALANCE_UPDATE":
+            case "TRANSACTION":
+                return CHANNEL_SAVINGS;
+            default:
+                return CHANNEL_GENERAL;
+        }
+    }
+
+    public static void ensureNotificationChannels(Context context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && context != null) {
+            try {
+                NotificationManager manager = context.getSystemService(NotificationManager.class);
+                if (manager == null) return;
+
+                AudioAttributes audioAttributes = new AudioAttributes.Builder()
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION_COMMUNICATION_REQUEST)
+                        .build();
+                Uri soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+                long[] vibrationPattern = new long[]{0, 450, 200, 450};
+
+                // 1. Game Requests Channel (MAX IMPORTANCE - Heads-up popover)
+                NotificationChannel gameRequests = new NotificationChannel(
+                        CHANNEL_GAME_REQUESTS,
+                        "Game Challenges & Invites",
+                        NotificationManager.IMPORTANCE_HIGH
+                );
+                gameRequests.setDescription("Live game requests, tournament invites and battle challenges");
+                gameRequests.enableLights(true);
+                gameRequests.setLightColor(BRAND_COLOR);
+                gameRequests.enableVibration(true);
+                gameRequests.setVibrationPattern(vibrationPattern);
+                gameRequests.setSound(soundUri, audioAttributes);
+                gameRequests.setBypassDnd(true);
+                gameRequests.setShowBadge(true);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    gameRequests.setAllowBubbles(true);
+                }
+
+                // 2. Daily Rewards Channel (HIGH IMPORTANCE)
+                NotificationChannel dailyRewards = new NotificationChannel(
+                        CHANNEL_DAILY_REWARDS,
+                        "Daily Bonuses & Streaks",
+                        NotificationManager.IMPORTANCE_HIGH
+                );
+                dailyRewards.setDescription("Daily streak reminders, login bonuses and free gifts");
+                dailyRewards.enableLights(true);
+                dailyRewards.setLightColor(BRAND_COLOR);
+                dailyRewards.enableVibration(true);
+                dailyRewards.setShowBadge(true);
+
+                // 3. Tournaments & Prizes (HIGH IMPORTANCE)
+                NotificationChannel tournaments = new NotificationChannel(
+                        CHANNEL_TOURNAMENTS,
+                        "Tournaments & Prize Standings",
+                        NotificationManager.IMPORTANCE_HIGH
+                );
+                tournaments.setDescription("Tournament start alerts, season end payouts and winning announcements");
+                tournaments.enableLights(true);
+                tournaments.setLightColor(Color.YELLOW);
+                tournaments.enableVibration(true);
+                tournaments.setShowBadge(true);
+
+                // 4. Account & Savings (HIGH IMPORTANCE)
+                NotificationChannel savings = new NotificationChannel(
+                        CHANNEL_SAVINGS,
+                        "Account & Savings Updates",
+                        NotificationManager.IMPORTANCE_HIGH
+                );
+                savings.setDescription("Savings vault milestones, deposits and balance updates");
+                savings.enableLights(true);
+                savings.setLightColor(Color.GREEN);
+                savings.enableVibration(true);
+                savings.setShowBadge(true);
+
+                // 5. General Channel (HIGH IMPORTANCE)
+                NotificationChannel general = new NotificationChannel(
+                        CHANNEL_GENERAL,
+                        "General Notifications",
+                        NotificationManager.IMPORTANCE_HIGH
+                );
+                general.setDescription("General announcements and updates");
+                general.enableLights(true);
+                general.enableVibration(true);
+                general.setShowBadge(true);
+
+                manager.createNotificationChannel(gameRequests);
+                manager.createNotificationChannel(dailyRewards);
+                manager.createNotificationChannel(tournaments);
+                manager.createNotificationChannel(savings);
+                manager.createNotificationChannel(general);
+
+                Log.i(TAG, "All rich notification channels successfully registered with MAXIMUM importance");
+            } catch (Exception e) {
+                Log.w(TAG, "Error registering notification channels: " + e.getMessage());
+            }
+        }
+    }
+}

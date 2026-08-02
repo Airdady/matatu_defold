@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.matatu.champ">
+
+    <!-- Permissions for High-Priority Push Notifications -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <application>
+        <!-- Custom Firebase Messaging Service for Heads-Up, Rich Action Push Notifications -->
+        <service
+            android:name="com.defold.android.firebaseauth.MatatuFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <!-- Broadcast Receiver for Inline Notification Actions (Accept/Decline/Dismiss) -->
+        <receiver
+            android:name="com.defold.android.firebaseauth.NotificationActionReceiver"
+            android:exported="false" />
+    </application>
+</manifest>

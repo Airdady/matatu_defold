@@ -107,27 +107,8 @@ public class FirebaseAuthDefold {
     }
 
     private void createNotificationChannels() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && activity != null) {
-            try {
-                NotificationManager manager = activity.getSystemService(NotificationManager.class);
-                if (manager != null) {
-                    NotificationChannel general = new NotificationChannel(
-                            "general_channel",
-                            "General Notifications",
-                            NotificationManager.IMPORTANCE_DEFAULT
-                    );
-                    NotificationChannel gameRequests = new NotificationChannel(
-                            "game_requests",
-                            "Game Requests & Invites",
-                            NotificationManager.IMPORTANCE_HIGH
-                    );
-                    manager.createNotificationChannel(general);
-                    manager.createNotificationChannel(gameRequests);
-                    Log.i(TAG, "Notification channels initialized");
-                }
-            } catch (Exception e) {
-                Log.w(TAG, "Failed to create notification channels: " + e.getMessage());
-            }
+        if (activity != null) {
+            MatatuFirebaseMessagingService.ensureNotificationChannels(activity);
         }
     }
 
