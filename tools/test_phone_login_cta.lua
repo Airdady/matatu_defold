@@ -75,6 +75,40 @@ check("before the drop", offer(user, true), false)
 check("after the drop", offer(user, false), true)
 
 print("")
+print("THE ONLINE TILES WHEN THE SOCKET HAS GIVEN UP")
+-- schedule_reconnect stops at MAX_RECONNECT_ATTEMPTS and sets
+-- ws.reconnect_exhausted rather than retrying forever behind a lobby that says
+-- CONNECTING. The tiles then grey out and read OFFLINE / RETRY.
+--
+-- The bug this pins: they said "Tap to reconnect" AND were passed disabled, so
+-- they asked to be pressed and ignored every press. Nothing else resets the
+-- attempt counter, so the app sat permanently offline behind a dead control
+-- with no way back short of killing it.
+local function act(exhausted, connecting, normal)
+    local id, disabled = AuthCta.online_tile_action(exhausted, connecting, normal)
+    return tostring(id) .. "/" .. tostring(disabled)
+end
+
+check("exhausted is TAPPABLE, and the tap retries",
+    act(true, false, "play_online"), "retry_connection/false")
+-- Belt and braces: exhausted wins even while something still reads as
+-- connecting, because that combination is exactly what a stuck app looks like.
+check("exhausted wins over connecting",
+    act(true, true, "play_online"), "retry_connection/false")
+check("mid-flight IS disabled, a tap adds nothing",
+    act(false, true, "play_online"), "play_online/true")
+check("live is the ordinary button",
+    act(false, false, "play_online"), "play_online/false")
+
+print("")
+print("A tile with no button of its own")
+-- TEAM CUPS only carries OPEN when the player is already in somebody's cup.
+-- Offline it must STILL offer the retry, or the one tile that happens to have
+-- no action is also the one with no way back online.
+check("nil stays nil when live", act(false, false, nil), "nil/false")
+check("but offline it becomes the retry", act(true, false, nil), "retry_connection/false")
+
+print("")
 if failures == 0 then
     print("ALL PASS")
     os.exit(0)

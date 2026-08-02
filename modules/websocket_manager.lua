@@ -772,6 +772,36 @@ function M.connect()
   connection = websocket.connect(url, params, ws_callback)
 end
 
+-- A DELIBERATE retry, after the automatic ones have given up.
+--
+-- schedule_reconnect stops at MAX_RECONNECT_ATTEMPTS and sets
+-- reconnect_exhausted, which is right: retrying forever behind a lobby that
+-- says CONNECTING drains the battery and tells the player nothing. The lobby
+-- then greys the online tiles and offers RETRY.
+--
+-- That button needs this. M.connect() on its own gets exactly ONE attempt —
+-- reconnect_attempts is still over the maximum, so the first failure lands
+-- straight back in the exhausted state — which makes a deliberate retry
+-- weaker than the automatic ones it is standing in for. Somebody who has just
+-- walked back into signal deserves the full budget, so the counter and the
+-- backoff are reset first.
+--
+-- Safe to call at any time: connect() already no-ops while connecting or
+-- connected, and refuses outright when an update is required.
+function M.retry_connection()
+  print("[WS] manual retry requested")
+  reconnect_attempts = 0
+  current_reconnect_delay = config.INITIAL_RECONNECT_DELAY
+  M.reconnect_exhausted = false
+  -- A pending timer would fire mid-attempt and be refused by connect()'s
+  -- is_connecting guard, silently costing the player one of their retries.
+  if reconnect_handle then
+    pcall(timer.cancel, reconnect_handle)
+    reconnect_handle = nil
+  end
+  M.connect()
+end
+
 function M.disconnect()
   is_manual_disconnect = true
   stop_keep_alive()

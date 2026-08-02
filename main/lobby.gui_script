@@ -25,6 +25,7 @@ local D      = require("modules.lobby.draw")
 local Tiles  = require("modules.lobby.tiles")
 local Season = require("modules.lobby.season")
 local Cups   = require("modules.lobby.cups")
+local auth_cta = require("modules.lobby.auth_cta")
 
 -- Local aliases keep the rest of this file reading as it did before the split.
 local track     = D.track
@@ -234,6 +235,9 @@ local function rebuild(self)
         sub_text = app_state.auth_error ~= "" and tostring(app_state.auth_error):upper() or "CONNECTION FAILED"
     end
 
+    local play_btn_id, play_disabled =
+        auth_cta.online_tile_action(is_exhausted, waiting_for_connect, "play_online")
+
     mode_tile(self, {
         x = play_cx, y = row_a_cy, w = play_w, h = row_a_h,
         accent      = (is_exhausted or waiting_for_connect) and C_MUTED or C_RED,
@@ -245,8 +249,10 @@ local function rebuild(self)
         season_countdown = self.season_text,
         season_deadline  = self.season_deadline_text,
         cta_label   = cta_text,
-        btn_id      = "play_online",
-        disabled    = is_exhausted or waiting_for_connect,
+        -- Exhausted is greyed but TAPPABLE, and the tap means "try again" -
+        -- see auth_cta.online_tile_action for why that distinction matters.
+        btn_id      = play_btn_id,
+        disabled    = play_disabled,
     })
 
     -- -----------------------------------------------------------------------
@@ -349,6 +355,10 @@ local function rebuild(self)
         team_sub = "Fund a prize, invite your team"
     end
 
+    local team_btn_id, team_disabled = auth_cta.online_tile_action(
+        is_exhausted, waiting_for_connect,
+        (has_team_tournament and not owns_cup) and "team_action_open" or nil)
+
     mode_tile(self, {
         x = team_cx, y = row_a_cy, w = team_w, h = row_a_h,
         accent      = (is_exhausted or waiting_for_connect) and C_MUTED or C_U_TEAM,
@@ -356,10 +366,14 @@ local function rebuild(self)
         top_left_2  = "TEAM",
         title       = "TEAM CUPS",
         sub         = is_exhausted and "Offline • Tap to retry" or (waiting_for_connect and "Connecting..." or team_sub),
-        cta_label   = (has_team_tournament and not owns_cup) and "OPEN" or nil,
-        btn_id      = (has_team_tournament and not owns_cup) and "team_action_open" or nil,
+        cta_label   = is_exhausted and "RETRY"
+            or ((has_team_tournament and not owns_cup) and "OPEN" or nil),
+        -- Same as PLAY ONLINE: offline is a state you can tap your way out of,
+        -- not a wall. The child CREATE / JOIN buttons stay hidden either way,
+        -- because those DO need a live socket.
+        btn_id      = team_btn_id,
         child_buttons = is_exhausted and nil or team_children,
-        disabled    = is_exhausted or waiting_for_connect,
+        disabled    = team_disabled,
     })
 
     -- -----------------------------------------------------------------------
@@ -519,7 +533,15 @@ local function handle(self, b)
     end); return
     elseif b.id == "theme_open" then msg.post("#controller", "goto_themes"); return end
 
-    if b.id == "play_online" then
+    if b.id == "retry_connection" then
+        -- The automatic reconnects gave up. This is the player saying they
+        -- believe the network is back, so the attempt budget is reset and the
+        -- socket tries again from scratch (see ws.retry_connection).
+        toast.info("Reconnecting...")
+        pcall(ws.retry_connection)
+        rebuild(self)
+
+    elseif b.id == "play_online" then
         go_online(self)
 
     elseif b.id == "quick_play" then

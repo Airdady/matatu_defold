@@ -671,6 +671,30 @@ function init(self)
     -- simply moved somewhere with signal). Without this the retry sits on
     -- its backoff timer, which by then can be a full minute out.
     window.set_listener(function(_, event)
+        -- TELL THE SERVER WHETHER THE APP IS ON SCREEN.
+        --
+        -- notifications.ts skips push for a player whose app is already
+        -- showing them the same thing in-app, and it reads client.isForeground
+        -- to decide. Nothing ever set it, so every one of those checks was
+        -- dead and players open in the app got the invite twice: once as a
+        -- banner they could act on, and once as a heads-up notification
+        -- covering it.
+        --
+        -- The server cannot work this out for itself. A live WebSocket is not
+        -- the same question — Android keeps a backgrounded app's socket up for
+        -- a while, and that window is exactly when push is the only way to
+        -- reach somebody. So this is sent from the one place that knows.
+        --
+        -- Sent on BOTH edges, and best-effort: send_message no-ops when the
+        -- socket is down, and a missed edge only costs a duplicate
+        -- notification, never a missing one (the server treats unknown as
+        -- "send").
+        if event == window.WINDOW_EVENT_FOCUS_GAINED then
+            pcall(ws.send_message, "APP_STATE", { foreground = true })
+        elseif event == window.WINDOW_EVENT_FOCUS_LOST then
+            pcall(ws.send_message, "APP_STATE", { foreground = false })
+        end
+
         if event ~= window.WINDOW_EVENT_FOCUS_GAINED then return end
 
         -- Only when there is no session and nothing already in flight, so this
@@ -999,6 +1023,15 @@ function init(self)
     -- needs the backup back. Only "#online" was told before, which is the one
     -- screen they are not on.
     forward("disconnected",           "#lobby", "auth_state_changed")
+
+    -- The lobby greys PLAY ONLINE and TEAM CUPS to OFFLINE / RETRY once the
+    -- automatic reconnects give up (ws.reconnect_exhausted), and paints them
+    -- live again on the next successful connect. Neither of those was reaching
+    -- it: the lobby only repaints on screen_enter, layout changes, a cups
+    -- refresh and auth_state_changed. So the flag flipped and the screen kept
+    -- saying CONNECTING until something unrelated happened to repaint it.
+    forward("reconnect_failed",       "#lobby", "auth_state_changed")
+    forward("connected",              "#lobby", "auth_state_changed")
 
     forward("savings_status",           "#payments", "ws_savings_status")
     forward("savings_exchange_result",  "#payments", "ws_savings_exchange_result")
