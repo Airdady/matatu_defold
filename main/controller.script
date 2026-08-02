@@ -705,12 +705,24 @@ function init(self)
         -- something the app already knows, and would fail on a device that
         -- happens to be offline at the moment of return, when a plain
         -- reconnect would have worked perfectly well a second later.
-        if is_logged_in() and not ws.is_identified then
-            auth_debug("focus regained with a cached session — re-identifying, no sign-in")
-            identify_and_connect(ws.current_user_data)
+        --
+        -- ONE CALL, AND IT IS IMMEDIATE.
+        --
+        -- Coming back is the case where the app already knows everything it
+        -- needs: the user id has been on disk the whole time the app was
+        -- suspended. There is nothing to look up, nothing to ask Firebase for,
+        -- and nothing to wait for — so this reconciles on this frame rather
+        -- than leaving it to the next tick.
+        --
+        -- Deliberately unconditional, and deliberately not branching on
+        -- is_logged_in(): the reconciler sources the identity from memory OR
+        -- from the cached session, so it covers a resume whose in-memory
+        -- identity survived and one whose did not, without this code having to
+        -- know which happened. It is a no-op once identified.
+        ws.start_reconciler()
 
-        -- Only when there is no session and nothing already in flight, so this
-        elseif fbauth.available and not is_logged_in() and not self._silent_login_inflight then
+        -- Only when there is no session at all, and nothing already in flight.
+        if fbauth.available and not is_logged_in() and not self._silent_login_inflight then
             auth_debug("focus regained with no session — retrying silent sign-in")
             try_silent_login(self)
         end

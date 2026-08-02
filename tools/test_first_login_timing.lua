@@ -222,6 +222,60 @@ check("adopted from cache and sent", tb ~= nil, true)
 check("promptly", (tb or 999) <= 8, true)
 
 print("")
+print("RETURNING: the app comes back with everything already in hand")
+-- The reported case in its own words: "when I return as a returning user make
+-- sure the identify is fired instantly since we have user data to use for
+-- identify in cache."
+--
+-- Backgrounding drops the socket, so on resume there is no connection and no
+-- registration — but the user id has been known all along. There is nothing to
+-- look up, nothing to ask Firebase, and nothing to wait for.
+
+-- (a) resume with the identity still in memory: the socket went, the identity
+--     did not. This is the ordinary suspend/resume.
+sign_in({ boot_only = true, cached = USER })
+advance(3)                          -- boot, identify, connect, get registered
+ws.is_identified = true
+local dropped_at = NOW
+ws.socket_connected = false          -- backgrounded: the socket goes
+ws.is_identified = false
+sent = {}
+ws.start_reconciler()                -- what the focus handler triggers
+advance(1)
+local tr = first_identify_at()
+print(string.format("      (IDENTIFY re-sent %ss after coming back)",
+    tostring(tr and math.floor(tr - dropped_at) or "never")))
+check("re-identified on return", tr ~= nil, true)
+-- "Instantly" means on the frame the app came back, not on the reconciler's
+-- next tick. What buys that is start_reconciler() reconciling ON CALL rather
+-- than only arming a timer — disable that and this goes to "never".
+check("instantly, not on the next tick", (tr or 999) - dropped_at <= 0.5, true)
+
+-- (b) resume after the identity was dropped too, with only the cache left.
+--     Adopting has to lead straight on to connecting rather than stopping for
+--     a tick in between.
+sign_in({ boot_only = true, cached = USER })
+advance(3)
+ws.is_identified = true
+ws.socket_connected = false
+ws.is_identified = false
+ws.reset_identity()                  -- nothing left but the cached session
+local dropped2 = NOW
+sent = {}
+ws.start_reconciler()
+advance(1)
+local tr2 = first_identify_at()
+print(string.format("      (IDENTIFY re-sent %ss after coming back)",
+    tostring(tr2 and math.floor(tr2 - dropped2) or "never")))
+check("adopted from cache and re-identified", tr2 ~= nil, true)
+-- NOTE on what this does and does not pin. It stays green even with the
+-- reconciler reduced to one action per call, because adopt goes through
+-- identify(), which re-enters start_reconciler and so continues the chain
+-- itself. The bounded loop in reconcile() is therefore belt-and-braces for
+-- actions that have no such re-entry, not the thing making this case fast.
+check("adopting leads straight on to connecting", (tr2 or 999) - dropped2 <= 0.5, true)
+
+print("")
 print("NO SESSION MEANS NO SOCKET")
 sign_in({ boot_only = true, cached = nil })
 advance(20)

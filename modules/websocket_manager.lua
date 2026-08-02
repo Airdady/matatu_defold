@@ -953,7 +953,7 @@ local function has_cached_identity()
   return ok and type(cached) == "table" and tostring(cached._id or cached.localId or "") ~= ""
 end
 
-local function reconcile()
+local function reconcile_step()
   local action = conn_plan.next_action({
     identity            = pending_identity,
     update_required     = M.update_required,
@@ -989,6 +989,27 @@ local function reconcile()
     connection = nil
     M.connect()
   end
+
+  return action
+end
+
+-- RUN THE WHOLE WAY TO A STABLE STATE, NOW.
+--
+-- One action per tick meant a returning player with a session already on disk
+-- waited two ticks before the socket was even opened: tick one adopted the
+-- identity, tick two connected. Four seconds of CONNECTING for somebody the
+-- app already knew everything about.
+--
+-- Each action changes the state the next decision reads, so a short loop walks
+-- adopt -> connect (or adopt -> identify) in one pass and stops the moment
+-- nothing more can usefully be done. Bounded because a planner bug must cost a
+-- few wasted iterations, never a frozen app.
+local function reconcile()
+  for _ = 1, 4 do
+    local action = reconcile_step()
+    if action == "wait" or action == "idle" then return action end
+  end
+  return "wait"
 end
 
 -- Idempotent. Started the first time an identity is set and left running: the
@@ -996,11 +1017,20 @@ end
 -- is a loop that has to be restarted correctly by everything that might need
 -- it — which is the class of bug this exists to remove.
 function M.start_reconciler()
-  if reconcile_handle then return end
-  reconcile_handle = timer.delay(RECONCILE_INTERVAL, true, function()
-    local ok, err = pcall(reconcile)
-    if not ok then print("[WS] reconciler error: " .. tostring(err)) end
-  end)
+  if not reconcile_handle then
+    reconcile_handle = timer.delay(RECONCILE_INTERVAL, true, function()
+      local ok, err = pcall(reconcile)
+      if not ok then print("[WS] reconciler error: " .. tostring(err)) end
+    end)
+  end
+  -- And reconcile RIGHT NOW, every time, even when the timer was already
+  -- running. This is what makes the common paths immediate rather than
+  -- eventual: registering the identity provider at boot, and identify() being
+  -- called after a sign-in, both land here and both should act on this frame
+  -- instead of waiting up to RECONCILE_INTERVAL for a tick that will decide
+  -- exactly the same thing.
+  local ok, err = pcall(reconcile)
+  if not ok then print("[WS] reconciler error: " .. tostring(err)) end
 end
 
 -- Test seam, and used by disconnect(): a repeating timer keeps the process
