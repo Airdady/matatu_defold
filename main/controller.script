@@ -80,10 +80,27 @@ local function identify_and_connect(user)
 
     local id = user._id or user.localId or ""
     auth_debug("identify_and_connect: id=%s username=%s", tostring(id), tostring(user.username))
-    if id ~= "" then
-        ws.identify(id, user.username or "Player",
-            { amount = user.balance or 0, charge = 0 }, "UG")
+    if id == "" then
+        ws.connect()
+        return
     end
+
+    -- If the socket is already open but registered under a different id
+    -- (e.g. a prior cached-session boot that was cut short, or a phone-merge
+    -- that switched accounts), tear it down first. ws.identify() + ws.connect()
+    -- with an already-open socket would just resend on the same connection that
+    -- the server already knows under the old id — which causes a stale IDENTIFY
+    -- or a silent no-op instead of a clean re-register.
+    local already_identified_as = ws.current_user_id or ""
+    if ws.socket_connected and already_identified_as ~= "" and already_identified_as ~= id then
+        auth_debug("identify_and_connect: socket open for different id (%s→%s), reconnecting",
+            already_identified_as, id)
+        ws.reset_identity()
+        pcall(ws.disconnect)
+    end
+
+    ws.identify(id, user.username or "Player",
+        { amount = user.balance or 0, charge = 0 }, "UG")
     ws.connect()
 end
 
@@ -110,6 +127,11 @@ local function clear_session()
     ws.current_user_data = nil
     pcall(api.set_auth_token, "")
     pcall(api.save_session, {})
+    -- Reset pending identity BEFORE disconnecting so the auto-reconnect that
+    -- disconnect schedules does NOT replay the now-stale user id, which is what
+    -- previously kept the server answering IDENTIFY_ERROR in a tight loop and
+    -- the UI stuck on "RECONNECTING..." forever.
+    pcall(ws.reset_identity)
     pcall(ws.disconnect) -- Sever the stale socket connection to prevent rapid-fire auth errors
 
     -- Deliberately NOT calling fbauth.logout() here. This used to wipe the
@@ -502,13 +524,45 @@ handle_auth_result = function(self, result)
             user.matchedByGoogleId = res.data.matchedByGoogleId and true or false
 
             if type(user) == "table" and (user._id or user.localId) then
-                identify_and_connect(user)
+                -- Save session and set auth token FIRST so the rest of the app
+                -- immediately has the right identity even before the socket
+                -- IDENTIFY round-trip completes.
+                ws.current_user_data = user
+                local tok = user.token or user.idToken or ""
+                if tok ~= "" then api.set_auth_token(tok) end
+                api.save_session(user)
+
                 if res.data.isNewUser then
                     msg.post("#signup_bonus", "show_signup_bonus", { amount = tonumber(user.balance) or 500 })
                 end
+
+                -- Transition auth state and navigate BEFORE firing the WebSocket
+                -- IDENTIFY — the REST response is already enriched with balance/rank
+                -- (handleNearbyPlayers), so the player data is complete. The socket
+                -- IDENTIFY happens in the background to register the player in the
+                -- live-clients map and get real-time balance/online-user pushes.
                 app_state.auth_state = "done"
                 msg.post("#lobby", "auth_state_changed")
-                route_after_auth(self)
+
+                -- Mark _explicit_online so route_after_auth sends to online screen
+                -- when this is a fresh interactive sign-in (not just a cached session
+                -- boot), or navigate to profile if profile is incomplete.
+                if not app_state.profile_complete(user) then
+                    show(self, "profile")
+                elseif self._explicit_online or self._interactive_open or self._interactive_login_done then
+                    self._explicit_online = false
+                    show(self, "online")
+                else
+                    -- Silent boot-time login: stay on lobby, just repaint.
+                    show(self, "lobby")
+                end
+
+                -- Connect + identify AFTER navigation. The socket is async —
+                -- it does not block the screen transition above. If already
+                -- connected (cached session path), ws.identify() sends IDENTIFY
+                -- immediately on the live socket; if not, ws.connect() opens it
+                -- and on_connected() sends it once open.
+                identify_and_connect(user)
                 return
             end
         end

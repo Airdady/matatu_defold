@@ -657,20 +657,7 @@ function M.finish_round_transition(self, force)
 
     if not self.is_transitioning_round then return end
     self.is_transitioning_round = false
-    
-    if self.online_mode and self._continuation_request_id then
-        log("Sending GAME_REQUEST_ACCEPTED for continuation: " .. tostring(self._continuation_request_id))
-        ws.accept_game_request(self._continuation_request_id)
-        self._continuation_request_id = nil
-        -- Mirror awaiting_replay's role for the manual-rematch flow: if the
-        -- opponent never mutually accepts (they disconnected mid-transition
-        -- and the backend's 45s continuation window expires), a
-        -- GAME_REQUEST_DECLINED notice can now arrive for this too — without
-        -- this flag it would be silently ignored and we'd wait forever with
-        -- no further server message ever coming.
-        self._awaiting_round_continuation = true
-        return -- Do NOT call M.start_game here. Wait for the server's START event.
-    end
+    self._continuation_request_id = nil
 
     if self.queued_start_game then
         self.queued_start_game = false

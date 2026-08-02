@@ -207,11 +207,22 @@ local function rebuild(self)
     -- -----------------------------------------------------------------------
     -- Tile 1: PLAY ONLINE
     -- -----------------------------------------------------------------------
+    -- Disable the tile while we have a cached user but the WebSocket IDENTIFY
+    -- hasn't come back yet: the player is known locally but not yet confirmed
+    -- live by the server, so entering matchmaking would fire against a socket
+    -- that isn't registered. Once identify_success fires (ws.is_identified),
+    -- the lobby repaints and the tile becomes fully interactive.
+    local has_cached_user = ws.current_user_data and (ws.current_user_data._id or "") ~= ""
+    local waiting_for_connect = has_cached_user and not ws.is_identified
+
     local cta_text = "PLAY NOW"
     local sub_text = "Real players • Live coin stakes"
     local is_connecting = app_state.auth_state == "sending" or app_state.auth_state == "verifying"
     
-    if is_connecting then
+    if waiting_for_connect then
+        cta_text = "CONNECTING..."
+        sub_text = "Verifying your account..."
+    elseif is_connecting then
         cta_text = "CONNECTING..."
         sub_text = "Signing in with Firebase..."
     elseif app_state.auth_state == "error" then
@@ -231,6 +242,7 @@ local function rebuild(self)
         season_deadline  = self.season_deadline_text,
         cta_label   = cta_text,
         btn_id      = "play_online",
+        disabled    = waiting_for_connect,
     })
 
     -- -----------------------------------------------------------------------
@@ -339,10 +351,11 @@ local function rebuild(self)
         top_left    = "ONLINE",
         top_left_2  = "TEAM",
         title       = "TEAM CUPS",
-        sub         = team_sub,
+        sub         = waiting_for_connect and "Connecting..." or team_sub,
         cta_label   = (has_team_tournament and not owns_cup) and "OPEN" or nil,
         btn_id      = (has_team_tournament and not owns_cup) and "team_action_open" or nil,
         child_buttons = team_children,
+        disabled    = waiting_for_connect,
     })
 
     -- -----------------------------------------------------------------------
@@ -735,7 +748,10 @@ function init(self)
     self.nodes, self.buttons = {}, {}
     self.state               = STATE_LOBBY
     self.tut_page            = 1
-    self.tutorial_active     = not tutorial_seen()
+    -- Never auto-show tutorial on first launch — it blocks the screen right
+    -- when the player is trying to sign in after clearing data. The tutorial
+    -- is still always reachable via the HELP button in the utility strip.
+    self.tutorial_active     = false
     self.consent_active      = false
     self._season_tick        = 0
 

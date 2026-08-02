@@ -1,19 +1,4 @@
-// Firebase Authentication — the Lua side.
-//
-// Same shape as the GameServices extension next door: a Java class doing the
-// real work, a JNI bridge, and a Lua table registered at init.
-//
-// ONE THING IT DOES THAT GAMESERVICES DOES NOT
-//
-// It answers back. GameServices' callbacks only log — nothing in the game waits
-// on an in-app update. A sign-in result has to reach Lua, and it arrives on a
-// Firebase listener thread, which is not the thread Lua runs on.
-//
-// Touching a lua_State from that thread is undefined behaviour, and the way it
-// presents is the worst kind: it works in testing and crashes in the field with
-// a stack naming none of the code responsible. So results are pushed onto a
-// mutex-guarded queue and drained in UpdateFirebaseAuth, which Defold calls on
-// the main thread once a frame. Nothing here calls into Lua from anywhere else.
+// Firebase Authentication & Cloud Messaging — the Lua side.
 
 #include <dmsdk/sdk.h>
 
@@ -26,14 +11,10 @@
 
 static jobject g_AuthObj = NULL;
 static jclass  g_AuthClass = NULL;
+static char*   g_CachedFcmToken = NULL;
 
-// The Lua function waiting for the next result. One at a time on purpose:
-// sign-in is a modal, user-driven act, and a second attempt while one is open
-// is a double tap, not two separate questions. The second replaces the first
-// rather than queueing behind it.
 static dmScript::LuaCallbackInfo* g_Callback = NULL;
 
-// Must match FirebaseAuthDefold.RC_SIGN_IN.
 static const int RC_SIGN_IN = 7011;
 
 struct AuthResult
@@ -91,6 +72,17 @@ extern "C" JNIEXPORT void JNICALL Java_com_defold_android_firebaseauth_FirebaseA
     }
     
     env->ReleaseStringUTFChars(message, msg);
+}
+
+extern "C" JNIEXPORT void JNICALL Java_com_defold_android_firebaseauth_FirebaseAuthDefold_onFcmTokenReceived(
+        JNIEnv* env, jclass clazz, jstring token)
+{
+    if (g_CachedFcmToken) {
+        free(g_CachedFcmToken);
+        g_CachedFcmToken = NULL;
+    }
+    g_CachedFcmToken = Dup(env, token);
+    dmLogInfo("FirebaseAuth [FCM]: Registration token received natively");
 }
 
 extern "C" JNIEXPORT void JNICALL Java_com_defold_android_firebaseauth_FirebaseAuthDefold_onAuthSuccess(
@@ -195,8 +187,31 @@ static int IsSignedIn(lua_State* L)
     return 1;
 }
 
-// True on a device where this extension is actually present and initialised.
-// Lets Lua branch once at startup instead of pcall-ing every call site.
+static int GetFcmToken(lua_State* L)
+{
+    DM_LUA_STACK_CHECK(L, 1);
+    if (g_AuthObj != NULL)
+    {
+        dmAndroid::ThreadAttacher attacher;
+        JNIEnv* env = attacher.GetEnv();
+        jmethodID m = env->GetMethodID(g_AuthClass, "getFcmToken", "()Ljava/lang/String;");
+        jstring jtok = (jstring)env->CallObjectMethod(g_AuthObj, m);
+        const char* ctok = jtok ? env->GetStringUTFChars(jtok, 0) : "";
+        lua_pushstring(L, ctok ? ctok : "");
+        if (jtok) env->ReleaseStringUTFChars(jtok, ctok);
+        return 1;
+    }
+    lua_pushstring(L, g_CachedFcmToken ? g_CachedFcmToken : "");
+    return 1;
+}
+
+static int FetchFcmToken(lua_State* L)
+{
+    DM_LUA_STACK_CHECK(L, 0);
+    CallJavaVoid("fetchFcmToken");
+    return 0;
+}
+
 static int IsAvailable(lua_State* L)
 {
     DM_LUA_STACK_CHECK(L, 1);
@@ -206,12 +221,14 @@ static int IsAvailable(lua_State* L)
 
 static const luaL_reg Module_methods[] =
 {
-    {"login",         Login},
-    {"silent_login",  SilentLogin},
-    {"refresh_token", RefreshToken},
-    {"logout",        Logout},
-    {"is_signed_in",  IsSignedIn},
-    {"is_available",  IsAvailable},
+    {"login",           Login},
+    {"silent_login",    SilentLogin},
+    {"refresh_token",   RefreshToken},
+    {"logout",          Logout},
+    {"is_signed_in",    IsSignedIn},
+    {"is_available",    IsAvailable},
+    {"get_fcm_token",   GetFcmToken},
+    {"fetch_fcm_token", FetchFcmToken},
     {NULL, NULL}
 };
 
@@ -247,9 +264,6 @@ static void Deliver(const AuthResult& r)
 
 static dmExtension::Result UpdateFirebaseAuth(dmExtension::Params* params)
 {
-    // Copied out under the lock and delivered outside it. Holding a mutex
-    // across a Lua call invites a deadlock the moment a callback does anything
-    // that ends up back in here.
     dmArray<AuthResult> batch;
     {
         DM_MUTEX_SCOPED_LOCK(g_Mutex);
@@ -291,9 +305,6 @@ static dmExtension::Result InitializeFirebaseAuth(dmExtension::Params* params)
             env->GetMethodID(g_AuthClass, "<init>", "(Landroid/app/Activity;)V"),
             activity));
 
-    // Straight out of game.project rather than google-services.json. Defold does
-    // not apply the Google Services Gradle plugin, so the generated string
-    // resources that file normally becomes do not exist in this build.
     const char* apiKey    = Cfg(params->m_ConfigFile, "firebase.api_key", "");
     const char* appId     = Cfg(params->m_ConfigFile, "firebase.app_id", "");
     const char* projectId = Cfg(params->m_ConfigFile, "firebase.project_id", "");
@@ -315,9 +326,6 @@ static dmExtension::Result InitializeFirebaseAuth(dmExtension::Params* params)
 
     if (!ok)
     {
-        // The object stays, so is_available() reports true and calls return a
-        // named failure through the normal path. Dropping it here would make
-        // every call silently do nothing instead.
         dmLogError("FirebaseAuth: initialisation failed — check the [firebase] section of game.project");
     }
 
@@ -350,6 +358,7 @@ static dmExtension::Result FinalizeFirebaseAuth(dmExtension::Params* params)
         g_Mutex = 0;
     }
 
+    if (g_CachedFcmToken) { free(g_CachedFcmToken); g_CachedFcmToken = NULL; }
     if (g_AuthObj)   { env->DeleteGlobalRef(g_AuthObj);   g_AuthObj = NULL; }
     if (g_AuthClass) { env->DeleteGlobalRef(g_AuthClass); g_AuthClass = NULL; }
     return dmExtension::RESULT_OK;
@@ -357,9 +366,6 @@ static dmExtension::Result FinalizeFirebaseAuth(dmExtension::Params* params)
 
 #else
 
-// Every other platform, including the editor. The extension registers nothing
-// at all, so `firebaseauth` is nil in Lua and modules/firebase_auth.lua takes
-// its stub path — which is what lets the game still run in the editor.
 static dmExtension::Result InitializeFirebaseAuth(dmExtension::Params* params) { return dmExtension::RESULT_OK; }
 static dmExtension::Result FinalizeFirebaseAuth(dmExtension::Params* params) { return dmExtension::RESULT_OK; }
 static dmExtension::Result UpdateFirebaseAuth(dmExtension::Params* params) { return dmExtension::RESULT_OK; }

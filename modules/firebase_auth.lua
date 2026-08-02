@@ -122,4 +122,15 @@ function M.is_signed_in()
     return ok and v or false
 end
 
+function M.get_fcm_token()
+    if not M.available or not ext.get_fcm_token then return "" end
+    local ok, tok = pcall(ext.get_fcm_token)
+    return (ok and tok) and tok or ""
+end
+
+function M.fetch_fcm_token()
+    if not M.available or not ext.fetch_fcm_token then return end
+    pcall(ext.fetch_fcm_token)
+end
+
 return M

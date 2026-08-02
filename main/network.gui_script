@@ -55,7 +55,7 @@ local function build(self)
     self.body = text(vmath.vector3(0, 22, 0), "Reconnecting", 19, C_BODY)
     gui.set_parent(self.body, self.panel)
 
-    self.hint = text(vmath.vector3(0, -14, 0), "Your game is safe — Akira holds your seat.", 15,
+    self.hint = text(vmath.vector3(0, -14, 0), "Please reconnect before the grace period expires.", 15,
         vmath.vector4(0.55, 0.59, 0.64, 1))
     gui.set_parent(self.hint, self.panel)
 
@@ -154,10 +154,17 @@ function init(self)
     end
     self._tokens = {
         ws.on("disconnected", function()
-            if ws.current_user_id ~= "" then notify("reconnecting") end
+            -- Suppress the "RECONNECTING" badge during the Firebase auth flow:
+            -- intentional disconnect+reconnect cycles happen while signing in
+            -- and should not surface as a network problem to the player.
+            local auth = app_state.auth_state or "idle"
+            local auth_busy = auth == "sending" or auth == "verifying"
+            if ws.current_user_id ~= "" and not auth_busy then notify("reconnecting") end
         end),
         ws.on("connection_error", function()
-            if ws.current_user_id ~= "" then notify("reconnecting") end
+            local auth = app_state.auth_state or "idle"
+            local auth_busy = auth == "sending" or auth == "verifying"
+            if ws.current_user_id ~= "" and not auth_busy then notify("reconnecting") end
         end),
         ws.on("reconnect_failed", function()
             notify("offline")
@@ -172,11 +179,13 @@ end
 
 function final(self)
     for _, t in ipairs(self._tokens or {}) do ws.off(t) end
+    app_state.modal_close("network")
 end
 
 local function apply_mode(self, mode)
     self._mode = mode
     gui.set_enabled(self.scrim, true)
+    app_state.modal_open("network")
     if mode == "offline" then
         gui.set_text(self.title, "YOU ARE OFFLINE")
         gui.set_color(self.strip, C_RED)
@@ -187,7 +196,7 @@ local function apply_mode(self, mode)
         gui.set_text(self.title, "CONNECTION LOST")
         gui.set_color(self.strip, C_ACCENT)
         gui.set_text(self.body, "Reconnecting")
-        gui.set_text(self.hint, "Your game is safe — Akira holds your seat.")
+        gui.set_text(self.hint, "Please reconnect before the grace period expires.")
         gui.set_enabled(self.retry_btn, false)
     end
 end
@@ -220,6 +229,7 @@ function on_message(self, message_id, message)
     elseif message_id == hash("net_hide") then
         self._mode = nil
         gui.set_enabled(self.scrim, false)
+        app_state.modal_close("network")
     elseif message_id == hash("net_badge") then
         local mode = (message and message.mode) or "reconnecting"
         -- When online the dialog owns the UI; keep the badge hidden.

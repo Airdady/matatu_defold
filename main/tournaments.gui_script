@@ -91,18 +91,20 @@ local function pick_tournament()
 
     -- Helper to check if a tournament is valid for the multi-level (7-level) map
     local function is_valid_map_tournament(t)
+        if not t then return false end
         local count = (type(t.levels) == "table") and #t.levels or 0
         if count == 7 then return true end
         if count > 1 then return true end
         if count == 1 then return false end -- Reject 1-level tournaments explicitly
-        -- If no levels defined (0), assume GLOBAL scope is our 7-level default
-        if t.scope == "GLOBAL" then return true end
+        -- If no levels defined (0), check if it's the global tournament
+        if t.scope == "GLOBAL" or t.name == "Global Championship" or t.type == "public" then return true end
         return false
     end
 
     -- 1. Try to find a GLOBAL active tournament that fits the multi-level criteria
     for _, t in ipairs(ts) do
-        if t.scope == "GLOBAL" and t.status == "active" and is_valid_map_tournament(t) then 
+        local is_global = (t.scope == "GLOBAL" or t.name == "Global Championship" or t.type == "public")
+        if is_global and t.status == "active" and is_valid_map_tournament(t) then 
             return t 
         end
     end

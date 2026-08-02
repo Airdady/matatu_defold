@@ -184,12 +184,21 @@ M.arm_identify_watchdog = arm_identify_watchdog
 
 function M.identify(id, username, stake, country)
   M.current_user_id = id
+  local fcm_token = ""
+  pcall(function()
+    local fbauth = require("modules.firebase_auth")
+    if fbauth and fbauth.get_fcm_token then
+      fcm_token = fbauth.get_fcm_token()
+    end
+  end)
+
   pending_identity = {
     _id = id,
     username = username,
     stake = stake or { amount = 0, charge = 0 },
     country = country or "",
     appVersion = config.APP_VERSION,
+    fcmToken = (fcm_token and fcm_token ~= "") and fcm_token or nil,
   }
   print(string.format("[WS-DEBUG] identify() called: id=%s socket_connected=%s (%s)",
     tostring(id), tostring(M.socket_connected), M.socket_connected and "sending IDENTIFY now" or "queued for on_connected"))
@@ -198,6 +207,15 @@ function M.identify(id, username, stake, country)
     M.send_message("IDENTIFY", pending_identity)
   end
   arm_identify_watchdog()
+end
+
+-- Clear the queued identity without disconnecting. Used when a session is
+-- being torn down so the next auto-reconnect does NOT replay an old user id.
+function M.reset_identity()
+  cancel_identify_watchdog()
+  pending_identity = nil
+  identify_tries = 0
+  M.current_user_id = ""
 end
 
 -- FIXED: extra_data logic appends payload keys matching the Godot structure (e.g. tournamentId)
@@ -755,6 +773,9 @@ end
 function M.disconnect()
   is_manual_disconnect = true
   stop_keep_alive()
+  cancel_identify_watchdog()
+  pending_identity = nil      -- never replay a stale identity on the next connect
+  identify_tries = 0
   if connection and websocket then websocket.disconnect(connection) end
   connection = nil
   M.socket_connected = false

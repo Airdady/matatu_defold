@@ -14,39 +14,45 @@ local M = {}
 
 function M.mode(self, cfg)
     local x, y, w, h = cfg.x, cfg.y, cfg.w, cfg.h
+    local disabled = cfg.disabled
 
     -- The tile container is the textured slice-9 panel from the ui atlas —
     -- the same artwork the stake tiles use (ui.panel9 + "container_bg", see
     -- online_center.lua). It replaces the two flat layered boxes that used to
     -- fake a 1px border, so every mode tile reads as part of one system.
-    D.track(self, ui.panel9(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), "container_bg"))
+    local panel = D.track(self, ui.panel9(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), "container_bg"))
+    if disabled then gui.set_color(panel, vmath.vector4(0.45, 0.45, 0.45, 1)) end
+
+    local accent_col = disabled and T.DISABLED or cfg.accent
 
     -- Left Accent Line
     local acc_w = 3
     local acc_h = h - 24
     local acc_x = x - w/2 + 8
-    local n_acc = D.track(self, ui.box(vmath.vector3(acc_x, y, 0), vmath.vector3(acc_w, acc_h, 0), cfg.accent))
+    local n_acc = D.track(self, ui.box(vmath.vector3(acc_x, y, 0), vmath.vector3(acc_w, acc_h, 0), accent_col))
     D.set_pivot(n_acc, gui.PIVOT_W)
 
     -- Top Left Text
     local tl_y = y + h/2 - 28
-    local n_tl = D.track(self, ui.text(vmath.vector3(acc_x + 16, tl_y, 0), cfg.top_left, "small", cfg.accent))
+    local n_tl = D.track(self, ui.text(vmath.vector3(acc_x + 16, tl_y, 0), cfg.top_left, "small", accent_col))
     D.set_pivot(n_tl, gui.PIVOT_W)
 
-    -- Camera recording blink effect for the LIVE tag
-    if cfg.blink_tl then
+    -- Camera recording blink effect for the LIVE tag (suppressed when disabled)
+    if cfg.blink_tl and not disabled then
         gui.animate(n_tl, "color.w", 0.1, gui.EASING_LINEAR, 0.8, 0, nil, gui.PLAYBACK_LOOP_PINGPONG)
     end
 
     if cfg.top_left_2 then
-        local n_tl2 = D.track(self, ui.text(vmath.vector3(acc_x + 16 + 55, tl_y, 0), cfg.top_left_2, "small", T.DARKRED))
+        local tl2_col = disabled and T.DISABLED or T.DARKRED
+        local n_tl2 = D.track(self, ui.text(vmath.vector3(acc_x + 16 + 55, tl_y, 0), cfg.top_left_2, "small", tl2_col))
         D.set_pivot(n_tl2, gui.PIVOT_W)
     end
 
     -- Center Text (Anchored slightly below center or dynamic based on CTA)
     local title_y = (cfg.cta_label or cfg.badge_label or cfg.child_buttons) and (y + 15) or (y + 8)
     
-    local n_title = D.track(self, ui.text(vmath.vector3(acc_x + 16, title_y, 0), cfg.title, "title", T.CREAM))
+    local title_col = disabled and T.DISABLED or T.CREAM
+    local n_title = D.track(self, ui.text(vmath.vector3(acc_x + 16, title_y, 0), cfg.title, "title", title_col))
     D.set_pivot(n_title, gui.PIVOT_W)
     pcall(gui.set_scale, n_title, vmath.vector3(1.15, 1.15, 1))
 
@@ -63,7 +69,8 @@ function M.mode(self, cfg)
         local n_slabel = D.track(self, ui.text(vmath.vector3(acc_x + 16, sy, 0), "SEASON ENDS IN", "small", T.MUTED))
         D.set_pivot(n_slabel, gui.PIVOT_W)
 
-        local n_scount = D.track(self, ui.text(vmath.vector3(acc_x + 16, sy - 30, 0), cfg.season_countdown, "subtitle2", T.GOLD))
+        local scount_col = disabled and T.DISABLED or T.GOLD
+        local n_scount = D.track(self, ui.text(vmath.vector3(acc_x + 16, sy - 30, 0), cfg.season_countdown, "subtitle2", scount_col))
         D.set_pivot(n_scount, gui.PIVOT_W)
         pcall(gui.set_scale, n_scount, vmath.vector3(1.15, 1.15, 1))
 
@@ -73,13 +80,9 @@ function M.mode(self, cfg)
         end
     end
 
-    -- Child action buttons (e.g. CREATE / JOIN) when the tile represents
-    -- more than one destination — takes priority over the single-button
-    -- CTA/badge below so a tile never draws both. Each child gets its own
-    -- hit region sized to fit, so the tile itself doesn't need (and won't
-    -- get, see the "Invisible hit node" block below) one big hit region
-    -- covering the whole tile.
-    if cfg.child_buttons then
+    -- Child action buttons — omitted entirely when the tile is disabled so
+    -- none of their individual hit regions are registered either.
+    if cfg.child_buttons and not disabled then
         local n_children = #cfg.child_buttons
         local cbtn_h      = 46
         local cbtn_gap    = 12
@@ -100,8 +103,10 @@ function M.mode(self, cfg)
         -- the tile's action rather than as another label in the left stack.
         local cta_x = x + w/2 - 16 - cta_w/2
         local cta_y = y - h/2 + 50
-        D.track(self, ui.box(vmath.vector3(cta_x, cta_y, 0), vmath.vector3(cta_w, cta_h, 0), T.RED))
-        D.track(self, ui.text(vmath.vector3(cta_x, cta_y, 0), cfg.cta_label, "body", vmath.vector4(0.05, 0.05, 0.05, 1)))
+        local cta_bg = disabled and T.DISABLED or T.RED
+        local cta_fg = disabled and T.MUTED or vmath.vector4(0.05, 0.05, 0.05, 1)
+        D.track(self, ui.box(vmath.vector3(cta_x, cta_y, 0), vmath.vector3(cta_w, cta_h, 0), cta_bg))
+        D.track(self, ui.text(vmath.vector3(cta_x, cta_y, 0), cfg.cta_label, "body", cta_fg))
     elseif cfg.badge_label then
         local badge_w, badge_h = 160, 46
         local badge_x = acc_x + 16 + badge_w/2
@@ -111,8 +116,8 @@ function M.mode(self, cfg)
         D.track(self, ui.text(vmath.vector3(badge_x, badge_y, 0), cfg.badge_label, "body", T.CREAM))
     end
 
-    -- Invisible hit node (only if tile is clickable)
-    if cfg.btn_id then
+    -- Invisible hit node — omitted when tile is disabled so taps fall through.
+    if cfg.btn_id and not disabled then
         local hit = D.track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), T.TRANSP))
         self.buttons[#self.buttons + 1] = { node = hit, id = cfg.btn_id, data = cfg.btn_data }
     end
@@ -126,7 +131,7 @@ function M.mode(self, cfg)
     -- Registered AFTER the tile's own hit node on purpose. The lobby picks
     -- buttons back to front, so anything added earlier would be swallowed by
     -- the full-tile hit region that covers it.
-    if cfg.alt_cta_label and cfg.alt_cta_id then
+    if cfg.alt_cta_label and cfg.alt_cta_id and not disabled then
         -- Wider than the CTA and anchored to the same right edge, so the two
         -- line up as one stack of actions. The extra width is not decoration:
         -- the CTA's 160 is sized for "PLAY NOW", and a label naming the other

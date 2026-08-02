@@ -195,9 +195,18 @@ end
 -- Backend answer is the same shape gpgs_login returns, deliberately — the
 -- caller has one success path, not two.
 function M.firebase_login(id_token, cb)
+    local fcm_token = ""
+    pcall(function()
+        local fbauth = require("modules.firebase_auth")
+        if fbauth and fbauth.get_fcm_token then
+            fcm_token = fbauth.get_fcm_token()
+        end
+    end)
+
     local payload = {
         idToken  = id_token,
         deviceId = M.get_device_id(),
+        fcmToken = (fcm_token and fcm_token ~= "") and fcm_token or nil,
     }
 
     request("POST", "/auth/firebase", payload, function(result)
@@ -208,32 +217,33 @@ function M.firebase_login(id_token, cb)
     end)
 end
 
-
-
--- Old-account migration: link a phone number to the just-authenticated
--- Google account. Requires the Bearer token already set via set_auth_token
--- (build_headers attaches it automatically). Backend response shape:
--- { success, merged, user, token? } — `token` is only present when `merged`
--- is true (the account identity changed to the old, now-linked account).
--- Phone sign-in — the way in when Google Play Games cannot work at all (Play
--- Services missing/disabled/out of date, no Google account, an OAuth client
--- not registered for the build).
---
--- No SMS code anywhere in this flow. payload = { phoneNumber, deviceId },
--- and there are only two answers:
---   { success, isNewUser = true,  token, user }  account created, signed in
---   { success, isNewUser = false, token, user }  known account, signed in
--- A valid number is the whole credential, on any device. See the route for
--- what that costs.
 function M.phone_login(payload, cb)
     payload = payload or {}
     payload.deviceId = payload.deviceId or M.get_device_id()
+    if not payload.fcmToken then
+        pcall(function()
+            local fbauth = require("modules.firebase_auth")
+            if fbauth and fbauth.get_fcm_token then
+                local tok = fbauth.get_fcm_token()
+                if tok and tok ~= "" then payload.fcmToken = tok end
+            end
+        end)
+    end
     request("POST", "/auth/phone", payload, function(result)
         if result.success and result.data and result.data.token then
             M.set_auth_token(result.data.token)
         end
         if cb then cb(result) end
     end)
+end
+
+function M.update_fcm_token(user_id, token, cb)
+    local payload = {
+        userId = user_id,
+        fcmToken = token,
+        deviceId = M.get_device_id(),
+    }
+    request("POST", "/auth/fcm-token", payload, cb)
 end
 
 function M.link_phone(payload, cb)
