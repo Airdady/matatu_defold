@@ -363,6 +363,98 @@ end
 check("no further device identifies", extra, 0)
 
 print("")
+print("FIRST LOGIN, NO CACHE: THE EXACT SEQUENCE THE APP RUNS")
+-- Reported as "the current login is unpredictable, at times it works and at
+-- times it doesn't". This replays what boot actually does on a device with no
+-- cached session:
+--
+--   1. controller.script calls ws.connect() straight away, so the socket is
+--      already handshaking before anybody has an identity
+--   2. the reconciler finds no cache and identifies by DEVICE id
+--   3. seconds later POST /auth/firebase returns and identify_and_connect runs
+--      with the real user id
+--
+-- Every one of those can land while the previous is still in flight, which is
+-- exactly the shape that produces "sometimes".
+local attempts_at_sign_in = 0
+local function first_login_no_cache(firebase_at, opts)
+    opts = opts or {}
+    sign_in({ boot_only = true, cached = nil,
+              outcomes = opts.outcomes, connect_latency = opts.connect_latency })
+    ws.connect()                       -- boot connects with no identity yet
+    advance(firebase_at)
+    sent = {}                          -- only count what the sign-in produces
+    attempts_at_sign_in = attempt
+    -- identify_and_connect(user), verbatim.
+    ws.identify(USER._id, USER.username, { amount = 500, charge = 0 }, "UG")
+    ws.connect()
+    advance(opts.settle or 6)
+end
+
+local function identify_with_user_id()
+    for _, m in ipairs(sent) do
+        if m.type == "IDENTIFY" and m.id == USER._id then return m.at end
+    end
+end
+
+-- (a) Firebase lands AFTER the socket is already open and device-identified.
+first_login_no_cache(2)
+local ta = identify_with_user_id()
+print(string.format("      (socket already open: user IDENTIFY at +%ss)",
+    tostring(ta and string.format("%.1f", ta - 2) or "never")))
+check("the real user id is sent", ta ~= nil, true)
+check("instantly", (ta and ta - 2 or 99) <= 0.5, true)
+
+-- (b) Firebase lands WHILE the socket is still handshaking. The awkward one:
+--     identify() cannot send yet, so it has to be queued and flushed on open.
+first_login_no_cache(0.1, { connect_latency = 3 })
+local tb = identify_with_user_id()
+print(string.format("      (mid-handshake: user IDENTIFY at +%ss)",
+    tostring(tb and string.format("%.1f", tb - 0.1) or "never")))
+check("still sent once the socket opens", tb ~= nil, true)
+
+-- (c) Firebase lands while the boot connect is HUNG and no event is coming —
+--     the ordinary shape of a first login, where the socket was opened at boot
+--     and the player then spent real seconds typing a number and waiting for a
+--     code. The sign-in inherited that dead socket and sat on it until the 10s
+--     backstop noticed, which is the "sometimes it works" being reported: it
+--     depended entirely on whether the boot socket happened to come up.
+first_login_no_cache(8, { outcomes = { "hang", "ok" } })
+local tc = identify_with_user_id()
+print(string.format("      (boot connect hung for 8s: user IDENTIFY at +%ss)",
+    tostring(tc and string.format("%.1f", tc - 8) or "never")))
+check("the hung attempt does not swallow the sign-in", tc ~= nil, true)
+check("and the sign-in does not wait out the 10s backstop for it",
+    (tc and tc - 8 or 99) <= 1, true)
+check("it opened a fresh socket rather than reusing the dead one",
+    attempt > attempts_at_sign_in, true)
+
+-- (d) THE OTHER SIDE OF THE SAME NUMBER, and the reason it is not smaller.
+--     A slow link is indistinguishable from a hung one except by how long it
+--     has had. A sign-in landing 1s into a 5s handshake must NOT tear it down:
+--     doing so throws away the attempt that was about to succeed and buys a
+--     second full handshake. That is the starvation bug that CONNECT_STALL
+--     already had once, and a grace below a real handshake reintroduces it.
+first_login_no_cache(1, { connect_latency = 5, settle = 10 })
+local td = identify_with_user_id()
+print(string.format("      (sign-in 1s into a 5s handshake: user IDENTIFY at +%ss)",
+    tostring(td and string.format("%.1f", td - 1) or "never")))
+check("the working handshake is left alone", attempt, attempts_at_sign_in)
+check("and it identifies as soon as that socket opens",
+    (td and td - 1 or 99) <= 4.5, true)
+
+-- (e) A hang that is still YOUNG at sign-in cannot be told apart from (d), so
+--     it rides — and the passive backstop is what catches it. Stated as a
+--     bound rather than left to be assumed: this is the worst case the design
+--     accepts, and naming it is what stops it quietly growing.
+first_login_no_cache(1, { outcomes = { "hang", "ok" }, settle = 20 })
+local te = identify_with_user_id()
+print(string.format("      (sign-in 1s into a hang: user IDENTIFY at +%ss)",
+    tostring(te and string.format("%.1f", te - 1) or "never")))
+check("it still gets there", te ~= nil, true)
+check("bounded by the 10s backstop, not unbounded", (te and te - 1 or 99) <= 10, true)
+
+print("")
 print("NO DEVICE ID EITHER MEANS NO SOCKET")
 -- The only case left where holding a socket open buys nothing.
 DEVICE_ID = ""

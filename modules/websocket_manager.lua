@@ -181,6 +181,33 @@ local IDENTIFY_MAX_TRIES = 3
 local identify_timer     = nil
 local identify_tries     = 0
 
+-- How old a connect attempt already in flight at SIGN-IN time must be before
+-- the sign-in abandons it in favour of a fresh one.
+--
+-- Shorter than conn_plan.CONNECT_STALL_SECONDS, and deliberately so: that one
+-- is the passive backstop for an app nobody is watching, while this fires on
+-- an explicit, user-visible event carrying fresh proof that the network is up
+-- (the HTTP sign-in that just returned against the same host). It fires once
+-- per sign-in, never in a loop.
+--
+-- But NOT shorter than a real handshake. Below that it stops being a rescue
+-- and becomes the starvation bug in miniature: a sign-in that lands during a
+-- slow-but-working connect tears down the attempt that was about to succeed
+-- and pays for a second one. Five seconds is the slow handshake that
+-- test_first_login_timing.lua models; the pairing is asserted there.
+--
+-- So an attempt YOUNGER than this rides — it is still plausibly working, and
+-- the 10s backstop has it either way. Only one that predates the sign-in by
+-- more than a whole handshake is treated as dead, which is the ordinary shape
+-- of a first login: boot opens a socket, then the player spends far longer
+-- than this typing a number and waiting for a code.
+--
+-- Declared HERE, with the other identify timings, rather than beside the code
+-- that reads it: M.identify() is defined earlier in this file, and a `local`
+-- introduced after a function body is not in scope inside it — the read would
+-- silently resolve to a nil global and raise on the comparison.
+local SIGN_IN_CONNECT_GRACE = 5
+
 local function cancel_identify_watchdog()
     if identify_timer then pcall(timer.cancel, identify_timer); identify_timer = nil end
 end
@@ -289,7 +316,31 @@ function M.identify(id, username, stake, country)
     send_identify("identify() called")
     arm_identify_watchdog()
   else
-    if is_connecting and (now_s() - (connecting_since or 0)) >= conn_plan.CONNECT_STALL_SECONDS then
+    -- A SIGN-IN IS EVIDENCE THE NETWORK WORKS.
+    --
+    -- Boot opens a socket before anybody has an identity, so by the time a
+    -- sign-in completes there is usually an attempt already in flight. If that
+    -- attempt has hung — no connect, no error, nothing — the sign-in used to
+    -- inherit it and wait out the full CONNECT_STALL_SECONDS before anything
+    -- else was tried. Ten seconds of nothing, after a login that had already
+    -- succeeded. That is the "sometimes it works and sometimes it doesn't":
+    -- whether login felt instant depended on whether the boot socket happened
+    -- to connect.
+    --
+    -- We know more here than the reconciler does. The HTTP round trip that
+    -- produced this user id just succeeded against the same host, seconds ago.
+    -- An older socket attempt that still has not connected is not more
+    -- trustworthy than that evidence, so it is abandoned and restarted.
+    --
+    -- A much shorter grace than the reconciler's, and it fires at most ONCE
+    -- per sign-in rather than in a loop — so a genuinely slow handshake costs
+    -- one restart here and is then governed by the 10s rule, instead of being
+    -- torn down repeatedly.
+    local in_flight_for = now_s() - (connecting_since or 0)
+    local stale = is_connecting and in_flight_for >= SIGN_IN_CONNECT_GRACE
+    if stale then
+      print(string.format(
+        "[WS] sign-in: abandoning a %.1fs connect that has reported nothing", in_flight_for))
       is_connecting = false
       close_orphan_socket()
     end
