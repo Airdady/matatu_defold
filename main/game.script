@@ -198,15 +198,30 @@ function init(self)
         RE.pre_validate_hand(self)
     end
 
+    -- CALLED SIX TO EIGHT TIMES A FRAME, so it must not allocate.
+    --
+    -- It used to run tostring() on both ids on every call. Those are string
+    -- allocations, and at 60fps that is several hundred a second thrown away
+    -- for a comparison whose inputs almost never change — GC pressure produced
+    -- by the watchdogs that only exist to notice when nothing is happening.
+    --
+    -- The conversions are memoised on the raw values instead, so a string is
+    -- built only when an id actually changes. The identity fast path above it
+    -- covers the common case (both already strings and equal) without touching
+    -- the memo at all.
+    local ct_raw, ct_str, me_raw, me_str
     self.is_player_turn = function()
-        if self.online_mode then
-            if self.game_state and self.game_state.currentTurn then
-                return tostring(self.game_state.currentTurn) == tostring(self.my_player_id)
-            end
-            return false
-        else
+        if not self.online_mode then
             return self.current_turn == "player"
         end
+        local gs = self.game_state
+        local ct = gs and gs.currentTurn
+        if ct == nil then return false end
+        local me = self.my_player_id
+        if ct == me then return true end
+        if ct ~= ct_raw then ct_raw, ct_str = ct, tostring(ct) end
+        if me ~= me_raw then me_raw, me_str = me, tostring(me) end
+        return ct_str == me_str
     end
     -- ----------------------------------------------------------------------
 
@@ -270,8 +285,14 @@ function update(self, dt)
     -- Tutorial: while a "play this card" step is active, follow the scripted
     -- card's live position and feed its rect to the spotlight overlay. World and
     -- GUI both use the 1280x720 logical space, so the card position maps directly.
+    -- The is_active() check is OUTSIDE the pcall, and that is the whole point.
+    -- `pcall(function() ... end)` allocates a fresh closure every time it is
+    -- reached, so with the check inside, every frame of every game built and
+    -- threw away a closure for a tutorial that is not running — 60 allocations
+    -- a second of pure garbage, feeding exactly the collector pauses that show
+    -- up as an intermittent hitch mid-animation.
+    if Tut.is_active() then
     pcall(function()
-        if not Tut.is_active() then return end
         local hl = Tut.current()
         if not (hl and hl.screen == "game" and hl.target == "card" and hl.v) then return end
         for _, c in ipairs(self.player_hand or {}) do
@@ -282,6 +303,7 @@ function update(self, dt)
             end
         end
     end)
+    end
 
     -- BUG FIX: Round story watchdog shouldn't default to 0 for deadline
     if self.round_story_active then

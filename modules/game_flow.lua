@@ -312,7 +312,18 @@ function M.draw_to_hand(self, hand, is_player, count, done)
     local seq         = self._seq
     local STAGGER     = 0.13
     local FLIP_T      = 0.14
-    local SETTLE      = 0.30
+    -- Long enough for the card to actually LAND.
+    --
+    -- This was 0.30 while layout_hand flies the card in over BL.HAND_TWEEN
+    -- (0.42), so the draw called itself finished 0.12s before the card
+    -- arrived — and `done` is what raises the SKIP prompt. That is the
+    -- reported "tap to skip turn opens while the drawing card is ongoing":
+    -- the prompt appearing over a card still in mid-air.
+    --
+    -- Derived from the tween rather than written again, because two numbers
+    -- describing one motion is how they came apart in the first place. The
+    -- small margin covers the frame the tween completes on.
+    local SETTLE      = BL.HAND_TWEEN + 0.04
     local placed      = 0
     local launched    = 0
     local finished    = false
@@ -372,7 +383,7 @@ function M.draw_to_hand(self, hand, is_player, count, done)
         -- deck): wipe its remembered hand slot so layout_hand's same-slot
         -- skip can never mistake the stale target for "already there" and
         -- leave it sitting on the deck.
-        c._hand_target = nil
+        BL.forget_hand_slot(c)
         table.insert(hand, c)
 
         if is_player and self.online_mode and self.is_player_turn() then

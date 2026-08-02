@@ -81,7 +81,7 @@ function M.animate_to_pile(self, rec, is_player, on_done)
     -- Leaving the hand: forget the remembered hand slot so a future return
     -- to a hand (reshuffle -> deck -> draw) always animates from scratch
     -- instead of being skipped by layout_hand's same-slot check.
-    rec._hand_target = nil
+    BL.forget_hand_slot(rec)
     -- Cancel any animation still running on this card before forcing it back
     -- to full pile scale — most importantly the opponent-hand shrink tween
     -- (board_layout.lua's layout_hand, started when this card was drawn).

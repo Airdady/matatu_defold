@@ -185,6 +185,33 @@ end
 -- side). Laying every card out against the batch's final size from the
 -- first card onward means already-placed cards' slots don't shift again as
 -- more arrive, so the same_target guard below can skip their tweens.
+-- How long a card takes to fly into its hand slot.
+--
+-- Exported because game_flow's draw has to WAIT for it. Its settle delay was a
+-- separate 0.30 written by hand, which is shorter than this — so the draw
+-- reported itself finished while the card was still 0.12s from landing, and
+-- the SKIP prompt appeared over a card in mid-flight. Two constants describing
+-- one motion will always drift; now there is one.
+M.HAND_TWEEN = 0.42
+
+-- Forget everything layout_hand remembers about a card.
+--
+-- layout_hand caches the slot, the rotation and the opponent scale so it can
+-- skip writes that would change nothing. Every one of those caches has to go
+-- the moment a card LEAVES a hand, or when it comes back — pile, reshuffle,
+-- deck, drawn again — layout_hand looks at a stale value, decides there is
+-- nothing to do, and leaves the card wearing the rotation and size it had in
+-- somebody else's hand.
+--
+-- One function rather than three assignments at each site, because there are
+-- two sites today and the third will forget one of them.
+function M.forget_hand_slot(c)
+    if not c then return end
+    c._hand_target = nil
+    c._hand_rot = nil
+    c._scaled_for_opponent = nil
+end
+
 function M.layout_hand(self, hand, y, animate, geometry_n)
     local n = #hand
     if n == 0 then return end
@@ -219,20 +246,35 @@ function M.layout_hand(self, hand, y, animate, geometry_n)
         -- visible shrink tween trailing behind the motion or, worse, after
         -- the whole deal has finished. Instant set is also free: no scale
         -- tween per card per reflow competing with everything else.
-        if is_ai_hand then go.set(c.id, "scale", M.OPPONENT_CARD_SCALE) end
+        -- Only when it CHANGES. These two writes sat outside the same-slot
+        -- skip below, so every reflow wrote a scale and a rotation for every
+        -- card in both hands whether or not anything had moved — and a reflow
+        -- runs on every play, every draw and every layout change. Each write
+        -- dirties the object's transform, so "setting it to the value it
+        -- already has" is not free.
+        if is_ai_hand and c._scaled_for_opponent ~= true then
+            go.set(c.id, "scale", M.OPPONENT_CARD_SCALE)
+            c._scaled_for_opponent = true
+        elseif not is_ai_hand and c._scaled_for_opponent then
+            c._scaled_for_opponent = nil
+        end
         if animate then
             -- Skip the re-tween entirely when this card is already at (or
             -- already flying toward) this exact slot — only cards whose
             -- slot actually changed animate.
             if not same_target(c._hand_target, target) then
-                go.animate(c.id, "position", go.PLAYBACK_ONCE_FORWARD, target, go.EASING_OUTSINE, 0.42)
+                go.animate(c.id, "position", go.PLAYBACK_ONCE_FORWARD, target, go.EASING_OUTSINE, M.HAND_TWEEN)
                 c._hand_target = vmath.vector3(target.x, target.y, target.z)
             end
         else
             go.set_position(target, c.id)
             c._hand_target = vmath.vector3(target.x, target.y, target.z)
         end
-        go.set(c.id, "euler.z", -t * fan_amt * dir)
+        local rot_z = -t * fan_amt * dir
+        if c._hand_rot ~= rot_z then
+            go.set(c.id, "euler.z", rot_z)
+            c._hand_rot = rot_z
+        end
     end
 end
 
