@@ -38,31 +38,9 @@ input_method = INPUT_METHOD_HIDDEN
 minimum_sdk_version = 23
 
 [firebase]
-; Firebase Authentication, read by the firebaseauth native extension.
-;
-; These four values are what google-services.json normally supplies. Defold does
-; not apply the Google Services Gradle plugin, so that file's generated string
-; resources do not exist in this build and FirebaseOptions is constructed by
-; hand instead — see firebaseauth/src/FirebaseAuthDefold.java.
-;
-; Where each comes from in google-services.json:
-;   project_id     project_info.project_id
-;   api_key        client[].api_key[0].current_key
-;   app_id         client[].client_info.mobilesdk_app_id
-;   web_client_id  client[].oauth_client[] entry with client_type 3
-;
-; project_id MUST match the backend's service account. verifyIdToken checks a
-; token against the admin SDK's own project, so a server holding a different
-; one rejects every login ever made, with an 'aud' claim error that reads like
-; a token problem. The backend prints the project it expects at startup
-; (logFirebaseProject) so this can be checked rather than assumed.
 project_id = matatu-7aba6
 api_key = AIzaSyBwKWUFvhd5_vKPcxc3ViL_SotOqjA3wjU
 app_id = 1:431938576253:android:4c5453fb238205b3d3b614
-; The WEB client (client_type 3) — NOT the Android one. requestIdToken issues a
-; token for the audience the backend verifies against, and that is always the
-; web client. This is the single most common way the setup is got wrong, and it
-; fails silently: sign-in "succeeds" and hands back no token at all.
 web_client_id = 431938576253-53tdml3h9mrjb1eb6562k56ogqo9gsef.apps.googleusercontent.com
 
 [websocket]
