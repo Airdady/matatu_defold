@@ -616,7 +616,12 @@ local function rebuild_body(self)
     gui.set_pivot(progress_note, gui.PIVOT_W)
 
     -- ── PRO TIP BOX ──
-    local tip_w = 260
+    -- 360, up from 260. The tips are drawn as plain unwrapped text lines, so a
+    -- line longer than the box does not wrap — it runs out of the panel and
+    -- across whatever is beside it. "Only joined players will participate only"
+    -- is half again as long as the line it replaced, and the box still ends
+    -- well short of the timeline dock on the right.
+    local tip_w = 360
     local tip_cx = LEFT_TEXT_X + tip_w / 2
     local tip_cy = EDGE_B + 96
     
@@ -628,6 +633,10 @@ local function rebuild_body(self)
     local tip_title = track(self, ui.text(vmath.vector3(tip_cx - tip_w/2 + 20, tip_cy + 42, 0), "PRO TIP", "small", vmath.vector4(1, 0.84, 0, 1)))
     gui.set_pivot(tip_title, gui.PIVOT_W)
     
+    -- "Exit anytime on Quarter Finals" is gone: it was not true of the
+    -- multi-level ladder and it told players the opposite of what actually
+    -- matters here, which is that the field is fixed once the tournament
+    -- starts. Only players who joined take part; nobody is added later.
     local tips = { "Online Multiplayer", "Only joined players will participate only", "Progress saved between seasons" }
     for ti, tip in ipairs(tips) do
         local tip_node = track(self, ui.text(vmath.vector3(tip_cx - tip_w/2 + 20, tip_cy + 14 - (ti - 1) * 22, 0), "• " .. tip, "small", vmath.vector4(0.9, 0.9, 0.9, 0.85)))

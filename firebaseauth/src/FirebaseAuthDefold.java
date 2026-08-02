@@ -40,6 +40,38 @@ public class FirebaseAuthDefold {
     private boolean ready = false;
     private String cachedFcmToken = "";
 
+    // ── Is the player looking at the app right now? ───────────────────────────
+    //
+    // MatatuFirebaseMessagingService asks this before posting anything to the
+    // shade. A push that arrives while the app is open is noise at best: the
+    // in-app overlay is already showing that same game request, driven by the
+    // WebSocket, so the player gets told twice — once by a banner they can act
+    // on and once by a heads-up notification covering it.
+    //
+    // Static because the messaging service is constructed by the FCM SDK and
+    // has no handle on the extension. It is the same process, so a static is
+    // exactly the right amount of machinery.
+    //
+    // Counting STARTED rather than RESUMED activities: resumed goes false for
+    // a permission dialog or the notification shade itself being pulled down,
+    // and the app is plainly still open in both cases.
+    private static int sStartedActivities = 0;
+    private static boolean sLifecycleRegistered = false;
+
+    /**
+     * True when the app is on screen. False when it is backgrounded, killed,
+     * or when nothing has told us either way — the safe default, because a
+     * missed notification is worse than a redundant one.
+     */
+    public static boolean isAppInForeground() {
+        return sStartedActivities > 0;
+    }
+
+    /** True once the lifecycle hook is installed, so callers know the answer means something. */
+    public static boolean isForegroundTrackingActive() {
+        return sLifecycleRegistered;
+    }
+
     // Native side. Implemented in firebaseauth.cpp.
     public static native void nativeLog(int level, String message);
     public static native void onAuthSuccess(String idToken, String uid, String email, String name, String photo);
@@ -48,6 +80,49 @@ public class FirebaseAuthDefold {
 
     public FirebaseAuthDefold(Activity activity) {
         this.activity = activity;
+        trackForeground(activity);
+    }
+
+    /**
+     * Installs the app-wide lifecycle hook that feeds isAppInForeground().
+     *
+     * Registered once, on the Application, so it survives every activity the
+     * engine creates. Failure here is not fatal: the counter simply stays at
+     * zero, isAppInForeground() answers false, and notifications behave exactly
+     * as they did before this existed.
+     */
+    private static synchronized void trackForeground(Activity activity) {
+        if (sLifecycleRegistered || activity == null) return;
+        try {
+            android.app.Application app = activity.getApplication();
+            if (app == null) return;
+            app.registerActivityLifecycleCallbacks(
+                    new android.app.Application.ActivityLifecycleCallbacks() {
+                @Override public void onActivityStarted(Activity a) { sStartedActivities++; }
+                @Override public void onActivityStopped(Activity a) {
+                    // Clamped. A stop without a matching start — which happens
+                    // if the hook is installed while an activity is already
+                    // running — would otherwise drive this negative and leave
+                    // the app permanently reported as backgrounded, silently
+                    // undoing the whole suppression.
+                    if (sStartedActivities > 0) sStartedActivities--;
+                }
+                @Override public void onActivityCreated(Activity a, android.os.Bundle b) {}
+                @Override public void onActivityResumed(Activity a) {}
+                @Override public void onActivityPaused(Activity a) {}
+                @Override public void onActivitySaveInstanceState(Activity a, android.os.Bundle b) {}
+                @Override public void onActivityDestroyed(Activity a) {}
+            });
+            sLifecycleRegistered = true;
+            // The extension is constructed from the activity's own start-up, so
+            // by the time we get here it is already started and its
+            // onActivityStarted has been and gone. Without this the app reads
+            // as backgrounded until the player next switches away and back.
+            sStartedActivities = 1;
+            Log.i(TAG, "Foreground tracking active - pushes will be suppressed while the app is open");
+        } catch (Throwable t) {
+            Log.w(TAG, "Could not track foreground state: " + t.getMessage());
+        }
     }
 
     /**

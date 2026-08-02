@@ -21,6 +21,7 @@ local app_state = require("modules.app_state")
 local dialog_incoming = require("modules.dialog_incoming")
 local api    = require("modules.api_service")
 local toast  = require("modules.toast")
+local budget = require("modules.incoming_budget")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local CX, CY = 640, 360
@@ -254,10 +255,29 @@ local function rebuild(self)
     if not ok then
         print("[INCOMING] draw error: " .. tostring(err))
         clear(self)
+        -- And DROP it. clear() alone leaves self.dialog set with no buttons in
+        -- it, and on_input reads that as "a full dialog is up, swallow every
+        -- tap" — an invisible modal over the whole app, with nothing on screen
+        -- to explain it and nothing to press to get rid of it.
+        --
+        -- Losing one request to a draw error is a small, honest failure. The
+        -- opponent gets their answer from the server's own timeout.
+        self.dialog = nil
+        app_state.modal_close("incoming")
     end
 end
 
 -- ── Dialog lifecycle ──────────────────────────────────────────────────────────
+-- Banner wording for a PLAIN game request, which normally never needs any: it
+-- gets the full dialog, and the dialog composes its own copy from the fields.
+-- Used only when the input budget has run out and the challenge is being shown
+-- on the non-blocking strip instead (see modules/incoming_budget.lua).
+local function plain_banner_text(d)
+    local amt = tonumber((d.stake or {}).amount) or 0
+    return "GAME REQUEST  -  " .. tostring(d.name or "A PLAYER"):upper(),
+           amt > 0 and (commas(amt * 2) .. " Coins pot") or "Practice Mode"
+end
+
 -- `d` is the request as it should be shown:
 --   { name, stake, request_id, avatar, opponent_id, h2h, banner, title, desc }
 -- A table rather than nine positional arguments — the last three exist only for
@@ -285,15 +305,29 @@ local function open_dialog(self, d)
     -- the answer, so it gets a long window and, crucially, expires by HIDING
     -- rather than by answering (see update()).
     local window = d.cup_invite and CUP_BANNER_SECONDS or 10
+
+    -- Which surface. Tournament / battle / cup invites are always the banner.
+    -- A plain game request is normally the full modal dialog — unless this
+    -- overlay has already been holding the app's input for too long, in which
+    -- case it drops to the banner as well so the rest of the app keeps working
+    -- through the burst.
+    local as_banner = budget.surface(self.budget, d.banner and true or false)
+        == "banner"
+    local title, desc = d.title, d.desc
+    if as_banner and not d.banner and not title then
+        title, desc = plain_banner_text(d)
+    end
+
     self.dialog = {
         kind = "incoming",
         name = d.name, stake = d.stake or {}, request_id = d.request_id,
         avatar = tonumber(d.avatar) or 1, time_left = window, max_time = window,
         opponent_id = d.opponent_id and tostring(d.opponent_id) or nil, h2h = d.h2h,
         -- Tournament / battle / knockout invites render as the top banner; a
-        -- plain game request always gets the full dialog (set in on_message).
-        banner = d.banner and true or false,
-        title = d.title, desc = d.desc,
+        -- plain game request gets the full dialog (set in on_message) until the
+        -- input budget demotes it.
+        banner = as_banner,
+        title = title, desc = desc,
         championship = d.championship and true or false,
         -- Team cup invitation: no request_id, answered over HTTP rather than
         -- the socket, and never auto-declined.
@@ -343,6 +377,9 @@ function init(self)
     msg.post(".", "acquire_input_focus")
     gui.set_render_order(15)
     self.nodes, self.buttons, self.dialog, self.dlg_alpha = {}, {}, nil, 0
+    -- How long this overlay has been blocking the app, and whether it is
+    -- currently serving a burst on the non-blocking surface.
+    self.budget = budget.new()
     refresh_wh()
 
     -- WS callbacks run in the socket owner's (controller) context — post back to
@@ -418,6 +455,38 @@ function update(self, dt)
     if not self.dialog and app_state.modals and app_state.modals["incoming"] then
         print("[INCOMING] releasing a stale modal claim with no dialog on screen")
         app_state.modal_close("incoming")
+    end
+
+    -- The other direction of the same failure: a dialog that IS set but has no
+    -- buttons in it. on_input reads that as "modal is up, swallow every tap"
+    -- while there is nothing on screen and nothing to press — the app is dead
+    -- until the countdown expires. rebuild() drops the dialog on a draw error
+    -- now, so this should never fire; it costs one comparison a frame and the
+    -- thing it catches costs a restart.
+    if self.dialog and not self.dialog.banner and #(self.buttons or {}) == 0 then
+        print("[INCOMING] dropping a full dialog that has no buttons to press")
+        self.dialog = nil
+        app_state.modal_close("incoming")
+    end
+
+    -- THE INPUT BUDGET.
+    --
+    -- Each request gets its own countdown, but a burst restarts that countdown
+    -- over and over, and the modal claim underneath is held the whole time —
+    -- which is an app that accepts no input at all for as long as challenges
+    -- keep arriving. Past the budget the overlay demotes to the top banner:
+    -- every invite is still shown and still acceptable, and everything behind
+    -- it works again.
+    local showing = self.dialog and (self.dialog.banner and "banner" or "dialog") or nil
+    if budget.tick(self.budget, dt, showing) == "demote" then
+        print("[INCOMING] input held too long by a burst of requests - "
+            .. "switching to the non-blocking banner")
+        self.dialog.banner = true
+        if not self.dialog.title then
+            self.dialog.title, self.dialog.desc = plain_banner_text(self.dialog)
+        end
+        app_state.modal_close("incoming")
+        rebuild(self)
     end
 
     if self.dialog then

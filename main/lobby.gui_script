@@ -430,6 +430,13 @@ local function rebuild(self)
         })
     end
 
+    -- (A 44x44 decorative box used to sit at grid_r + 4 here, meant to show a
+    -- "diamonds" flipbook. No texture was ever set on the node and the
+    -- play_flipbook was wrapped in pcall, so it failed silently on every build
+    -- and left an untextured square filled with its own colour — a grey block
+    -- hanging off the right edge of the utility strip that reads as a missing
+    -- avatar. Removed rather than fixed: it decorated nothing.)
+
     -- -----------------------------------------------------------------------
     -- Draw Active Overlays on top of the main Lobby UI
     -- -----------------------------------------------------------------------

@@ -59,6 +59,24 @@ public class MatatuFirebaseMessagingService extends FirebaseMessagingService {
         super.onMessageReceived(remoteMessage);
         Log.i(TAG, "FCM Message received from: " + remoteMessage.getFrom());
 
+        // NOTHING GOES TO THE SHADE WHILE THE APP IS OPEN.
+        //
+        // Every push this app sends has an in-app counterpart already: game
+        // requests, tournament invites and cup invitations all arrive over the
+        // WebSocket and are shown by the incoming overlay, which is live on
+        // every screen. Posting a heads-up notification as well means the
+        // player is interrupted twice for one event, and the notification
+        // physically covers the banner it is duplicating — including its
+        // Accept button.
+        //
+        // Dropped rather than posted-silently: a silent notification still
+        // stacks up in the shade, so a busy session leaves a column of dead
+        // invites the player has already answered.
+        if (isAppInForeground()) {
+            Log.i(TAG, "App is in the foreground - not showing this push, the in-app overlay has it");
+            return;
+        }
+
         try {
             Map<String, String> data = remoteMessage.getData();
             RemoteMessage.Notification notif = remoteMessage.getNotification();
@@ -74,6 +92,48 @@ public class MatatuFirebaseMessagingService extends FirebaseMessagingService {
             displayRichNotification(this, type, title, body, data);
         } catch (Exception e) {
             Log.e(TAG, "Error displaying incoming push notification: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Is the player looking at the app right now?
+     *
+     * Two answers, in order of trustworthiness:
+     *
+     *   the lifecycle counter   FirebaseAuthDefold registers an
+     *                           ActivityLifecycleCallbacks on the Application
+     *                           and counts started activities. Same process as
+     *                           this service, exact, and cheap.
+     *   process importance      the fallback for when the extension never
+     *                           initialised — a build where Firebase failed to
+     *                           start still receives pushes through this
+     *                           service, and without this it would show every
+     *                           one of them over a running game.
+     *
+     * Neither can throw out of here. A crash in this check would take down
+     * message handling entirely, which loses the notification rather than
+     * merely mistiming it.
+     */
+    private boolean isAppInForeground() {
+        try {
+            if (FirebaseAuthDefold.isForegroundTrackingActive()) {
+                return FirebaseAuthDefold.isAppInForeground();
+            }
+        } catch (Throwable ignored) {
+            // Extension class missing or not loaded; fall through.
+        }
+
+        try {
+            android.app.ActivityManager.RunningAppProcessInfo info =
+                    new android.app.ActivityManager.RunningAppProcessInfo();
+            android.app.ActivityManager.getMyMemoryState(info);
+            // VISIBLE as well as FOREGROUND: an activity behind a dialog or a
+            // pulled-down shade is still an app the player is looking at.
+            return info.importance
+                    <= android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE;
+        } catch (Throwable t) {
+            Log.w(TAG, "Could not determine foreground state: " + t.getMessage());
+            return false;
         }
     }
 
