@@ -292,6 +292,29 @@ function M.process_scoreboard(self, state)
         return mine, theirs
     end
 
+    if type(state.headToHead) == "table" then self._h2h = state.headToHead end
+    local h2h_msg = nil
+    if type(self._h2h) == "table" then
+        local hp, ho = read_scores(self._h2h.scores)
+        local form = nil
+        if type(self._h2h.form) == "table" then
+            form = self._h2h.form[tostring(self.my_player_id)]
+        end
+        h2h_msg = {
+            p = hp or 0,
+            o = ho or 0,
+            total = self._h2h.totalGames or 0,
+            form = (type(form) == "table") and form or {},
+        }
+    end
+
+    -- Knockout games render the score-cap chamber table, so the battle
+    -- scoreboard flippers stay hidden. BUT pass h2h_msg so the last 5 games form strip displays!
+    if is_knockout_state(state) or self._is_knockout then
+        msg.post(GUI_HUD, "update_scoreboard", { show = false, h2h = h2h_msg })
+        return
+    end
+
     local ts = (type(state.tournamentScore) == "table") and state.tournamentScore or nil
     local fmt, stage, p_score, o_score
 
@@ -334,22 +357,6 @@ function M.process_scoreboard(self, state)
     -- Only fallback to user data if not locked
     if p_score == nil and not self._final_state_locked then 
         p_score, o_score = read_scores(scores_from_user_data(t_id)) 
-    end
-
-    if type(state.headToHead) == "table" then self._h2h = state.headToHead end
-    local h2h_msg = nil
-    if type(self._h2h) == "table" then
-        local hp, ho = read_scores(self._h2h.scores)
-        local form = nil
-        if type(self._h2h.form) == "table" then
-            form = self._h2h.form[tostring(self.my_player_id)]
-        end
-        h2h_msg = {
-            p = hp or 0,
-            o = ho or 0,
-            total = self._h2h.totalGames or 0,
-            form = (type(form) == "table") and form or {},
-        }
     end
 
     -- ✅ FIXED: If final state is locked, force `is_series` to true so the HUD stays active

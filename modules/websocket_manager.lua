@@ -225,10 +225,15 @@ end
 
 local function arm_identify_watchdog()
     cancel_identify_watchdog()
-    if not pending_identity then return end
+    if not pending_identity or not M.socket_connected then return end
     identify_timer = timer.delay(IDENTIFY_TIMEOUT, false, function()
         identify_timer = nil
         if M.is_identified or not pending_identity then return end
+        if not M.socket_connected then
+            -- Socket was disconnected or is currently reconnecting;
+            -- do not burn identify attempts while disconnected.
+            return
+        end
         if identify_tries < IDENTIFY_MAX_TRIES then
             identify_tries = identify_tries + 1
             -- %.1f, not %d. IDENTIFY_TIMEOUT is a fraction of a second now,
@@ -347,7 +352,6 @@ function M.identify(id, username, stake, country)
     if not is_connecting then
       M.connect()
     end
-    arm_identify_watchdog()
   end
   M.start_reconciler()
 end
@@ -508,8 +512,11 @@ local function parse_message(json_string)
       if d._id then user_payload._id = d._id end
       if d.username then user_payload.username = d.username end
     end
-    for k, v in pairs(user_payload) do M.current_user_data[k] = v end
-    if M.current_user_data._id then M.current_user_id = M.current_user_data._id end
+    if type(M.current_user_data) ~= "table" then M.current_user_data = {} end
+    if type(user_payload) == "table" then
+      for k, v in pairs(user_payload) do M.current_user_data[k] = v end
+    end
+    if M.current_user_data._id then M.current_user_id = tostring(M.current_user_data._id) end
 
     -- Identified WITHOUT having sent a user id: the server resolved us from
     -- the device id. The user it sent back is now the identity, and
@@ -1163,6 +1170,16 @@ end
 -- is a loop that has to be restarted correctly by everything that might need
 -- it — which is the class of bug this exists to remove.
 function M.start_reconciler()
+  -- When reconciling / resuming, if we are not connected and not identified,
+  -- cancel any pending backoff delay so we attempt reconnection immediately.
+  if not M.socket_connected and not M.is_identified then
+    if reconnect_handle then
+      pcall(timer.cancel, reconnect_handle)
+      reconnect_handle = nil
+    end
+    reconnect_attempts = 0
+  end
+
   if not reconcile_handle then
     reconcile_handle = timer.delay(RECONCILE_INTERVAL, true, function()
       local ok, err = pcall(reconcile)

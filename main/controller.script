@@ -108,7 +108,15 @@ local function identify_and_connect(user)
 end
 
 local function is_logged_in()
-    return ws.current_user_data and type(ws.current_user_data._id) == "string" and ws.current_user_data._id ~= ""
+    if ws.current_user_data and type(ws.current_user_data._id) == "string" and ws.current_user_data._id ~= "" then
+        return true
+    end
+    local cached = api.load_session()
+    if cached and type(cached._id) == "string" and cached._id ~= "" then
+        ws.current_user_data = cached
+        return true
+    end
+    return false
 end
 
 -- Set ONLY by identify_success, cleared by clear_session. This is the app's
@@ -324,6 +332,20 @@ local handle_device_result
 
 local function try_device_login(self)
     cancel_silent_login_retry(self)
+
+    -- If a user session is ALREADY cached in memory or on disk, no need to send
+    -- an HTTP POST to /auth/device. Just identify the WebSocket with the cached
+    -- user / device ID directly.
+    local cached = ws.current_user_data or api.load_session()
+    if cached and type(cached._id) == "string" and cached._id ~= "" then
+        auth_debug("try_device_login: user already in cache (%s) — identifying over WebSocket instead of HTTP", tostring(cached._id))
+        ws.current_user_data = cached
+        self._silent_login_inflight = false
+        arm_connect_deadline(self)
+        identify_and_connect(cached)
+        return
+    end
+
     arm_connect_deadline(self)
     self._silent_login_inflight = true
     self._silent_login_attempts = (self._silent_login_attempts or 0) + 1
@@ -584,6 +606,8 @@ function init(self)
         -- from the cached session, so it covers a resume whose in-memory
         -- identity survived and one whose did not, without this code having to
         -- know which happened. It is a no-op once identified.
+        self._silent_login_inflight = false
+        cancel_silent_login_retry(self)
         ws.start_reconciler()
 
         -- Only when there is no session at all, and nothing already in flight.
@@ -772,7 +796,9 @@ function init(self)
         -- that payload — it lived under DataScope.THEME and nothing fetches
         -- that at sign-in — so this call has been returning at its first line
         -- on every path for as long as it has existed. The list is in the base
-        -- response now; this is what puts it on.
+        if type(ws.current_user_data) == "table" and (ws.current_user_data._id or "") ~= "" then
+            pcall(api.save_session, ws.current_user_data)
+        end
         app_state.sync_theme_from_user(ws.current_user_data)
 
         -- CLEAR THE NOTE, DON'T JUST OUT-VOTE IT.
@@ -857,24 +883,32 @@ function init(self)
         return false
     end
 
-    table.insert(self.tokens, ws.on("game_start", function(gs)
-        if type(gs) == "table" and next(gs) ~= nil then ws.active_game_state = gs end
-        app_state.mode = "online"
-        if intercept_for_search(self) then return end
-        if self.screen ~= "game" then show(self, "game") else msg.post("#game_logic", "ws_new_game_start") end
-    end))
+    local function extract_game_stake(gs)
+        if type(gs) ~= "table" then return 0 end
+        if type(gs.stake) == "table" and tonumber(gs.stake.amount) then
+            return tonumber(gs.stake.amount) or 0
+        elseif tonumber(gs.stake) then
+            return tonumber(gs.stake) or 0
+        elseif type(gs.tournament) == "table" and type(gs.tournament.stake) == "table" and tonumber(gs.tournament.stake.amount) then
+            return tonumber(gs.tournament.stake.amount) or 0
+        elseif type(gs.tournament) == "table" and tonumber(gs.tournament.stake) then
+            return tonumber(gs.tournament.stake) or 0
+        elseif type(gs.tournamentData) == "table" and type(gs.tournamentData.stake) == "table" and tonumber(gs.tournamentData.stake.amount) then
+            return tonumber(gs.tournamentData.stake.amount) or 0
+        elseif type(gs.tournamentData) == "table" and tonumber(gs.tournamentData.stake) then
+            return tonumber(gs.tournamentData.stake) or 0
+        end
+        return 0
+    end
 
-    table.insert(self.tokens, ws.on("game_request_accepted", function(gs)
+    local function handle_online_game_entry(gs)
         if type(gs) == "table" and next(gs) ~= nil then ws.active_game_state = gs end
         app_state.mode = "online"
         if intercept_for_search(self) then return end
         local is_round_continuation = (self.screen == "game") and app_state.game_active
         if self.screen ~= "game" then show(self, "game") else msg.post("#game_logic", "ws_new_game_start") end
         if not is_round_continuation then
-            local stake = (type(gs) == "table" and type(gs.stake) == "table" and tonumber(gs.stake.amount)) or 500
-            -- A zero-stake game (AI trial battle, free match) has no real pot
-            -- to show — skip the bundle entirely instead of sitting a "0
-            -- coins" bundle on screen for the whole game.
+            local stake = extract_game_stake(gs)
             if stake > 0 then
                 pcall(msg.post, "#coins", "coin_collect_pot", {
                     amount  = stake * 2,
@@ -885,7 +919,10 @@ function init(self)
                 pcall(msg.post, "#coins", "coin_pot_to", { x = 220, y = 360 })
             end
         end
-    end))
+    end
+
+    table.insert(self.tokens, ws.on("game_start", handle_online_game_entry))
+    table.insert(self.tokens, ws.on("game_request_accepted", handle_online_game_entry))
 
     local function broadcast(evt)
         table.insert(self.tokens, ws.on(evt, function(user)

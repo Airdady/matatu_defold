@@ -59,49 +59,10 @@ function M.from_user_data()
 end
 
 function M.load(self, on_loaded)
-    if self.team_cups_loading then return end
-
-    -- Read before anything else: the user object already has both of these, so
-    -- the tile is correct on the very first paint rather than after a round
-    -- trip.
     self.invites = M.invitations()
-
     local carried = M.from_user_data()
-    if carried then
-        self.team_cups = carried
-        if self.nodes and on_loaded then on_loaded(self) end
-        return
-    end
-
-    -- Only when the payload did not carry them: an install still running
-    -- against an older backend, or a refresh after creating or joining a cup,
-    -- where the list has changed since IDENTIFY answered.
-    self.team_cups_loading = true
-    local uid = tostring((ws.current_user_data or {})._id or "")
-    api.list_active_team_tournaments(uid, function(res)
-        self.team_cups_loading = false
-        -- A FAILED REQUEST IS NOT AN EMPTY RAIL.
-        --
-        -- `res.data.tournaments or {}` treated a timeout, a dropped
-        -- connection and a 5xx as "there are no cups", so one bad request
-        -- emptied a rail that had been correct a moment earlier and nothing
-        -- put it back until the player left the screen and came back.
-        --
-        -- On a failure the previous list is kept — stale is closer to the
-        -- truth than empty — and self.team_cups is left nil if there was
-        -- nothing yet, so the next load() tries again instead of believing
-        -- the answer it never got.
-        local list = res and res.success and ((res.data or {}).tournaments)
-        if type(list) == "table" then
-            self.team_cups = list
-        end
-        self.invites = M.invitations()
-        -- Unlike the other screens, lobby has no self._active flag — gating on
-        -- one would silently never repaint, leaving the tile stuck on
-        -- "Loading..." forever. self.nodes is the real signal that the screen
-        -- is currently built.
-        if self.nodes and on_loaded then on_loaded(self) end
-    end)
+    self.team_cups = carried or {}
+    if self.nodes and on_loaded then on_loaded(self) end
 end
 
 --- Force a refetch: the carried list is known to be out of date.
