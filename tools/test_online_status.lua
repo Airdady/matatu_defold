@@ -113,6 +113,31 @@ print("The tile and the tap gate read the SAME predicate")
 local lobby = io.open((debug.getinfo(1, "S").source:match("@(.*/)") or "./")
     .. "../main/lobby.gui_script"):read("a")
 check("the tile asks the module", lobby:find("online_status.tile_state", 1, true) ~= nil, true)
+
+-- CONNECTING IS SILENT ON THE TILE ITSELF.
+--
+-- It used to repaint the whole thing: accent to grey, LIVE stops blinking,
+-- subtitle replaced by a status line, panel greyed out. On a good connection
+-- that is everything going dull and back for no visible reason; on a slow one
+-- it is a lobby that looks broken while nothing is wrong. Sign-in is automatic
+-- and silent, so only the button says anything.
+check("the accent does not grey while connecting",
+    lobby:find("accent      = is_exhausted and C_MUTED or C_RED", 1, true) ~= nil, true)
+check("LIVE keeps blinking", lobby:find("blink_tl    = not is_exhausted", 1, true) ~= nil, true)
+-- Comments stripped for the ABSENCE checks. This file explains the historical
+-- bug at length and quotes the very strings being asserted gone, so the raw
+-- text "contains" them no matter what the code does — the same prose-for-code
+-- trap that has caught three assertions in this codebase already.
+local lobby_code = (lobby:gsub("%-%-%[%[.-%]%]", ""):gsub("%-%-[^\n]*", ""))
+check("no 'Verifying your account' status line",
+    lobby_code:find("Verifying your account", 1, true), nil)
+check("nor a leftover Firebase one", lobby_code:find("Signing in with Firebase", 1, true), nil)
+check("the team tile keeps its colour too",
+    lobby:find("accent      = is_exhausted and C_MUTED or C_U_TEAM", 1, true) ~= nil, true)
+-- OFFLINE is deliberately still loud: nothing is running in the background,
+-- and RETRY needs a reason to exist.
+check("but OFFLINE still says so", lobby:find('"Offline • Tap to reconnect"', 1, true) ~= nil, true)
+check("and the button still shows CONNECTING", lobby:find('"CONNECTING..."', 1, true) ~= nil, true)
 check("and so does the tap gate", lobby:find("online_status.auth_is_busy", 1, true) ~= nil, true)
 check("the tap is not blocked once identified",
     lobby:find("not ws.is_identified and online_status.auth_is_busy", 1, true) ~= nil, true)

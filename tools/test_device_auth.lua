@@ -137,6 +137,48 @@ check("it does re-sign-in automatically",
     controller:find("try_device_login", 1, true) ~= nil, true)
 
 print("")
+print("THE PHONE SCREEN APPEARS FOR ONE REASON ONLY")
+-- Reported: it turned up after a perfectly successful launch. It was a
+-- MANDATORY completion step — profile_complete required a phone number, and
+-- route_after_auth re-evaluates that on every login and every reconnect, so
+-- any account without one was sent to the number screen however it signed in.
+--
+-- That made sense when the phone number was the migration path off pre-Google
+-- accounts. It does not now: sign-in IS the device id, so a player whose
+-- handset was recognised is signed in, and asking them for a credential the
+-- app did not need to let them in has nothing to explain itself with.
+--
+-- The number still matters — it is the identity that survives a new handset,
+-- and losing it means losing the account when the phone changes. So it stays
+-- offered on the profile screen and remains the entire answer to
+-- DEVICE_UNKNOWN. It just no longer interrupts.
+local app_state = code_of(read("modules/app_state.lua"))
+local profile_fn = app_state:match("function M%.profile_complete%(user%).-\nend\n") or ""
+check("found profile_complete", #profile_fn > 0, true)
+check("it does NOT require a phone number", profile_fn:find("phone_complete", 1, true), nil)
+check("it still requires an avatar", profile_fn:find("avatar", 1, true) ~= nil, true)
+check("and a username", profile_fn:find("username_complete", 1, true) ~= nil, true)
+-- Still available where it belongs: the profile screen decides whether to show
+-- the step, rather than the router deciding whether to force it.
+check("phone_complete still exists for the screen to ask",
+    app_state:find("function M.phone_complete", 1, true) ~= nil, true)
+local profile_gui = code_of(read("main/profile.gui_script"))
+check("and the profile screen is what asks it",
+    profile_gui:find("app_state.phone_complete(u)", 1, true) ~= nil, true)
+
+-- The one path that DOES lead there, and it is the only one.
+check("DEVICE_UNKNOWN is what opens it",
+    handler:sub(unknown_at or 1, retry_at or #handler):find('show(self, "profile")', 1, true) ~= nil, true)
+-- ...and once there, the button has to actually work. With no session there is
+-- nothing to LINK a number to: the endpoint requires a Bearer token the player
+-- does not have yet, so the one route back into an account after changing
+-- handsets answered 401.
+check("the phone step signs in when there is no session",
+    controller:find("if not is_logged_in() then", 1, true) ~= nil, true)
+check("by routing to phone_login, not link_phone",
+    controller:find('msg.post("#controller", "phone_login", { phoneNumber = phone })', 1, true) ~= nil, true)
+
+print("")
 print("FIREBASE AUTH IS GONE FROM THE EXTENSION TOO")
 -- Not just unused from Lua — removed. The native extension still exposed
 -- login/silent_login/refresh_token/logout/is_signed_in, and an entry point

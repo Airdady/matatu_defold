@@ -90,12 +90,28 @@ function M.username_complete(name)
   return true
 end
 
--- A phone number is only REQUIRED for Matatu (Uganda) accounts — the
--- old-account migration/identity-verification path (be_matatu's
--- POST /auth/link-phone, driven from profile.gui_script's "phone" step) is
--- Uganda-only (mobile-money name-enquiry, +256 MSISDN format); Whot/Kadi
--- accounts never had a phone-based predecessor and have no equivalent
--- verification service, so they're never blocked on this.
+-- THE PHONE NUMBER IS NO LONGER A GATE.
+--
+-- It used to be mandatory for Matatu accounts, re-evaluated on every login and
+-- reconnect, and a missing one sent the player to the phone screen. That made
+-- sense when the phone number was the migration path off pre-Google accounts.
+--
+-- It does not now. Sign-in is the device id, so a player whose handset is
+-- recognised is signed in, full stop — and putting a number-entry screen in
+-- front of them at that moment asks for something the app did not need to let
+-- them in and cannot explain the reason for. The reported version of this was
+-- the phone screen turning up after a perfectly successful launch.
+--
+-- The phone number still MATTERS, and this is the one thing worth being clear
+-- about: it is the identity that survives a new handset. Without it, changing
+-- phones loses the account. So it stays offered on the profile screen, and it
+-- is still the entire answer to DEVICE_UNKNOWN — a handset we do not recognise
+-- has nothing else to go on. What it no longer does is interrupt somebody the
+-- device already identified.
+--
+-- phone_complete is kept, and still answers honestly, because the profile
+-- screen uses it to decide whether to show the prompt. It simply no longer
+-- feeds profile_complete.
 function M.phone_required()
   local ok, GameMode = pcall(require, "modules.game_mode")
   return ok and GameMode.is_matatu()
@@ -108,18 +124,17 @@ function M.phone_complete(user)
   return type(p) == "string" and p ~= ""
 end
 
--- Account is "complete" when an avatar is chosen, the username is valid,
--- AND (Matatu only) a phone number is on file. This is re-evaluated every
--- time route_after_auth runs — a mandatory step, not a one-shot prompt —
--- so it reliably reappears on every login/reconnect (including a cold app
--- restart from a cached session) until actually satisfied, and can't be
--- silently bypassed by another modal grabbing focus first.
+-- Account is "complete" when an avatar is chosen and the username is valid.
+--
+-- Deliberately NOT phone_complete — see above. This is re-evaluated every time
+-- route_after_auth runs, so anything in here reappears on every login and every
+-- reconnect until satisfied, which is the right shape for "you have not chosen
+-- a name yet" and the wrong one for a credential the player was not asked for.
 function M.profile_complete(user)
   if type(user) ~= "table" then return false end
   local avatar = tonumber(user.avatar) or 0
   if avatar <= 0 then return false end
-  if not M.username_complete(user.username) then return false end
-  return M.phone_complete(user)
+  return M.username_complete(user.username)
 end
 
 function M.next_theme()

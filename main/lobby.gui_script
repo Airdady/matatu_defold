@@ -228,34 +228,53 @@ local function rebuild(self)
         auth_state          = app_state.auth_state,
     })
 
-    local is_exhausted        = st == "offline"
-    local waiting_for_connect = st == "verifying"
+    -- SIGNING IN IS A BACKGROUND ACTIVITY, AND THE TILE SHOULD LOOK LIKE IT.
+    --
+    -- Connecting used to repaint the whole tile: the accent went grey, LIVE
+    -- stopped blinking, the subtitle was replaced by a status line and the
+    -- panel itself was greyed out. On a good connection that is a flicker of
+    -- everything going dull and coming back for no reason the player can see,
+    -- and on a slow one it is a lobby that looks broken while nothing is
+    -- wrong. Sign-in needs no announcement — it is automatic, it is silent,
+    -- and it succeeds.
+    --
+    -- So the tile keeps its colour, its LIVE tag, its blink and its subtitle
+    -- throughout, and the ONLY thing that says anything is the button, which
+    -- is exactly where somebody looks when they want to press it.
+    --
+    -- OFFLINE is deliberately still loud. That one is not signing in — the
+    -- retries have been given up on, there is nothing running in the
+    -- background, and the tile has to say so or RETRY is a button with no
+    -- reason to exist.
+    local is_exhausted = st == "offline"
+    local connecting   = st == "verifying" or st == "signing_in"
 
     local cta_text = "PLAY NOW"
     local sub_text = "Real players • Live coin stakes"
 
-    if st == "offline" then
+    if is_exhausted then
         cta_text = "RETRY"
         sub_text = "Offline • Tap to reconnect"
-    elseif st == "verifying" then
+    elseif connecting then
+        -- The button, and nothing else.
         cta_text = "CONNECTING..."
-        sub_text = "Verifying your account..."
-    elseif st == "signing_in" then
-        cta_text = "CONNECTING..."
-        sub_text = "Signing in with Firebase..."
     elseif st == "error" then
         cta_text = "TRY AGAIN"
         sub_text = app_state.auth_error ~= "" and tostring(app_state.auth_error):upper() or "CONNECTION FAILED"
     end
 
+    -- `connecting` is NOT passed as the waiting flag any more: that argument is
+    -- what greyed and disabled the tile. The tap is still gated — go_online()
+    -- refuses while an attempt is genuinely in flight — but visually nothing
+    -- happens.
     local play_btn_id, play_disabled =
-        auth_cta.online_tile_action(is_exhausted, waiting_for_connect, "play_online")
+        auth_cta.online_tile_action(is_exhausted, false, "play_online")
 
     mode_tile(self, {
         x = play_cx, y = row_a_cy, w = play_w, h = row_a_h,
-        accent      = (is_exhausted or waiting_for_connect) and C_MUTED or C_RED,
+        accent      = is_exhausted and C_MUTED or C_RED,
         top_left    = is_exhausted and "OFFLINE" or "LIVE",
-        blink_tl    = not is_exhausted and not waiting_for_connect,
+        blink_tl    = not is_exhausted,
         top_left_2  = "MULTI PLAYER",
         title       = "PLAY ONLINE",
         sub         = sub_text,
@@ -368,17 +387,21 @@ local function rebuild(self)
         team_sub = "Fund a prize, invite your team"
     end
 
+    -- Same rule as PLAY ONLINE above: connecting is silent. This tile has no
+    -- CTA of its own most of the time, so the only thing that changed while
+    -- signing in was the whole tile going grey with "Connecting..." under it,
+    -- which is pure noise for a state that resolves itself in under a second.
     local team_btn_id, team_disabled = auth_cta.online_tile_action(
-        is_exhausted, waiting_for_connect,
+        is_exhausted, false,
         (has_team_tournament and not owns_cup) and "team_action_open" or nil)
 
     mode_tile(self, {
         x = team_cx, y = row_a_cy, w = team_w, h = row_a_h,
-        accent      = (is_exhausted or waiting_for_connect) and C_MUTED or C_U_TEAM,
+        accent      = is_exhausted and C_MUTED or C_U_TEAM,
         top_left    = is_exhausted and "OFFLINE" or "ONLINE",
         top_left_2  = "TEAM",
         title       = "TEAM CUPS",
-        sub         = is_exhausted and "Offline • Tap to retry" or (waiting_for_connect and "Connecting..." or team_sub),
+        sub         = is_exhausted and "Offline • Tap to retry" or team_sub,
         cta_label   = is_exhausted and "RETRY"
             or ((has_team_tournament and not owns_cup) and "OPEN" or nil),
         -- Same as PLAY ONLINE: offline is a state you can tap your way out of,

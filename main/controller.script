@@ -1215,6 +1215,28 @@ function on_message(self, message_id, message, sender)
             msg.post("#profile", "phone_link_result", { ok = false, message = "Enter a phone number." })
             return
         end
+
+        -- LINKING AND SIGNING IN ARE THE SAME SCREEN, SO THE DECISION LIVES
+        -- HERE RATHER THAN IN IT.
+        --
+        -- The profile screen shows one phone-number step and posts one message.
+        -- What that message MEANS depends on whether there is a session behind
+        -- it, and the screen has no business knowing:
+        --
+        --   session   link this number to the account already signed in
+        --   none      this IS the sign-in — the handset was not recognised and
+        --             the number is the only identity left
+        --
+        -- Without this split, the DEVICE_UNKNOWN path led to a screen whose
+        -- only button called an endpoint that requires the Bearer token it does
+        -- not have, so the one route back into an existing account after
+        -- changing handsets answered 401.
+        if not is_logged_in() then
+            auth_debug("link_phone with no session - signing in by phone instead")
+            msg.post("#controller", "phone_login", { phoneNumber = phone })
+            return
+        end
+
         api.link_phone({ phoneNumber = phone }, function(result)
             if result.success and type(result.data) == "table" then
                 local data = result.data

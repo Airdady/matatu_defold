@@ -80,7 +80,21 @@ function M.load(self, on_loaded)
     local uid = tostring((ws.current_user_data or {})._id or "")
     api.list_active_team_tournaments(uid, function(res)
         self.team_cups_loading = false
-        self.team_cups = ((res or {}).data or {}).tournaments or {}
+        -- A FAILED REQUEST IS NOT AN EMPTY RAIL.
+        --
+        -- `res.data.tournaments or {}` treated a timeout, a dropped
+        -- connection and a 5xx as "there are no cups", so one bad request
+        -- emptied a rail that had been correct a moment earlier and nothing
+        -- put it back until the player left the screen and came back.
+        --
+        -- On a failure the previous list is kept — stale is closer to the
+        -- truth than empty — and self.team_cups is left nil if there was
+        -- nothing yet, so the next load() tries again instead of believing
+        -- the answer it never got.
+        local list = res and res.success and ((res.data or {}).tournaments)
+        if type(list) == "table" then
+            self.team_cups = list
+        end
         self.invites = M.invitations()
         -- Unlike the other screens, lobby has no self._active flag — gating on
         -- one would silently never repaint, leaving the tile stuck on
