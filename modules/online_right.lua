@@ -3,6 +3,7 @@ local dialog_search = require("modules.dialog_search")
 local GameMode      = require("modules.game_mode")
 local app_state     = require("modules.app_state")
 local toast         = require("modules.toast")
+local twindow       = require("modules.tournament_window")
 
 local M = {}
 
@@ -930,11 +931,54 @@ function M.draw(self, ctx, left_M)
     gui.set_color(t_icon, C.COL_WHITE)
     txtL(self, icon_x + 28, tcy2, "TOURNAMENTS", "btn_lg", C.COL_WHITE)
 
-    local nx = cx + pw/2 - 40
+    -- OPEN / CLOSED, NOT "NEW".
+    --
+    -- "NEW" was not a state — it said the same thing on a tournament that had
+    -- been running for months and on one that closed an hour ago, so it told a
+    -- player nothing they could act on. What they actually want to know before
+    -- tapping is whether they can play right now.
+    --
+    -- The rule comes from modules/tournament_window.lua, which is also what
+    -- tournaments.gui_script's own dormant/countdown logic is built on, so the
+    -- badge and the screen it leads to cannot say different things.
+    local t_state = twindow.state(twindow.headline(u.tournaments))
+    local t_label = twindow.BADGE_LABEL[t_state] or "CLOSED"
+
+    -- SIZED TO THE WORD, not a fixed 48px.
+    --
+    -- That width fit "NEW" and nothing else — "CLOSED" is twice the glyphs and
+    -- simply ran out of the pill, which is the reported overflow. Measured
+    -- where a live gui context allows it, estimated where it does not, and the
+    -- estimate errs wide because too roomy is invisible and too narrow is the
+    -- bug.
+    local BADGE_H, BADGE_PAD, BADGE_MIN_W = 22, 14, 52
+    local badge_col =
+        (t_state == "open")  and vmath.vector4(0.106, 0.725, 0.267, 1.0) or   -- green
+        (t_state == "soon")  and vmath.vector4(0.949, 0.702, 0.020, 1.0) or   -- amber
+                                 vmath.vector4(0.412, 0.435, 0.478, 1.0)      -- slate
+
+    local n_badge_txt = track(self, ui.text(vmath.vector3(0, 0, 0), t_label, "btn_sm", C.COL_WHITE))
+    local text_w = #t_label * 9
+    local ok, metrics = pcall(gui.get_text_metrics_node, n_badge_txt)
+    if ok and type(metrics) == "table" and (metrics.width or 0) > 0 then
+        text_w = metrics.width
+    end
+    local badge_w = math.max(BADGE_MIN_W, math.ceil(text_w + BADGE_PAD * 2))
+
+    -- Right-aligned to the panel edge like every other trailing control on
+    -- this screen, so a wider word grows LEFTWARDS and the pill's right edge
+    -- stays put whatever it says.
+    local nx = cx + pw/2 - 16 - badge_w/2
     local ny = tcy2
-    track(self, ui.box(vmath.vector3(nx, ny, 0), vmath.vector3(48, 22, 0), vmath.vector4(0.15, 0.8, 0.25, 1.0)))
-    track(self, ui.box(vmath.vector3(nx, ny + 11, 0), vmath.vector3(48, 1, 0), C.COL_WHITE))
-    track(self, ui.text(vmath.vector3(nx, ny, 0), "NEW", "btn_sm", C.COL_WHITE))
+    track(self, ui.box(vmath.vector3(nx, ny, 0), vmath.vector3(badge_w, BADGE_H, 0), badge_col))
+    -- The 1px highlight along the top, kept, and now the width of the pill it
+    -- sits on rather than a hardcoded 48 that overhung a wider badge.
+    track(self, ui.box(vmath.vector3(nx, ny + BADGE_H/2 - 1, 0), vmath.vector3(badge_w, 1, 0),
+        vmath.vector4(1, 1, 1, 0.25)))
+    -- Moved onto the pill LAST so it draws above it, and centred by explicit
+    -- pivot rather than by relying on the default.
+    gui.set_position(n_badge_txt, vmath.vector3(nx, ny, 0))
+    pcall(gui.set_pivot, n_badge_txt, gui.PIVOT_CENTER)
     cy = cy - t_h - C.BLOCK_GAP
 
     -- ── Team Tournaments panel — only shown once this account has actually
