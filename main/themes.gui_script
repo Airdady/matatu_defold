@@ -70,13 +70,30 @@ local function get_themes()
     local u = ws.current_user_data or {}
     local raw_themes = {}
     
-    if type(u.themes) == "table" and #u.themes > 0 then 
-        raw_themes = u.themes 
+    -- THE SERVER'S LIST WINS WHENEVER THERE IS ONE.
+    --
+    -- It is the only side that knows what the player OWNS and what a theme
+    -- actually costs, and it is now on the IDENTIFY payload, so on any normal
+    -- launch this is the branch that runs.
+    if type(u.themes) == "table" and #u.themes > 0 then
+        raw_themes = u.themes
     else
+        -- Only when there is no payload: opened offline, or a build talking to
+        -- a backend whose catalogue has not been seeded.
+        --
+        -- Prices come from THEME_PRICES, which mirrors the server's catalogue.
+        -- This used to charge a flat 2000 for everything, so a player could be
+        -- shown one number and deducted another the moment the real list
+        -- arrived — and the names differed too, so the same theme was called
+        -- two different things depending on which list happened to win.
         for _, key in ipairs(app_state.THEME_ORDER) do
             local t = app_state.THEMES[key]
-            raw_themes[#raw_themes+1] = { id = t.id, name = t.label, price = (key=="default" and 0 or 2000),
-                purchased = (key=="default") }
+            raw_themes[#raw_themes+1] = {
+                id = t.id,
+                name = t.label,
+                price = app_state.THEME_PRICES[key] or 0,
+                purchased = (key == "default"),
+            }
         end
     end
 

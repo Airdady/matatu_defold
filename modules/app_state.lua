@@ -66,6 +66,31 @@ M.THEMES = {
 -- Ordered list so cycling is deterministic.
 M.THEME_ORDER = { "default", "blue_basic", "black_basic", "red_drago", "blue_drago", "batman" }
 
+-- THE PRICE THE BACKEND WILL ACTUALLY CHARGE.
+--
+-- Mirrors DEFAULT_THEMES_DATA in be_matatu's models/Theme.ts. It is a MIRROR,
+-- not a second opinion: the server is the only side that can be right about a
+-- price, because it is the side that deducts it.
+--
+-- It exists at all because the shop has to be able to draw something when the
+-- payload has not arrived — an app opened offline, or a build talking to a
+-- backend whose catalogue has not been seeded. What it drew before was a flat
+-- 2000 for everything, which matched none of these and meant a player could be
+-- shown one number and charged another.
+--
+-- `label` above and `name` here serve the same purpose and are now the same
+-- strings on both sides, so whichever list wins, the player reads the same
+-- word. See the comment on DEFAULT_THEMES_DATA for why the server's names were
+-- changed to match these rather than the other way round.
+M.THEME_PRICES = {
+  default     = 0,
+  blue_basic  = 500,
+  black_basic = 500,
+  blue_drago  = 1000,
+  red_drago   = 1500,
+  batman      = 2000,
+}
+
 function M.get_theme()
   return M.THEMES[M.theme] or M.THEMES["default"]
 end
