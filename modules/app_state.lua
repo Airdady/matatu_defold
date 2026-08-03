@@ -84,11 +84,11 @@ M.THEME_ORDER = { "default", "blue_basic", "black_basic", "red_drago", "blue_dra
 -- changed to match these rather than the other way round.
 M.THEME_PRICES = {
   default     = 0,
-  blue_basic  = 500,
-  black_basic = 500,
+  blue_basic  = 0,
+  black_basic = 0,
   blue_drago  = 1000,
-  red_drago   = 1500,
-  batman      = 2000,
+  red_drago   = 2000,
+  batman      = 5000,
 }
 
 function M.get_theme()
