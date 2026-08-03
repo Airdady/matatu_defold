@@ -919,7 +919,28 @@ function on_message(self, message_id, message, sender)
         if app_state.auth_state == "done" then
             app_state.auth_state = "idle"
         end
-        rebuild(self) -- Will dynamically change the button text to connection/error states
+
+        -- ONLY WHILE THE LOBBY IS THE SCREEN ON SHOW.
+        --
+        -- This rebuilt unconditionally, and auth_state_changed fires on every
+        -- socket state change — which during a reconnect loop is one every
+        -- retry, indefinitely. So a player sitting on the phone-number screen
+        -- with a flaky connection was tearing down and rebuilding the entire
+        -- lobby, nodes and all, tens of times a minute, for a screen that was
+        -- disabled and not on display.
+        --
+        -- That is what exhausted lobby.gui's node budget: "Out of nodes (max
+        -- 1024)" raised from the very first ui.cover of a rebuild, which then
+        -- came back out of on_message as RESULT_SCRIPT_ERROR against this
+        -- message. The same guard the cups_changed branch above already uses,
+        -- and for the same reason.
+        --
+        -- Nothing is missed by skipping it: screen_enter rebuilds on the way
+        -- back in, so the CTA is repainted from current state when it is next
+        -- actually visible.
+        if app_state.current_screen == "lobby" and self.nodes then
+            rebuild(self) -- button text tracks the connection/error states
+        end
     end
 end
 

@@ -848,6 +848,60 @@ end
 -- identified. config.MAX_RECONNECT_DELAY (30s) still applies once nobody is.
 local WAITING_RECONNECT_MAX = 1.5
 
+-- ...BUT NOT FOREVER.
+--
+-- A flat 1.5s ceiling is right for the case it was written for: a player
+-- looking at CONNECTING while the server blips. It is wrong once it is clear
+-- the server is not coming back in a moment, because it never escalates — it
+-- retries every 1.5s for as long as the outage lasts, and every retry is a
+-- fresh TLS handshake.
+--
+-- On the reported log that is exactly what happened: attempt after attempt at
+-- 1.5s, each one answered with
+--
+--   SSLSocket mbedtls_ssl_handshake: -29312
+--
+-- which is MBEDTLS_ERR_SSL_CONN_EOF — the peer hung up DURING the handshake,
+-- not a certificate or protocol fault. That is what a tunnel or proxy does
+-- when it is shedding connections, so the retry rate was feeding the thing it
+-- was retrying against.
+--
+-- So the ceiling escalates in three steps rather than staying flat, and the
+-- steps are sized by what the player is actually experiencing:
+--
+--   1-6    1.5s   the blip the fast path exists for. A player who has just
+--                 tapped is owed a retry NOW, and six of these is nine
+--                 seconds — still well inside the promise that a handful of
+--                 failed connects never costs them half a minute, which
+--                 tools/test_first_login_timing.lua pins as arithmetic.
+--
+--   7-20   2.5s   the network is genuinely bad rather than briefly busy. Still
+--                 seconds, still responsive, and already fewer handshakes.
+--
+--   21+    8s     nobody is being kept responsive any more — by here they have
+--                 been waiting the best part of a minute and the fast retries
+--                 have plainly not helped. This is where the reported log was
+--                 (attempt 26), and it is the only band where the retry rate
+--                 is doing harm rather than good. Five times fewer handshakes.
+--
+-- Note the ceilings only ever CAP the exponential backoff; they never hold a
+-- retry back that the curve would have issued sooner.
+local WAITING_FAST_ATTEMPTS  = 6
+local WAITING_LATE_ATTEMPTS  = 20
+local WAITING_RECONNECT_MID_MAX  = 2.5
+local WAITING_RECONNECT_SLOW_MAX = 8
+
+-- Spread the retries out.
+--
+-- Every client that drops off a restarting server comes back on the same
+-- schedule, so they arrive together, and a server that just fell over gets its
+-- whole population in one spike. A little noise per client turns that spike
+-- into an arrival rate.
+--
+-- Deliberately small: it exists to break the lockstep, not to reshape the
+-- timings above, which are held to real limits by the first-login test.
+local RECONNECT_JITTER = 0.10
+
 local schedule_reconnect -- forward decl
 
 local function on_connected()
@@ -912,8 +966,25 @@ schedule_reconnect = function()
   -- So while there is an identity waiting to be registered, the ceiling drops
   -- to a few seconds. It rises again the moment they are identified.
   local waiting = pending_identity ~= nil and not M.is_identified
-  local ceiling = waiting and WAITING_RECONNECT_MAX or config.MAX_RECONNECT_DELAY
+  local ceiling
+  if waiting then
+    -- Fast while the outage still looks like a blip, then escalating. Without
+    -- these steps it stayed at 1.5s for as long as the server was down.
+    if reconnect_attempts <= WAITING_FAST_ATTEMPTS then
+      ceiling = WAITING_RECONNECT_MAX
+    elseif reconnect_attempts <= WAITING_LATE_ATTEMPTS then
+      ceiling = WAITING_RECONNECT_MID_MAX
+    else
+      ceiling = WAITING_RECONNECT_SLOW_MAX
+    end
+  else
+    ceiling = config.MAX_RECONNECT_DELAY
+  end
   current_reconnect_delay = math.min(config.INITIAL_RECONNECT_DELAY * (config.RECONNECT_BACKOFF ^ (reconnect_attempts - 1)), ceiling)
+  -- Jitter LAST, so it spreads the ceiling too — applied before the clamp it
+  -- would be flattened away by it at exactly the point every client is pinned
+  -- to the same value and the spread matters most.
+  current_reconnect_delay = current_reconnect_delay * (1 + (math.random() * 2 - 1) * RECONNECT_JITTER)
   print(string.format("[WS] reconnecting in %.1fs (attempt %d)", current_reconnect_delay, reconnect_attempts))
   reconnect_handle = timer.delay(current_reconnect_delay, false, function()
     reconnect_handle = nil
