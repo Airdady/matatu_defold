@@ -184,32 +184,35 @@ local function request(method, endpoint, payload, cb)
     end, headers, body, options)
 end
 
--- Firebase sign-in. The way in.
+-- Google Play Games sign-in. The way in.
 --
--- One call with one already-finished credential, where gpgs_login below sends a
--- serverAuthCode the backend then has to redeem across four more network calls.
--- That redemption is what produced the invalid_grant failures: an auth code is
--- SINGLE USE, so any retry with a cached code failed forever. A Firebase ID
--- token is reusable until it expires, so a retry here is just a retry.
+-- Restored as it was: the backend redeems the serverAuthCode against
+-- /auth/google, an endpoint that was never removed and has kept working
+-- throughout.
 --
--- Backend answer is the same shape gpgs_login returns, deliberately — the
--- caller has one success path, not two.
-function M.firebase_login(id_token, cb)
+-- The one thing carried over from the Firebase build is the FCM token riding
+-- along on the payload. That is push, not auth — the token has to reach the
+-- backend on whichever call establishes the session, and this is now that
+-- call. Sending it here saves the separate /auth/fcm-token round trip on the
+-- common path and, more importantly, means a player who signs in and never
+-- opens anything else is still reachable by a notification.
+function M.gpgs_login(server_auth_code, cb)
     local fcm_token = ""
     pcall(function()
-        local fbauth = require("modules.firebase_auth")
-        if fbauth and fbauth.get_fcm_token then
-            fcm_token = fbauth.get_fcm_token()
+        local fbpush = require("modules.firebase_push")
+        if fbpush and fbpush.get_fcm_token then
+            fcm_token = fbpush.get_fcm_token()
         end
     end)
 
     local payload = {
-        idToken  = id_token,
-        deviceId = M.get_device_id(),
-        fcmToken = (fcm_token and fcm_token ~= "") and fcm_token or nil,
+        serverAuthCode = server_auth_code,
+        deviceId       = M.get_device_id(),
+        fcmToken       = (fcm_token and fcm_token ~= "") and fcm_token or nil,
     }
 
-    request("POST", "/auth/firebase", payload, function(result)
+    request("POST", "/auth/google", payload, function(result)
+        -- 'token' rather than 'idToken': this is the backend's own JWT.
         if result.success and result.data and result.data.token then
             M.set_auth_token(result.data.token)
         end
@@ -222,9 +225,9 @@ function M.phone_login(payload, cb)
     payload.deviceId = payload.deviceId or M.get_device_id()
     if not payload.fcmToken then
         pcall(function()
-            local fbauth = require("modules.firebase_auth")
-            if fbauth and fbauth.get_fcm_token then
-                local tok = fbauth.get_fcm_token()
+            local fbpush = require("modules.firebase_push")
+            if fbpush and fbpush.get_fcm_token then
+                local tok = fbpush.get_fcm_token()
                 if tok and tok ~= "" then payload.fcmToken = tok end
             end
         end)

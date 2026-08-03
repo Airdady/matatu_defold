@@ -284,9 +284,9 @@ function M.identify(id, username, stake, country)
   M.current_user_id = id
   local fcm_token = ""
   pcall(function()
-    local fbauth = require("modules.firebase_auth")
-    if fbauth and fbauth.get_fcm_token then
-      fcm_token = fbauth.get_fcm_token()
+    local fbpush = require("modules.firebase_push")
+    if fbpush and fbpush.get_fcm_token then
+      fcm_token = fbpush.get_fcm_token()
     end
   end)
 
