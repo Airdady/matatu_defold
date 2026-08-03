@@ -1,9 +1,7 @@
 local ws        = require("modules.websocket_manager")
 local api       = require("modules.api_service")
 local app_state = require("modules.app_state")
--- Push only. Sign-in is Google Play Games, which the extension exposes as the
--- GLOBAL `gpgs` — nil in the editor and on any device without Play Services,
--- so every use of it below is guarded.
+-- Push only. Sign-in is the device id, over api.device_login.
 local fbpush    = require("modules.firebase_push")
 local identify_recovery = require("modules.identify_recovery")
 local online_status = require("modules.lobby.online_status")
@@ -16,7 +14,7 @@ local SCREENS = { "lobby", "auth", "profile", "online", "themes", "payments", "t
 -- of guessed at.
 -- Never let the debug trail be the thing that kills the pipeline it is there
 -- to explain. A nil where a %d/%f was expected makes string.format raise, and
--- because these calls sit inside gpgs_callback and the retry path, that error
+-- because these calls sit inside handle_device_result and the retry path, that error
 -- unwinds the callback and the retry timer is never scheduled — the app then
 -- sits on "connecting..." forever. Logging is best-effort by construction.
 local function auth_debug(fmt, ...)
@@ -139,16 +137,12 @@ local function clear_session()
     pcall(ws.reset_identity)
     pcall(ws.disconnect) -- Sever the stale socket connection to prevent rapid-fire auth errors
 
-    -- Deliberately NOT calling gpgs.logout() here. This used to wipe Google's
-    -- cached sign-in state on every auth_required/identify_error (even ones as
-    -- mundane as "Connection failed" — a plain network hiccup, not an identity
-    -- problem), which forced a full interactive sign-in prompt the next time
-    -- regardless of how solid the player's actual login was. Clearing only our
-    -- own local session/token is enough to stop a broken identify from
-    -- looping; try_silent_login's gpgs.silent_login() can then still succeed
-    -- silently next time using the still-valid Firebase session,
-    -- re-authenticating in the background exactly as intended, instead of
-    -- re-prompting every single time.
+    -- Deliberately does NOT touch the device id. Clearing our own session and
+    -- token is enough to stop a broken identify from looping, and the device
+    -- id is what lets the very next attempt sign the player straight back in
+    -- without asking them for anything. Wiping the credential on a failure as
+    -- mundane as "Connection failed" would turn a network hiccup into a
+    -- request for a phone number.
 
     for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile", "lobby" }) do
         pcall(msg.post, "#" .. s, "user_data_updated")
@@ -193,40 +187,38 @@ local SILENT_LOGIN_BACKOFF = { 1, 2, 6, 12, 30, 60 }  -- last entry repeats
 
 -- THE ESCALATION LADDER
 --
--- Retrying the same silent sign-in over and over only helps the failures that
--- heal by themselves (Play Services still waking up, no network yet). It does
--- nothing at all for the two that keep coming back in device logs — a cached
--- credential that has gone stale, and a sign-in that succeeds while handing
--- back an empty server auth code. Both reproduce identically forever, because
--- silent_login() replays exactly the state that produced them.
+-- The ladder is two rungs now, and that is the point of the change.
 --
--- So each rung does something DIFFERENT rather than the same thing later:
+-- It used to be five, and four of them existed for ONE Play Games failure:
+-- signing in successfully while handing back an empty server auth code,
+-- because a code is issued against a consent grant and a silent attempt can
+-- only ever re-use a grant, never create one. That produced a state no amount
+-- of retrying could leave, so the ladder had to escalate through forced
+-- credential refreshes to an interactive consent sheet.
 --
---   1..2  retry silent. Covers everything transient, costs nothing.
---   3     full cleanup — drop the local session AND log out of Firebase/Google, so the
---         next silent attempt has no cached anything to replay.
---   4     Google's own interactive sign-in. Once per run. This is the rung
---         that fixes "the cache is not the problem, the account state is":
---         the player picks an account, grants consent, and a real server auth
---         code comes back.
---   5+    offer the phone number instead, and keep retrying silently
---         underneath in case Google sign-in recovers on its own.
+-- A device id has no consent to grant. There is no state it can get into that
+-- a retry cannot leave, so what is left is:
 --
--- A sign-in that returns NO AUTH CODE skips straight past rung 1: there is
--- nothing transient about it, so it forces a fresh Google session on the spot
--- (see force_fresh_gpgs_session) instead of waiting three attempts to try the
--- one thing that can change the answer.
+--   1..n  retry. Covers everything transient — no network yet, backend
+--         restarting — and costs one request.
+--   3     full cleanup, once per run: drop the local session so the next
+--         attempt has nothing stale of ours to replay.
+--
+-- And ONE answer that is not a failure at all: DEVICE_UNKNOWN, meaning this
+-- handset is not on any account. That is the ordinary state on a first run and
+-- the expected state on a new phone. Retrying it is pointless — no number of
+-- requests invents an account — so it does not enter the ladder; it goes
+-- straight to the phone number, which is the identity that survives changing
+-- handsets.
 local CLEANUP_AFTER_ATTEMPTS = 2
 
 -- A HARD DEADLINE to prevent indefinite connecting state.
 local CONNECT_DEADLINE_SECONDS = 10
 local INTERACTIVE_DEADLINE_SECONDS = 60
 
--- Interactive Google sign-in is NOT on the automatic ladder any more. A sheet
--- the player has to read and tap through cannot fit inside a 10 second budget,
--- and racing it against the phone screen would put two things in front of them
--- at once. It still fires when the player taps PLAY ONLINE — they are present
--- and waiting, so there is no deadline to violate.
+-- INTERACTIVE_DEADLINE_SECONDS is kept for the phone screen, which is the only
+-- step left that a player has to read and tap through. A device sign-in has no
+-- UI at all and lives inside the ordinary budget.
 
 -- Clamp at BOTH ends. The upper clamp is the "last entry repeats" rule; the
 -- lower one matters just as much, because a caller reaching here with attempt
@@ -324,12 +316,18 @@ local function handle_push_action(self)
     run_push_action(self, action, request_id)
 end
 
-local function try_silent_login(self)
+-- Forward-declared, because it and the retry ladder call each other: a failure
+-- there re-enters handle_login_failure, and that schedules another attempt.
+-- Declared local rather than left global so it does not leak into every other
+-- script's shared environment — Defold runs them all in one Lua state.
+local handle_device_result
+
+local function try_device_login(self)
     cancel_silent_login_retry(self)
     arm_connect_deadline(self)
     self._silent_login_inflight = true
     self._silent_login_attempts = (self._silent_login_attempts or 0) + 1
-    auth_debug("try_silent_login: attempt %d", self._silent_login_attempts)
+    auth_debug("try_device_login: attempt %d", self._silent_login_attempts)
     -- Only claim the CTA when the player is actually waiting on this. A
     -- background attempt must leave the lobby reading PLAY NOW.
     if self._explicit_online then
@@ -337,28 +335,15 @@ local function try_silent_login(self)
         app_state.auth_error = ""
         msg.post("#lobby", "auth_state_changed")
     end
-    gpgs.silent_login()
-end
-
--- Invalidate the cached credential so the NEXT silent attempt has to build a
--- new one. Narrower than background_auth_cleanup: it touches the sign-in
--- session only, leaving any local session and socket alone, which is what
--- makes it safe to run on the specific failure where the cache is the known
--- suspect rather than one possibility among many.
---
--- Allowed more than once, but only a couple of times — if two forced refreshes
--- in a row still produce no auth code, the cache was never the problem and
--- the ladder should move on to interactive sign-in rather than keep spending
--- the player's Google session on it.
-local MAX_FORCED_REFRESHES = 2
-local function force_fresh_gpgs_session(self)
-    local n = (self._forced_refreshes or 0)
-    if n >= MAX_FORCED_REFRESHES then return false end
-    self._forced_refreshes = n + 1
-    auth_debug("force_fresh_gpgs_session: dropping the cached credential (%d/%d)",
-        n + 1, MAX_FORCED_REFRESHES)
-    pcall(function() if gpgs and gpgs.logout then gpgs.logout() end end)
-    return true
+    -- ONE REQUEST, AND IT IS THE WHOLE OF SIGNING IN.
+    --
+    -- No provider, no consent screen, no token exchange, no Play Services.
+    -- What this replaces was a five-rung escalation ladder built entirely
+    -- around one Play Games failure mode — signing in successfully while
+    -- handing back an empty server auth code, which only an interactive
+    -- consent sheet could ever fix. A device id has no consent to grant, so
+    -- that whole shape of failure, and the machinery for it, is gone.
+    api.device_login(function(result) handle_device_result(self, result) end)
 end
 
 -- Drop everything that could be making silent sign-in fail, then retry from
@@ -373,11 +358,9 @@ local function background_auth_cleanup(self)
     pcall(api.set_auth_token, "")
     pcall(api.clear_session)
     pcall(ws.disconnect)
-    -- The one place logging out of GPGS is the right move. Everywhere else it
-    -- is wrong (it forces an interactive prompt next time), but by here silent
-    -- sign-in has failed several times in a row and the cached Google state is
-    -- the most likely culprit — a stale credential fails silently forever.
-    pcall(function() if gpgs and gpgs.logout then gpgs.logout() end end)
+    -- Nothing to sign out of any more: there is no provider session behind a
+    -- device id, which is most of why this rung shrank to clearing our own
+    -- state.
     return true
 end
 
@@ -391,7 +374,7 @@ local function handle_login_failure(self, error_message, opts)
 
     -- This attempt is over. Leaving the flag set — which is what used to
     -- happen on every path except the two below — permanently latched the
-    -- app: try_silent_login sets it, nothing cleared it again, and from then
+    -- app: try_device_login sets it, nothing cleared it again, and from then
     -- on every PLAY ONLINE tap hit the "already in flight, ignoring duplicate
     -- tap" branch and did nothing at all. The lobby sat on CONNECTING with a
     -- button that no longer responded.
@@ -408,214 +391,111 @@ local function handle_login_failure(self, error_message, opts)
         msg.post("#lobby", "auth_state_changed")
     end
 
-    -- Rung 0 — this failure cannot heal by itself, so change something before
-    -- the next attempt instead of replaying it. Runs immediately, not after a
-    -- attempt budget: a sign-in that returns no auth code returns no auth code
-    -- every time until the cached credential behind it is gone.
-    local forced_before = self._forced_refreshes or 0
-    if opts.force_refresh then force_fresh_gpgs_session(self) end
-
-    -- Rung 3 — >= rather than ==: the counter is reset by explicit taps and by
-    -- the identify-error recovery path, so an exact match is a window that can
-    -- be stepped straight over. background_auth_cleanup is already once-per-run.
     if attempts >= CLEANUP_AFTER_ATTEMPTS then
         background_auth_cleanup(self)
     end
 
-    -- Google's own sign-in UI.
-    --
-    -- WHY THIS CANNOT BE OPTIONAL, and why retrying silently is not a fallback
-    -- for it: a server auth code is issued against a CONSENT GRANT. Silent
-    -- sign-in can only ever re-use a grant that already exists — by
-    -- definition it cannot create one, because creating one means showing the
-    -- player a screen. So a player who has never granted offline access to
-    -- this OAuth client gets, forever:
-    --
-    --     sign-in SUCCEEDS  (that needs only the app_id)
-    --     auth code is EMPTY  (that needs the grant)
-    --
-    -- which is indistinguishable, from inside the app, from a backend fault.
-    -- No number of retries changes it. No amount of clearing caches changes
-    -- it. Only the interactive sheet can.
-    --
-    -- This is what splits users on an IDENTICAL build: whoever has the grant
-    -- works, whoever does not never will. Fresh installs, new devices, a new
-    -- Google account, cleared app data — all land on the wrong side of
-    -- it, which is why it reads as "new users cannot log in".
-    --
-    -- So a missing auth code escalates here on its own, after one cheap forced
-    -- refresh has failed to explain it as a stale token. It does NOT wait for
-    -- the player to tap PLAY ONLINE — a first-run player has no reason to
-    -- suspect a tap is what is needed, and the previous version of this file
-    -- required exactly that.
-    --
-    -- forced_before, captured above rather than read now: force_fresh_auth_
-    -- session has already run for THIS failure, so reading the counter here
-    -- would open the sheet in the same pass that dropped the cached token and
-    -- never give the cheap fix its one attempt.
-    local consent_needed = opts.missing_auth_code and forced_before >= 1
-
-    local go_interactive = gpgs and gpgs.login and not identify_ok
-        and (waiting or (consent_needed and not self._interactive_login_done))
-
-    if go_interactive then
-        self._interactive_login_done = true
-        self._interactive_open = true
-        auth_debug("opening interactive Google sign-in (%s) after %d attempts",
-            consent_needed and "no auth code — consent cannot be granted silently"
-                           or "player is waiting", attempts)
-        self._silent_login_inflight = true
-        cancel_silent_login_retry(self)
-        arm_connect_deadline(self, INTERACTIVE_DEADLINE_SECONDS, true)
-        gpgs.login()
-    else
+    -- Everything that gets here is transient by construction: the one answer
+    -- that is not — DEVICE_UNKNOWN — never enters this function. So there is
+    -- one thing left to do, and it is to try again in a while.
+    do
         local delay = silent_login_delay(attempts)
         auth_debug("handle_login_failure: retrying silently in %.1fs", delay)
         cancel_silent_login_retry(self)
         self._silent_login_timer = timer.delay(delay, false, function()
             self._silent_login_timer = nil
-            try_silent_login(self)
+            try_device_login(self)
         end)
     end
 end
 
--- Every GPGS sign-in answer, silent or interactive, arrives here.
+-- Every device sign-in answer arrives here.
 --
--- Restored as it was. It is longer than the Firebase callback it replaces for
--- one reason worth keeping in view: Play Games can sign a player in perfectly
--- and still hand back an EMPTY server auth code. That is a whole failure
--- branch of its own, with its own forced refresh and its own escalation,
--- because signing in was never the goal here — a code the backend can redeem
--- is. Every one of those cases is handled below; none of them is theoretical.
-local function gpgs_callback(self, message_id, message)
-    auth_debug("gpgs_callback: message_id=%s status=%s error=%s",
-        tostring(message_id), tostring(message and message.status), tostring(message and message.error))
-    if message_id == gpgs.MSG_SIGN_IN or message_id == gpgs.MSG_SILENT_SIGN_IN then
-        -- Whatever the outcome, Google's sheet is no longer on screen — this
-        -- callback IS its result. Cleared before any branch below so the
-        -- phone fallback stops being suppressed the moment the player is back
-        -- looking at our own UI.
-        self._interactive_open = false
-        -- A callback with no message table at all is not a shape we expect,
-        -- but indexing it would raise inside the extension's own callback and
-        -- take the whole retry pipeline down with it — the exact failure mode
-        -- that left the app on "connecting..." before. Treat it as a failure
-        -- and let the ladder handle it.
-        if type(message) ~= "table" then
-            handle_login_failure(self, "Sign-in returned nothing", { force_refresh = true })
-            return
-        end
-        if message.status == gpgs.STATUS_SUCCESS then
-            local auth_code = gpgs.get_server_auth_code()
-            -- "" is TRUTHY in Lua, so a bare `if auth_code then` sent an empty
-            -- code to the backend as though it were a real one and burned the
-            -- attempt on a request that could only ever 401.
-            local have_code = type(auth_code) == "string" and auth_code ~= ""
-            auth_debug("gpgs_callback: GPGS success, auth_code_present=%s", tostring(have_code))
-            if have_code then
-                -- Fresh budget: a later failure (token expiry, account switch)
-                -- should start its backoff from the beginning rather than
-                -- inheriting a long delay from whatever happened at boot.
-                --
-                -- This reset belongs HERE, on a usable code, not on bare
-                -- sign-in success. Signing in fine but getting NO server auth
-                -- code used to re-enter the failure path at attempt 0 every
-                -- time, so the backoff never grew, the cleanup threshold was
-                -- never reached, and the phone fallback was never offered.
-                self._silent_login_attempts = 0
-                -- The ladder resets with it. Play Games just proved it works
-                -- on this device, so a failure hours from now deserves the
-                -- full escalation again rather than an exhausted budget.
-                self._forced_refreshes = 0
-                self._interactive_login_done = false
-                app_state.auth_state = "verifying"
-                msg.post("#lobby", "auth_state_changed")
-                api.gpgs_login(auth_code, function(result)
-                    self._silent_login_inflight = false
-                    auth_debug("api.gpgs_login callback: success=%s message=%s isNewUser=%s",
-                        tostring(result.success), tostring(result.message),
-                        tostring(result.data and result.data.isNewUser))
-                    if result.success and type(result.data) == "table" then
-                        local user = result.data.user or result.data
-                        -- Map the backend JWT so identify_and_connect can save it.
-                        if result.data.token then user.token = result.data.token end
-                        -- See app_state.phone_complete(): a user matched by
-                        -- their actual Google identity (not the deviceId/email
-                        -- fallback, not a brand-new account) has no legacy
-                        -- phone-only account left to migrate, so the mandatory
-                        -- phone step can skip them entirely.
-                        user.matchedByGoogleId = result.data.matchedByGoogleId and true or false
+-- Three outcomes, and the middle one is the reason the app can drop Play
+-- Services altogether:
+--
+--   signed in       we know this handset. This is the overwhelming majority of
+--                   launches and costs one request.
+--   DEVICE_UNKNOWN  we do not know this handset. NOT a failure and NOT a retry
+--                   — no number of requests invents an account. The phone
+--                   number is the identity that survives a new handset, so
+--                   that is what gets asked for.
+--   anything else   transient. Back off and try again.
+--
+-- Telling the middle one from the last is the whole of the logic, and it is
+-- done by the server's own code rather than by the status, so a dead network
+-- (status 0) is never read as "no account here" and never strands a returning
+-- player on a screen asking for their phone number when they already have an
+-- account on the device.
+handle_device_result = function(self, result)
+    result = type(result) == "table" and result or
+        { success = false, message = "Sign-in returned nothing" }
+    self._silent_login_inflight = false
 
-                        if type(user) == "table" and (user._id or user.localId) then
-                            -- Save session and set the auth token FIRST so the
-                            -- rest of the app has the right identity even
-                            -- before the socket IDENTIFY round trip completes.
-                            ws.current_user_data = user
-                            local tok = user.token or user.idToken or ""
-                            if tok ~= "" then api.set_auth_token(tok) end
-                            api.save_session(user)
+    local data = type(result.data) == "table" and result.data or {}
+    auth_debug("handle_device_result: success=%s code=%s",
+        tostring(result.success), tostring(data.code))
 
-                            if result.data.isNewUser then
-                                msg.post("#signup_bonus", "show_signup_bonus", { amount = tonumber(user.balance) or 500 })
-                            end
+    -- ── the handset is not on any account ──────────────────────────────────
+    if api.is_device_unknown(result) then
+        auth_debug("device not recognised — asking for a phone number")
+        cancel_silent_login_retry(self)
+        cancel_connect_deadline(self)
+        self._silent_login_attempts = 0
+        -- Not an error state. TRY AGAIN would be a button that cannot work,
+        -- and CONNECTING would be a lie — nothing is connecting.
+        app_state.auth_state = "idle"
+        app_state.auth_error = ""
+        msg.post("#lobby", "auth_state_changed")
+        show(self, "profile")
+        return
+    end
 
-                            app_state.auth_state = "done"
-                            msg.post("#lobby", "auth_state_changed")
+    -- ── transient ──────────────────────────────────────────────────────────
+    if not (result.success and data.token) then
+        handle_login_failure(self, result.message or "Could not sign in on this device.")
+        return
+    end
 
-                            -- Connect and identify IMMEDIATELY so IDENTIFY is
-                            -- put on the wire with no added delay.
-                            identify_and_connect(user)
+    -- ── signed in ──────────────────────────────────────────────────────────
+    local user = type(data.user) == "table" and data.user or {}
+    user.token = data.token
+    if type(user._id) ~= "string" and type(user.localId) ~= "string" then
+        handle_login_failure(self, "Signed in but no account came back")
+        return
+    end
 
-                            if not app_state.profile_complete(user) then
-                                show(self, "profile")
-                            elseif self._explicit_online or self._interactive_login_done then
-                                self._explicit_online = false
-                                show(self, "online")
-                            else
-                                -- Silent boot-time login: stay put, repaint.
-                                show(self, "lobby")
-                            end
-                            return
-                        end
-                    end
-                    -- Google accepted us but our own backend did not (user
-                    -- deleted server-side, a 5xx, a dropped request). Wipe the
-                    -- local session so nothing keeps sending a broken payload,
-                    -- then go back through the same backed-off silent retry as
-                    -- every other failure: a transient backend problem heals
-                    -- itself within a minute, and a permanent one costs one
-                    -- quiet request a minute rather than stranding the player
-                    -- on a TRY AGAIN they cannot act on.
-                    --
-                    -- Force a fresh Google session only on a 4xx. That is the
-                    -- backend saying the CODE itself was no good — expired, or
-                    -- already redeemed — which the next silent attempt will
-                    -- reproduce exactly unless the cached credential goes. A
-                    -- 5xx or a dead connection says nothing about the code, so
-                    -- spending the player's Google session on it would be
-                    -- throwing away something that was working.
-                    local sc = tonumber(result.status_code) or 0
-                    local code_rejected = sc >= 400 and sc < 500
-                    clear_session()
-                    handle_login_failure(self, result.message or "Backend auth failed",
-                        { force_refresh = code_rejected })
-                end)
-            else
-                -- Signed in, but Play Games handed back no server auth code.
-                -- Calling silent_login() again on its own cannot fix this: it
-                -- replays the same cached Google state and returns the same
-                -- empty code forever. force_refresh drops that state now
-                -- rather than several attempts from now, and the counter is
-                -- deliberately left to keep climbing so a still-empty code
-                -- walks on up the ladder to interactive sign-in and then to
-                -- the phone number.
-                handle_login_failure(self, "Missing auth code. Forcing a fresh session...",
-                    { force_refresh = true, missing_auth_code = true })
-            end
-        else
-            -- Sign-in failed — retry silently until the budget is used up.
-            handle_login_failure(self, message.error or "Couldn't sign in. Check your connection and try again.")
-        end
+    -- Fresh budget. This device just proved it works, so a failure hours from
+    -- now deserves the full ladder again rather than an exhausted one.
+    self._silent_login_attempts = 0
+    self._auth_cleanup_done = false
+
+    app_state.auth_state = "verifying"
+    msg.post("#lobby", "auth_state_changed")
+
+    -- Save the session and the token FIRST so the rest of the app has the
+    -- right identity before the socket IDENTIFY round trip completes.
+    ws.current_user_data = user
+    local tok = user.token or user.idToken or ""
+    if tok ~= "" then api.set_auth_token(tok) end
+    api.save_session(user)
+
+    if data.isNewUser then
+        msg.post("#signup_bonus", "show_signup_bonus", { amount = tonumber(user.balance) or 500 })
+    end
+
+    app_state.auth_state = "done"
+    msg.post("#lobby", "auth_state_changed")
+
+    identify_and_connect(user)
+
+    if not app_state.profile_complete(user) then
+        show(self, "profile")
+    elseif self._explicit_online then
+        self._explicit_online = false
+        show(self, "online")
+    else
+        show(self, "lobby")
     end
 end
 
@@ -693,9 +573,9 @@ function init(self)
         ws.start_reconciler()
 
         -- Only when there is no session at all, and nothing already in flight.
-        if gpgs and not is_logged_in() and not self._silent_login_inflight then
+        if not is_logged_in() and not self._silent_login_inflight then
             auth_debug("focus regained with no session — retrying silent sign-in")
-            try_silent_login(self)
+            try_device_login(self)
         end
 
         -- Did they get here by pressing a notification button?
@@ -770,15 +650,6 @@ function init(self)
     -- focus regained, the identify_error recovery, the post-sign-in callback.
     -- Miss any one and the app sits on CONNECTING with a perfectly good
     -- session on disk, which is exactly what was reported.
-    -- GPGS answers through ONE callback for the whole extension, not per
-    -- call, so it is registered once here and every sign-in result — silent or
-    -- interactive, boot or a PLAY ONLINE tap — arrives through it. The inner
-    -- `self_` is the extension's own idea of self and is not ours; the `self`
-    -- captured from init is.
-    if gpgs then
-        gpgs.set_callback(function(self_, mid, m) gpgs_callback(self, mid, m) end)
-    end
-
     ws.set_identity_provider(function() return api.load_session() end)
 
     local cached = api.load_session()
@@ -827,24 +698,15 @@ function init(self)
         -- No local session cached: open Firebase account selection immediately on app launch
         -- and start the WebSocket connection concurrently in the background so it is
         -- connected and ready the moment Firebase sign-in completes.
-        auth_debug("init: no cached session, connecting socket and opening Firebase sign-in prompt")
+        -- No cached session. The socket opens concurrently — its own
+        -- reconciler will identify by device id on its own — while this asks
+        -- the backend who this handset belongs to. Both are the same question
+        -- down two channels, and whichever answers first is fine.
+        auth_debug("init: no cached session, connecting socket and signing in by device")
         ws.connect()
         show(self, "lobby")
-        if gpgs then
-            self._interactive_open = true
-            self._interactive_login_done = true
-            self._silent_login_inflight = true
-            self._silent_login_attempts = 0
-            self._forced_refreshes = 0
-            app_state.auth_state = "sending"
-            app_state.auth_error = ""
-            msg.post("#lobby", "auth_state_changed")
-            cancel_silent_login_retry(self)
-            arm_connect_deadline(self, INTERACTIVE_DEADLINE_SECONDS, true)
-            gpgs.login()
-        else
-            auth_debug("init: Firebase auth not available on this platform")
-        end
+        self._silent_login_attempts = 0
+        try_device_login(self)
     end
 
     local function forward(evt, target, notification)
@@ -1102,10 +964,8 @@ function init(self)
         -- "Session expired. Try again." with nothing retrying behind it, so
         -- the only way back was for the player to notice the CTA had changed
         -- and tap it. Rebuild in the background instead.
-        if gpgs then
-            self._silent_login_attempts = 0
-            try_silent_login(self)
-        end
+        self._silent_login_attempts = 0
+        try_device_login(self)
         msg.post("#lobby", "auth_state_changed")
         if self.screen ~= "lobby" then show(self, "lobby") end
     end))
@@ -1155,12 +1015,12 @@ function init(self)
         auth_debug("identify_error (%s): identity rejected or out of budget, rebuilding",
             tostring(reason))
         clear_session()
-        if gpgs and self._identify_recoveries <= MAX_IDENTIFY_RECOVERIES then
+        if self._identify_recoveries <= MAX_IDENTIFY_RECOVERIES then
             auth_debug("identify_error: rebuilding session via silent login (%d/%d)",
                 self._identify_recoveries, MAX_IDENTIFY_RECOVERIES)
             self._silent_login_attempts = 0
-            try_silent_login(self)
-        elseif gpgs then
+            try_device_login(self)
+        else
             -- Past the fast-recovery budget. The cap exists so a server that
             -- rejects every identify cannot spin — it does NOT mean give up:
             -- hand over to the backed-off silent retry, which is slow enough
@@ -1168,7 +1028,7 @@ function init(self)
             auth_debug("identify_error: past fast recovery, handing to backoff retry")
             background_auth_cleanup(self)
             timer.delay(silent_login_delay(CLEANUP_AFTER_ATTEMPTS), false, function()
-                try_silent_login(self)
+                try_device_login(self)
             end)
         end
         if self.screen ~= "lobby" then show(self, "lobby") end
@@ -1280,31 +1140,24 @@ function on_message(self, message_id, message, sender)
             return
         end
         -- The tap on "Play Online" IS the trigger for sign-in — no separate
-        -- auth screen/dialog is shown for this. The player stays exactly
-        -- where they are while gpgs_callback resolves in the background;
-        -- once identify_and_connect succeeds, route_after_auth() (called
-        -- from gpgs_callback) takes them straight to "online" since
-        -- self._explicit_online is already set above.
-        if gpgs then
-            if self._silent_login_inflight then
-                auth_debug("play_online: a silent-login attempt is already in flight, ignoring duplicate tap")
-            else
-                self._silent_login_attempts = 0
-                try_silent_login(self)
-            end
+        -- auth screen is shown for it. The player stays exactly where they
+        -- are while handle_device_result resolves in the background; it takes
+        -- them straight to "online" because _explicit_online is set above.
+        if self._silent_login_inflight then
+            auth_debug("play_online: an attempt is already in flight, ignoring duplicate tap")
         else
-            auth_debug("play_online: gpgs extension not available on this device")
+            self._silent_login_attempts = 0
+            try_device_login(self)
         end
 
-    elseif message_id == hash("auth_retry_silent_login") then
+    elseif message_id == hash("auth_retry_device_login") then
         -- The only tappable thing on the auth screen (shown only for the
         -- auth_required/identify_error recovery path, not for play_online):
-        -- retries the same silent flow with a fresh budget — never a
-        -- manual/interactive Google sign-in prompt.
-        if gpgs and not self._silent_login_inflight then
+        -- retries the same flow with a fresh budget.
+        if not self._silent_login_inflight then
             self._phone_login_chosen = false
             self._silent_login_attempts = 0
-            try_silent_login(self)
+            try_device_login(self)
         end
 
     elseif message_id == hash("auth_cancel") then

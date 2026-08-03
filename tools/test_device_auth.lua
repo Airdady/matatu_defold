@@ -1,0 +1,167 @@
+-- DEVICE-FIRST SIGN-IN, WITH THE PHONE NUMBER AS THE THING THAT SURVIVES.
+--
+--   Run: lua tools/test_device_auth.lua
+--
+-- THE SHAPE
+--
+--   launch ─▶ cached session?  ── yes ─▶ IDENTIFY with the user id
+--               │ no
+--               ▼
+--             POST /auth/device { deviceId }
+--               ├─ 200            signed in. One request. No provider.
+--               ├─ 404 DEVICE_UNKNOWN   we do not know this handset
+--               └─ anything else  transient — back off and retry
+--                    │
+--                    ▼ (on DEVICE_UNKNOWN)
+--             phone number ─▶ POST /auth/phone, which REMAPS deviceId
+--
+-- WHY THE PHONE STEP IS NOT OPTIONAL
+--
+-- A device id does not survive a new handset. Without a second identity, a
+-- player who buys a phone has simply lost their account and their balance, and
+-- nothing on screen would say so. The phone number is the identity that
+-- crosses handsets, and /auth/phone writes the NEW deviceId onto the account as
+-- it signs them in — so it is both the recovery and the re-binding.
+--
+-- WHY DEVICE_UNKNOWN IS NOT A FAILURE
+--
+-- It is the ordinary state on a first run and the expected state on a new
+-- phone. Feeding it into the retry ladder would spend requests on a question
+-- that cannot change its answer, while the player watches CONNECTING. It is
+-- also why the client keys on the server's `code` rather than on the status:
+-- a dead network reports status 0, and reading that as "no account here" would
+-- send a returning player to a phone-number screen they do not need.
+--
+-- Source-level, because controller.script and api_service.lua cannot be
+-- required into a plain Lua process.
+
+local ROOT = (debug.getinfo(1, "S").source:match("@(.*/)") or "./") .. "../"
+
+local failures = 0
+local function check(label, got, want)
+    local ok = got == want
+    if not ok then failures = failures + 1 end
+    print(string.format("  %s %s (got %s, want %s)",
+        ok and "PASS" or "FAIL", label, tostring(got), tostring(want)))
+end
+
+local function read(rel)
+    local f = io.open(ROOT .. rel)
+    if not f then return nil end
+    local s = f:read("a"); f:close(); return s
+end
+
+-- Assert against CODE. Every file here explains itself at length and those
+-- explanations name the very things being asserted absent.
+local function code_of(src) return (src:gsub("%-%-%[%[.-%]%]", ""):gsub("%-%-[^\n]*", "")) end
+
+local controller = code_of(read("main/controller.script"))
+local api        = code_of(read("modules/api_service.lua"))
+local project    = read("game.project")
+
+print("PLAY SERVICES IS GONE")
+check("no gpgs extension dependency", project:find("extension%-gpgs"), nil)
+check("no [gpgs] config section", project:find("%[gpgs%]"), nil)
+check("the controller calls nothing on gpgs", controller:find("gpgs%."), nil)
+check("no /auth/google call is left in the client", api:find("/auth/google", 1, true), nil)
+check("and no gpgs_login", api:find("function M.gpgs_login", 1, true), nil)
+
+print("")
+print("DEVICE SIGN-IN IS THE WAY IN")
+check("api.device_login exists", api:find("function M.device_login", 1, true) ~= nil, true)
+check("it posts to /auth/device", api:find("/auth/device", 1, true) ~= nil, true)
+check("it sends the device id", api:find("deviceId = M.get_device_id()", 1, true) ~= nil, true)
+-- Push rides along on whichever call establishes the session.
+check("and carries the FCM token", api:find("fcmToken", 1, true) ~= nil, true)
+check("the controller signs in with it",
+    controller:find("api.device_login(", 1, true) ~= nil, true)
+check("boot uses it when there is no cached session",
+    controller:find("try_device_login(self)", 1, true) ~= nil, true)
+
+print("")
+print("A CACHED SESSION STILL SHORT-CIRCUITS IT")
+-- The fastest launch of all makes no HTTP request at all: the reconciler
+-- adopts the session from disk and IDENTIFYs straight away.
+check("the identity provider is still registered at boot",
+    controller:find("ws.set_identity_provider", 1, true) ~= nil, true)
+
+print("")
+print("DEVICE_UNKNOWN IS NOT A FAILURE")
+check("there is a named predicate for it",
+    api:find("function M.is_device_unknown", 1, true) ~= nil, true)
+check("the controller asks it",
+    controller:find("api.is_device_unknown(result)", 1, true) ~= nil, true)
+-- The distinction that matters: keyed on the server's code, not the status.
+-- A dead network is status 0 and must NOT read as "no account on this device".
+check("it is keyed on the server's code", api:find('"DEVICE_UNKNOWN"', 1, true) ~= nil, true)
+check("not on a bare 404", api:find("status_code == 404", 1, true), nil)
+-- It must not enter the retry ladder: no number of requests invents an account.
+local handler = controller:match("handle_device_result = function.-\nend\n") or ""
+check("found the handler", #handler > 0, true)
+local unknown_at = handler:find("is_device_unknown", 1, true)
+local retry_at   = handler:find("handle_login_failure", 1, true)
+check("the unknown branch is checked BEFORE the retry ladder",
+    (unknown_at or math.huge) < (retry_at or 0), true)
+check("and it returns rather than falling through",
+    handler:sub(unknown_at or 1, retry_at or #handler):find("return", 1, true) ~= nil, true)
+check("it asks for the phone number",
+    handler:sub(unknown_at or 1, retry_at or #handler):find('show(self, "profile")', 1, true) ~= nil, true)
+
+print("")
+print("A TRANSIENT FAILURE STILL RETRIES")
+check("the ladder is still wired", controller:find("handle_login_failure", 1, true) ~= nil, true)
+check("with a backoff", controller:find("silent_login_delay", 1, true) ~= nil, true)
+-- The rungs that only ever existed for Play Games' consent problem are gone;
+-- a device id has no consent to grant, so nothing can need them.
+check("no forced credential refresh rung", controller:find("force_fresh_gpgs_session", 1, true), nil)
+check("no interactive sign-in rung", controller:find("_interactive_login_done", 1, true), nil)
+
+print("")
+print("THE PHONE NUMBER IS THE IDENTITY THAT CROSSES HANDSETS")
+check("phone sign-in is still there", api:find("function M.phone_login", 1, true) ~= nil, true)
+check("it posts to /auth/phone", api:find("/auth/phone", 1, true) ~= nil, true)
+check("and sends the CURRENT device id, so the backend can remap it",
+    api:find("payload.deviceId = payload.deviceId or M.get_device_id()", 1, true) ~= nil, true)
+check("the controller handles a phone sign-in",
+    controller:find('hash("phone_login")', 1, true) ~= nil, true)
+
+print("")
+print("A BROKEN IDENTIFY DOES NOT COST THE PLAYER THEIR DEVICE")
+-- clear_session runs on auth_required/identify_error, which includes causes as
+-- mundane as a dropped connection. Clearing the device id there would turn a
+-- network hiccup into a demand for a phone number.
+local clear_fn = controller:match("local function clear_session%(%).-\nend\n") or ""
+check("found clear_session", #clear_fn > 0, true)
+check("it does not clear the device id", clear_fn:find("device", 1, true), nil)
+check("it does re-sign-in automatically",
+    controller:find("try_device_login", 1, true) ~= nil, true)
+
+print("")
+print("PUSH IS UNAFFECTED")
+check("the push module is still required",
+    controller:find("modules.firebase_push", 1, true) ~= nil, true)
+check("the token is still fetched", controller:find("fbpush.fetch_fcm_token", 1, true) ~= nil, true)
+check("rotations are still heard", controller:find("fbpush.on_fcm_token", 1, true) ~= nil, true)
+check("[firebase] is still configured for messaging", project:find("%[firebase%]") ~= nil, true)
+
+print("")
+print("game.project STILL PARSES")
+-- It has no comment syntax; only [section] headers and key = value lines.
+local bad = 0
+for line in (project .. "\n"):gmatch("([^\n]*)\n") do
+    local t = line:match("^%s*(.-)%s*$")
+    if t ~= "" and not t:match("^%[[%w_]+%]$") and not t:match("^[%w_#]+%s*=") then
+        bad = bad + 1
+        print("        " .. t)
+    end
+end
+check("every line is a header or a key = value", bad, 0)
+
+print("")
+if failures == 0 then
+    print("ALL PASS")
+    os.exit(0)
+else
+    print(failures .. " FAILURE(S)")
+    os.exit(1)
+end

@@ -184,19 +184,20 @@ local function request(method, endpoint, payload, cb)
     end, headers, body, options)
 end
 
--- Google Play Games sign-in. The way in.
+-- DEVICE SIGN-IN. The way in.
 --
--- Restored as it was: the backend redeems the serverAuthCode against
--- /auth/google, an endpoint that was never removed and has kept working
--- throughout.
+-- No provider, no consent screen, no token exchange, no Play Services. The
+-- device id is generated on first run and already sits on the User document,
+-- so for anybody who has opened the app before this is the whole of signing in
+-- — one request, and it is the first thing a launch makes.
 --
--- The one thing carried over from the Firebase build is the FCM token riding
--- along on the payload. That is push, not auth — the token has to reach the
--- backend on whichever call establishes the session, and this is now that
--- call. Sending it here saves the separate /auth/fcm-token round trip on the
--- common path and, more importantly, means a player who signs in and never
--- opens anything else is still reachable by a notification.
-function M.gpgs_login(server_auth_code, cb)
+-- The 404 is NOT an error. It means "we do not know this handset yet", which is
+-- the ordinary state on a first run and the expected state on a new phone.
+-- Both are answered by the phone number, which is the identity that survives
+-- changing handsets — see phone_login below. The caller distinguishes the two
+-- by result.data.code == "DEVICE_UNKNOWN" rather than by the status alone, so
+-- a network failure (status 0) is never mistaken for "no account here".
+function M.device_login(cb)
     local fcm_token = ""
     pcall(function()
         local fbpush = require("modules.firebase_push")
@@ -206,18 +207,28 @@ function M.gpgs_login(server_auth_code, cb)
     end)
 
     local payload = {
-        serverAuthCode = server_auth_code,
-        deviceId       = M.get_device_id(),
-        fcmToken       = (fcm_token and fcm_token ~= "") and fcm_token or nil,
+        deviceId = M.get_device_id(),
+        fcmToken = (fcm_token and fcm_token ~= "") and fcm_token or nil,
     }
 
-    request("POST", "/auth/google", payload, function(result)
-        -- 'token' rather than 'idToken': this is the backend's own JWT.
+    request("POST", "/auth/device", payload, function(result)
         if result.success and result.data and result.data.token then
             M.set_auth_token(result.data.token)
         end
         if cb then cb(result) end
     end)
+end
+
+--- Does this answer mean "this handset is not on any account"?
+---
+--- A named predicate rather than `status_code == 404` at the call site: the
+--- difference between "no account here" and "the request did not arrive" is
+--- the difference between showing the phone screen and retrying quietly, and
+--- getting it wrong in either direction is a player stuck on the wrong screen.
+function M.is_device_unknown(result)
+    if not result or result.success then return false end
+    local code = result.data and result.data.code
+    return code == "DEVICE_UNKNOWN" or code == "DEVICE_ID_INVALID"
 end
 
 function M.phone_login(payload, cb)

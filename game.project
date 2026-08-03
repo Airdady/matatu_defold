@@ -3,7 +3,6 @@ title = Matatu
 version = 18.5.9
 bundle_resources = /bundle
 dependencies#0 = https://github.com/defold/extension-websocket/archive/refs/tags/4.2.3.zip
-dependencies#1 = https://github.com/defold/extension-gpgs/archive/refs/tags/4.2.0.zip
 
 [bootstrap]
 main_collection = /main/main.collectionc
@@ -37,14 +36,6 @@ default_texture_mag_filter = linear
 package = com.matatu.champ
 input_method = INPUT_METHOD_HIDDEN
 minimum_sdk_version = 23
-
-[gpgs]
-app_id = 413944711733
-use_saved_games = 0
-request_server_auth_code = 1
-force_refresh_token = 1
-client_id = 413944711733-obti4e9cb3eu0jal7ol59s62lv0nkc7e.apps.googleusercontent.com
-client_token = 413944711733-obti4e9cb3eu0jal7ol59s62lv0nkc7e.apps.googleusercontent.com
 
 [firebase]
 project_id = matatu-7aba6
