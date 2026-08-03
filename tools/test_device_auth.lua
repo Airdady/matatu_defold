@@ -137,7 +137,49 @@ check("it does re-sign-in automatically",
     controller:find("try_device_login", 1, true) ~= nil, true)
 
 print("")
+print("FIREBASE AUTH IS GONE FROM THE EXTENSION TOO")
+-- Not just unused from Lua — removed. The native extension still exposed
+-- login/silent_login/refresh_token/logout/is_signed_in, and an entry point
+-- that exists is an entry point that can be called.
+local java   = read("firebaseauth/src/FirebaseAuthDefold.java") or ""
+local cpp    = read("firebaseauth/src/firebaseauth.cpp") or ""
+-- Comments stripped, for the same reason the Lua sources are: the gradle file
+-- explains which dependencies were removed and why, naming both of them, and
+-- the raw text therefore "contains" exactly what is being asserted absent.
+local gradle_raw = read("firebaseauth/manifests/android/build.gradle") or ""
+local gradle = (gradle_raw:gsub("//[^\n]*", ""))
+
+check("no GoogleSignIn in the Java", java:find("GoogleSignIn", 1, true), nil)
+check("no FirebaseAuth in the Java", java:find("FirebaseAuth%."), nil)
+check("no sign-in intent", java:find("RC_SIGN_IN", 1, true), nil)
+check("no activity-result handling", java:find("onActivityResult", 1, true), nil)
+check("no auth callbacks into native", java:find("onAuthSuccess", 1, true), nil)
+
+check("the Lua module offers no login", cpp:find('{"login"', 1, true), nil)
+check("no silent_login", cpp:find('{"silent_login"', 1, true), nil)
+check("no refresh_token", cpp:find('{"refresh_token"', 1, true), nil)
+check("no logout", cpp:find('{"logout"', 1, true), nil)
+check("no is_signed_in", cpp:find('{"is_signed_in"', 1, true), nil)
+
+check("firebase-auth is not a dependency", gradle:find("firebase%-auth"), nil)
+check("play-services-auth is not a dependency", gradle:find("play%-services%-auth"), nil)
+check("web_client_id is gone from the config", project:find("web_client_id", 1, true), nil)
+
+print("")
 print("PUSH IS UNAFFECTED")
+-- Everything the notification path needs, still there. This is the half that
+-- CANNOT go: FCM is Firebase, and nothing else in the build initialises it.
+check("firebase-messaging is still a dependency", gradle:find("firebase%-messaging") ~= nil, true)
+check("FirebaseApp is still initialised", java:find("FirebaseApp.initializeApp", 1, true) ~= nil, true)
+check("the token is still fetched natively", java:find("FirebaseMessaging.getInstance", 1, true) ~= nil, true)
+check("notification channels are still created",
+    java:find("ensureNotificationChannels", 1, true) ~= nil, true)
+check("the foreground check the messaging service asks for is still there",
+    java:find("isAppInForeground", 1, true) ~= nil, true)
+for _, fn in ipairs({ "is_available", "get_fcm_token", "fetch_fcm_token",
+                      "set_fcm_listener", "consume_pending_action" }) do
+    check("the Lua module still offers " .. fn, cpp:find('{"' .. fn .. '"', 1, true) ~= nil, true)
+end
 check("the push module is still required",
     controller:find("modules.firebase_push", 1, true) ~= nil, true)
 check("the token is still fetched", controller:find("fbpush.fetch_fcm_token", 1, true) ~= nil, true)

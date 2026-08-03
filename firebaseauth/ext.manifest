@@ -1,9 +1,14 @@
-# ext.manifest for the FirebaseAuth native extension.
+# ext.manifest for the push-notification native extension.
 #
-# Separate from GameServices on purpose. That extension is push notifications
-# and in-app updates — things the game can lose without anybody being locked
-# out. This one is the front door, and keeping it apart means a build problem
-# in one cannot take the other down with it.
+# It used to do sign-in as well, and the name is left over from that. The name
+# is deliberately NOT changed: it has to match the Java package, the JNI symbol
+# names in firebaseauth.cpp and the service and receiver entries in
+# AndroidManifest.xml, all in lockstep, and none of that is verifiable short of
+# a device build. Getting it wrong stops notifications silently. The cost of
+# the stale name is this comment; the cost of the rename is push.
+#
+# Authentication is now the device id and the phone number, over plain HTTP —
+# no extension involved at all.
 name: "FirebaseAuth"
 
 platforms:

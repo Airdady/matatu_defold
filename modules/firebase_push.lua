@@ -1,10 +1,11 @@
 -- Firebase Cloud Messaging, Lua side. PUSH ONLY.
 --
 -- This was modules/firebase_auth.lua and it did two unrelated jobs: signing
--- players in, and carrying push notifications. Sign-in has gone back to Google
--- Play Games, so everything to do with credentials, ID tokens and failure
--- classification has gone with it. What is left is the half that was never
--- about auth.
+-- players in, and carrying push notifications. Sign-in is now the device id,
+-- and the phone number when that is not enough — plain HTTP against our own
+-- backend, no provider of any kind. Everything to do with credentials, ID
+-- tokens and failure classification went with it. What is left is the half
+-- that was never about auth.
 --
 -- WHY THERE IS STILL A FIREBASE HERE AT ALL
 --
@@ -16,10 +17,11 @@
 -- do it) and, in the same breath, fetches the registration token and creates
 -- the notification channels.
 --
--- The extension still exposes silent_login/login/refresh_token. Nothing calls
--- them, and this module deliberately does not re-export them: the way to be
--- sure sign-in has really moved back to Play Games is for the Firebase path to
--- be unreachable from Lua, not merely unused.
+-- The extension used to expose silent_login/login/refresh_token as well. They
+-- are gone now — not merely unexported here, but removed from the Java, the
+-- JNI bridge and the gradle dependencies behind them. Authentication is the
+-- device id, and the phone number when that is not enough, both over plain
+-- HTTP to our own backend.
 --
 -- WHAT THE REST OF THE APP GETS
 --

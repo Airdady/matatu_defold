@@ -41,7 +41,6 @@ minimum_sdk_version = 23
 project_id = matatu-7aba6
 api_key = AIzaSyBwKWUFvhd5_vKPcxc3ViL_SotOqjA3wjU
 app_id = 1:431938576253:android:4c5453fb238205b3d3b614
-web_client_id = 431938576253-53tdml3h9mrjb1eb6562k56ogqo9gsef.apps.googleusercontent.com
 
 [websocket]
 debug = 0
