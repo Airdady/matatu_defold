@@ -3,6 +3,7 @@ local api       = require("modules.api_service")
 local app_state = require("modules.app_state")
 local fbauth    = require("modules.firebase_auth")
 local identify_recovery = require("modules.identify_recovery")
+local online_status = require("modules.lobby.online_status")
 
 local SCREENS = { "lobby", "auth", "profile", "online", "themes", "payments", "tournaments", "team_tournament", "standings", "game" }
 
@@ -895,6 +896,29 @@ function init(self)
         -- rejection, so the deadline stays armed until this fires.
         identify_ok = true
         cancel_connect_deadline(self)
+
+        -- CLEAR THE NOTE, DON'T JUST OUT-VOTE IT.
+        --
+        -- auth_state is set to "sending"/"verifying" in nine different places
+        -- and every one of them has to remember to clear it. This handler
+        -- cleared it only on the _restore_pending branch below, so a sign-in
+        -- that completed any other way — the reconciler adopting the cached
+        -- session, a device identify, an IDENTIFY_SUCCESS on a socket that
+        -- came back by itself — left it reading "signing in" for the rest of
+        -- the session while the player was demonstrably signed in.
+        --
+        -- Reported as: the top-right badge says ONLINE and the PLAY ONLINE
+        -- tile says "Signing in with Firebase…", with the session in cache.
+        --
+        -- Being accepted by the server is the end of every sign-in there is,
+        -- so it clears the flag here for all of them rather than asking nine
+        -- call sites to each get it right.
+        if online_status.stale_auth(app_state.auth_state, true) then
+            auth_debug("identify_success: clearing stale auth_state=%s",
+                tostring(app_state.auth_state))
+            app_state.auth_state = "idle"
+        end
+
         if self._restore_pending then
             self._restore_pending = false
             app_state.auth_state = "idle"

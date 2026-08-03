@@ -26,6 +26,7 @@ local Tiles  = require("modules.lobby.tiles")
 local Season = require("modules.lobby.season")
 local Cups   = require("modules.lobby.cups")
 local auth_cta = require("modules.lobby.auth_cta")
+local online_status = require("modules.lobby.online_status")
 
 -- Local aliases keep the rest of this file reading as it did before the split.
 local track     = D.track
@@ -214,23 +215,35 @@ local function rebuild(self)
     -- that isn't registered. Once identify_success fires (ws.is_identified),
     -- the lobby repaints and the tile becomes fully interactive.
     local has_cached_user = ws.current_user_data and (ws.current_user_data._id or "") ~= ""
-    local is_exhausted = ws.reconnect_exhausted == true
-    local waiting_for_connect = has_cached_user and not ws.is_identified and not is_exhausted
+
+    -- Derived from the connection, not from a note left by whichever code path
+    -- last began a sign-in. The badge in the top-right corner and this tile
+    -- were reading different things and reporting opposite answers — ONLINE up
+    -- there, "Signing in with Firebase…" down here, with the session cached
+    -- the whole time. See modules/lobby/online_status.lua.
+    local st = online_status.tile_state({
+        is_identified       = ws.is_identified,
+        reconnect_exhausted = ws.reconnect_exhausted == true,
+        has_cached_user     = has_cached_user,
+        auth_state          = app_state.auth_state,
+    })
+
+    local is_exhausted        = st == "offline"
+    local waiting_for_connect = st == "verifying"
 
     local cta_text = "PLAY NOW"
     local sub_text = "Real players • Live coin stakes"
-    local is_connecting = app_state.auth_state == "sending" or app_state.auth_state == "verifying"
-    
-    if is_exhausted then
+
+    if st == "offline" then
         cta_text = "RETRY"
         sub_text = "Offline • Tap to reconnect"
-    elseif waiting_for_connect then
+    elseif st == "verifying" then
         cta_text = "CONNECTING..."
         sub_text = "Verifying your account..."
-    elseif is_connecting then
+    elseif st == "signing_in" then
         cta_text = "CONNECTING..."
         sub_text = "Signing in with Firebase..."
-    elseif app_state.auth_state == "error" then
+    elseif st == "error" then
         cta_text = "TRY AGAIN"
         sub_text = app_state.auth_error ~= "" and tostring(app_state.auth_error):upper() or "CONNECTION FAILED"
     end
@@ -486,8 +499,13 @@ end
 -- "CREATE" option, both of which need the same sign-in-if-needed-then-
 -- route-to-online dance before anything else can happen.
 local function go_online(self)
-    if app_state.auth_state == "sending" or app_state.auth_state == "verifying" then
-        return -- Block multiple taps whilst already attempting connection
+    -- Block multiple taps whilst genuinely mid-attempt — but NOT once the
+    -- server has accepted us. A stranded "sending" used to make this return
+    -- for the rest of the session, so the tile both read "Signing in with
+    -- Firebase…" and did nothing when tapped. Relabelling it alone would have
+    -- produced a PLAY NOW button that silently ignores you, which is worse.
+    if not ws.is_identified and online_status.auth_is_busy(app_state.auth_state) then
+        return
     end
 
     msg.post("#controller", "play_online")
