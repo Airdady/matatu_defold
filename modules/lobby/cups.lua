@@ -43,9 +43,6 @@ function M.invitations()
     return type(list) == "table" and list or {}
 end
 
--- Pull the active-cup list the tile reads to find the cup this player owns.
--- One call on screen entry rather than polling; invitations no longer need one
--- at all.
 --- The cups the user object already carries, if it does.
 ---
 --- IDENTIFY's payload now includes them (see handleNearbyPlayers), so at launch
@@ -60,20 +57,21 @@ end
 
 function M.load(self, on_loaded)
     self.invites = M.invitations()
-    local carried = M.from_user_data()
-    self.team_cups = carried or {}
-    if self.nodes and on_loaded then on_loaded(self) end
-end
 
---- Force a refetch: the carried list is known to be out of date.
----
---- Creating, joining or starting a cup changes the rail, and the copy that
---- arrived with IDENTIFY predates that. Clearing it puts load() back on the
---- network for exactly those cases and no others.
-function M.invalidate()
-    if type(ws.current_user_data) == "table" then
-        ws.current_user_data.teamTournaments = nil
-    end
+    -- KEPT when the payload has none, rather than blanked.
+    --
+    -- A scoped user update — a balance change, a theme switch — carries only
+    -- the keys in its scope, and the client merges payloads key by key, so
+    -- teamTournaments simply is not in that message. `carried or {}` reads
+    -- that absence as "this player has no cups" and empties a rail that was
+    -- correct a moment earlier, every time the balance moves.
+    --
+    -- Absent means UNSAID. Only a payload that actually carries the key gets
+    -- to change what is on screen.
+    local carried = M.from_user_data()
+    if carried then self.team_cups = carried end
+
+    if self.nodes and on_loaded then on_loaded(self) end
 end
 
 -- How many invitations are waiting — the tile shows this as a badge.

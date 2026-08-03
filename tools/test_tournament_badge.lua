@@ -131,13 +131,51 @@ check("and the shared picker", code:find("twindow.headline(", 1, true) ~= nil, t
 -- The overflow. A hardcoded 48 cannot hold CLOSED at any font this uses.
 check("no fixed 48-wide pill", code:find("vmath.vector3(48, 22, 0)", 1, true), nil)
 check("the width is computed", code:find("local badge_w = math.max", 1, true) ~= nil, true)
-check("from a measurement where one is available",
-    code:find("gui.get_text_metrics_node", 1, true) ~= nil, true)
-check("with an estimate behind it", code:find("local text_w = #t_label * 9", 1, true) ~= nil, true)
+check("from the label's own length", code:find("#t_label", 1, true) ~= nil, true)
 check("the highlight follows the pill's width",
     code:find("vmath.vector3(badge_w, 1, 0)", 1, true) ~= nil, true)
 check("and the label is explicitly centred",
     code:find("gui.PIVOT_CENTER", 1, true) ~= nil, true)
+
+print("")
+print("AND THE LABEL IS DRAWN ON TOP OF THE PILL, NOT UNDER IT")
+-- The reported "fully messed" badge. In Defold, CREATION ORDER IS DRAW ORDER:
+-- a node made earlier renders BEHIND one made later. The label used to be
+-- created FIRST — because measuring it was what sized the pill — so the pill
+-- and its highlight were both painted straight over the text and the badge
+-- came out a blank coloured rectangle. Moving the label's POSITION last is not
+-- the same as drawing it last, which is what the code did while a comment
+-- claimed otherwise.
+--
+-- Pinned as the INVARIANT rather than as one way of achieving it: sizing the
+-- pill from the label's character count instead of from a measured node means
+-- the label no longer has to exist first, so it is simply created last. A
+-- gui.move_above after the fact would satisfy this just as well, and both are
+-- accepted here — what must never come back is a label created before a box
+-- and left there.
+local badge_block = code:sub(
+    code:find("local BADGE_H", 1, true) or 1,
+    code:find("cy = cy %- t_h") or #code)
+
+local txt_at = badge_block:find("local n_badge_txt", 1, true)
+local last_box_at = nil
+local at = 1
+while true do
+    local found = badge_block:find("ui.box(", at, true)
+    if not found then break end
+    last_box_at, at = found, found + 1
+end
+
+check("the badge draws a pill", last_box_at ~= nil, true)
+check("and a label", txt_at ~= nil, true)
+check("the label is created after every box, so it draws over them",
+    (txt_at or 0) > (last_box_at or 0)
+        or badge_block:find("gui.move_above", 1, true) ~= nil, true)
+-- Nothing may be drawn over the label after it exists.
+check("and nothing is drawn over it afterwards",
+    badge_block:sub(txt_at or #badge_block):find("ui.box(", 1, true), nil)
+check("it is centred on the pill by explicit pivot",
+    badge_block:find("gui.PIVOT_CENTER", 1, true) ~= nil, true)
 
 -- The estimate must actually be wide enough for the longest word this can show.
 local longest = 0

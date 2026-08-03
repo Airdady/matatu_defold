@@ -334,14 +334,6 @@ function M.search_usernames(q, exclude, cb)
     request("GET", ep, nil, cb)
 end
 
--- Open team tournaments for the lobby list. `user_id` marks the ones the
--- caller already joined/owns so the card can render JOINED instead of JOIN.
-function M.list_active_team_tournaments(user_id, cb)
-    local ep = "/tournaments/team/active"
-    if user_id and user_id ~= "" then ep = ep .. "?userId=" .. urlencode(user_id) end
-    request("GET", ep, nil, cb)
-end
-
 function M.create_team_tournament(payload, cb)
     request("POST", "/tournaments/team", payload, cb)
 end
