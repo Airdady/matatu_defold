@@ -489,6 +489,20 @@ handle_device_result = function(self, result)
 
     identify_and_connect(user)
 
+    -- THE PLAYER'S THEME, APPLIED.
+    --
+    -- route_after_auth does this and this handler routes itself, so the call
+    -- went missing when the sign-in path was rewritten — every device sign-in
+    -- left app_state.theme at whatever it booted with, so an owned, active
+    -- theme was simply never put on. Reported as active themes not being
+    -- applied to the game.
+    --
+    -- Done here rather than by switching this branch to route_after_auth,
+    -- because the routing below is deliberately different: route_after_auth
+    -- also resumes an in-progress game, and a sign-in that has only just
+    -- produced a user has no game state yet to resume.
+    app_state.sync_theme_from_user(user)
+
     if not app_state.profile_complete(user) then
         show(self, "profile")
     elseif self._explicit_online then
@@ -745,6 +759,21 @@ function init(self)
         -- rejection, so the deadline stays armed until this fires.
         identify_ok = true
         cancel_connect_deadline(self)
+
+        -- THE THEME, APPLIED WHENEVER THE SERVER SAYS WHO WE ARE.
+        --
+        -- This is the one moment every route has in common: a cached-session
+        -- boot never calls device_login at all, and the saved session carries
+        -- no theme (see api.save_session), so IDENTIFY's payload is the FIRST
+        -- and only place the app learns which theme the player owns and has
+        -- active.
+        --
+        -- sync_theme_from_user reads user.themes, which until now was never in
+        -- that payload — it lived under DataScope.THEME and nothing fetches
+        -- that at sign-in — so this call has been returning at its first line
+        -- on every path for as long as it has existed. The list is in the base
+        -- response now; this is what puts it on.
+        app_state.sync_theme_from_user(ws.current_user_data)
 
         -- CLEAR THE NOTE, DON'T JUST OUT-VOTE IT.
         --

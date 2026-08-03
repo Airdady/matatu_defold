@@ -179,6 +179,29 @@ check("by routing to phone_login, not link_phone",
     controller:find('msg.post("#controller", "phone_login", { phoneNumber = phone })', 1, true) ~= nil, true)
 
 print("")
+print("THE PLAYER'S THEME IS ACTUALLY PUT ON")
+-- sync_theme_from_user reads user.themes and returns at its first line without
+-- one. That list lived under DataScope.THEME on the backend, which nothing
+-- fetches at sign-in, so the call was a no-op on every path for as long as it
+-- existed and an owned, active theme was never applied. The list is in the base
+-- IDENTIFY payload now; these are the two places that have to read it.
+--
+-- IDENTIFY is the one moment every route has in common: a cached-session boot
+-- never calls device_login at all, and api.save_session stores no theme, so the
+-- IDENTIFY reply is the FIRST place the app can learn which theme is active.
+local id_ok = controller:match('ws%.on%("identify_success".-\n    end%)%)') or ""
+check("found the identify_success handler", #id_ok > 0, true)
+check("it applies the theme", id_ok:find("sync_theme_from_user", 1, true) ~= nil, true)
+-- And the device sign-in, which routes itself rather than going through
+-- route_after_auth and so does not inherit that call.
+check("so does the device sign-in",
+    handler:find("app_state.sync_theme_from_user(user)", 1, true) ~= nil, true)
+-- The session cache carries no theme, which is why IDENTIFY has to.
+local api_raw = read("modules/api_service.lua") or ""
+local save_fn = api_raw:match("function M%.save_session%(user%).-\nend\n") or ""
+check("the saved session has no theme in it", save_fn:find("theme", 1, true), nil)
+
+print("")
 print("FIREBASE AUTH IS GONE FROM THE EXTENSION TOO")
 -- Not just unused from Lua — removed. The native extension still exposed
 -- login/silent_login/refresh_token/logout/is_signed_in, and an entry point
