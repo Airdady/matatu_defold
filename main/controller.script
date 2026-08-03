@@ -625,17 +625,25 @@ function init(self)
             return
         end
 
-        auth_debug("fcm token arrived post-identify; forwarding to backend")
-        api.update_fcm_token(uid, token, function(result)
-            if result and result.success then
-                self._fcm_token_sent = token
-            else
-                -- Left unset so the next focus regain retries. A token the
-                -- backend never stored is a player who silently receives no
-                -- push at all.
-                auth_debug("fcm token update failed: %s", tostring(result and result.message))
-            end
-        end)
+        -- SENT OVER THE SOCKET, NOT AS AN HTTP CALL.
+        --
+        -- POST /auth/fcm-token existed only because the token usually arrives
+        -- after IDENTIFY has already gone. But IDENTIFY carries a fcmToken
+        -- field and the server stores whatever is on it, so re-sending IDENTIFY
+        -- says the same thing down a socket that is already open — no
+        -- connection to set up, no headers, no round trip to wait on, and no
+        -- second endpoint whose failure mode is a player who silently receives
+        -- no notifications.
+        --
+        -- Marked sent immediately rather than on an acknowledgement, because
+        -- there is no longer one to wait for. The cost of being wrong is one
+        -- redundant IDENTIFY on the next focus regain; the token is re-read
+        -- from the cache every time identify() runs, so it cannot go missing.
+        auth_debug("fcm token arrived post-identify; re-identifying to carry it")
+        self._fcm_token_sent = token
+        local u = ws.current_user_data or {}
+        ws.identify(uid, u.username or "Player",
+            { amount = u.balance or 0, charge = 0 }, "UG")
     end)
 
     -- WHERE THE CONNECTION LAYER GETS AN IDENTITY, WITH NO HELP FROM HERE.

@@ -251,15 +251,6 @@ function M.phone_login(payload, cb)
     end)
 end
 
-function M.update_fcm_token(user_id, token, cb)
-    local payload = {
-        userId = user_id,
-        fcmToken = token,
-        deviceId = M.get_device_id(),
-    }
-    request("POST", "/auth/fcm-token", payload, cb)
-end
-
 function M.link_phone(payload, cb)
     request("POST", "/auth/link-phone", payload, cb)
 end

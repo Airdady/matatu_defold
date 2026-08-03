@@ -46,14 +46,38 @@ end
 -- Pull the active-cup list the tile reads to find the cup this player owns.
 -- One call on screen entry rather than polling; invitations no longer need one
 -- at all.
+--- The cups the user object already carries, if it does.
+---
+--- IDENTIFY's payload now includes them (see handleNearbyPlayers), so at launch
+--- there is nothing to fetch: the moment the socket answers, the rail has its
+--- data. That gap is what the connection badge going green ahead of the tile
+--- actually was — the badge is the socket, and the tile was waiting on an HTTP
+--- request the client could not even issue until the socket had identified.
+function M.from_user_data()
+    local list = (ws.current_user_data or {}).teamTournaments
+    return type(list) == "table" and list or nil
+end
+
 function M.load(self, on_loaded)
     if self.team_cups_loading then return end
+
+    -- Read before anything else: the user object already has both of these, so
+    -- the tile is correct on the very first paint rather than after a round
+    -- trip.
+    self.invites = M.invitations()
+
+    local carried = M.from_user_data()
+    if carried then
+        self.team_cups = carried
+        if self.nodes and on_loaded then on_loaded(self) end
+        return
+    end
+
+    -- Only when the payload did not carry them: an install still running
+    -- against an older backend, or a refresh after creating or joining a cup,
+    -- where the list has changed since IDENTIFY answered.
     self.team_cups_loading = true
     local uid = tostring((ws.current_user_data or {})._id or "")
-    -- Read before the request as well as after: the user object already has
-    -- them, so the tile is correct on the very first paint instead of after a
-    -- round trip.
-    self.invites = M.invitations()
     api.list_active_team_tournaments(uid, function(res)
         self.team_cups_loading = false
         self.team_cups = ((res or {}).data or {}).tournaments or {}
@@ -64,6 +88,17 @@ function M.load(self, on_loaded)
         -- is currently built.
         if self.nodes and on_loaded then on_loaded(self) end
     end)
+end
+
+--- Force a refetch: the carried list is known to be out of date.
+---
+--- Creating, joining or starting a cup changes the rail, and the copy that
+--- arrived with IDENTIFY predates that. Clearing it puts load() back on the
+--- network for exactly those cases and no others.
+function M.invalidate()
+    if type(ws.current_user_data) == "table" then
+        ws.current_user_data.teamTournaments = nil
+    end
 end
 
 -- How many invitations are waiting — the tile shows this as a badge.

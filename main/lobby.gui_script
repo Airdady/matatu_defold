@@ -629,14 +629,14 @@ local function handle(self, b)
                 self.cup_starting = false
                 if res.success then
                     toast.success("Cup started — good luck!")
-                    load_team_cups(self)
+                    Cups.invalidate(); load_team_cups(self)
                 else
                     local err = (res.data and res.data.error) or res.message
                         or "Could not start the cup."
                     toast.error(err)
                     -- A refusal is usually "not enough players yet", which the
                     -- refreshed member count on the tile then explains.
-                    load_team_cups(self)
+                    Cups.invalidate(); load_team_cups(self)
                 end
             end)
         end
@@ -671,7 +671,7 @@ local function handle(self, b)
                     toast.error((res.data and res.data.error) or res.message
                         or "Could not delete the cup.")
                 end
-                load_team_cups(self)
+                Cups.invalidate(); load_team_cups(self)
             end)
         end
 
@@ -721,7 +721,7 @@ local function handle(self, b)
                     toast.error((res.data and res.data.error) or res.message
                         or "Could not accept that invitation.")
                 end
-                load_team_cups(self)
+                Cups.invalidate(); load_team_cups(self)
             end)
         end
 
@@ -858,8 +858,10 @@ function on_message(self, message_id, message, sender)
         refresh_wh()
         update_lobby_season(self)
         set_state(self, self.state or STATE_LOBBY)
-        -- Refreshed on entry rather than polled: coming back from creating or
-        -- joining a cup is exactly when the rail is stale.
+        -- Deliberately NOT invalidated: arriving on the lobby is not a change
+        -- to the rail. The mutation paths above invalidate, and the cup event
+        -- below invalidates, so anything still carried from IDENTIFY here is
+        -- current — and re-entering the lobby costs nothing at all.
         load_team_cups(self)
         
     elseif message_id == hash("enable") or message_id == hash("layout_changed") then
@@ -880,8 +882,13 @@ function on_message(self, message_id, message, sender)
         -- looking at, and screen_enter refetches anyway when they come back.
         --
         -- Refetch rather than patch the count in place: the event carries one
-        -- cup's numbers and the tile reads the whole list.
-        if app_state.current_screen == "lobby" then load_team_cups(self) end
+        -- cup's numbers and the tile reads the whole list. Invalidated first
+        -- because the copy that arrived with IDENTIFY predates the change this
+        -- event is announcing.
+        if app_state.current_screen == "lobby" then
+            Cups.invalidate()
+            load_team_cups(self)
+        end
 
     elseif message_id == hash("auth_state_changed") then
         -- Just repaint. This used to post "play_online" whenever sign-in
