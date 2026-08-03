@@ -58,6 +58,34 @@ local api        = code_of(read("modules/api_service.lua"))
 local auth_gui   = code_of(read("main/auth.gui_script"))
 local project    = read("game.project")   -- ini; its comments start with ';'
 
+print("game.project PARSES AT ALL")
+-- IT HAS NO COMMENT SYNTAX. Not '#', not ';' — bob rejects anything that is
+-- not a [section] header or a key = value line, and the whole build fails.
+--
+-- Checked here because this revert edits that file, and because the failure is
+-- total and arrives from the bundler rather than from anything in this repo:
+-- nothing else reads game.project, so a stray line of explanation sits there
+-- looking perfectly reasonable until somebody tries to build. Which is exactly
+-- what happened — this section exists because comments were written into it.
+local bad = {}
+local n = 0
+for line in (project .. "\n"):gmatch("([^\n]*)\n") do
+    n = n + 1
+    local t = line:match("^%s*(.-)%s*$")
+    if t ~= ""
+        and not t:match("^%[[%w_]+%]$")          -- [section]
+        and not t:match("^[%w_#]+%s*=")          -- key = value, and key#0 = value
+    then
+        bad[#bad + 1] = string.format("line %d: %s", n, t)
+    end
+end
+check("every line is a header or a key = value", #bad, 0)
+for _, b in ipairs(bad) do print("        " .. b) end
+-- Stated separately, because these two are the specific mistake that was made.
+check("no ';' comment lines", project:find("\n%s*;") == nil, true)
+check("no '#' comment lines", project:find("\n%s*#") == nil, true)
+
+print("")
 print("THE SIGN-IN PATH IS GONE FROM LUA")
 check("the firebase_auth module no longer exists", read("modules/firebase_auth.lua"), nil)
 check("nothing requires it", controller:find("modules.firebase_auth", 1, true), nil)

@@ -47,22 +47,9 @@ client_id = 413944711733-obti4e9cb3eu0jal7ol59s62lv0nkc7e.apps.googleusercontent
 client_token = 413944711733-obti4e9cb3eu0jal7ol59s62lv0nkc7e.apps.googleusercontent.com
 
 [firebase]
-; SIGN-IN IS BACK ON GOOGLE PLAY GAMES. This section is now here for PUSH
-; NOTIFICATIONS ONLY, and it is not optional for them.
-;
-; Firebase Cloud Messaging IS Firebase, so push cannot outlive the Firebase
-; app. Defold does not apply the Google Services Gradle plugin, so
-; google-services.json never becomes the string resources that would normally
-; initialise FirebaseApp automatically — FirebaseAuthDefold.java builds
-; FirebaseOptions from these four values by hand instead, and that same
-; initialisation is what fetches the FCM token and creates the notification
-; channels. Blank these out and notifications stop, silently.
 project_id = matatu-7aba6
 api_key = AIzaSyBwKWUFvhd5_vKPcxc3ViL_SotOqjA3wjU
 app_id = 1:431938576253:android:4c5453fb238205b3d3b614
-; Only ever read by the sign-in half of the extension, which nothing calls any
-; more. Left in place because a blank value makes the extension refuse to
-; initialise at all, and that would take messaging down with it.
 web_client_id = 431938576253-53tdml3h9mrjb1eb6562k56ogqo9gsef.apps.googleusercontent.com
 
 [websocket]
