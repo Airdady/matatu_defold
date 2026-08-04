@@ -77,6 +77,9 @@ M.IDENTIFY_RESEND_SECONDS = 2.5
 -- @param s  observable state:
 --    identity          who we want to be (nil when signed out)
 --    update_required   the build is refused; nothing is worth trying
+--    app_offline       the ACCOUNT is refused; nothing is worth trying yet
+--    app_offline_recheck  the recheck window is open: allow ONE attempt, so a
+--                      block that has since been lifted can be discovered
 --    socket_connected  the socket is up
 --    is_connecting     an attempt is in flight
 --    is_identified     the server has accepted us
@@ -101,6 +104,29 @@ function M.next_action(s)
     -- loop would only burn battery behind the update screen — and adopting a
     -- cached identity to do it with is worse, not better.
     if s.update_required then return "idle" end
+
+    -- SAME RANK, DIFFERENT DURATION: the server refuses this ACCOUNT.
+    --
+    -- connect() refuses while the latch is up, but refusing there is not
+    -- enough on its own — this planner is what DRIVES connecting, and while it
+    -- knew nothing about the latch it went on deciding "adopt_device", then
+    -- "connect", every single tick. Each decision called identify(), which
+    -- restarts this loop immediately rather than waiting for the next tick, so
+    -- it did not even cost one second per round: it was a spin, refused one
+    -- call deeper every time, for as long as the app was open.
+    --
+    -- Unlike update_required this is NOT permanent, and that difference is the
+    -- whole reason it is a window rather than an "idle". A build the server has
+    -- outgrown cannot become acceptable without a new binary, so there is
+    -- nothing to re-ask. A block can be lifted server-side with nothing
+    -- happening on the phone at all — and if the app never asks again, an
+    -- account that was unblocked can never come back, no matter how long the
+    -- player waits or how often they reopen it.
+    --
+    -- So: silence, then exactly one attempt when the window comes round.
+    -- app_offline_recheck is what says the window is open (see
+    -- websocket_manager's APP_OFFLINE_RECHECK_SECONDS).
+    if s.app_offline and not s.app_offline_recheck then return "idle" end
 
     -- Nobody to be YET, but a session on disk. Adopt it.
     --

@@ -21,17 +21,40 @@ M.is_identified = false
 -- clear it, so it also suppresses the reconnect loop.
 M.update_required = false
 
--- Set once the server refuses this ACCOUNT. Latching for the same reason and
--- in the same way: the answer will be identical every time, so reconnecting is
--- a loop that burns battery and radio to be told no again.
+-- Set once the server refuses this ACCOUNT. Suppresses reconnecting for the
+-- same reason update_required does: the answer will be the same every time, so
+-- retrying burns battery and radio to be told no again.
 --
 -- Restored from disk at boot (see api_service's offline flag), so a launch
 -- after this costs no request at all — the app comes up offline knowing why,
 -- rather than discovering it again.
 --
--- Cleared only by the server accepting an identify, which is the one event
--- that can prove it no longer applies.
+-- NOT PERMANENT, and that is the difference from update_required. A build the
+-- server has outgrown cannot become acceptable without a new binary. A block
+-- can be lifted server-side with nothing happening on the phone — so an app
+-- that latches this and never asks again can never come back, however long the
+-- player waits or how often they reopen it. See APP_OFFLINE_RECHECK_SECONDS.
 M.app_offline = false
+
+-- When the latch went up, so the recheck window can be measured from it.
+-- Seeded at boot from the timestamp in the cached flag, so the wait is counted
+-- from the refusal itself rather than restarting at every launch — reopening
+-- the app ten times in a minute costs no more requests than opening it once.
+local app_offline_at = 0
+
+-- How long the app stays quiet before spending ONE request to ask again.
+--
+-- Fifteen minutes, which is nothing next to how long a block lasts, and far
+-- enough apart that it is not a reconnect loop by any reading: four requests
+-- an hour against a server that answers each one in a few bytes. Set against
+-- the alternative — never asking — where a player whose block was lifted an
+-- hour ago is still staring at App Offline with nothing they can do about it.
+local APP_OFFLINE_RECHECK_SECONDS = 15 * 60
+
+-- The three accessors that read app_offline_at live further down, below
+-- now_s(): a `local` introduced after a function body is not in scope inside
+-- it, so written here they would resolve to a nil global and raise on the
+-- first call. Same trap as SIGN_IN_CONNECT_GRACE further down.
 M.online_users = {}
 M.current_user_data = {}
 M.current_user_id = ""
@@ -72,6 +95,34 @@ local function now_s()
   return os.time()
 end
 local last_rx_time = now_s()
+
+--- Is the quiet period over? Exactly one attempt is allowed when it is.
+function M.app_offline_recheck_due()
+  if not M.app_offline then return false end
+  return (now_s() - (app_offline_at or 0)) >= APP_OFFLINE_RECHECK_SECONDS
+end
+
+--- Raise the latch. `since` is when the refusal happened (an os.time()
+--- stamp), so a flag restored from disk goes on counting from the refusal
+--- itself instead of restarting the wait at every launch.
+function M.set_app_offline(since)
+  M.app_offline = true
+  -- os.time() and now_s() can be different clocks, so an absolute stamp is
+  -- turned into "how long ago" before being stored against the monotonic one.
+  local ago = 0
+  if type(since) == "number" and since > 0 then
+    local elapsed = os.time() - since
+    if elapsed > 0 then ago = elapsed end
+  end
+  app_offline_at = now_s() - ago
+end
+
+--- Drop it. The server accepting an identify is the one event that proves the
+--- refusal no longer applies.
+function M.clear_app_offline()
+  M.app_offline = false
+  app_offline_at = 0
+end
 
 local KEY_BYTES = util.hex_to_bytes(config.GAME_STATE_SECRET)
 
@@ -568,10 +619,23 @@ local function parse_message(json_string)
       local reason = tostring(M.current_user_data.blockReason or "")
       print("[WS] identify returned a refused account - going offline")
       M.is_identified = false
+      local was_offline = M.app_offline
       -- Latched BEFORE the listeners run: one of them disconnects, and a
       -- disconnect schedules a reconnect unless this is already set.
-      M.app_offline = true
-      emit("account_blocked", { reason = reason })
+      M.set_app_offline(os.time())
+      -- The socket is refused, so it goes — here, not only via a listener that
+      -- may not run. Left open it is a live connection carrying an identity
+      -- the server will not accept, and the planner reads exactly that state
+      -- as "re-send IDENTIFY", which is the refusal answered and re-asked for
+      -- as long as the app is open.
+      pcall(M.disconnect)
+      -- Announced ONCE per latch. This path is re-entered every recheck
+      -- window, and each emit clears the session, toasts and bounces the
+      -- player back to the lobby — fine the first time, and a screen that
+      -- resets itself out of nowhere every quarter of an hour after that.
+      if not was_offline then
+        emit("account_blocked", { reason = reason })
+      end
       return
     end
 
@@ -1080,9 +1144,19 @@ function M.connect()
   -- Every route to a socket goes through connect(), so refusing here stops
   -- the reconnect timer, the lobby's auto-identify and the PLAY ONLINE tap
   -- alike, rather than each of them needing its own guard.
+  --
+  -- Except when the recheck window is open, which is the ONE attempt that
+  -- lets an account whose block has been lifted find that out. The window is
+  -- closed again here rather than on the answer: whether it succeeds or
+  -- fails, this attempt has been spent, and leaving it open would turn the
+  -- one probe into the loop this is here to prevent.
   if M.app_offline then
-    print("[WS] connect() refused: app offline")
-    return
+    if not M.app_offline_recheck_due() then
+      print("[WS] connect() refused: app offline")
+      return
+    end
+    print("[WS] app offline, but the recheck window is open - trying once")
+    app_offline_at = now_s()
   end
   if is_connecting and (now_s() - (connecting_since or 0)) >= conn_plan.CONNECT_STALL_SECONDS then
     print("[WS] clearing stale is_connecting")
@@ -1246,6 +1320,15 @@ local function reconcile_step()
   local action = conn_plan.next_action({
     identity            = pending_identity,
     update_required     = M.update_required,
+    -- WITHOUT THESE TWO THE PLANNER DRIVES A LOOP connect() ONLY REFUSES.
+    --
+    -- The latch was read at connect() and nowhere else, so every tick the
+    -- planner still decided "adopt_device" and then "connect" — and
+    -- adopt_device calls identify(), which restarts this loop on the spot
+    -- rather than waiting for the next tick. It spun for as long as the app
+    -- was open, refused one call deeper each time.
+    app_offline         = M.app_offline,
+    app_offline_recheck = M.app_offline_recheck_due(),
     socket_connected    = M.socket_connected,
     is_connecting       = is_connecting,
     is_identified       = M.is_identified,

@@ -265,18 +265,45 @@ check_true("boot reads it before anything connects",
     init_head ~= nil and init_head:find("api%.is_app_offline%(%)") ~= nil,
     "read after a connect attempt is a read that saved nothing")
 -- And that it really is at the TOP of init, not merely somewhere in it.
+--
+-- Counted in STATEMENTS, not characters. A character budget measures the
+-- comments as well as the code, so explaining the block better moved it
+-- "later" and failed a test about where it runs — which is a test measuring
+-- prose. Blank and comment-only lines are dropped and what is left is code
+-- that would run before the restore.
+local before = 0
+for line in (init_head or ""):gmatch("[^\n]+") do
+    local t = line:match("^%s*(.-)%s*$")
+    if t ~= "" and not t:match("^%-%-") then before = before + 1 end
+end
 check_true("and does so first thing",
-    init_head ~= nil and #init_head < 900,
-    "restored " .. tostring(init_head and #init_head) .. " chars into init")
+    init_head ~= nil and before <= 6,
+    tostring(before) .. " statements run before the offline latch is restored")
 check_true("and mirrors it onto the socket manager",
-    ctrl:find("ws%.app_offline = true") ~= nil, "the latch has to reach the thing that reconnects")
+    ctrl:find("ws%.set_app_offline%(") ~= nil, "the latch has to reach the thing that reconnects")
+-- Through the SETTER, with the stamp the refusal was written with. A bare
+-- assignment leaves the recheck window starting at zero — permanently due —
+-- so the one probe becomes an attempt on every reconciler tick, which is the
+-- loop this whole section exists to stop.
+check_true("counting the wait from the refusal, not from this launch",
+    ctrl:find("ws%.set_app_offline%(api%.app_offline_since%(%)%)") ~= nil,
+    "restarting the window at every launch costs a request per cold start")
+check_true("and nothing assigns the latch behind the setter's back",
+    ctrl:find("ws%.app_offline = ") == nil,
+    "a bare assignment skips the window and reads as due-now")
 
 print("")
 print("no sign-in is even attempted")
 local dev = ctrl:match("local function try_device_login%(self%)(.-)\n    cancel_silent_login_retry")
 check_true("device login returns early when offline",
-    dev and dev:find("if app_state%.app_offline then"),
+    dev and dev:find("if app_state%.app_offline and not ws%.app_offline_recheck_due"),
     "every route into signing in comes through this function")
+check_true("but not while the recheck window is open",
+    dev and dev:find("app_offline_recheck_due"),
+    "clear_session wiped the cached session, so the socket path alone cannot probe")
+check_true("and cancels the retry ladder on the way out",
+    dev and dev:find("cancel_silent_login_retry%(self%)"),
+    "a retry left on the clock fires into this same early return, and is still armed later")
 check_true("and clears the in-flight flag on the way out",
     dev and dev:find("self%._silent_login_inflight = false"),
     "left set, PLAY ONLINE would be permanently swallowed as a duplicate tap")
@@ -288,7 +315,7 @@ check_true("a successful identify clears the cache too",
     "otherwise an unblocked account stays offline forever")
 local ident = ctrl:match('ws%.on%("identify_success", function%(%)(.-)end%)%)')
 check_true("and clears the socket latch with it",
-    ident and ident:find("ws%.app_offline = false"), "half-cleared is still offline")
+    ident and ident:find("ws%.clear_app_offline%(%)"), "half-cleared is still offline")
 
 print("")
 if failures > 0 then

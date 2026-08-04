@@ -381,8 +381,17 @@ local function try_device_login(self)
     --
     -- Checked here because every route into signing in comes through this
     -- function: the boot path, the retry timer and the PLAY ONLINE tap.
-    if app_state.app_offline then
+    -- Not while the recheck window is open: that attempt is how an account
+    -- whose block has been lifted gets discovered, and the socket path alone
+    -- cannot do it for a device that has no cached session left to identify
+    -- with — clear_session wiped it when the refusal came in.
+    if app_state.app_offline and not ws.app_offline_recheck_due() then
         auth_debug("device login skipped: app offline")
+        -- Cancelled even though nothing is being attempted. A retry left on
+        -- the clock fires into this same early return and re-arms nothing, so
+        -- the ladder just runs itself out invisibly; worse, it is still armed
+        -- when the block is lifted, and then two attempts race.
+        cancel_silent_login_retry(self)
         self._silent_login_inflight = false
         return
     end
@@ -559,7 +568,10 @@ handle_device_result = function(self, result)
         -- where it belongs.
         app_state.blocked_reason = "App Offline"
         app_state.app_offline = true
-        ws.app_offline = true
+        -- Through the setter, which starts the recheck window. A bare
+        -- assignment leaves the window's start at zero, i.e. permanently due,
+        -- and the one probe becomes an attempt on every reconciler tick.
+        ws.set_app_offline(os.time())
         -- Cached, so the next launch does not repeat this exchange.
         pcall(api.set_app_offline, data.reason or result.message)
         app_state.auth_error = ""
@@ -647,7 +659,12 @@ function init(self)
     if api.is_app_offline() then
         app_state.app_offline = true
         app_state.blocked_reason = "App Offline"
-        ws.app_offline = true
+        -- Through the setter, with the stamp the refusal was written with, so
+        -- the recheck window carries on from the refusal instead of restarting
+        -- at every launch. Assigning ws.app_offline directly would leave the
+        -- window's start at zero, which reads as "due now" and hands out an
+        -- attempt on every single cold start.
+        ws.set_app_offline(api.app_offline_since())
         auth_debug("boot: app is offline (cached) - not contacting the server")
     end
 
@@ -912,7 +929,7 @@ function init(self)
         pcall(api.clear_session)
         app_state.blocked_reason = "App Offline"
         app_state.app_offline = true
-        ws.app_offline = true
+        ws.set_app_offline(os.time())
         pcall(api.set_app_offline, reason)
         -- Not an error toast, and not routed to the sign-in screen. The player
         -- keeps the app and everything in it that does not need the server;
@@ -932,7 +949,7 @@ function init(self)
         -- says otherwise, which this IS.
         app_state.app_offline = false
         app_state.blocked_reason = nil
-        ws.app_offline = false
+        ws.clear_app_offline()
         pcall(api.clear_app_offline)
         self._identify_recoveries = 0
         -- The only signal that means CONNECTED. Everything earlier — a token,

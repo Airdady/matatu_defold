@@ -114,6 +114,18 @@ function M.is_app_offline()
     return d.offline == true
 end
 
+--- WHEN the refusal happened, as an os.time() stamp, or 0 if unknown.
+---
+--- The recheck window is measured from this rather than from launch, so
+--- reopening the app does not restart the wait: ten launches in a minute cost
+--- the same one request as one launch, and a player coming back the next day
+--- gets their attempt immediately instead of waiting out the window again.
+function M.app_offline_since()
+    local ok, d = pcall(sys.load, OFFLINE_FILE)
+    if not ok or type(d) ~= "table" then return 0 end
+    return tonumber(d.at) or 0
+end
+
 -- STREAMING_CHUNK: Building request parsers...
 local function build_headers()
     local h = {
