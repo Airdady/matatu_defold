@@ -244,6 +244,35 @@ if ! grep -q "^M.APP_BUILD   = ${VERSION_CODE}$" modules/config.lua; then
     exit 1
 fi
 
+# AND THE REPO'S game.project, which is what every OTHER build reports.
+#
+# The --settings override below only reaches the BUILT game.project, so it is
+# true for releases and for nothing else. build.sh passes no settings at all,
+# so it builds straight from the file in the repo — and config.lua PREFERS
+# what the engine was bundled with over its own stamped constant. The version
+# in this file had been left at 18.5.9 while config.lua was stamped 20.9.2, so
+# every build.sh build told the server it was 18.5.9, fell under the
+# force-update floor, and could not come online at all.
+#
+# Stamping it here means the repo file is always the last released version,
+# which is the right answer for a build that overrides nothing.
+print_status "Stamping version $VERSION_NAME ($VERSION_CODE) into game.project..."
+
+sed -i.bak -E \
+    -e "s/^(version[[:space:]]*=[[:space:]]*).*/\1${VERSION_NAME}/" \
+    -e "s/^(version_code[[:space:]]*=[[:space:]]*).*/\1${VERSION_CODE}/" \
+    game.project
+rm -f game.project.bak
+
+if ! grep -q "^version = ${VERSION_NAME}$" game.project; then
+    print_error "Failed to stamp version in game.project"
+    exit 1
+fi
+if ! grep -q "^version_code = ${VERSION_CODE}$" game.project; then
+    print_error "Failed to stamp version_code in game.project"
+    exit 1
+fi
+
 print_success "modules/config.lua -> APP_VERSION=${VERSION_NAME} APP_BUILD=${VERSION_CODE}"
 
 # ═══════════════════════════════════════════════════════════
