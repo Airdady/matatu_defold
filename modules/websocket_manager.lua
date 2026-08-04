@@ -542,6 +542,23 @@ local function parse_message(json_string)
     end
     if M.current_user_data._id then M.current_user_id = tostring(M.current_user_data._id) end
 
+    -- BLOCKED. The server has been sending isBlocked on this payload all along
+    -- and nothing read it, so a suspended account signed in and played exactly
+    -- as before — the block only bit when it next hit an HTTP route guarded by
+    -- checkBlockStatus.
+    --
+    -- Answered here and nowhere else: this is the first moment the app is told,
+    -- and everything below (user_updated, identify_success, the game state
+    -- restore) would otherwise put a blocked player back into the app before
+    -- anyone could act on it.
+    if M.current_user_data.isBlocked == true then
+      local reason = tostring(M.current_user_data.blockReason or "")
+      print("[WS] identify returned a BLOCKED account - signing out")
+      M.is_identified = false
+      emit("account_blocked", { reason = reason })
+      return
+    end
+
     -- Identified WITHOUT having sent a user id: the server resolved us from
     -- the device id. The user it sent back is now the identity, and
     -- pending_identity has to carry it, or the next reconnect goes out

@@ -333,14 +333,25 @@ function M.get_user(user_id, cb)
     request("GET", "/users/" .. user_id, nil, cb)
 end
 
+-- Save the username and avatar, whether or not there is an account yet.
+--
+-- THE "USER ID REQUIRED" A NEW PLAYER HIT. This used to refuse here, on the
+-- handset, without ever asking the server — and for a player who skipped phone
+-- linking there IS no id, because nothing on that path creates an account:
+-- /auth/device deliberately only resumes one, and the account-creating route
+-- is the phone step they just skipped. So the very first thing a new player
+-- does was answered with an error about an id they could not have.
+--
+-- With no id, this goes to the create-or-update route instead, which makes the
+-- account against this device and applies the same username rules. The device
+-- id rides along either way: on create it is what the new account is addressed
+-- by, and on update it backfills accounts stored before device ids were kept.
 function M.update_profile(user_id, payload, cb)
+    payload = payload or {}
+    payload.deviceId = payload.deviceId or M.get_device_id()
+
     if not user_id or user_id == "" then
-        return cb({
-            success     = false,
-            status_code = 0,
-            data        = {},
-            message     = "User ID required"
-        })
+        return request("POST", "/auth/device/profile", payload, cb)
     end
     request("PUT", "/users/" .. user_id, payload, cb)
 end

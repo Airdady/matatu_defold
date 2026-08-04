@@ -459,9 +459,10 @@ local function handle_login_failure(self, error_message, opts)
         background_auth_cleanup(self)
     end
 
-    -- Everything that gets here is transient by construction: the one answer
-    -- that is not — DEVICE_UNKNOWN — never enters this function. So there is
-    -- one thing left to do, and it is to try again in a while.
+    -- Everything that gets here is transient by construction: the two answers
+    -- that are not — DEVICE_UNKNOWN and ACCOUNT_BLOCKED — are both intercepted
+    -- in handle_device_result and never enter this function. So there is one
+    -- thing left to do, and it is to try again in a while.
     do
         local delay = silent_login_delay(attempts)
         auth_debug("handle_login_failure: retrying silently in %.1fs", delay)
@@ -512,6 +513,33 @@ handle_device_result = function(self, result)
         app_state.auth_error = ""
         msg.post("#lobby", "auth_state_changed")
         show(self, "profile")
+        return
+    end
+
+    -- ── suspended: the one other answer that is not transient ──────────────
+    --
+    -- checkBlockStatus refuses this handset, and it will refuse it every time:
+    -- the block is matched on the device id, the names, the phone number and
+    -- every number in phoneNumbers, so it follows the person rather than the
+    -- credential. Left to fall through to handle_login_failure, whose comment
+    -- claimed DEVICE_UNKNOWN was "the one answer that is not transient", this
+    -- retried silently forever — a blocked player's app quietly hammering a
+    -- route that is never going to say yes.
+    if data.error == "ACCOUNT_BLOCKED" or result.status_code == 403 then
+        auth_debug("device sign-in refused: account blocked")
+        cancel_silent_login_retry(self)
+        cancel_connect_deadline(self)
+        self._silent_login_attempts = 0
+        clear_session()
+        pcall(api.clear_session)
+        app_state.auth_state = "idle"
+        app_state.blocked_reason = tostring(data.reason or result.message or "")
+        if app_state.blocked_reason == "" then
+            app_state.blocked_reason = "This account has been suspended."
+        end
+        app_state.auth_error = app_state.blocked_reason
+        msg.post("#lobby", "auth_state_changed")
+        show(self, "auth")
         return
     end
 
@@ -816,6 +844,34 @@ function init(self)
         if tok ~= "" then api.set_auth_token(tok) end
         pcall(api.save_session, user)
         msg.post("#lobby", "auth_state_changed")
+    end))
+
+    -- BLOCKED ACCOUNT: WIPED AND SIGNED OUT, NOT JUST REFUSED.
+    --
+    -- The server has always reported isBlocked on the identify payload and the
+    -- app never read it, so a suspended player carried on as normal until they
+    -- happened to touch an HTTP route the block middleware guards.
+    --
+    -- Everything local goes: the cached user, the auth token, the stored
+    -- session. What is deliberately NOT touched is the device id — it is how
+    -- the server recognises this handset, and clearing it would hand a blocked
+    -- player a clean one, which is the opposite of the point.
+    --
+    -- Signing back in is refused server-side: /auth/device and /auth/phone both
+    -- run checkBlockStatus, which matches on the device id, the names, the
+    -- phone number and every number in phoneNumbers, so the block follows the
+    -- person rather than the credential they happen to be using.
+    table.insert(self.tokens, ws.on("account_blocked", function(info)
+        local reason = (type(info) == "table" and tostring(info.reason or "")) or ""
+        auth_debug("account blocked - clearing local data and signing out (%s)", reason)
+        clear_session()
+        pcall(api.clear_session)
+        app_state.blocked_reason = (reason ~= "" and reason)
+            or "This account has been suspended."
+        pcall(function()
+            require("modules.toast").error(app_state.blocked_reason)
+        end)
+        show(self, "auth")
     end))
 
     table.insert(self.tokens, ws.on("identify_success", function()
@@ -1417,6 +1473,25 @@ function on_message(self, message_id, message, sender)
                 for k, v in pairs(merged) do user[k] = v end
                 user.username    = message.username
                 user.avatar      = message.avatar
+
+                -- THE ACCOUNT MAY HAVE JUST BEEN CREATED BY THIS SAVE.
+                --
+                -- A player who skipped phone linking had no account until now,
+                -- so `uid` above is the empty string they arrived with. The id
+                -- to use from here on is the one in the response — identifying
+                -- with the empty one would open a socket for nobody, which is
+                -- the same dead end as the save failing.
+                if type(merged._id) == "string" and merged._id ~= "" then
+                    user._id = merged._id
+                end
+                uid = user._id or uid
+                -- A created account comes back with its token, and it is the
+                -- credential for everything afterwards.
+                if type(data.token) == "string" and data.token ~= "" then
+                    user.token = data.token
+                    pcall(api.set_auth_token, data.token)
+                end
+
                 ws.current_user_data = user
                 api.save_session(user)
 
