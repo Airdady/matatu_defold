@@ -5,6 +5,7 @@ local app_state = require("modules.app_state")
 local fbpush    = require("modules.firebase_push")
 local identify_recovery = require("modules.identify_recovery")
 local online_status = require("modules.lobby.online_status")
+local toast     = require("modules.toast")
 
 local SCREENS = { "lobby", "auth", "profile", "online", "themes", "payments", "tournaments", "team_tournament", "standings", "game" }
 
@@ -1140,6 +1141,24 @@ function init(self)
     end))
 
     table.insert(self.tokens, ws.on("game_request_declined", function(reason)
+        -- REFUSED FOR NOT BEING SET UP YET — SEND THEM SOMEWHERE THEY CAN FIX IT.
+        --
+        -- The server hides accounts with no username or avatar from the online
+        -- list and refuses game requests either way (profileComplete.ts). Every
+        -- other decline reason is about the opponent or the moment, and the
+        -- screen correctly just closes the dialog — but doing that here would
+        -- read as the button not working, because the thing to change is on a
+        -- different screen entirely.
+        --
+        -- route_after_auth already sends an incomplete profile to this screen on
+        -- sign-in, so reaching this means that was skipped or the profile was
+        -- cleared since. Either way the answer is the same screen.
+        if tostring(reason or "") == "PROFILE_INCOMPLETE" then
+            toast.error("Choose a username and an avatar before playing.")
+            show(self, "profile")
+            return
+        end
+
         msg.post("#game_logic", "ws_replay_declined", { reason = tostring(reason or "Declined") })
         if app_state.searching_tournament or app_state.searching_invite then
             pcall(msg.post, "#snd_suspense", "stop_sound")
