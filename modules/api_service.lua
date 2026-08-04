@@ -137,13 +137,6 @@ local function build_headers()
         -- rather than the display name: it is a monotonic integer, so there is
         -- nothing to parse and no way for "18.5.9" vs "18.5.10" to sort wrong.
         ["X-App-Build"]   = tostring(config.APP_BUILD or 0),
-        -- Which of the two matatus this is. com.matatu.champ and
-        -- com.matatu.nap are the same game with independent versionCode
-        -- sequences, so the build above only means something once the server
-        -- knows which sequence it came from. Absent, the server falls back to
-        -- the game — exact for whot and kadi, a coin toss between the two
-        -- matatus.
-        ["X-App-Package"] = tostring(config.APP_PACKAGE or ""),
         -- ngrok's free tier puts an HTML interstitial in front of a tunnel for
         -- anything it takes for a browser, and this header is how it is waived.
         -- Without it a request can come back 200 with a page of markup where

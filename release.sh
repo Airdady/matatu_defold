@@ -385,60 +385,6 @@ if [ $BUILD_STATUS -eq 0 ]; then
         echo -e "📦 ${YELLOW}Target Engine Format:${NC} .aab (Android App Bundle)"
         echo ""
         print_success "Ready for Google Play Console upload."
-
-        # ── tell the backend this version exists ────────────────────────────
-        #
-        # Recorded, NOT activated. The build is minutes old and Play is not
-        # serving it yet; forcing everyone onto it now would show every player
-        # an update screen pointing at a listing that still offers the version
-        # they already have, with no way out.
-        #
-        # Activating is a separate, deliberate act — POST /app-builds/:id/
-        # activate — taken once the release is actually live. That is what
-        # raises the floor and forces older installs to update.
-        #
-        # Best-effort by design: a bundle that built correctly must not be
-        # reported as a failed release because a server was unreachable. The
-        # curl is bounded so a hung endpoint cannot stall the script, and the
-        # outcome is printed either way so it is never silently skipped.
-        # /api, not /${GAME}. The route is mounted on the shared router, so it
-        # answers under every prefix — but the per-game prefixes only exist for
-        # matatu, whot and kadi, and matatu_nap is a TARGET, not a game. A URL
-        # built from the target 404s, and one built from the game would then
-        # disagree with the target in the body. /api names neither.
-        RELEASE_API="${RELEASE_API:-https://champion.matatuleague.com/api/app-builds}"
-        print_status "Registering ${PACKAGE_NAME} ${VERSION_NAME} (${VERSION_CODE}) with ${RELEASE_API}..."
-
-        # PACKAGE NAME, not game. matatu and matatu_nap are one game shipped
-        # as two binaries with independent versionCode sequences; filing a nap
-        # build as "matatu" and later activating it would raise
-        # com.matatu.champ's floor to a number from nap's sequence.
-        #
-        # The package is what the backend stores builds and floors under, and
-        # $PACKAGE_NAME is the same value this script just wrote into
-        # game.project — so what is registered is what was built, not a
-        # separate name that could be edited out of step with it. The target
-        # rides along as the readable handle.
-        REG_BODY=$(printf \
-            '{"packageName":"%s","target":"%s","build":%s,"versionName":"%s","notes":"%s"}' \
-            "$PACKAGE_NAME" "$TARGET" "$VERSION_CODE" "$VERSION_NAME" \
-            "$(git rev-parse --short HEAD 2>/dev/null || echo 'no-git')")
-
-        REG_CODE=$(curl -sS -o /tmp/app_build_reg.json -w '%{http_code}' \
-            --max-time 20 \
-            -X POST "$RELEASE_API" \
-            -H 'Content-Type: application/json' \
-            -d "$REG_BODY" 2>/dev/null || echo "000")
-
-        if [ "$REG_CODE" = "201" ] || [ "$REG_CODE" = "200" ]; then
-            print_success "Registered with the backend — NOT active yet."
-            echo -e "   ${YELLOW}Activate it (forces every older install to update) with:${NC}"
-            echo -e "   curl -X POST ${RELEASE_API}/<id>/activate"
-        else
-            print_warning "Could not register the build (HTTP ${REG_CODE}). The bundle is fine;"
-            print_warning "register it by hand:"
-            print_warning "curl -X POST ${RELEASE_API} -H 'Content-Type: application/json' -d '${REG_BODY}'"
-        fi
     else
         print_warning "Build processed successfully, but output file couldn't be located automatically inside $OUTPUT_DIR"
     fi
