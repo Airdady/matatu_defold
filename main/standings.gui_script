@@ -870,6 +870,11 @@ local function dispatch(self, x, y)
                 -- opens in EDIT mode against the right bracket rather than
                 -- starting a second one.
                 app_state.team_edit = self.cup
+                -- Straight to the invite step. This button exists to add
+                -- people; landing on the settings and making the owner tap
+                -- NEXT past a form they did not come to change is a step for
+                -- nothing.
+                app_state.team_edit_step = 2
                 msg.post("#controller", "goto_team_tournament")
             elseif b.id == "cup_remove_mode" then
                 self.remove_mode = not self.remove_mode

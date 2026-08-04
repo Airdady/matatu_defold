@@ -201,6 +201,13 @@ end
 local function fresh_form()
     return {
         edit_id     = nil,
+        -- Which half of the form is on screen. 1 = the cup's settings,
+        -- 2 = who is invited to it. Split because all of this on one screen
+        -- did not fit: the entry fee stepper ended up UNDERNEATH the create
+        -- button (drawn later, so it took the taps — the fee row looked
+        -- disabled) and the owner-plays checkbox was pushed off the bottom
+        -- of the screen entirely.
+        step        = 1,
         name        = "",
         prize       = PRIZE_STEP * 2,
         max_players = 8,
@@ -286,17 +293,22 @@ local function rebuild(self)
     local hy = EDGE_T - hdr_h / 2
     btn(self, "back", EDGE_L + 78, hy, 116, 46, "BACK", "secondary")
     track(self, ui.text(vmath.vector3(CX, hy, 0),
-        editing and "EDIT TEAM CUP" or "CREATE TEAM CUP", "subtitle2", P_GOLD))
+        (editing and "EDIT TEAM CUP" or "CREATE TEAM CUP")
+            .. ((f.step or 1) == 1 and "  ·  1 OF 2" or "  ·  2 OF 2"), "subtitle2", P_GOLD))
     track(self, ui.text(vmath.vector3(EDGE_R - 26, hy, 0),
         commas(balance()) .. " " .. tostring(GameMode.CURRENCY_CODE or ""), "small", P_GOLD_LIGHT))
     gui.set_pivot(self.nodes[#self.nodes], gui.PIVOT_E)
 
     local col_w  = math.min(500, (EDGE_R - EDGE_L) * 0.42)
     local left   = EDGE_L + (CX - EDGE_L) * 0.52
-    local right  = CX + (EDGE_R - CX) * 0.48
+    local right  = CX + (EDGE_R - CX) * 0.48  -- reassigned to CX in step 2
     local y      = d_y - 34
     local ROW    = 46
     local GAP    = 18
+    -- The column the settings are currently being drawn into; moved to the
+    -- right half partway down (see the SECOND COLUMN switch below).
+    local col    = left
+    local step   = f.step or 1
 
     local function label(cx_, text, col)
         track(self, ui.text(vmath.vector3(cx_ - col_w / 2, y, 0), text, "small", col or P_MUTED))
@@ -304,55 +316,63 @@ local function rebuild(self)
         y = y - 20
     end
 
+    if step == 1 then
     -- ── NAME ────────────────────────────────────────────────────────────
-    label(left, "TOURNAMENT NAME (optional)")
-    field(self, F_NAME, left, y - ROW / 2, col_w, ROW, f.name, "TEAM CUP", f.focus == F_NAME)
+    label(col, "TOURNAMENT NAME (optional)")
+    field(self, F_NAME, col, y - ROW / 2, col_w, ROW, f.name, "TEAM CUP", f.focus == F_NAME)
     y = y - ROW - GAP
 
     -- ── GRAND PRIZE ─────────────────────────────────────────────────────
-    label(left, "GRAND PRIZE  (funded from your balance)")
+    label(col, "GRAND PRIZE  (funded from your balance)")
     local over = f.prize > balance()
     local mid_w = col_w - 116
-    btn(self, "prize_minus", left - col_w / 2 + 28, y - ROW / 2, 48, ROW, "-", "secondary", nil, not editing)
-    framed3(self, left, y - ROW / 2, mid_w, ROW, over and P_ERROR or P_GOLD, P_B_OUTER)
-    track(self, ui.text(vmath.vector3(left, y - ROW / 2, 0),
+    btn(self, "prize_minus", col - col_w / 2 + 28, y - ROW / 2, 48, ROW, "-", "secondary", nil, not editing)
+    framed3(self, col, y - ROW / 2, mid_w, ROW, over and P_ERROR or P_GOLD, P_B_OUTER)
+    track(self, ui.text(vmath.vector3(col, y - ROW / 2, 0),
         commas(f.prize) .. "  " .. tostring(GameMode.CURRENCY_CODE or ""), "body",
         over and P_ERROR or P_GOLD_LIGHT))
-    btn(self, "prize_plus", left + col_w / 2 - 28, y - ROW / 2, 48, ROW, "+", "secondary", nil, not editing)
+    btn(self, "prize_plus", col + col_w / 2 - 28, y - ROW / 2, 48, ROW, "+", "secondary", nil, not editing)
     y = y - ROW - 4
     if editing then
-        track(self, ui.text(vmath.vector3(left, y - 9, 0),
+        track(self, ui.text(vmath.vector3(col, y - 9, 0),
             "Escrowed at creation — cannot be changed.", "small", P_MUTED))
     elseif over then
-        track(self, ui.text(vmath.vector3(left, y - 9, 0),
+        track(self, ui.text(vmath.vector3(col, y - 9, 0),
             "More than your balance.", "small", P_ERROR))
     end
     y = y - 18 - GAP
 
+
+    -- SECOND COLUMN. Invites have moved to step 2, so step 1 has the full
+    -- width — and needs it: stacked in one column these rows ran off the
+    -- bottom of the screen and under the footer button.
+    col = right
+    y   = d_y - 34
+
     -- ── MAX PLAYERS ─────────────────────────────────────────────────────
-    label(left, "MAX PLAYERS")
-    btn(self, "players_minus", left - col_w / 2 + 28, y - ROW / 2, 48, ROW, "-", "secondary", nil, not f.locked)
-    framed3(self, left, y - ROW / 2, mid_w, ROW, P_GOLD, P_B_OUTER)
-    track(self, ui.text(vmath.vector3(left, y - ROW / 2, 0), tostring(f.max_players), "body", P_CREAM))
-    btn(self, "players_plus", left + col_w / 2 - 28, y - ROW / 2, 48, ROW, "+", "secondary", nil, not f.locked)
+    label(col, "MAX PLAYERS")
+    btn(self, "players_minus", col - col_w / 2 + 28, y - ROW / 2, 48, ROW, "-", "secondary", nil, not f.locked)
+    framed3(self, col, y - ROW / 2, mid_w, ROW, P_GOLD, P_B_OUTER)
+    track(self, ui.text(vmath.vector3(col, y - ROW / 2, 0), tostring(f.max_players), "body", P_CREAM))
+    btn(self, "players_plus", col + col_w / 2 - 28, y - ROW / 2, 48, ROW, "+", "secondary", nil, not f.locked)
     y = y - ROW - 4
-    track(self, ui.text(vmath.vector3(left, y - 9, 0),
+    track(self, ui.text(vmath.vector3(col, y - 9, 0),
         string.format("Bracket depth: %d levels", suggested_levels(f.max_players)), "small", P_MUTED))
     y = y - 18 - GAP
 
     -- ── GAMES PER LEVEL ─────────────────────────────────────────────────
-    label(left, "GAMES PER LEVEL (to advance)")
+    label(col, "GAMES PER LEVEL (to advance)")
     local seg_w = (col_w - 24) / #GPL_OPTIONS
     for i, v in ipairs(GPL_OPTIONS) do
-        local sx = left - col_w / 2 + seg_w / 2 + (i - 1) * (seg_w + 12)
+        local sx = col - col_w / 2 + seg_w / 2 + (i - 1) * (seg_w + 12)
         btn(self, "gpl", sx, y - ROW / 2, seg_w, ROW, "Best of " .. v,
             (f.gpl_i == i) and "primary" or "secondary", i, not f.locked)
     end
     y = y - ROW - GAP
 
     -- ── INVITE CODE ─────────────────────────────────────────────────────
-    label(left, string.format("INVITE CODE (optional, %d-%d letters/numbers)", CODE_MIN, CODE_MAX))
-    field(self, F_CODE, left, y - ROW / 2, col_w, ROW, f.code, "AUTO-GENERATED", f.focus == F_CODE)
+    label(col, string.format("INVITE CODE (optional, %d-%d letters/numbers)", CODE_MIN, CODE_MAX))
+    field(self, F_CODE, col, y - ROW / 2, col_w, ROW, f.code, "AUTO-GENERATED", f.focus == F_CODE)
     y = y - ROW
 
     y = y - 10
@@ -361,21 +381,21 @@ local function rebuild(self)
     -- the money goes into the PRIZE, not to the owner — so a cup cannot be
     -- used to collect coins, and the pot the winner takes grows with the field.
     local fee_editable = not f.fee_locked
-    checkbox(self, "fee_toggle", left, y - ROW / 2, col_w, ROW,
+    checkbox(self, "fee_toggle", col, y - ROW / 2, col_w, ROW,
         "Charge an entry fee to join", f.fee_on)
     y = y - ROW
 
     if f.fee_on then
         y = y - 6
         local fee_over = f.fee <= 0
-        btn(self, "fee_minus", left - col_w / 2 + 28, y - ROW / 2, 48, ROW, "-",
+        btn(self, "fee_minus", col - col_w / 2 + 28, y - ROW / 2, 48, ROW, "-",
             "secondary", nil, fee_editable)
-        framed3(self, left, y - ROW / 2, mid_w, ROW,
+        framed3(self, col, y - ROW / 2, mid_w, ROW,
             fee_over and P_ERROR or P_GOLD, P_B_OUTER)
-        track(self, ui.text(vmath.vector3(left, y - ROW / 2, 0),
+        track(self, ui.text(vmath.vector3(col, y - ROW / 2, 0),
             commas(f.fee) .. "  " .. tostring(GameMode.CURRENCY_CODE or ""), "body",
             fee_over and P_ERROR or P_GOLD_LIGHT))
-        btn(self, "fee_plus", left + col_w / 2 - 28, y - ROW / 2, 48, ROW, "+",
+        btn(self, "fee_plus", col + col_w / 2 - 28, y - ROW / 2, 48, ROW, "+",
             "secondary", nil, fee_editable)
         y = y - ROW - 4
         local note
@@ -386,7 +406,7 @@ local function rebuild(self)
         else
             note = "Each player pays this to join. It goes into the prize."
         end
-        track(self, ui.text(vmath.vector3(left, y - 9, 0), note, "small",
+        track(self, ui.text(vmath.vector3(col, y - 9, 0), note, "small",
             (f.fee_locked or fee_over) and P_MUTED or P_WIN))
         y = y - 18
     end
@@ -396,16 +416,21 @@ local function rebuild(self)
     -- compete for it. Locked once players have joined, like the rest of the
     -- structure — the bracket has already been built around the field. The
     -- owner never pays the entry fee: they funded the prize.
-    checkbox(self, "owner_plays", left, y - ROW / 2, col_w, ROW,
+    checkbox(self, "owner_plays", col, y - ROW / 2, col_w, ROW,
         "I'll play in this cup too", f.owner_plays)
     y = y - ROW
 
     if f.locked then
-        track(self, ui.text(vmath.vector3(left, y - 16, 0),
+        track(self, ui.text(vmath.vector3(col, y - 16, 0),
             "Players have joined — structure is locked.", "small", P_MUTED))
     end
 
-    -- ── RIGHT: invites + autocomplete ───────────────────────────────────
+    end
+
+    -- ── STEP 2: invites ─────────────────────────────────────────────────
+    -- Centred: alone on the screen it has no reason to sit in the right half.
+    if step == 2 then
+    right = CX
     local ry = d_y - 34
     track(self, ui.text(vmath.vector3(right - col_w / 2, ry, 0),
         string.format("INVITE BY USERNAME  (%d/%d)", #f.invites, MAX_INVITES), "small", P_MUTED))
@@ -509,16 +534,25 @@ local function rebuild(self)
         end
     end
 
+    end
+
     -- ── FOOTER ──────────────────────────────────────────────────────────
     local foot_y = EDGE_B + 46
     if f.msg then
         track(self, ui.text(vmath.vector3(CX, foot_y + 46, 0), f.msg, "small",
             f.msg_ok and P_SUCCESS or P_ERROR))
     end
-    local lbl
-    if f.submitting then lbl = editing and "SAVING..." or "CREATING..."
-    else lbl = editing and "SAVE CHANGES" or "CREATE TOURNAMENT" end
-    btn(self, "submit", CX, foot_y, 360, 56, lbl, "primary", nil, not f.submitting)
+    if step == 1 then
+        -- Nothing is created yet. This only moves to the invite step, so the
+        -- label says so rather than implying the cup is about to exist.
+        btn(self, "step_next", CX, foot_y, 360, 56, "NEXT: INVITE PLAYERS", "primary")
+    else
+        local lbl
+        if f.submitting then lbl = editing and "SAVING..." or "CREATING..."
+        else lbl = editing and "SAVE CHANGES" or "CREATE TOURNAMENT" end
+        btn(self, "step_back", EDGE_L + 92, foot_y, 150, 56, "BACK", "secondary", nil, not f.submitting)
+        btn(self, "submit", CX + 80, foot_y, 320, 56, lbl, "primary", nil, not f.submitting)
+    end
 end
 
 ----------------------------------------------------------------------
@@ -596,6 +630,29 @@ end
 ----------------------------------------------------------------------
 -- submit
 ----------------------------------------------------------------------
+-- The settings, checked on leaving STEP 1.
+--
+-- Separate from validate() below because a message about the grand prize is
+-- useless on the invite step, where the prize field is not on screen to fix.
+-- Submit still runs the whole of validate(), so nothing is checked only here.
+local function validate_settings(self)
+    local f = self.form
+    if not f.edit_id then
+        if f.prize <= 0 then return "A grand prize amount is required." end
+        if f.prize > balance() then return "Insufficient balance for that grand prize." end
+    end
+    if f.code ~= "" and (#f.code < CODE_MIN or #f.code > CODE_MAX) then
+        return string.format("Invite code must be %d-%d letters/numbers.", CODE_MIN, CODE_MAX)
+    end
+    if f.max_players < MIN_PLAYERS or f.max_players > MAX_PLAYERS then
+        return string.format("Players must be between %d and %d.", MIN_PLAYERS, MAX_PLAYERS)
+    end
+    if f.fee_on and f.fee <= 0 then
+        return "Set an entry fee amount, or untick it for a free cup."
+    end
+    return nil
+end
+
 local function validate(self)
     local f = self.form
     if not f.edit_id then
@@ -773,7 +830,11 @@ function on_message(self, message_id, message, sender)
         -- Seeded by the caller for EDIT; cleared here so a later CREATE can
         -- never inherit a stale tournament id.
         local seed = app_state.team_edit
+        -- Which step to open on, if the caller asked for one. Cleared with the
+        -- seed so a later CREATE opens at the beginning like anything else.
+        local seed_step = app_state.team_edit_step
         app_state.team_edit = nil
+        app_state.team_edit_step = nil
         self.form = fresh_form()
         if type(seed) == "table" and seed._id then
             local f = self.form
@@ -795,6 +856,7 @@ function on_message(self, message_id, message, sender)
             f.fee_on      = f.fee > 0
             f.fee_locked  = seed.entryFeeLocked and true or false
             f.owner_plays = seed.ownerPlays and true or false
+            if seed_step == 2 then f.step = 2 end
             -- Pre-populate the invite list with the invitations already
             -- outstanding, so editing a live cup opens showing who has been
             -- asked rather than an empty box that reads as "nobody invited".
@@ -877,6 +939,25 @@ function on_input(self, action_id, action)
                 f.max_players = math.max(MIN_PLAYERS, f.max_players - 1); rebuild(self)
             elseif b.id == "players_plus" then
                 f.max_players = math.min(MAX_PLAYERS, f.max_players + 1); rebuild(self)
+            elseif b.id == "step_next" then
+                -- Checked before moving on, not at submit: an error about the
+                -- prize is no use on a screen with no prize field.
+                local err = validate_settings(self)
+                if err then
+                    set_msg(self, err, false)
+                else
+                    close_keyboard(self)
+                    set_msg(self, nil, false)
+                    f.step = 2
+                end
+                rebuild(self)
+                return
+            elseif b.id == "step_back" then
+                close_keyboard(self)
+                set_msg(self, nil, false)
+                f.step = 1
+                rebuild(self)
+                return
             elseif b.id == "fee_toggle" then
                 if not f.fee_locked then
                     f.fee_on = not f.fee_on
