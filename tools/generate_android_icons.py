@@ -52,6 +52,19 @@ LEGACY_DENSITIES = {
     "mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192,
 }
 
+# THE STATUS-BAR NOTIFICATION ICON — one asset, every game mode.
+#
+# The launcher icon above is per-target artwork. This is not: the same white
+# mark appears in the shade for matatu, matatu_nap, whot and kadi, so it lives
+# as a single committed PNG and is only INSTALLED here, never generated.
+#
+# 24dp base, which is what Android reserves for a small icon; anything larger
+# is downscaled by the system and comes out soft.
+NOTIFICATION_SRC = os.path.join(SCRIPT_DIR, "icons", "icon_notification.png")
+NOTIFICATION_DENSITIES = {
+    "mdpi": 24, "hdpi": 36, "xhdpi": 48, "xxhdpi": 72, "xxxhdpi": 96,
+}
+
 ICON_XML = """<?xml version="1.0" encoding="utf-8"?>
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@drawable/icon_background" />
@@ -212,6 +225,30 @@ def main():
         p = os.path.join(rdir("drawable-" + dens), "icon.png")
         legacy_master.resize((px, px), Image.LANCZOS).save(p)
         written.append((p, "%dx%d" % (px, px)))
+
+    # 4) the shared notification icon, installed rather than generated.
+    #
+    # SILHOUETTE, NOT ARTWORK. From Android 5.0 the small icon is drawn as an
+    # alpha mask: every non-transparent pixel becomes solid white, tinted by
+    # the notification's colour. Colour in the source is discarded, so a
+    # full-colour PNG here renders as a filled white square in the status bar.
+    # Checked below rather than trusted, because it looks perfect in a design
+    # tool and wrong only on a phone.
+    if os.path.isfile(NOTIFICATION_SRC):
+        notif = Image.open(NOTIFICATION_SRC).convert("RGBA")
+        alpha = notif.getchannel("A")
+        if alpha.getextrema()[0] == 255:
+            print("WARNING: %s has no transparency. Android draws the status-bar icon\n"
+                  "         as an alpha mask, so this will render as a solid white square.\n"
+                  "         It needs to be a silhouette on a TRANSPARENT background."
+                  % os.path.relpath(NOTIFICATION_SRC, args.out))
+        for dens, px in NOTIFICATION_DENSITIES.items():
+            p = os.path.join(rdir("drawable-" + dens), "icon_notification.png")
+            notif.resize((px, px), Image.LANCZOS).save(p)
+            written.append((p, "%dx%d notification" % (px, px)))
+    else:
+        print("WARNING: %s not found — pushes will fall back to the launcher icon."
+              % os.path.relpath(NOTIFICATION_SRC, args.out))
 
     print("Scaffolded Android icons from %s:" % os.path.relpath(args.svg, args.out))
     for i, (path, note) in enumerate(written, 1):

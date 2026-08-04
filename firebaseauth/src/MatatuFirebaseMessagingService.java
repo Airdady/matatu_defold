@@ -5,6 +5,9 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.Resources;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.media.AudioAttributes;
@@ -41,7 +44,58 @@ public class MatatuFirebaseMessagingService extends FirebaseMessagingService {
     public static final String CHANNEL_SAVINGS = "account_and_savings";
     public static final String CHANNEL_GENERAL = "general_channel";
 
+    // ONE COLOUR FOR EVERY GAME MODE.
+    //
+    // Deliberately a constant and deliberately not derived from the target
+    // being built. matatu, matatu_nap, whot and kadi ship from this same
+    // source with different launcher icons, and the accent Android uses to
+    // tint the status-bar icon and the notification lights stays the same for
+    // all of them — one recognisable colour in the shade rather than four.
     private static final int BRAND_COLOR = 0xFFFF8C00; // Matatu Amber Gold
+
+    // THE STATUS-BAR ICON, in preference order.
+    //
+    // icon_notification is the dedicated asset and the one that should win.
+    // The rest are fallbacks, and the ORDER matters: before this list existed
+    // the code looked for "app_logo" and "ic_launcher", neither of which is in
+    // the bundle, so every notification fell through to Android's stock
+    // ic_dialog_info — a grey (i) in the status bar on every push we have ever
+    // sent. "icon" is the launcher drawable that release.sh actually
+    // generates, so it is the last of ours before that stock fallback.
+    //
+    // NOTE ON THE ASSET ITSELF: from Android 5.0 the small icon is drawn as an
+    // ALPHA MASK. Every non-transparent pixel becomes solid white, tinted by
+    // setColor below — colour in the file is discarded. icon_notification.png
+    // must therefore be a white (or any colour) silhouette on a TRANSPARENT
+    // background, or it renders as a filled white square.
+    private static final String[] SMALL_ICON_NAMES = {
+            "icon_notification", "app_logo", "ic_launcher", "icon",
+    };
+
+    // THE LOGO ON THE RIGHT of the notification row.
+    //
+    // Android draws the large icon in full colour, unmasked, which is why the
+    // recognisable logo belongs here and not in the small icon above. Nothing
+    // set one before, so the right-hand side of every notification was empty.
+    private static final String[] LARGE_ICON_NAMES = {
+            "notification_logo", "icon", "icon_foreground", "app_logo",
+    };
+
+    /** First of `names` that resolves to a drawable/mipmap, or 0. */
+    private static int findIcon(Context context, String[] names) {
+        Resources res = context.getResources();
+        String pkg = context.getPackageName();
+        for (String name : names) {
+            int id = res.getIdentifier(name, "drawable", pkg);
+            if (id == 0) {
+                id = res.getIdentifier(name, "mipmap", pkg);
+            }
+            if (id != 0) {
+                return id;
+            }
+        }
+        return 0;
+    }
 
     @Override
     public void onNewToken(String token) {
@@ -252,13 +306,28 @@ public class MatatuFirebaseMessagingService extends FirebaseMessagingService {
                 pendingIntentFlags
         );
 
-        // Resolve notification icon
-        int smallIcon = context.getResources().getIdentifier("app_logo", "drawable", context.getPackageName());
+        // The status-bar icon. See SMALL_ICON_NAMES: this used to look for two
+        // names that are not in the bundle and land on Android's stock info
+        // icon every single time.
+        int smallIcon = findIcon(context, SMALL_ICON_NAMES);
         if (smallIcon == 0) {
-            smallIcon = context.getResources().getIdentifier("ic_launcher", "mipmap", context.getPackageName());
-        }
-        if (smallIcon == 0) {
+            Log.w(TAG, "No notification icon found (looked for icon_notification, "
+                    + "app_logo, ic_launcher, icon) - falling back to the Android default");
             smallIcon = android.R.drawable.ic_dialog_info;
+        }
+
+        // The logo shown on the RIGHT of the notification, in full colour.
+        // Decoded rather than passed as a resource id because setLargeIcon
+        // takes a Bitmap on the API levels this supports; a failure here is
+        // cosmetic, so it must never stop the notification being posted.
+        Bitmap largeIcon = null;
+        try {
+            int largeIconId = findIcon(context, LARGE_ICON_NAMES);
+            if (largeIconId != 0) {
+                largeIcon = BitmapFactory.decodeResource(context.getResources(), largeIconId);
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "Could not decode the notification logo: " + t.getMessage());
         }
 
         Uri defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
@@ -288,6 +357,8 @@ public class MatatuFirebaseMessagingService extends FirebaseMessagingService {
                         .bigText(styledBody)
                         .setBigContentTitle(richText(title)))
                 .setColor(BRAND_COLOR)
+                // Same accent for every game mode — see BRAND_COLOR.
+                .setColorized(false)
                 .setContentIntent(contentPendingIntent)
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_MAX) // Maximum importance (Heads-Up)
@@ -295,6 +366,14 @@ public class MatatuFirebaseMessagingService extends FirebaseMessagingService {
                 .setVibrate(vibrationPattern)
                 .setLights(BRAND_COLOR, 1000, 500)
                 .setSound(defaultSoundUri);
+
+        // The logo, on the right of the row, on EVERY notification this
+        // service posts — the builder is shared by all types, so setting it
+        // here covers game requests, bonuses, tournaments, savings and general
+        // alike rather than each having to remember.
+        if (largeIcon != null) {
+            builder.setLargeIcon(largeIcon);
+        }
 
         // Add contextual interactive buttons according to notification type
         if ("GAME_REQUEST".equalsIgnoreCase(type)) {

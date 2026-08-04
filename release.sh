@@ -300,6 +300,33 @@ else
     fi
 fi
 
+# ── the notification icon, which is SHARED across every game mode ───────────
+#
+# The launcher icon above is per-target artwork, regenerated from that target's
+# SVG. The status-bar icon is not: the same white mark appears in the shade for
+# whot, matatu, matatu_nap and kadi, so it is one committed PNG
+# (tools/icons/icon_notification.png) that the generator INSTALLS at each
+# density rather than draws.
+#
+# Verified after generation because its absence is silent and ugly:
+# MatatuFirebaseMessagingService falls back through app_logo, ic_launcher and
+# icon, and finally to Android's own ic_dialog_info — a grey (i) in the status
+# bar on every push, with nothing in any log to say why.
+#
+# A warning and not an exit: shipping without it is ugly, not broken, and the
+# launcher icon stands in until the asset lands.
+NOTIF_INSTALLED=$(ls bundle/android/res/drawable*/icon_notification.png 2>/dev/null | wc -l | tr -d ' ')
+if [ "$NOTIF_INSTALLED" = "0" ]; then
+    print_warning "No icon_notification.png was installed into bundle/android/res/drawable*/."
+    print_warning "Source expected at tools/icons/icon_notification.png."
+    print_warning "Pushes will fall back to the launcher icon, or to Android's default."
+    print_warning "The asset must be a SILHOUETTE ON A TRANSPARENT BACKGROUND: from Android"
+    print_warning "5.0 the status-bar icon is drawn as an ALPHA MASK, so a full-colour PNG"
+    print_warning "renders as a solid white square."
+else
+    print_success "notification icon installed at ${NOTIF_INSTALLED} densities (shared by all game modes)."
+fi
+
 print_status "Regenerating bg_logo watermark for $GAME_UPPER..."
 
 if [ ! -f "$LOGO_SVG" ]; then
