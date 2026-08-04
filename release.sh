@@ -407,14 +407,21 @@ if [ $BUILD_STATUS -eq 0 ]; then
         # built from the target 404s, and one built from the game would then
         # disagree with the target in the body. /api names neither.
         RELEASE_API="${RELEASE_API:-https://champion.matatuleague.com/api/app-builds}"
-        print_status "Registering ${TARGET} ${VERSION_NAME} (${VERSION_CODE}) with ${RELEASE_API}..."
+        print_status "Registering ${PACKAGE_NAME} ${VERSION_NAME} (${VERSION_CODE}) with ${RELEASE_API}..."
 
-        # TARGET, not GAME: matatu and matatu_nap are one game shipped as two
-        # binaries with independent versionCode sequences. Filing a nap build
-        # as "matatu" and later activating it would raise com.matatu.champ's
-        # floor to a number from nap's sequence.
-        REG_BODY=$(printf '{"target":"%s","build":%s,"versionName":"%s","notes":"%s"}' \
-            "$TARGET" "$VERSION_CODE" "$VERSION_NAME" \
+        # PACKAGE NAME, not game. matatu and matatu_nap are one game shipped
+        # as two binaries with independent versionCode sequences; filing a nap
+        # build as "matatu" and later activating it would raise
+        # com.matatu.champ's floor to a number from nap's sequence.
+        #
+        # The package is what the backend stores builds and floors under, and
+        # $PACKAGE_NAME is the same value this script just wrote into
+        # game.project — so what is registered is what was built, not a
+        # separate name that could be edited out of step with it. The target
+        # rides along as the readable handle.
+        REG_BODY=$(printf \
+            '{"packageName":"%s","target":"%s","build":%s,"versionName":"%s","notes":"%s"}' \
+            "$PACKAGE_NAME" "$TARGET" "$VERSION_CODE" "$VERSION_NAME" \
             "$(git rev-parse --short HEAD 2>/dev/null || echo 'no-git')")
 
         REG_CODE=$(curl -sS -o /tmp/app_build_reg.json -w '%{http_code}' \
