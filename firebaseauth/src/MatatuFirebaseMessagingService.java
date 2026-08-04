@@ -333,6 +333,37 @@ public class MatatuFirebaseMessagingService extends FirebaseMessagingService {
             );
             builder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Decline", declinePendingIntent);
 
+        } else if ("TEAM_TOURNAMENT_INVITE".equalsIgnoreCase(type)) {
+            // A CUP INVITE YOU CAN ACCEPT FROM THE BANNER.
+            //
+            // This type reached here and fell through every branch, so an
+            // invite arrived as a plain notification with no buttons: the
+            // player had to open the app, find the cup and accept it there.
+            //
+            // Deliberately a DIFFERENT action name from the game-request
+            // "accept" above. The two carry different ids — a pending game
+            // request there, a tournament here — and share one intent extra,
+            // so a single name would have the app accept whichever it guessed
+            // and fail at whatever it actually was.
+            builder.setCategory(NotificationCompat.CATEGORY_SOCIAL);
+
+            Intent joinIntent = (Intent) launchIntent.clone();
+            joinIntent.setAction("com.matatu.champ.ACTION_ACCEPT_CUP");
+            joinIntent.putExtra("push_action", "accept_cup");
+            // The cup travels with the button, exactly as the requestId does
+            // for a game request: without it the app knows Accept was pressed
+            // but not what was accepted.
+            if (data != null && data.containsKey("tournamentId")) {
+                joinIntent.putExtra("push_request_id", data.get("tournamentId"));
+            }
+            PendingIntent joinPendingIntent = PendingIntent.getActivity(
+                    context,
+                    notificationId + 1,
+                    joinIntent,
+                    pendingIntentFlags
+            );
+            builder.addAction(android.R.drawable.ic_media_play, "Accept", joinPendingIntent);
+
         } else if ("DAILY_BONUS_REMINDER".equalsIgnoreCase(type)) {
             builder.setCategory(NotificationCompat.CATEGORY_PROMO);
 

@@ -297,6 +297,42 @@ local function run_push_action(self, action, request_id)
         -- is the same dead end as not accepting at all.
         app_state.mode = "online"
         show(self, "online")
+    elseif action == "accept_cup" and request_id then
+        -- ACCEPTING A CUP INVITE STRAIGHT FROM THE NOTIFICATION.
+        --
+        -- request_id is the tournament here, not a game request — the two
+        -- share one intent extra and are told apart by the action name, which
+        -- is why this is "accept_cup" and not "accept".
+        --
+        -- Done over HTTP rather than the socket because that is what accepting
+        -- an invitation is: there is no pending request object on the server
+        -- to answer, only a cup to join. It still waits for identify (see
+        -- handle_push_action) because it needs the signed-in user id.
+        local uid = tostring((ws.current_user_data or {}).id
+            or (ws.current_user_data or {})._id or "")
+        if uid == "" then
+            auth_debug("push action: accept_cup with no signed-in user")
+            show(self, "online")
+            return
+        end
+        auth_debug("push action: accepting cup invite %s", tostring(request_id))
+        api.accept_team_invitation(request_id, uid, function(res)
+            if res and res.success then
+                pcall(function() require("modules.toast").success("Joined the cup.") end)
+            else
+                -- An invite can be withdrawn, the cup deleted or full, or the
+                -- entry fee unaffordable. Say which rather than opening on a
+                -- lobby that looks like nothing happened.
+                local why = (res and res.data and res.data.error)
+                    or (res and res.message) or "Could not join that cup."
+                pcall(function() require("modules.toast").error(tostring(why)) end)
+            end
+            -- Nothing to refresh by hand: acceptTeamInvitation calls
+            -- pushCupRailTo for the joiner and every existing member, so the
+            -- rail arrives down the socket on its own.
+        end)
+        app_state.mode = "online"
+        show(self, "online")
     elseif action == "claim_daily_bonus" then
         show(self, "online")
         pcall(msg.post, "#online", "open_daily_bonus")
@@ -316,8 +352,13 @@ local function handle_push_action(self)
     -- Held until the socket is up. accept_game_request queues onto a connection
     -- that does not exist yet at boot, and a queued accept that is never sent is
     -- an invite the player watched themselves accept and then expire.
-    if action == "accept" and not identify_ok then
-        auth_debug("push action: accept parked until the socket is up (%s)", tostring(request_id))
+    -- accept_cup is parked for the same reason as accept: it needs the
+    -- signed-in user id, which a cold start does not have yet. Accepting with
+    -- an empty id fails as "not invited" and looks exactly like a button that
+    -- does not work.
+    if (action == "accept" or action == "accept_cup") and not identify_ok then
+        auth_debug("push action: %s parked until the socket is up (%s)",
+            tostring(action), tostring(request_id))
         pending_push_action = { action = action, request_id = request_id }
         return
     end
