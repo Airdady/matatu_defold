@@ -277,6 +277,16 @@ local function draw_battle_modal(self, ctx)
     track(self, ui.text(vmath.vector3(CX, sub_y, 0), sub_label, "btn_lg", C_BTN_TEXT))
 end
 
+-- Used by format_redemption_date below, and ONLY by it now.
+--
+-- This sat between the team-bracket modal and this function, and went with the
+-- modal when that was removed — it was inside the cut, not part of it. The
+-- savings dialogue then drew nothing: format_redemption_date indexes
+-- MONTH_NAMES, indexing a nil value throws, and the error takes out the rest
+-- of the modal's content with it.
+local MONTH_NAMES = {"January","February","March","April","May","June","July",
+    "August","September","October","November","December"}
+
 local function format_redemption_date(iso)
     local y, m, d = tostring(iso or ""):match("(%d+)-(%d+)-(%d+)")
     if not y then return "" end

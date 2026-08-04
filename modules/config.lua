@@ -125,11 +125,15 @@ local STAKE_LEVELS_BY_GAME = {
     { amount = 2000, charge = 100, points = 100, label = "2000" },
   },
   WHOT = {
+    -- 50 / 100 / 200 / 500, and nothing else. 800 is retired and 100 added.
+    -- Keep in lockstep with STAKE_LEVELS_BY_GAME.whot on the backend: a stake
+    -- offered here that settlement does not know about is refused the moment
+    -- a player picks it.
     { amount = 0, charge = 0, points = 0, label = "Free" },
     { amount = 50, charge = 10, points = 10, label = "50" },
+    { amount = 100, charge = 10, points = 10, label = "100" },
     { amount = 200, charge = 10, points = 10, label = "200" },
     { amount = 500, charge = 20, points = 20, label = "500" },
-    { amount = 800, charge = 40, points = 40, label = "800" },
   },
   KADI = {
     { amount = 0, charge = 0, points = 0, label = "Free" },

@@ -98,6 +98,40 @@ check_true("the label is positioned from the icon size",
     right:find("icon_x %+ T_ICON / 2 %+ 12") ~= nil,
     "a fixed offset leaves a hole when the icon shrinks")
 
+-- ── what the cut must NOT have taken with it ───────────────────────────────
+--
+-- Removing the bracket modal also removed MONTH_NAMES, which sat between it
+-- and format_redemption_date and belonged to the SAVINGS dialogue. Indexing a
+-- nil value throws, and the error took out the rest of that modal's content —
+-- reported as the savings dialogue no longer showing its text.
+--
+-- Checked as a general property rather than as one name: every module-level
+-- constant a surviving function reads must still be defined.
+print("")
+print("the cut left the savings dialogue intact")
+
+check_true("MONTH_NAMES is defined", right:find("local MONTH_NAMES") ~= nil,
+    "format_redemption_date indexes it; without it the modal throws mid-draw")
+check_true("and defined BEFORE the function that reads it",
+    (right:find("local MONTH_NAMES") or math.huge)
+        < (right:find("local function format_redemption_date") or 0),
+    "a local declared after its reader is nil to it")
+check_true("the savings modals are still drawn",
+    right_code:find("draw_savings_info%(self, ctx%)") ~= nil
+        and right_code:find("draw_savings_plans%(self, ctx%)") ~= nil
+        and right_code:find("draw_savings_add%(self, ctx%)") ~= nil,
+    "the savings dialogue must survive the team-row removal")
+
+-- The sweep: any ALL-CAPS table indexed in this file must have a definition.
+local defined = {}
+for n in right:gmatch("local%s+([%w_]+)%s*=") do defined[n] = true end
+local orphans = {}
+for n in right_code:gmatch("[^%w_%.]([A-Z][A-Z0-9_]+)%s*%[") do
+    if not defined[n] then orphans[#orphans + 1] = n end
+end
+check_true("no constant is read that nothing defines",
+    #orphans == 0, table.concat(orphans, ", "))
+
 print("")
 if failures > 0 then
     print(string.format("%d FAILED", failures))
