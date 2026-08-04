@@ -110,16 +110,36 @@ check_true("settings are validated before leaving step 1",
 check_true("and submit still validates everything",
     src:find("local err = validate%(self%)") ~= nil,
     "per-step checks must not become the only checks")
-check_true("submit only exists on step 2",
-    src:find('btn%(self, "submit", CX %+ 80') ~= nil,
-    "a create button on step 1 would skip the invite step entirely")
+-- Checked STRUCTURALLY, not by pinning coordinates: the buttons have since
+-- moved to the screen edges, and an assertion naming their x would fail on a
+-- purely cosmetic change while still passing if submit leaked onto step 1.
+local footer = src:sub(src:find("%-%- ── FOOTER") or 1)
+local f_if     = footer:find("if step == 1 then")
+local f_else   = footer:find("\n    else\n", f_if or 1)
+local f_next   = footer:find('btn%(self, "step_next"')
+local f_submit = footer:find('btn%(self, "submit"')
 
--- The bug was a later-drawn node covering an earlier one, so the two must
--- never be on screen together again.
-check_true("NEXT and submit are never both drawn",
-    src:find('if step == 1 then\n        %-%-') ~= nil
-        or src:find('btn%(self, "step_next".-else.-btn%(self, "submit"') ~= nil,
-    "they must be in opposite branches")
+check_true("NEXT is on step 1",
+    f_if and f_next and f_next > f_if and (not f_else or f_next < f_else),
+    "NEXT must be in the step-1 branch")
+check_true("submit only exists on step 2",
+    f_else and f_submit and f_submit > f_else,
+    "a create button on step 1 would skip the invite step entirely")
+check_true("so NEXT and submit are never both drawn",
+    f_next and f_submit and f_else and f_next < f_else and f_submit > f_else,
+    "the original bug was a later-drawn node covering an earlier one")
+
+print("")
+print("the invite step puts its buttons at the edges")
+check_true("BACK is anchored to the left edge",
+    footer:find('btn%(self, "step_back", EDGE_L %+ 24 %+ back_w / 2') ~= nil,
+    "asked for BACK on the extreme left")
+check_true("and submit to the right edge",
+    footer:find('btn%(self, "submit", EDGE_R %- 24 %- sub_w / 2') ~= nil,
+    "asked for submit on the extreme right")
+check_true("they cannot overlap, whatever the screen width",
+    footer:find("local back_w, sub_w = 150, 320") ~= nil,
+    "widths must be known to place both from their own edges")
 
 -- ── entering straight at the invite step ───────────────────────────────────
 print("")

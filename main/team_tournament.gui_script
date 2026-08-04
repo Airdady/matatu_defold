@@ -268,7 +268,28 @@ end
 ----------------------------------------------------------------------
 -- draw
 ----------------------------------------------------------------------
+
+-- ONE REBUILD PER FRAME, NOT ONE PER KEYSTROKE.
+--
+-- rebuild() deletes every node on the screen and builds it again — well over a
+-- hundred of them for this form. It was called straight from the text handler,
+-- so holding backspace or typing at any speed rebuilt the entire form per
+-- CHARACTER, which is what made the field feel like it was lagging behind the
+-- keyboard.
+--
+-- Marking instead of drawing collapses a burst into a single rebuild in
+-- update(). Taps in the same frame are unaffected: the old nodes have not been
+-- deleted yet, so self.buttons still picks correctly.
+--
+-- Structural changes (entering the screen, a layout change, changing step)
+-- still call rebuild directly — those must be on screen before the next input
+-- is read, and they do not repeat.
+local function mark_dirty(self)
+    self._dirty = true
+end
+
 local function rebuild(self)
+    self._dirty = false
     clear(self)
     if not self._active then return end
     local f = self.form
@@ -550,8 +571,15 @@ local function rebuild(self)
         local lbl
         if f.submitting then lbl = editing and "SAVING..." or "CREATING..."
         else lbl = editing and "SAVE CHANGES" or "CREATE TOURNAMENT" end
-        btn(self, "step_back", EDGE_L + 92, foot_y, 150, 56, "BACK", "secondary", nil, not f.submitting)
-        btn(self, "submit", CX + 80, foot_y, 320, 56, lbl, "primary", nil, not f.submitting)
+        -- Pinned to the edges rather than clustered in the middle: BACK on the
+        -- far left, the commit on the far right, so the destructive-ish and
+        -- committing actions are as far apart as the screen allows and neither
+        -- is where a thumb lands by accident on the way to the other.
+        local back_w, sub_w = 150, 320
+        btn(self, "step_back", EDGE_L + 24 + back_w / 2, foot_y, back_w, 56,
+            "BACK", "secondary", nil, not f.submitting)
+        btn(self, "submit", EDGE_R - 24 - sub_w / 2, foot_y, sub_w, 56,
+            lbl, "primary", nil, not f.submitting)
     end
 end
 
@@ -641,14 +669,42 @@ local function validate_settings(self)
         if f.prize <= 0 then return "A grand prize amount is required." end
         if f.prize > balance() then return "Insufficient balance for that grand prize." end
     end
-    if f.code ~= "" and (#f.code < CODE_MIN or #f.code > CODE_MAX) then
-        return string.format("Invite code must be %d-%d letters/numbers.", CODE_MIN, CODE_MAX)
+    if f.code ~= "" then
+        if #f.code < CODE_MIN or #f.code > CODE_MAX then
+            return string.format("Invite code must be %d-%d letters/numbers.", CODE_MIN, CODE_MAX)
+        end
+        -- The label has always promised "letters/numbers" and nothing enforced
+        -- it. A code with a space or a slash in it is one the server may
+        -- reject, or one that breaks the moment it is put in a URL or read out
+        -- loud — and the owner finds out only after the cup is created.
+        if f.code:match("[^%w]") then
+            return "Invite code can only contain letters and numbers."
+        end
     end
     if f.max_players < MIN_PLAYERS or f.max_players > MAX_PLAYERS then
         return string.format("Players must be between %d and %d.", MIN_PLAYERS, MAX_PLAYERS)
     end
-    if f.fee_on and f.fee <= 0 then
-        return "Set an entry fee amount, or untick it for a free cup."
+    if f.fee_on then
+        if f.fee <= 0 then
+            return "Set an entry fee amount, or untick it for a free cup."
+        end
+        if f.fee > FEE_MAX then
+            return "That entry fee is too large."
+        end
+        -- A fee nobody sane would pay makes a cup nobody joins. Compared with
+        -- the prize because that is what a player is paying FOR: staking more
+        -- than the whole pot is worth cannot be what was meant.
+        if not f.edit_id and f.prize > 0 and f.fee > f.prize then
+            return "Entry fee is more than the whole prize — lower it, or raise the prize."
+        end
+    end
+    -- The bracket needs somewhere for everyone to go. maxPlayers below the
+    -- people already on it is a cup that cannot be saved, and the server would
+    -- refuse it after the trip.
+    local already = #f.existing + #f.invites + (f.owner_plays and 1 or 0)
+    if already > f.max_players then
+        return string.format("%d players are already in — raise the max above %d.",
+            already, f.max_players)
     end
     return nil
 end
@@ -813,6 +869,9 @@ end
 function update(self, dt)
     if not self._active then return end
     local f = self.form
+    -- Coalesced redraw. Everything that only changes what the form SAYS marks
+    -- it dirty; this is the single place that acts on that.
+    if self._dirty then rebuild(self) end
     if f.suggest_t then
         f.suggest_t = f.suggest_t - dt
         if f.suggest_t <= 0 then
@@ -897,11 +956,13 @@ function on_input(self, action_id, action)
     -- Device keyboard events.
     if action_id == hash("text") then
         push_text(self, action.text)
-        rebuild(self)
+        mark_dirty(self)
         return true
     elseif action_id == hash("backspace") and (action.pressed or action.repeated) then
+        -- `repeated` is the one that matters here: a held backspace fires every
+        -- frame, and each one used to rebuild the whole form.
         pop_char(self)
-        rebuild(self)
+        mark_dirty(self)
         return true
     elseif action_id == hash("enter") and action.pressed then
         -- ENTER commits and DISMISSES. It used to add the invite and leave the
@@ -932,13 +993,13 @@ function on_input(self, action_id, action)
                 if b.data ~= F_INVITE then f.suggestions = {} end
                 rebuild(self)
             elseif b.id == "prize_minus" then
-                f.prize = math.max(0, f.prize - PRIZE_STEP); rebuild(self)
+                f.prize = math.max(0, f.prize - PRIZE_STEP); mark_dirty(self)
             elseif b.id == "prize_plus" then
-                f.prize = f.prize + PRIZE_STEP; rebuild(self)
+                f.prize = f.prize + PRIZE_STEP; mark_dirty(self)
             elseif b.id == "players_minus" then
-                f.max_players = math.max(MIN_PLAYERS, f.max_players - 1); rebuild(self)
+                f.max_players = math.max(MIN_PLAYERS, f.max_players - 1); mark_dirty(self)
             elseif b.id == "players_plus" then
-                f.max_players = math.min(MAX_PLAYERS, f.max_players + 1); rebuild(self)
+                f.max_players = math.min(MAX_PLAYERS, f.max_players + 1); mark_dirty(self)
             elseif b.id == "step_next" then
                 -- Checked before moving on, not at submit: an error about the
                 -- prize is no use on a screen with no prize field.
@@ -959,6 +1020,16 @@ function on_input(self, action_id, action)
                 rebuild(self)
                 return
             elseif b.id == "fee_toggle" then
+                -- THE REDRAW IS NOT OPTIONAL.
+                --
+                -- These three handlers changed f.fee_on / f.fee and then fell
+                -- straight to `return true` without asking for a redraw —
+                -- every neighbouring handler does, and these did not. The
+                -- value moved in memory and the screen never followed, so the
+                -- box stayed unticked and the amount never changed no matter
+                -- how many times it was tapped. That is the whole of "the
+                -- entry fee looks disabled": it was drawn, it was hittable,
+                -- and it repainted nothing.
                 if not f.fee_locked then
                     f.fee_on = not f.fee_on
                     -- Ticking it on with nothing set opens at one step rather
@@ -966,20 +1037,24 @@ function on_input(self, action_id, action)
                     -- the tick having done nothing.
                     if f.fee_on and f.fee <= 0 then f.fee = FEE_STEP end
                     if not f.fee_on then f.fee = 0 end
+                    set_msg(self, nil, false)
                 end
+                mark_dirty(self)
             elseif b.id == "fee_minus" then
                 if not f.fee_locked then
                     f.fee = math.max(0, f.fee - FEE_STEP)
                 end
+                mark_dirty(self)
             elseif b.id == "fee_plus" then
                 if not f.fee_locked then
                     f.fee = math.min(FEE_MAX, f.fee + FEE_STEP)
                 end
+                mark_dirty(self)
             elseif b.id == "owner_plays" then
                 if not f.locked then f.owner_plays = not f.owner_plays end
-                rebuild(self)
+                mark_dirty(self)
             elseif b.id == "gpl" then
-                f.gpl_i = b.data; rebuild(self)
+                f.gpl_i = b.data; mark_dirty(self)
             elseif b.id == "suggest_pick" then
                 f.invite_buf = tostring(b.data)
                 add_invite(self)
@@ -989,7 +1064,7 @@ function on_input(self, action_id, action)
                 close_keyboard(self)
                 rebuild(self)
             elseif b.id == "invite_del" then
-                table.remove(f.invites, b.data); rebuild(self)
+                table.remove(f.invites, b.data); mark_dirty(self)
             elseif b.id == "invite_revoke" then
                 -- An invitation the server already holds: withdraw it there,
                 -- and only drop the row once that succeeded.
