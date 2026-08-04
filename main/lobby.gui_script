@@ -83,13 +83,15 @@ local function suggested_levels(max_players)
     return lv
 end
 
--- Percent-encodes a string for a wa.me ?text= query value.
+-- Percent-encodes a string for a mailto: subject or body.
 --
--- Newlines are encoded as a bare LF (%0A), NOT the CRLF a mailto: body wants:
--- WhatsApp renders the stray CR as a visible box on some clients, so the
--- diagnostic block below would arrive speckled with junk characters.
+-- Newlines are normalised to CRLF, which is what RFC 6068 says a mailto body
+-- is. The previous version deliberately stripped the CR, because it was
+-- feeding WhatsApp and some clients drew the stray CR as a visible box; mail
+-- clients want the opposite, and a bare LF is what makes a diagnostic block
+-- arrive as one run-on line in some of them.
 local function url_encode(str)
-    str = tostring(str or ""):gsub("\r\n", "\n")
+    str = tostring(str or ""):gsub("\r\n", "\n"):gsub("\n", "\r\n")
     str = str:gsub("([^%w%-%_%.%~])", function(c)
         return string.format("%%%02X", string.byte(c))
     end)
@@ -572,19 +574,29 @@ local function handle(self, b)
         local uname = (me.username and me.username ~= "") and me.username or "Not set"
         local phone = (me.phoneNumber and me.phoneNumber ~= "") and me.phoneNumber or "Not set"
         local acct  = (me._id and me._id ~= "") and me._id or "Unknown"
-        -- Same diagnostic block the email carried — support still needs to
-        -- know who is writing, and asking a player to find their account id
-        -- by hand is asking them not to bother.
-        local text = GameMode.BRAND .. " Support\n\nPlease describe your issue below:\n\n\n---\nUsername: "
+        -- The diagnostic block, kept whatever the channel is: support needs to
+        -- know who is writing, and asking a player to find their own account
+        -- id by hand is asking them not to bother.
+        local subject = GameMode.BRAND .. " Support"
+        local body = "Please describe your issue below:\n\n\n---\nUsername: "
             .. uname
             .. "\nPhone: " .. phone
             .. "\nAccount ID: " .. acct
             .. "\nApp: " .. tostring(config.APP_VERSION)
             .. " (" .. tostring(config.APP_BUILD or 0) .. ")"
-        -- wa.me opens WhatsApp if installed and the web client otherwise, so
-        -- this works on a device with no mail client — which the mailto: link
-        -- it replaces did not.
-        sys.open_url("https://wa.me/" .. config.SUPPORT_WHATSAPP .. "?text=" .. url_encode(text))
+        -- EMAIL, EXCLUSIVELY — support has moved off WhatsApp.
+        --
+        -- A mailto: opens nothing at all on a phone with no mail client
+        -- configured, and that is not rare here; it is the reason this was
+        -- WhatsApp before. So the address is ALSO shown on screen. The tile is
+        -- a small labelled button with nowhere to print it, so it goes in a
+        -- toast — which costs nothing when the link works and is the whole
+        -- difference between "support is unreachable" and "write to this
+        -- address" when it does not.
+        toast.info("Support: " .. config.SUPPORT_EMAIL_DISPLAY)
+        sys.open_url("mailto:" .. config.SUPPORT_EMAIL
+            .. "?subject=" .. url_encode(subject)
+            .. "&body=" .. url_encode(body))
     end); return
     elseif b.id == "theme_open" then msg.post("#controller", "goto_themes"); return end
 

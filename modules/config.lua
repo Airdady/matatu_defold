@@ -64,16 +64,19 @@ end
 -- ---------------------------------------------------------------------------
 -- SUPPORT CONTACT
 -- ---------------------------------------------------------------------------
--- WhatsApp, not email. Players here reach support on WhatsApp; a mailto: link
--- opens whatever mail client the device has configured, which on a lot of
--- these phones is none at all — the tap did nothing and the player concluded
--- there was no way to reach anyone.
+-- EMAIL, EXCLUSIVELY. Support has moved off WhatsApp.
 --
--- DIGITS ONLY, with the country code and no leading '+': that is the format
--- wa.me requires. A '+' or a space in the path silently 404s the link.
-M.SUPPORT_WHATSAPP = "256700372678"
--- How the same number is shown to a human.
-M.SUPPORT_WHATSAPP_DISPLAY = "+256 700 372 678"
+-- The note this replaces argued for WhatsApp on the grounds that a mailto:
+-- link does nothing on a phone with no mail client configured. That is still
+-- true and is the one thing to keep in mind here, so the address is shown as
+-- TEXT beside the button as well as being linked: a player whose phone cannot
+-- open the link can still read where to write and use webmail. A link that
+-- silently does nothing, with nothing else on screen, is what leaves somebody
+-- concluding there is no way to reach anyone.
+M.SUPPORT_EMAIL = "matatu.league@gmail.com"
+-- The same address as it is shown to a human. Separate constant because the
+-- displayed form is free to differ from the one in the mailto: URL.
+M.SUPPORT_EMAIL_DISPLAY = "matatu.league@gmail.com"
 
 M.GAME_STATE_SECRET = "a27a120adfbc9f727c187748fff44547e1ee72f09481c8a965d62ed1c02e6ea3"
 
