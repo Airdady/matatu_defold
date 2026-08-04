@@ -159,10 +159,17 @@ function M.after_play_settled(self, rec, is_player, result, ticket)
             else
                 self.is_suit_selection_active = true
                 RE.pre_validate_hand(self)
-                timer.delay(0.05, false, function() 
+                timer.delay(0.05, false, function()
                     local cx = self.CENTER and self.CENTER.x or 640
                     local dx = self.DECK_POS and self.DECK_POS.x or 1150
                     local mid_x = cx + (dx - cx) / 2
+                    -- Re-asserted HERE, at the moment the picker actually
+                    -- appears, not only when it was queued. A close arriving
+                    -- inside this 0.05s window now clears the flag (see
+                    -- suit_select.gui_script), and without this that clear
+                    -- would win and leave a picker on screen that the game
+                    -- thinks is not there.
+                    self.is_suit_selection_active = true
                     notify_gui(self.gui_suit, "suit_select", { mode = "open", x = mid_x })
                     tut("on_suit_opened")
                 end)

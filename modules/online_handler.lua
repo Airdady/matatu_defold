@@ -67,6 +67,14 @@ end
 
 function M.end_turn(self)
     if not self.online_mode then return end
+    -- The round is decided; there is no turn left to end. ws.send_move refuses
+    -- this too, but stopping here also keeps the local turn bookkeeping below
+    -- (waiting, last_local_play, the cleared action list) from running on a
+    -- game that has finished.
+    if self.game_over then
+        print("[ONLINE] end_turn ignored: the game is over")
+        return
+    end
 
     local actions_to_send = {}
     local last_card = nil

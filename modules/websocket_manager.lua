@@ -159,6 +159,30 @@ function M.send_message(msg_type, data)
 end
 
 function M.send_move(game_id, from_id, to_id, actions, new_suit, active_penalty_count)
+  -- NO MOVE SURVIVES THE END OF ITS GAME.
+  --
+  -- Every move leaves the client through here, which makes this the one place
+  -- the rule can actually be enforced. Up to now it was enforced at the input
+  -- layer instead — on_input refuses taps once game_over is set — and that
+  -- only covers moves the player starts by tapping. A move already staged when
+  -- the result arrived, an AFK auto-play, a queued action draining after the
+  -- fact and a retry all reach this function without going near on_input.
+  --
+  -- active_game_id is the authority: it is set from the game state the server
+  -- pushes and cleared the moment GAME_OVER lands, so an empty one means there
+  -- is no game to move in. A move naming a DIFFERENT game is refused too —
+  -- that is a move from the round that just finished arriving after the next
+  -- one has already started, which would otherwise be applied to the new game.
+  if M.active_game_id == "" then
+    print("[WS] MOVE dropped: the game is over")
+    return false
+  end
+  if game_id and tostring(game_id) ~= "" and tostring(game_id) ~= tostring(M.active_game_id) then
+    print(string.format("[WS] MOVE dropped: for game %s, but the live game is %s",
+      tostring(game_id), tostring(M.active_game_id)))
+    return false
+  end
+
   local move_data = { gameId = game_id, from = from_id, to = to_id, cards = actions }
   if new_suit and new_suit ~= "" then
     move_data.newSuit = new_suit

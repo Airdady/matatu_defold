@@ -1027,6 +1027,21 @@ function on_message(self, message_id, message, sender)
         local snd_name = message.sound or message[hash("sound")]
         if snd_name then self.play_sound(snd_name) end
 
+    elseif message_id == hash("suit_select_closed") then
+        -- The picker is off screen, so nothing is waiting on a suit choice.
+        -- Reported as: after the opponent plays a penalty the player can
+        -- neither play a card nor draw one. A Matatu Joker is both a penalty
+        -- and a wildcard, and every opponent PLAY posts a close to this
+        -- overlay — so a close landing while the player's own picker was up
+        -- left is_suit_selection_active set forever, with on_input swallowing
+        -- every tap on both the hand and the deck and the stuck-lock watchdog
+        -- skipping itself because a suit selection was "active".
+        if self.is_suit_selection_active then
+            print("[DEBUG] Suit picker closed without a selection - releasing input")
+            self.is_suit_selection_active = false
+            RE.pre_validate_hand(self)
+        end
+
     elseif message_id == hash("suit_selected") then
         self.chosen_suit = message.suit
         self.play_sound("SoundRequestSuit")

@@ -265,6 +265,25 @@ function on_message(self, message_id, message)
                     gui.set_enabled(self.ss_overlay, false)
                 end)
             end
+
+            -- TELL THE GAME THE PICKER IS GONE.
+            --
+            -- game.script's is_suit_selection_active is set in exactly one
+            -- place (the player played a wildcard) and was cleared in exactly
+            -- one place (the player picked a suit) — but this overlay is
+            -- closed from fifteen, and none of them are a selection. Any of
+            -- them left the flag set with no picker on screen, and that flag
+            -- makes on_input swallow every tap on a card AND on the deck: the
+            -- player can neither play nor draw. It also disables the
+            -- stuck-lock watchdog, which skips itself while a suit selection
+            -- is "active", so nothing recovered it either. Permanent freeze.
+            --
+            -- Posted whether or not the overlay was enabled: a close can
+            -- arrive in the 0.05s between the flag being set and the picker
+            -- actually opening, and that case is exactly the one that stranded
+            -- it. The open re-asserts the flag when it fires, so the ordering
+            -- comes out right either way.
+            msg.post("/controller#game_logic", "suit_select_closed")
         end
         
     elseif message_id == hash("reset_hud") then
