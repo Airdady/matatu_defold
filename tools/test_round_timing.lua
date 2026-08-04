@@ -261,6 +261,34 @@ else
         "forward declaration missing")
 end
 
+-- ── nothing sits in front of the flip ──────────────────────────────────────
+--
+-- Asked directly: "is there a delay in flipping cards, if so remove it".
+-- There were two, stacked, and neither was doing anything for the animation:
+--
+--   process_game_over_queue   timer.delay(0.5) before end_game even ran, to
+--                             let the scoreboard flip "visibly start"
+--   flip_ai_hand              +0.5s lead-in on the per-card stagger
+--
+-- Plus the game-over watchdog's own settle ahead of both. So the reveal did
+-- not begin for about a second after the round was decided — a long time on a
+-- dead board, and long enough for the next round to arrive first.
+print("")
+print("the flip starts as soon as the round is decided")
+
+check_true("no lead-in on the card stagger",
+    src:find("timer%.delay%(%(i %- 1%) %* 0%.03, false, function%(%)") ~= nil,
+    "flip_ai_hand should stagger only, with no + constant")
+check_true("and the stagger itself is intact",
+    src:find("%(i %- 1%) %* 0%.03") ~= nil,
+    "the sweep across the hand is what the stagger is for")
+check_true("end_game is not held behind a beat either",
+    gsrc:find("timer%.delay%(0%.5, false, function%(%)") == nil,
+    "process_game_over_queue should call end_game directly")
+check_true("end_game is still actually called",
+    gsrc:find("self%.end_game%(%(results%.winner == self%.my_player_id%)") ~= nil,
+    "removing the delay must not remove the call")
+
 print("")
 if failures > 0 then
     print(string.format("%d FAILED", failures))

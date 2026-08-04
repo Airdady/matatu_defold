@@ -1169,7 +1169,13 @@ function M.end_game(self, player_won, is_cut, backend_results)
 
         for i, c in ipairs(self.ai_hand) do
             local cc = c
-            timer.delay((i - 1) * 0.03 + 0.5, false, function()
+            -- Stagger only. The +0.5s lead-in that used to sit here delayed
+            -- the FIRST card of the reveal by half a second on top of
+            -- everything already waited out to get here, for no reason the
+            -- animation needs — the stagger alone is what makes it read as a
+            -- sweep across the hand. The flip is the first thing that should
+            -- happen when a round ends, so it starts immediately.
+            timer.delay((i - 1) * 0.03, false, function()
                 if not pcall(go.get_position, cc.id) then
                     flipped = flipped + 1; if flipped == total then on_complete() end
                     return

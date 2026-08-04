@@ -281,18 +281,18 @@ local function process_game_over_queue(self, results)
         self._final_state_locked = false
     end
     
-    -- Step 2: Brief beat for the scoreboard flip to visibly start BEFORE
-    -- flipping cards / round transitions (was 1.2s — trimmed so game over
-    -- reads as instant; the card-reveal flip is the only intentional wait).
+    -- Step 2: flip, straight away.
+    --
+    -- There was another half-second here, to let the scoreboard flip "visibly
+    -- start" before the cards. Stacked on flip_ai_hand's own +0.5s lead-in and
+    -- the watchdog's settle, the reveal did not begin for about a second after
+    -- the round was decided — which is a long time to sit on a dead board, and
+    -- long enough for the next round to arrive first. The scoreboard flip
+    -- above animates on its own; it does not need the cards held back for it.
     local is_cut = results.isCut or (results.reason == "CUTTING_CARD")
 
-    timer.delay(0.5, false, function()
-        -- Start Step 3: Flip cards and display round transitions cleanly
-        self.end_game((results.winner == self.my_player_id), is_cut, results)
-        
-        -- Release lock
-        self._is_processing_game_over = false
-    end)
+    self.end_game((results.winner == self.my_player_id), is_cut, results)
+    self._is_processing_game_over = false
 end
 
 -- Forward declaration. start_new_online_game is defined a few hundred lines
