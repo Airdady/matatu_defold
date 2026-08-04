@@ -533,13 +533,24 @@ handle_device_result = function(self, result)
         clear_session()
         pcall(api.clear_session)
         app_state.auth_state = "idle"
-        app_state.blocked_reason = tostring(data.reason or result.message or "")
-        if app_state.blocked_reason == "" then
-            app_state.blocked_reason = "This account has been suspended."
-        end
-        app_state.auth_error = app_state.blocked_reason
+        -- "APP OFFLINE", NOT "YOU ARE BLOCKED".
+        --
+        -- The player keeps the app: the lobby, their cards, offline play, all
+        -- of it. What they cannot do is play ONLINE, and that is what the
+        -- message describes — a state of the app, not a verdict on the person.
+        --
+        -- The server's actual reason is deliberately NOT shown. It is written
+        -- for staff ("Violation of Terms of Service") and reads as an
+        -- accusation on a phone; it is still in the logs and the admin tools,
+        -- where it belongs.
+        app_state.blocked_reason = "App Offline"
+        app_state.app_offline = true
+        app_state.auth_error = ""
         msg.post("#lobby", "auth_state_changed")
-        show(self, "auth")
+        -- The lobby, not the sign-in screen: there is nothing to sign in with
+        -- and nothing they can do there. Everything that works without the
+        -- server still works.
+        show(self, "lobby")
         return
     end
 
@@ -863,18 +874,32 @@ function init(self)
     -- person rather than the credential they happen to be using.
     table.insert(self.tokens, ws.on("account_blocked", function(info)
         local reason = (type(info) == "table" and tostring(info.reason or "")) or ""
-        auth_debug("account blocked - clearing local data and signing out (%s)", reason)
+        -- Logged with the real reason, shown without it. See the note on the
+        -- device path above: the wording the server carries is written for
+        -- staff and reads as an accusation on a phone.
+        auth_debug("account blocked - going offline (%s)", reason)
         clear_session()
         pcall(api.clear_session)
-        app_state.blocked_reason = (reason ~= "" and reason)
-            or "This account has been suspended."
+        app_state.blocked_reason = "App Offline"
+        app_state.app_offline = true
+        -- Not an error toast, and not routed to the sign-in screen. The player
+        -- keeps the app and everything in it that does not need the server;
+        -- online play is what is unavailable, and the lobby now says so on the
+        -- PLAY NOW tile itself rather than throwing them out to a login page
+        -- they cannot get past.
         pcall(function()
-            require("modules.toast").error(app_state.blocked_reason)
+            require("modules.toast").info("App Offline - online play is unavailable")
         end)
-        show(self, "auth")
+        msg.post("#lobby", "auth_state_changed")
+        show(self, "lobby")
     end))
 
     table.insert(self.tokens, ws.on("identify_success", function()
+        -- Accepted, so whatever put the app offline no longer applies. Cleared
+        -- here and only here: the flag is terminal until the server itself
+        -- says otherwise, which this IS.
+        app_state.app_offline = false
+        app_state.blocked_reason = nil
         self._identify_recoveries = 0
         -- The only signal that means CONNECTED. Everything earlier — a token,
         -- a user payload, a socket that opened — can still be followed by a

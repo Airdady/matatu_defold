@@ -43,9 +43,20 @@ end
 --- What the tile should be showing.
 ---
 --- facts: is_identified, reconnect_exhausted, has_cached_user, auth_state
---- returns one of: "ready" | "offline" | "verifying" | "signing_in" | "error"
+--- returns one of: "ready" | "app_offline" | "offline" | "verifying" | "signing_in" | "error"
 function M.tile_state(f)
     f = f or {}
+
+    -- 0. APP OFFLINE. Terminal, so it speaks before anything else.
+    --
+    -- This is the account the server will not accept. Deliberately its own
+    -- state and not "offline": that one renders RETRY, and a retry here can
+    -- never succeed — it would be a button that invites the player to keep
+    -- asking a question already answered.
+    --
+    -- Named for what the player experiences rather than for what the server
+    -- decided. The app still works; the online half of it does not.
+    if f.app_offline then return "app_offline" end
 
     -- 1. THE ONE THAT WAS MISSING. Accepted by the server: nothing else can
     --    make that untrue, so nothing else gets to speak first.

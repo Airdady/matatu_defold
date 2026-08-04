@@ -229,6 +229,7 @@ local function rebuild(self)
         reconnect_exhausted = ws.reconnect_exhausted == true,
         has_cached_user     = has_cached_user,
         auth_state          = app_state.auth_state,
+        app_offline         = app_state.app_offline == true,
     })
 
     -- SIGNING IN IS A BACKGROUND ACTIVITY, AND THE TILE SHOULD LOOK LIKE IT.
@@ -255,7 +256,17 @@ local function rebuild(self)
     local cta_text = "PLAY NOW"
     local sub_text = "Real players • Live coin stakes"
 
-    if is_exhausted then
+    if st == "app_offline" then
+        -- No RETRY here. The server has already answered, and a button that
+        -- invites the player to ask again is a button that lies to them.
+        --
+        -- The tile stays where it is and keeps its place in the lobby, so
+        -- nothing about the app looks broken or missing — it simply says that
+        -- the online half is unavailable, which is what is true from where the
+        -- player is sitting.
+        cta_text = "APP OFFLINE"
+        sub_text = "Online play unavailable • Everything else still works"
+    elseif is_exhausted then
         cta_text = "RETRY"
         sub_text = "Offline • Tap to reconnect"
     elseif connecting then
