@@ -194,6 +194,73 @@ check_true("the stuck-transition watchdog still sits clear of the sequence",
     watchdog and watchdog > RS.TOTAL + 2.0,
     "watchdog=" .. tostring(watchdog) .. " total=" .. tostring(RS.TOTAL))
 
+-- ── the next round is not built during the transition ──────────────────────
+--
+-- The reported symptom: "it initializes the new game, THEN does the flipping
+-- and counting". The server now pushes the next round the instant the last one
+-- is decided, so it arrives mid-reveal as a matter of course — and the only
+-- gate was round_story_active, which is not set until final_resolution, i.e.
+-- after the flip and the count have already run. So the state sailed through
+-- and rebuilt the board underneath the reveal. On the way past, it also
+-- cleared pending_game_over_data, so for that round the flip and count never
+-- ran at all.
+print("")
+print("the next round is parked until the transition has finished")
+
+local function ghas(pat) return gsrc:find(pat) ~= nil end
+
+check_true("the transition is flagged the moment the server says the round ended",
+    gsrc:match("ws_game_over.-round_transition_busy = true") ~= nil,
+    "must start at ws_game_over, not at end_game")
+check_true("and the gate covers it, not just the banner",
+    ghas("if self%.round_story_active or self%.round_transition_busy then"),
+    "round_story_active alone begins after the flip and the count")
+check_true("the parked state is kept, not dropped",
+    ghas("self%._pending_next_state = state"), "park")
+check_true("finish_round_transition is what clears the flag",
+    src:find("self%.round_transition_busy = false") ~= nil
+        and src:find("round_transition_finished") ~= nil,
+    "game_flow must release it when the round has finished ending")
+check_true("and the script builds the parked round on that signal",
+    ghas('message_id == hash%("round_transition_finished"%)'), "handler")
+check_true("but not while the banner is still up",
+    gsrc:match('round_transition_finished".-if not self%.round_story_active then') ~= nil,
+    "whichever of the two finishes last should do the build")
+
+-- Holding a round back is only safe if something always lets it go.
+check_true("a parked round always has a way out",
+    ghas("_pending_next_deadline") and ghas("watchdog released a parked next round"),
+    "otherwise a transition that never reports finishing strands the round")
+
+local park_deadline = tonumber(gsrc:match("_pending_next_deadline = socket%.gettime%(%) %+ ([%d%.]+)"))
+check_true("and that backstop sits behind every normal path",
+    park_deadline and watchdog and park_deadline > watchdog and park_deadline > RS.TOTAL,
+    "park=" .. tostring(park_deadline) .. " story_watchdog=" .. tostring(watchdog))
+
+-- The watchdogs call start_new_online_game from update(), which sits ABOVE its
+-- definition. Without a forward declaration that call compiles to a global
+-- lookup that is always nil, so the net threw instead of firing. Checked by
+-- compiling, because it is invisible by reading.
+print("")
+print("the watchdogs can actually call what they call")
+
+local compiled = io.popen("luac -l -l -p -- '"
+    .. (debug.getinfo(1, "S").source:match("@(.*/)") or "./")
+    .. "../main/game.script' 2>/dev/null")
+local dump = compiled and compiled:read("*a") or ""
+if compiled then compiled:close() end
+
+if dump == "" then
+    print("  SKIP  luac unavailable")
+else
+    check_true("start_new_online_game is never reached as a nil global",
+        not dump:find('_ENV "start_new_online_game"'),
+        "GETTABUP _ENV means the call resolves to nil at runtime")
+    check_true("it is forward-declared above the watchdogs",
+        ghas("^local start_new_online_game$") or ghas("\nlocal start_new_online_game\n"),
+        "forward declaration missing")
+end
+
 print("")
 if failures > 0 then
     print(string.format("%d FAILED", failures))

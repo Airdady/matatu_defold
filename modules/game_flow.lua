@@ -734,6 +734,14 @@ function M.finish_round_transition(self, force)
     self.is_transitioning_round = false
     self._continuation_request_id = nil
 
+    -- The round has finished ending. Release the parked next-round state (see
+    -- game.script's round_transition_busy): while this was set, an incoming
+    -- next round was held rather than built, so something has to say when it
+    -- may be built. Posted rather than called because start_new_online_game is
+    -- a local in game.script, the same way round_story_ui reports its banner.
+    self.round_transition_busy = false
+    pcall(function() msg.post("/controller#game_logic", "round_transition_finished") end)
+
     if self.queued_start_game then
         self.queued_start_game = false
         log("Executing queued next round via EXPLICIT finish event!")
