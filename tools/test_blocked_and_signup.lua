@@ -138,9 +138,13 @@ print("a refused account is told the app is offline")
 check_true("neither path calls the player suspended",
     not ctrl:find("This account has been suspended"),
     "written for staff, reads as an accusation on a phone")
-check_true("both say App Offline instead",
-    select(2, ctrl:gsub('app_state%.blocked_reason = "App Offline"', '')) == 2,
-    "the socket path and the sign-in path must agree")
+-- THREE sites, not two: the socket path, the sign-in path, and the boot
+-- restore that reads the latch back off disk. Asserted as "at least the two
+-- decision paths, and every one of them says the same thing" rather than as an
+-- exact count, which would fail the moment a fourth legitimate site appeared.
+local offline_wordings = select(2, ctrl:gsub('app_state%.blocked_reason = "App Offline"', ''))
+check_true("every path says App Offline", offline_wordings >= 3,
+    "found " .. offline_wordings .. "; the socket path, the sign-in path and the boot restore must agree")
 check_true("and the server's own reason is not shown",
     not ctrl:find("app_state.blocked_reason = tostring(data.reason"),
     "it is staff wording; it stays in the logs")
@@ -166,10 +170,16 @@ for _, blk in ipairs(offline_blocks) do
 end
 check_true("they land on the lobby, not a sign-in screen", not goes_to_auth,
     "there is nothing to sign in with and nothing they can do there")
+-- Only the two paths that DECIDE the app is offline route anywhere. The boot
+-- restore also sets the flag but is inside init(), where there is no screen to
+-- move to and nothing has been shown yet — requiring a destination there would
+-- be asking for a navigation that makes no sense.
+local routed = 0
 for _, blk in ipairs(offline_blocks) do
-    check_true("and each one actually shows the lobby",
-        blk:find('show%(self, "lobby"%)') ~= nil, "no destination")
+    if blk:find('show%(self, "lobby"%)') then routed = routed + 1 end
 end
+check_true("the two decision paths both land on the lobby", routed >= 2,
+    "routed " .. routed .. " of " .. #offline_blocks)
 check_true("the toast is informational, not an error",
     ctrl:find('toast"%)%.info%("App Offline') ~= nil, "an error toast reads as a fault")
 
@@ -208,6 +218,77 @@ check_true("while saying the rest of the app still works",
 check_true("and a successful identify clears it",
     ctrl:find("app_state%.app_offline = false") ~= nil,
     "terminal until the server itself says otherwise, which an identify IS")
+
+-- ── persistent, and silent ─────────────────────────────────────────────────
+--
+-- Asked for: show offline persistently, stop calling the backend to reconnect,
+-- and keep the state in the local cache.
+--
+-- The point is that a refusal is a permanent answer. Retrying it is a loop
+-- that burns battery and radio to be told the same thing, and holding it only
+-- in memory means every cold start rediscovers it — a device sign-in, a 403
+-- and a socket attempt, on every launch, forever.
+print("")
+print("the offline state is latched, not rediscovered")
+
+check_true("the socket latches it",
+    ws:find("M%.app_offline = false") ~= nil and ws:find("M%.app_offline = true") ~= nil,
+    "no latch")
+check_true("connect() is refused while it is set",
+    ws:match("function M%.connect%(%)(.-)\nend"):find("if M%.app_offline then"),
+    "every route to a socket goes through connect; refusing there stops them all")
+check_true("and no reconnect is scheduled",
+    ws:find('print%("%[WS%] not reconnecting: app offline"%)') ~= nil,
+    "the reconnect loop would ask again on a timer")
+
+-- Latched BEFORE the listeners run: one of them disconnects, and a disconnect
+-- schedules a reconnect unless the flag is already set.
+local blk_at = ws:find("M%.app_offline = true")
+local emit_at = ws:find('emit%("account_blocked"')
+check_true("latched before the listeners can disconnect",
+    blk_at and emit_at and blk_at < emit_at,
+    "a disconnect during the emit would schedule a reconnect")
+
+print("")
+print("and it survives a restart, from the local cache")
+check_true("there is a file for it, separate from the session",
+    api:find('local OFFLINE_FILE = sys%.get_save_file%("matatu_gdt", "offline%.json"%)') ~= nil,
+    "the session is cleared when going offline; this has to outlive that")
+for _, fn in ipairs({ "set_app_offline", "clear_app_offline", "is_app_offline" }) do
+    check_true("api." .. fn, api:find("function M%." .. fn) ~= nil, "missing")
+end
+-- Bounded by the RESTORE BLOCK itself. A lazy match from init() to the first
+-- comment line stops before the code it is looking for — the block is
+-- introduced by a comment.
+local init_head = ctrl:match("function init%(self%)(.-)auth_debug%(\"boot: app is offline")
+check_true("boot reads it before anything connects",
+    init_head ~= nil and init_head:find("api%.is_app_offline%(%)") ~= nil,
+    "read after a connect attempt is a read that saved nothing")
+-- And that it really is at the TOP of init, not merely somewhere in it.
+check_true("and does so first thing",
+    init_head ~= nil and #init_head < 900,
+    "restored " .. tostring(init_head and #init_head) .. " chars into init")
+check_true("and mirrors it onto the socket manager",
+    ctrl:find("ws%.app_offline = true") ~= nil, "the latch has to reach the thing that reconnects")
+
+print("")
+print("no sign-in is even attempted")
+local dev = ctrl:match("local function try_device_login%(self%)(.-)\n    cancel_silent_login_retry")
+check_true("device login returns early when offline",
+    dev and dev:find("if app_state%.app_offline then"),
+    "every route into signing in comes through this function")
+check_true("and clears the in-flight flag on the way out",
+    dev and dev:find("self%._silent_login_inflight = false"),
+    "left set, PLAY ONLINE would be permanently swallowed as a duplicate tap")
+
+print("")
+print("only the server can undo it")
+check_true("a successful identify clears the cache too",
+    ctrl:find("api%.clear_app_offline") ~= nil,
+    "otherwise an unblocked account stays offline forever")
+local ident = ctrl:match('ws%.on%("identify_success", function%(%)(.-)end%)%)')
+check_true("and clears the socket latch with it",
+    ident and ident:find("ws%.app_offline = false"), "half-cleared is still offline")
 
 print("")
 if failures > 0 then

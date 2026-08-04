@@ -80,6 +80,40 @@ function M.clear_session()
     sys.save(SESSION_FILE, {})
 end
 
+-- ── the offline latch, on disk ──────────────────────────────────────────────
+--
+-- An account the server refuses stays refused. Keeping that only in memory
+-- means every launch rediscovers it: a device sign-in, a 403, and a socket
+-- attempt, all to be told the same thing again — on every cold start, forever.
+--
+-- Written to its OWN file rather than into the session, because the session is
+-- cleared when the app goes offline and this has to outlive that. Reading it
+-- costs one file read at boot and saves every request that would otherwise be
+-- made to learn something already known.
+local OFFLINE_FILE = sys.get_save_file("matatu_gdt", "offline.json")
+
+--- Remember that this install is offline, and why.
+function M.set_app_offline(reason)
+    pcall(sys.save, OFFLINE_FILE, {
+        offline = true,
+        reason  = tostring(reason or ""),
+        at      = os.time(),
+    })
+end
+
+--- Forget it. Called when the server accepts an identify — the one event that
+--- proves the refusal no longer applies.
+function M.clear_app_offline()
+    pcall(sys.save, OFFLINE_FILE, {})
+end
+
+--- Is this install offline? Answers from disk, asking nobody.
+function M.is_app_offline()
+    local ok, d = pcall(sys.load, OFFLINE_FILE)
+    if not ok or type(d) ~= "table" then return false end
+    return d.offline == true
+end
+
 -- STREAMING_CHUNK: Building request parsers...
 local function build_headers()
     local h = {

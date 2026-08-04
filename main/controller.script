@@ -373,6 +373,20 @@ end
 local handle_device_result
 
 local function try_device_login(self)
+    -- NOTHING IS ASKED OF A SERVER THAT HAS ALREADY ANSWERED.
+    --
+    -- The refusal is latched and cached on disk, so this is the point at which
+    -- a launch costs zero requests rather than a device sign-in, a 403 and a
+    -- socket attempt to rediscover what was already known.
+    --
+    -- Checked here because every route into signing in comes through this
+    -- function: the boot path, the retry timer and the PLAY ONLINE tap.
+    if app_state.app_offline then
+        auth_debug("device login skipped: app offline")
+        self._silent_login_inflight = false
+        return
+    end
+
     cancel_silent_login_retry(self)
 
     -- If a user session is ALREADY cached in memory or on disk, no need to send
@@ -545,6 +559,9 @@ handle_device_result = function(self, result)
         -- where it belongs.
         app_state.blocked_reason = "App Offline"
         app_state.app_offline = true
+        ws.app_offline = true
+        -- Cached, so the next launch does not repeat this exchange.
+        pcall(api.set_app_offline, data.reason or result.message)
         app_state.auth_error = ""
         msg.post("#lobby", "auth_state_changed")
         -- The lobby, not the sign-in screen: there is nothing to sign in with
@@ -620,6 +637,19 @@ end
 function init(self)
     self.screen = "lobby"
     self.tokens = {}
+
+    -- RESTORE THE OFFLINE LATCH BEFORE ANYTHING TRIES TO CONNECT.
+    --
+    -- Read from disk, so an install the server has refused comes up already
+    -- knowing it, and makes no request to find out again. Mirrored onto the
+    -- websocket manager, which refuses connect() and suppresses the reconnect
+    -- loop off the same flag.
+    if api.is_app_offline() then
+        app_state.app_offline = true
+        app_state.blocked_reason = "App Offline"
+        ws.app_offline = true
+        auth_debug("boot: app is offline (cached) - not contacting the server")
+    end
 
     -- Keep the screen awake for as long as the app is open, not just during
     -- a match — set once here and never re-enabled (see game.script, which
@@ -882,6 +912,8 @@ function init(self)
         pcall(api.clear_session)
         app_state.blocked_reason = "App Offline"
         app_state.app_offline = true
+        ws.app_offline = true
+        pcall(api.set_app_offline, reason)
         -- Not an error toast, and not routed to the sign-in screen. The player
         -- keeps the app and everything in it that does not need the server;
         -- online play is what is unavailable, and the lobby now says so on the
@@ -900,6 +932,8 @@ function init(self)
         -- says otherwise, which this IS.
         app_state.app_offline = false
         app_state.blocked_reason = nil
+        ws.app_offline = false
+        pcall(api.clear_app_offline)
         self._identify_recoveries = 0
         -- The only signal that means CONNECTED. Everything earlier — a token,
         -- a user payload, a socket that opened — can still be followed by a

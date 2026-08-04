@@ -20,6 +20,18 @@ M.is_identified = false
 -- 4426 close). Latching, deliberately: nothing short of updating the app can
 -- clear it, so it also suppresses the reconnect loop.
 M.update_required = false
+
+-- Set once the server refuses this ACCOUNT. Latching for the same reason and
+-- in the same way: the answer will be identical every time, so reconnecting is
+-- a loop that burns battery and radio to be told no again.
+--
+-- Restored from disk at boot (see api_service's offline flag), so a launch
+-- after this costs no request at all — the app comes up offline knowing why,
+-- rather than discovering it again.
+--
+-- Cleared only by the server accepting an identify, which is the one event
+-- that can prove it no longer applies.
+M.app_offline = false
 M.online_users = {}
 M.current_user_data = {}
 M.current_user_id = ""
@@ -542,6 +554,7 @@ local function parse_message(json_string)
     end
     if M.current_user_data._id then M.current_user_id = tostring(M.current_user_data._id) end
 
+
     -- BLOCKED. The server has been sending isBlocked on this payload all along
     -- and nothing read it, so a suspended account signed in and played exactly
     -- as before — the block only bit when it next hit an HTTP route guarded by
@@ -553,8 +566,11 @@ local function parse_message(json_string)
     -- anyone could act on it.
     if M.current_user_data.isBlocked == true then
       local reason = tostring(M.current_user_data.blockReason or "")
-      print("[WS] identify returned a BLOCKED account - signing out")
+      print("[WS] identify returned a refused account - going offline")
       M.is_identified = false
+      -- Latched BEFORE the listeners run: one of them disconnects, and a
+      -- disconnect schedules a reconnect unless this is already set.
+      M.app_offline = true
       emit("account_blocked", { reason = reason })
       return
     end
@@ -981,6 +997,10 @@ on_disconnected = function(reason)
     print("[WS] not reconnecting: update required")
     return
   end
+  if M.app_offline then
+    print("[WS] not reconnecting: app offline")
+    return
+  end
   schedule_reconnect()
 end
 
@@ -1055,6 +1075,13 @@ function M.connect()
   -- enough to stop all of them rather than guarding each one.
   if M.update_required then
     print("[WS] connect() refused: update required")
+    return
+  end
+  -- Every route to a socket goes through connect(), so refusing here stops
+  -- the reconnect timer, the lobby's auto-identify and the PLAY ONLINE tap
+  -- alike, rather than each of them needing its own guard.
+  if M.app_offline then
+    print("[WS] connect() refused: app offline")
     return
   end
   if is_connecting and (now_s() - (connecting_since or 0)) >= conn_plan.CONNECT_STALL_SECONDS then
