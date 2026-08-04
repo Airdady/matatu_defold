@@ -277,106 +277,6 @@ local function draw_battle_modal(self, ctx)
     track(self, ui.text(vmath.vector3(CX, sub_y, 0), sub_label, "btn_lg", C_BTN_TEXT))
 end
 
--- ── Team Tournament Bracket View ─────────────────────────────────────────────
--- Every joined player, and the owner whether or not they're playing, can
--- see who's on which level and how they're doing. The owner additionally
--- gets ADVANCE/DROP overrides per row (see advanceTeamTournamentPlayer/
--- dropTeamTournamentPlayer on the backend — neither can mint the grand
--- prize; that's still only ever awarded through real gameplay).
-local MAX_BRACKET_ROWS = 8
-
-local function draw_team_bracket_modal(self, ctx)
-    local br = self.team_bracket_modal
-    if not br then return end
-
-    local track = ctx.track
-    local ui    = ctx.ui
-    local mkbtn = ctx.mkbtn
-    local txtL  = ctx.txtL
-    local commas = ctx.commas
-    -- Anchored to the full screen — this dialog's content (a list of player
-    -- rows plus ADVANCE/DROP buttons) is wider than the right panel's own
-    -- column, so it gets the full screen to work with rather than being
-    -- squeezed into that narrower strip.
-    local CX, CY = ctx.CX, ctx.CY
-    local C     = ctx.C
-    local NOTE_C = vmath.vector4(0.6, 0.6, 0.6, 1)
-
-    local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.85)))
-    self.buttons[#self.buttons+1] = { node = dim, id = "tbr_block" }
-    track(self, ui.grad_backdrop(ctx.LOGICAL_W, ctx.LOGICAL_H))
-
-    local panel_w, panel_h = 520, 560
-    track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
-
-    local cursor_y = CY + panel_h/2 - 18
-    track(self, ui.text(vmath.vector3(CX, cursor_y - 10, 0), "TEAM TOURNAMENT BRACKET", "subtitle2", C.COL_WHITE))
-    mkbtn(self, "tbr_close", vmath.vector3(CX + panel_w/2 - 32, cursor_y - 10, 0), vmath.vector3(40, 40, 0), "X", "secondary_btn")
-    cursor_y = cursor_y - 34
-    track(self, ui.box(vmath.vector3(CX, cursor_y, 0), vmath.vector3(panel_w - 48, 1, 0), vmath.vector4(1, 1, 1, 0.14)))
-    cursor_y = cursor_y - 24
-
-    if br.loading then
-        track(self, ui.text(vmath.vector3(CX, cursor_y, 0), "Loading...", "small", C_NEUTRAL))
-        return
-    end
-    if br.error then
-        track(self, ui.text(vmath.vector3(CX, cursor_y, 0), br.error, "small", vmath.vector4(1, 0.35, 0.35, 1)))
-        return
-    end
-
-    local data = br.data or {}
-    local totalLevels = #(data.levels or {})
-    track(self, ui.text(vmath.vector3(CX, cursor_y, 0),
-        string.format("%s  ·  %s coins  ·  code %s", data.name or "Team Tournament",
-            commas((data.grandPrize or {}).value or 0), data.invitationCode or "?"), "small", C_NEUTRAL))
-    cursor_y = cursor_y - 30
-
-    local players = data.players or {}
-    -- Highest level first — the closest to winning are the most interesting
-    -- to see at a glance.
-    table.sort(players, function(a, b) return (a.currentLevel or 1) > (b.currentLevel or 1) end)
-
-    if #players == 0 then
-        track(self, ui.text(vmath.vector3(CX, cursor_y, 0), "No players have joined yet.", "small", NOTE_C))
-    end
-
-    local row_h = 52
-    local is_owner = br.is_owner
-    for i = 1, math.min(#players, MAX_BRACKET_ROWS) do
-        local p = players[i]
-        local py = cursor_y - (i - 0.5) * row_h
-        track(self, ui.box(vmath.vector3(CX, py, 0), vmath.vector3(panel_w - 40, row_h - 6, 0), vmath.vector4(1,1,1,0.04)))
-
-        local status_col = (p.status == "completed") and vmath.vector4(1.0, 0.843, 0.0, 1) or C.COL_WHITE
-        txtL(self, CX - panel_w/2 + 30, py + 8, tostring(p.username or "Player"), "body", status_col)
-        txtL(self, CX - panel_w/2 + 30, py - 12, string.format("Level %d/%d  ·  %s", p.currentLevel or 1, totalLevels, tostring(p.status or "active")), "small", NOTE_C)
-
-        if is_owner then
-            local adv_x = CX + panel_w/2 - 130
-            local drop_x = CX + panel_w/2 - 60
-            mkbtn(self, "tbr_advance", vmath.vector3(adv_x, py, 0), vmath.vector3(60, 34, 0), "ADV", "secondary_btn", p.playerId, "btn_sm")
-            mkbtn(self, "tbr_drop", vmath.vector3(drop_x, py, 0), vmath.vector3(60, 34, 0), "DROP", "secondary_btn", p.playerId, "btn_sm")
-        end
-    end
-
-    if #players > MAX_BRACKET_ROWS then
-        track(self, ui.text(vmath.vector3(CX, cursor_y - (MAX_BRACKET_ROWS + 0.5) * row_h, 0),
-            string.format("+ %d more player(s)", #players - MAX_BRACKET_ROWS), "small", NOTE_C))
-    end
-
-    if br.msg then
-        track(self, ui.text(vmath.vector3(CX, CY - panel_h/2 + 30, 0), br.msg, "small",
-            br.msg_ok and vmath.vector4(0.3, 1.0, 0.3, 1) or vmath.vector4(1, 0.3, 0.3, 1)))
-    end
-end
-
--- ── Savings helpers (backend-driven config, with a safe fallback while the
--- first SAVINGS_STATUS round-trip hasn't landed yet) ────────────────────────
--- Must be defined before draw_savings_info/draw_savings_plans below, which
--- call format_redemption_date — Lua doesn't hoist locals within a chunk, so
--- a forward reference here would resolve to an undefined global and error.
-local MONTH_NAMES = {"January","February","March","April","May","June","July","August","September","October","November","December"}
 local function format_redemption_date(iso)
     local y, m, d = tostring(iso or ""):match("(%d+)-(%d+)-(%d+)")
     if not y then return "" end
@@ -927,9 +827,16 @@ function M.draw(self, ctx, left_M)
     mkbtn(self, "nav_tournaments", vmath.vector3(cx, tcy2, 0), vmath.vector3(pw, t_h, 0), nil, "container_bg")
     
     local icon_x = row_l + 24
-    local t_icon = track(self, ui.image(vmath.vector3(icon_x, tcy2, 0), vmath.vector3(48, 48, 0), "tournament_icon"))
+    -- 34, not 48. The battle rows above use 48 for battle_icon/knockout/party
+    -- and read correctly at it, but the tournament artwork fills far more of
+    -- its box than those do, so at the same nominal size it came out visibly
+    -- heavier than every other icon on the screen. Matched by eye rather than
+    -- by number; the label offset comes down with it so the gap the larger
+    -- icon needed does not turn into a hole.
+    local T_ICON = 34
+    local t_icon = track(self, ui.image(vmath.vector3(icon_x, tcy2, 0), vmath.vector3(T_ICON, T_ICON, 0), "tournament_icon"))
     gui.set_color(t_icon, C.COL_WHITE)
-    txtL(self, icon_x + 38, tcy2, "TOURNAMENTS", "btn_lg", C.COL_WHITE)
+    txtL(self, icon_x + T_ICON / 2 + 12, tcy2, "TOURNAMENTS", "btn_lg", C.COL_WHITE)
 
     -- OPEN / CLOSED, NOT "NEW".
     local t_state = twindow.state(twindow.headline(u.tournaments))
@@ -954,33 +861,15 @@ function M.draw(self, ctx, left_M)
     gui.set_pivot(n_badge_txt, gui.PIVOT_CENTER)
     cy = cy - t_h - C.BLOCK_GAP
 
-    -- ── Team Tournaments panel — only shown once this account has actually
-    -- created or joined one (tracked client-side since last create/join —
-    -- see lobby.gui_script's tc_submit/team_join_submit). Creating one now
-    -- happens entirely on the main lobby screen, so there's nothing to do
-    -- about team tournaments from here until you're already in one; this
-    -- row exists purely as quick return access to VIEW BRACKET.
-    local has_team = u.myTeamTournamentId and tostring(u.myTeamTournamentId) ~= ""
-    if has_team then
-        local team_h  = 72
-        local team_cy = cy - team_h/2
-        track(self, ui.box(vmath.vector3(cx, team_cy, 0), vmath.vector3(pw, team_h, 0), C.COL_BG))
-
-        local team_icon_x = cx - 80
-        local team_icon = track(self, ui.image(vmath.vector3(team_icon_x, team_cy, 0), vmath.vector3(32, 32, 0), "tournament_icon"))
-        gui.set_color(team_icon, C.COL_WHITE)
-        txtL(self, team_icon_x + 28, team_cy, "TEAM TOURNAMENTS", "btn_lg", C.COL_WHITE)
-
-        local team_btn_w = 180
-        local team_bx = cx + pw/2 - team_btn_w/2 - 20
-        txtL(self, team_icon_x + 28, team_cy - 14, "Your team tournament", "small", C.COL_DIM)
-        mkbtn(self, "nav_team_bracket", vmath.vector3(team_bx, team_cy, 0), vmath.vector3(team_btn_w, 48, 0), "VIEW BRACKET", "primary_btn", nil, "btn_md")
-        cy = cy - team_h - C.BLOCK_GAP
-    end
+    -- Team tournaments are managed entirely from the main lobby now: its cup
+    -- rail creates, joins and opens them, and the standings screen carries the
+    -- bracket and the owner controls. The row that used to sit here was only
+    -- ever quick return access to a VIEW BRACKET modal — a second place to do
+    -- a subset of the same thing — and that modal went with it, since this row
+    -- was its only way in.
 
     -- ── Draw Extracted Modals on Top ──────────────────────────────────────
     draw_battle_modal(self, ctx)
-    draw_team_bracket_modal(self, ctx)
     draw_invite_search(self, ctx)
     draw_savings_info(self, ctx)
     draw_savings_plans(self, ctx)
@@ -1079,85 +968,6 @@ function M.bm_submit(self, rebuild_cb)
     else
         api.create_tournament(payload, on_result)
     end
-end
-
-function M.open_team_bracket(self, rebuild_cb)
-    local u = ws.current_user_data or {}
-    local tid = u.myTeamTournamentId
-    if not tid or tostring(tid) == "" then return end
-
-    self.team_bracket_modal = { loading = true, is_owner = u.myTeamTournamentIsOwner and true or false }
-    rebuild_cb()
-
-    local api = require("modules.api_service")
-    api.get_team_tournament_bracket(tid, function(result)
-        local cur = self.team_bracket_modal
-        if not cur then return end
-        cur.loading = false
-        if result.success then
-            cur.data = result.data
-        else
-            cur.error = result.message or "Could not load the bracket."
-        end
-        if self._active then rebuild_cb() end
-    end)
-end
-
-local function refresh_team_bracket(self, rebuild_cb)
-    local br = self.team_bracket_modal
-    if not br then return end
-    local u = ws.current_user_data or {}
-    local tid = u.myTeamTournamentId
-    if not tid or tostring(tid) == "" then return end
-    local api = require("modules.api_service")
-    api.get_team_tournament_bracket(tid, function(result)
-        local cur = self.team_bracket_modal
-        if not cur then return end
-        if result.success then cur.data = result.data end
-        if self._active then rebuild_cb() end
-    end)
-end
-
-function M.tbr_advance(self, player_id, rebuild_cb)
-    local br = self.team_bracket_modal
-    local u = ws.current_user_data or {}
-    local tid = u.myTeamTournamentId
-    if not br or not tid or not player_id then return end
-    local api = require("modules.api_service")
-    api.advance_team_tournament_player(tid, { userId = u._id, playerId = player_id }, function(result)
-        local cur = self.team_bracket_modal
-        if not cur then return end
-        if result.success then
-            cur.msg, cur.msg_ok = "Player advanced.", true
-            refresh_team_bracket(self, rebuild_cb)
-        else
-            local err = result.message or "Could not advance this player."
-            cur.msg, cur.msg_ok = err, false
-            toast.error(err)
-            if self._active then rebuild_cb() end
-        end
-    end)
-end
-
-function M.tbr_drop(self, player_id, rebuild_cb)
-    local br = self.team_bracket_modal
-    local u = ws.current_user_data or {}
-    local tid = u.myTeamTournamentId
-    if not br or not tid or not player_id then return end
-    local api = require("modules.api_service")
-    api.drop_team_tournament_player(tid, { userId = u._id, playerId = player_id }, function(result)
-        local cur = self.team_bracket_modal
-        if not cur then return end
-        if result.success then
-            cur.msg, cur.msg_ok = "Player dropped.", true
-            refresh_team_bracket(self, rebuild_cb)
-        else
-            local err = result.message or "Could not drop this player."
-            cur.msg, cur.msg_ok = err, false
-            toast.error(err)
-            if self._active then rebuild_cb() end
-        end
-    end)
 end
 
 function M.start_invite_search(self, app_state, rebuild_cb, battle_type)

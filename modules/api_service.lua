@@ -461,6 +461,12 @@ function M.get_team_tournament_bracket(tournament_id, cb)
 end
 
 -- Owner-only admin overrides. payload = { userId, playerId }
+--
+-- No caller since the online lobby's VIEW BRACKET modal was removed — team
+-- cups are managed from the main lobby, and the standings screen reaches the
+-- drop endpoint through drop_team_player instead. Kept, like
+-- list_team_invitations above, because the endpoints are still there and a
+-- rollback should not have to restore the bindings.
 function M.advance_team_tournament_player(tournament_id, payload, cb)
     request("POST", "/tournaments/team/" .. tournament_id .. "/advance", payload, cb)
 end
