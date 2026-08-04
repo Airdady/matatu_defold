@@ -318,7 +318,14 @@ function update(self, dt)
     -- a hard gate the player can't get past otherwise, and this modal
     -- popping up over it visually buried the phone step, letting players
     -- miss/bypass it entirely.
-    if self.pending and not self.visible and not app_state.season_modal_active and app_state.current_screen ~= "profile" then
+    -- And deferred while the Savings explainer is up. That dialog is shown
+    -- once per player, ever, at the same moment this one fires; opening over
+    -- it means it is dismissed unread and never comes back.
+    if self.pending and not self.visible
+        and not app_state.season_modal_active
+        and not app_state.savings_promo_active
+        and app_state.current_screen ~= "profile"
+    then
         self.visible = true
         self.alpha = 0
         self.opened_at = self.t

@@ -383,6 +383,17 @@ function update(self, dt)
         end
     end
 
+    -- ── Savings modal typing effect (see draw_savings_info in online_right.lua) ──
+    --
+    -- Restored: this tick was dropped and the drawing code went on dividing by
+    -- the clock it fed, so every line of the dialog's copy came out empty.
+    -- online_right.lua now shows the text in full when nothing is ticking, so
+    -- losing this again costs the animation and not the words.
+    if self.savings_info_open and not self._savings_type_done then
+        self._savings_type_t = (self._savings_type_t or 0) + dt
+        need_rebuild = true
+    end
+
     -- ── Lottery opponent-search reel ──────────────────────────────────────
     if self.invite_search and not self.invite_search.found then
         local sr = self.invite_search; sr.t, sr.spin_t, sr.dots_t = (sr.t or 0) + dt, (sr.spin_t or 0) + dt, (sr.dots_t or 0) + dt
@@ -439,6 +450,15 @@ function on_message(self, message_id, message, sender)
         local u = ws.current_user_data or {}
         if u.savingsPromoSeen ~= true then
             self.savings_info_open = true
+            -- Claimed so the bonus dialogs wait. They fire at this exact
+            -- moment on a fresh account and would otherwise open on top,
+            -- and this explainer is shown once per player, ever.
+            app_state.savings_promo_active = true
+            -- Start the clock WITH the dialog. Left nil, the first frame sees
+            -- nothing ticking and draws the copy in full (which is the right
+            -- fallback), and the tick below then starts typing it from
+            -- nothing — full text, then empty, then typed back in.
+            self._savings_type_t, self._savings_type_done = 0, false
         end
         refresh_wh(); rebuild(self)
         -- Actively ask for a fresh online-players list every time this
@@ -460,7 +480,15 @@ function on_message(self, message_id, message, sender)
         -- reel, then close the overlay (fail_invite_search handles the timing).
         right_panel.fail_invite_search(self, app_state, function() rebuild(self) end, message and message.reason)
     elseif message_id == hash("enable") then refresh_wh(); self._active = true
-    elseif message_id == hash("disable") then self._active = false; clear(self)
+    elseif message_id == hash("disable") then
+        self._active = false
+        -- Released with the screen. The dialog's nodes go with clear() below,
+        -- so leaving while it is open would otherwise leave the claim standing
+        -- with nothing on screen holding it — and every bonus dialog waiting
+        -- on a dialog the player can no longer see or dismiss.
+        self.savings_info_open, self.savings_plans_open = false, false
+        app_state.savings_promo_active = false
+        clear(self)
     elseif message_id == hash("ws_identify") then
         if self._active then
             pcall(ws.request_online_users)
@@ -611,10 +639,16 @@ function on_input(self, action_id, action)
                 elseif id == "nav_tournaments" then msg.post("#controller", "goto_tournaments")
                 elseif id == "nav_support" then msg.post("#controller", "goto_support")
                 elseif id == "nav_account" then msg.post("#controller", "goto_profile")
-                elseif id == "savings_info" then self.savings_info_open = true; rebuild(self)
+                elseif id == "savings_info" then
+                    self.savings_info_open = true
+                    app_state.savings_promo_active = true
+                    self._savings_type_t = self._savings_type_t or 0
+                    rebuild(self)
                 elseif id == "savings_info_close" or id == "savings_info_block" then
                     mark_savings_promo_seen()
-                    self.savings_info_open = false; rebuild(self)
+                    self.savings_info_open = false
+                    app_state.savings_promo_active = false
+                    rebuild(self)
                 elseif id == "savings_try_it" then
                     -- Continue the same story into the "how" instead of just
                     -- closing the explainer — see draw_savings_plans.
@@ -623,9 +657,15 @@ function on_input(self, action_id, action)
                     self.savings_plans_open = true
                     rebuild(self)
                 elseif id == "savings_plans_close" or id == "savings_plans_block" then
-                    self.savings_plans_open = false; rebuild(self)
+                    self.savings_plans_open = false
+                    -- TRY IT hands the explainer straight to this dialog, so
+                    -- the claim is only released here — a bonus popping up
+                    -- between the two is the same interruption one step later.
+                    app_state.savings_promo_active = false
+                    rebuild(self)
                 elseif id == "savings_plans_start" then
                     self.savings_plans_open = false
+                    app_state.savings_promo_active = false
                     -- Hand off to the real controls already built on the
                     -- payments SAVE COINS tab (screen_enter there consumes
                     -- this once) instead of duplicating them in the promo.

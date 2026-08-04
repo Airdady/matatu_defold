@@ -124,6 +124,10 @@ function update(self, dt)
     if self.pending and not self.visible
         and not app_state.season_modal_active
         and not app_state.daily_bonus_active
+        -- The Savings explainer is shown once per player, ever, and fires at
+        -- the same moment a brand-new account reaches the online screen.
+        -- Opening over it means it is dismissed unread and never returns.
+        and not app_state.savings_promo_active
         and app_state.current_screen ~= "profile"
     then
         self.visible = true

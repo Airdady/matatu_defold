@@ -45,6 +45,20 @@ M.username_suggestions = {}
 -- auto-opening themselves so they never fight the season modal for screen space.
 M.season_modal_active = false
 
+-- True while the Savings explainer is open (draw_savings_info in
+-- online_right.lua, the one with I UNDERSTAND on it).
+--
+-- Every player is shown that dialog exactly once, ever, and it is shown at the
+-- same moment the bonus modals fire: the first entry into the online screen on
+-- a fresh account. Those are separate .gui components with their own node
+-- trees, so they do not stack with it — they land ON it, and the explainer is
+-- read, dismissed and marked seen without ever having been visible.
+--
+-- Same shape as season_modal_active above: the bonus dialogs already carry a
+-- `pending` flag and open on the first tick their gate is clear, so waiting is
+-- one more condition rather than a queue.
+M.savings_promo_active = false
+
 -- Themes table – each entry defines the visual style applied across lobby + game.
 -- bg_image  : animation name in the ui atlas
 -- card_set  : which card sprite sheet the deck uses ("default"|"drago"|"batman")

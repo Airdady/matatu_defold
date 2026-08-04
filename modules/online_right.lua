@@ -316,9 +316,18 @@ local function draw_savings_info(self, ctx)
     -- landing as one wall of text. Every typed string here is plain ASCII —
     -- string.sub() slices by byte, and a multi-byte UTF-8 char (✓, —) cut
     -- mid-sequence would render as garbage, so those stay outside the budget.
+    --
+    -- FAILS OPEN, and that is the important part. The clock lives in another
+    -- file's update(); when it was dropped from there, `_savings_type_t`
+    -- stayed nil, the budget was permanently 0, and typed() returned "" for
+    -- every line — so the dialog drew its panel, coin bundle, dividers,
+    -- progress bar and both buttons around no words at all. A decorative
+    -- animation must not be able to delete the content it is decorating: no
+    -- clock ticking means show the copy, not hide it.
     local CHAR_INTERVAL = 0.015
-    local typing = not self._savings_type_done
-    local budget = typing and math.floor((self._savings_type_t or 0) / CHAR_INTERVAL) or math.huge
+    local ticking = type(self._savings_type_t) == "number"
+    local typing = ticking and not self._savings_type_done
+    local budget = typing and math.floor(self._savings_type_t / CHAR_INTERVAL) or math.huge
     local function typed(full)
         if not typing then return full end
         if budget >= #full then
