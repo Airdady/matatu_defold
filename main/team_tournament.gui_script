@@ -74,6 +74,12 @@ local MAX_SUGGESTIONS          = 5
 local PRIZE_STEP_BY_GAME = { MATATU = 500, WHOT = 200, KADI = 20 }
 local PRIZE_STEP = PRIZE_STEP_BY_GAME[GameMode.GAME] or 500
 
+-- Entry fee steps in tenths of a prize step: a fee is what one player pays to
+-- enter, not what the whole pot is worth, so the prize step is far too coarse
+-- for it. FEE_MAX matches the server's own ceiling.
+local FEE_STEP = math.max(1, math.floor(PRIZE_STEP / 10))
+local FEE_MAX  = 1000000
+
 local F_NAME, F_CODE, F_INVITE = "name", "code", "invite"
 
 -- Debounce autocomplete so a fast typist fires one request, not one per key.
@@ -201,6 +207,16 @@ local function fresh_form()
         gpl_i       = 2,
         code        = "",
         owner_plays = false,
+        -- Entry fee: off by default, so a cup created without touching this
+        -- behaves exactly as team cups always have — the owner funds the whole
+        -- prize and joining is free. When on, every player pays `entry_fee` to
+        -- join and it goes into the prize pot, not to the owner.
+        fee_on      = false,
+        fee         = 0,
+        -- Set for EDIT when somebody has already paid: the fee cannot change
+        -- after that (the server refuses it), so the row is shown but inert
+        -- rather than offering a change that will bounce.
+        fee_locked  = false,
         invites     = {},
         -- Already on the cup when this form was opened for EDIT: everyone
         -- invited and still awaiting a reply. Kept SEPARATE from `invites`
@@ -340,9 +356,46 @@ local function rebuild(self)
     y = y - ROW
 
     y = y - 10
+    -- ── ENTRY FEE ───────────────────────────────────────────────────────
+    -- Off by default. Ticking it charges every player this much to join, and
+    -- the money goes into the PRIZE, not to the owner — so a cup cannot be
+    -- used to collect coins, and the pot the winner takes grows with the field.
+    local fee_editable = not f.fee_locked
+    checkbox(self, "fee_toggle", left, y - ROW / 2, col_w, ROW,
+        "Charge an entry fee to join", f.fee_on)
+    y = y - ROW
+
+    if f.fee_on then
+        y = y - 6
+        local fee_over = f.fee <= 0
+        btn(self, "fee_minus", left - col_w / 2 + 28, y - ROW / 2, 48, ROW, "-",
+            "secondary", nil, fee_editable)
+        framed3(self, left, y - ROW / 2, mid_w, ROW,
+            fee_over and P_ERROR or P_GOLD, P_B_OUTER)
+        track(self, ui.text(vmath.vector3(left, y - ROW / 2, 0),
+            commas(f.fee) .. "  " .. tostring(GameMode.CURRENCY_CODE or ""), "body",
+            fee_over and P_ERROR or P_GOLD_LIGHT))
+        btn(self, "fee_plus", left + col_w / 2 - 28, y - ROW / 2, 48, ROW, "+",
+            "secondary", nil, fee_editable)
+        y = y - ROW - 4
+        local note
+        if f.fee_locked then
+            note = "Players have already paid — the fee cannot be changed."
+        elseif fee_over then
+            note = "Set an amount, or untick for a free cup."
+        else
+            note = "Each player pays this to join. It goes into the prize."
+        end
+        track(self, ui.text(vmath.vector3(left, y - 9, 0), note, "small",
+            (f.fee_locked or fee_over) and P_MUTED or P_WIN))
+        y = y - 18
+    end
+
+    y = y - 10
     -- The owner funds the prize either way; this decides whether they also
     -- compete for it. Locked once players have joined, like the rest of the
-    -- structure — the bracket has already been built around the field.
+    -- structure — the bracket has already been built around the field. The
+    -- owner never pays the entry fee: they funded the prize.
     checkbox(self, "owner_plays", left, y - ROW / 2, col_w, ROW,
         "I'll play in this cup too", f.owner_plays)
     y = y - ROW
@@ -555,6 +608,12 @@ local function validate(self)
     if f.max_players < MIN_PLAYERS or f.max_players > MAX_PLAYERS then
         return string.format("Players must be between %d and %d.", MIN_PLAYERS, MAX_PLAYERS)
     end
+    -- Ticked but left at nothing. Submitting that would create a cup that
+    -- claims to charge and does not, so it is caught here rather than being
+    -- quietly saved as free.
+    if f.fee_on and f.fee <= 0 then
+        return "Set an entry fee amount, or untick it for a free cup."
+    end
     return nil
 end
 
@@ -637,6 +696,10 @@ local function submit(self)
         local payload = {
             name = (f.name ~= "" and f.name) or nil,
             maxPlayers = f.max_players,
+            -- Sent on update too, so a fee added or removed before anybody has
+            -- paid actually takes. The server refuses a change once somebody
+            -- has, which is what fee_locked mirrors in the form.
+            entryFee = f.fee_on and f.fee or 0,
             matchFormat = GPL_OPTIONS[f.gpl_i],
         }
         api.update_tournament(f.edit_id, payload, function(res)
@@ -671,6 +734,7 @@ local function submit(self)
         userId          = uid,
         name            = (f.name ~= "" and f.name) or nil,
         grandPrizeCoins = f.prize,
+        entryFee        = f.fee_on and f.fee or 0,
         maxPlayers      = f.max_players,
         gamesPerLevel   = GPL_OPTIONS[f.gpl_i],
         invitationCode  = (f.code ~= "" and f.code) or nil,
@@ -719,6 +783,18 @@ function on_message(self, message_id, message, sender)
             f.max_players = math.floor(tonumber(seed.maxPlayers) or 8)
             f.code        = tostring(seed.invitationCode or "")
             f.locked      = (tonumber(seed.joinedCount) or 0) > 1
+            -- EVERY field the cup actually has, not just some of them. An
+            -- update form that opens at defaults does not merely look wrong —
+            -- it SAVES those defaults, so a field the seed skipped is silently
+            -- reset by the act of editing anything else.
+            --
+            -- owner_plays was exactly that: it was never seeded, so an owner
+            -- who had opted into their own cup found the box unticked on every
+            -- edit, and saving took them off the bracket they built.
+            f.fee         = math.floor(tonumber(seed.entryFee) or 0)
+            f.fee_on      = f.fee > 0
+            f.fee_locked  = seed.entryFeeLocked and true or false
+            f.owner_plays = seed.ownerPlays and true or false
             -- Pre-populate the invite list with the invitations already
             -- outstanding, so editing a live cup opens showing who has been
             -- asked rather than an empty box that reads as "nobody invited".
@@ -801,6 +877,23 @@ function on_input(self, action_id, action)
                 f.max_players = math.max(MIN_PLAYERS, f.max_players - 1); rebuild(self)
             elseif b.id == "players_plus" then
                 f.max_players = math.min(MAX_PLAYERS, f.max_players + 1); rebuild(self)
+            elseif b.id == "fee_toggle" then
+                if not f.fee_locked then
+                    f.fee_on = not f.fee_on
+                    -- Ticking it on with nothing set opens at one step rather
+                    -- than at zero, which would submit as "free" and read as
+                    -- the tick having done nothing.
+                    if f.fee_on and f.fee <= 0 then f.fee = FEE_STEP end
+                    if not f.fee_on then f.fee = 0 end
+                end
+            elseif b.id == "fee_minus" then
+                if not f.fee_locked then
+                    f.fee = math.max(0, f.fee - FEE_STEP)
+                end
+            elseif b.id == "fee_plus" then
+                if not f.fee_locked then
+                    f.fee = math.min(FEE_MAX, f.fee + FEE_STEP)
+                end
             elseif b.id == "owner_plays" then
                 if not f.locked then f.owner_plays = not f.owner_plays end
                 rebuild(self)
