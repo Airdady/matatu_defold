@@ -385,6 +385,43 @@ if [ $BUILD_STATUS -eq 0 ]; then
         echo -e "📦 ${YELLOW}Target Engine Format:${NC} .aab (Android App Bundle)"
         echo ""
         print_success "Ready for Google Play Console upload."
+
+        # ── tell the backend this version exists ────────────────────────────
+        #
+        # Recorded, NOT activated. The build is minutes old and Play is not
+        # serving it yet; forcing everyone onto it now would show every player
+        # an update screen pointing at a listing that still offers the version
+        # they already have, with no way out.
+        #
+        # Activating is a separate, deliberate act — POST /app-builds/:id/
+        # activate — taken once the release is actually live. That is what
+        # raises the floor and forces older installs to update.
+        #
+        # Best-effort by design: a bundle that built correctly must not be
+        # reported as a failed release because a server was unreachable. The
+        # curl is bounded so a hung endpoint cannot stall the script, and the
+        # outcome is printed either way so it is never silently skipped.
+        RELEASE_API="${RELEASE_API:-https://champion.matatuleague.com/${GAME}/app-builds}"
+        print_status "Registering ${VERSION_NAME} (${VERSION_CODE}) with ${RELEASE_API}..."
+
+        REG_BODY=$(printf '{"game":"%s","build":%s,"versionName":"%s","notes":"%s"}' \
+            "$GAME" "$VERSION_CODE" "$VERSION_NAME" \
+            "$(git rev-parse --short HEAD 2>/dev/null || echo 'no-git')")
+
+        REG_CODE=$(curl -sS -o /tmp/app_build_reg.json -w '%{http_code}' \
+            --max-time 20 \
+            -X POST "$RELEASE_API" \
+            -H 'Content-Type: application/json' \
+            -d "$REG_BODY" 2>/dev/null || echo "000")
+
+        if [ "$REG_CODE" = "201" ] || [ "$REG_CODE" = "200" ]; then
+            print_success "Registered with the backend — NOT active yet."
+            echo -e "   ${YELLOW}Activate it (forces every older install to update) with:${NC}"
+            echo -e "   curl -X POST ${RELEASE_API}/<id>/activate"
+        else
+            print_warning "Could not register the build (HTTP ${REG_CODE}). The bundle is fine;"
+            print_warning "register it by hand: curl -X POST ${RELEASE_API} -d '${REG_BODY}'"
+        fi
     else
         print_warning "Build processed successfully, but output file couldn't be located automatically inside $OUTPUT_DIR"
     fi
