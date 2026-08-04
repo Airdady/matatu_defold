@@ -25,6 +25,34 @@ end
 local GS             = require "modules.game_state"
 local OnlineHandler  = require "modules.online_handler"
 local OfflineHandler = require "modules.offline_handler"
+-- Required for its timings only (SHOW_IN / HOLD / SHOW_OUT / TOTAL). The
+-- module touches the `gui` API inside its functions, never at load, so this
+-- is safe from the game script side.
+local RoundStory     = require "modules.round_story_ui"
+
+-- WHEN THE NEXT ROUND MAY START.
+--
+-- Nothing here is a guess about how long a phone needs. The order the player
+-- sees is: cards flip face-up, (knockout) the hands are counted, then the
+-- round-complete banner. Only once that banner has been up for its full hold
+-- is the queue allowed to run and the next round begin.
+--
+-- NEXT_ROUND_AFTER_BANNER is measured from the moment the banner is posted,
+-- so it covers the banner arriving and being readable for RoundStory.HOLD.
+local NEXT_ROUND_AFTER_BANNER = RoundStory.SHOW_IN + RoundStory.HOLD
+
+-- The banner posts "round_story_done" when it has fully gone, and that is the
+-- normal trigger. This is the fallback for when that message never arrives
+-- (hud gui not loaded, screen torn down mid-transition), so it must sit AFTER
+-- the banner's own full length — a net that fires first is not a net, it is
+-- the primary path, which is exactly how the old flat 1.5s ended up cutting
+-- the banner short.
+local NEXT_ROUND_FALLBACK = RoundStory.TOTAL + 0.5
+
+-- Ordinary game over (no round to follow): the flip has already happened by
+-- the time we get here, and this is the extra beat before anything queued is
+-- allowed to pull the player into another game.
+local NEW_GAME_AFTER_FLIP = 2.0
 
 local M = {}
 
@@ -876,18 +904,24 @@ function M.end_game(self, player_won, is_cut, backend_results)
                 self.round_story_active = true
                 if story then notify_gui(self.gui_hud, "round_story", story) end
                 
-                -- Wait for ROUND WON text to settle, then tell the backend to
-                -- start the next round right away. The chamber history
-                -- expand/hold/collapse below is a purely local visual
-                -- flourish — it used to gate the backend request behind its
-                -- own ~3s tail (hold + collapse), making the server (and the
-                -- opponent) wait far longer than the round-status banner
-                -- itself implied. start_new_online_game already defers the
-                -- actual board rebuild until round_story_active clears
-                -- (round_story_ui.lua's banner finishing), so firing the
-                -- request here is safe: the new round still can't visually
-                -- start until that banner is gone.
-                timer.delay(1.5, false, function()
+                -- KNOCKOUT ORDER: flip -> count -> banner -> next round.
+                --
+                -- The flip and the counting have both already run by the time
+                -- final_resolution is reached (see the chain at the bottom of
+                -- this function), so what is left is to let the banner be read
+                -- before the next round starts.
+                --
+                -- This timer is the ONLY thing that releases a knockout round.
+                -- round_story_done routes to finish_round_transition WITHOUT
+                -- force, and _knockout_story_locked (set just above) makes
+                -- that call return early — so unlike the tournament branch
+                -- below, there is no second path waiting to catch this. It
+                -- fires once the banner has been up for its full hold.
+                --
+                -- The chamber history expand/hold/collapse underneath is a
+                -- local visual flourish and deliberately does not gate any of
+                -- this; it plays out across the start of the next round.
+                timer.delay(NEXT_ROUND_AFTER_BANNER, false, function()
                     M.finish_round_transition(self, true)
 
                     -- This round just settled — reorder the standings board
@@ -913,19 +947,16 @@ function M.end_game(self, player_won, is_cut, backend_results)
                     self.round_story_active = true
                     notify_gui(self.gui_hud, "round_story", story)
                 end
-                -- Same reasoning as the knockout branch above: round_story_ui's
-                -- own banner (0.42s in + 1.35s hold + 0.30s out ~= 2.1s) already
-                -- posts "round_story_done" -> game.script's handler -> this same
-                -- finish_round_transition, and finish_round_transition is
-                -- idempotent (is_transitioning_round guards it), so this is only
-                -- a safety net for the odd case that message never arrives. For
-                -- online continuations this only sends GAME_REQUEST_ACCEPTED —
-                -- it does NOT render the next round (that waits on the server's
-                -- own START push) — so firing it promptly can't show anything
-                -- before the banner is actually done. The previous flat 8.0s
-                -- had no such requirement behind it; it just made the backend
-                -- (and the opponent) wait ~6s longer than the banner needed.
-                timer.delay(1.5, false, function() M.finish_round_transition(self) end)
+                -- The banner posts "round_story_done" when it has fully gone,
+                -- which routes to this same (idempotent) call — that is the
+                -- normal path and it lands at RoundStory.TOTAL. This timer is
+                -- only the net for when that message never arrives, so it sits
+                -- deliberately after it.
+                --
+                -- It used to be a flat 1.5s, i.e. BEFORE the banner had
+                -- finished, which quietly made the net the primary path and
+                -- released the round while the result was still on screen.
+                timer.delay(NEXT_ROUND_FALLBACK, false, function() M.finish_round_transition(self) end)
             end
             
         else
@@ -937,7 +968,14 @@ function M.end_game(self, player_won, is_cut, backend_results)
             if is_series_active and not is_series_over then
                 timer.delay(4.0, false, function() M.finish_round_transition(self) end)
             else
-                M.finish_round_transition(self)
+                -- The flip has already run by the time we are here, and this
+                -- released the queue in the same frame as the game-over modal
+                -- appeared — so anything queued could pull the player straight
+                -- into the next game over the top of their own result. The
+                -- beat is the point.
+                timer.delay(NEW_GAME_AFTER_FLIP, false, function()
+                    M.finish_round_transition(self)
+                end)
             end
         end
     end
