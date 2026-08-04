@@ -401,11 +401,20 @@ if [ $BUILD_STATUS -eq 0 ]; then
         # reported as a failed release because a server was unreachable. The
         # curl is bounded so a hung endpoint cannot stall the script, and the
         # outcome is printed either way so it is never silently skipped.
-        RELEASE_API="${RELEASE_API:-https://champion.matatuleague.com/${GAME}/app-builds}"
-        print_status "Registering ${VERSION_NAME} (${VERSION_CODE}) with ${RELEASE_API}..."
+        # /api, not /${GAME}. The route is mounted on the shared router, so it
+        # answers under every prefix — but the per-game prefixes only exist for
+        # matatu, whot and kadi, and matatu_nap is a TARGET, not a game. A URL
+        # built from the target 404s, and one built from the game would then
+        # disagree with the target in the body. /api names neither.
+        RELEASE_API="${RELEASE_API:-https://champion.matatuleague.com/api/app-builds}"
+        print_status "Registering ${TARGET} ${VERSION_NAME} (${VERSION_CODE}) with ${RELEASE_API}..."
 
-        REG_BODY=$(printf '{"game":"%s","build":%s,"versionName":"%s","notes":"%s"}' \
-            "$GAME" "$VERSION_CODE" "$VERSION_NAME" \
+        # TARGET, not GAME: matatu and matatu_nap are one game shipped as two
+        # binaries with independent versionCode sequences. Filing a nap build
+        # as "matatu" and later activating it would raise com.matatu.champ's
+        # floor to a number from nap's sequence.
+        REG_BODY=$(printf '{"target":"%s","build":%s,"versionName":"%s","notes":"%s"}' \
+            "$TARGET" "$VERSION_CODE" "$VERSION_NAME" \
             "$(git rev-parse --short HEAD 2>/dev/null || echo 'no-git')")
 
         REG_CODE=$(curl -sS -o /tmp/app_build_reg.json -w '%{http_code}' \
@@ -420,7 +429,8 @@ if [ $BUILD_STATUS -eq 0 ]; then
             echo -e "   curl -X POST ${RELEASE_API}/<id>/activate"
         else
             print_warning "Could not register the build (HTTP ${REG_CODE}). The bundle is fine;"
-            print_warning "register it by hand: curl -X POST ${RELEASE_API} -d '${REG_BODY}'"
+            print_warning "register it by hand:"
+            print_warning "curl -X POST ${RELEASE_API} -H 'Content-Type: application/json' -d '${REG_BODY}'"
         fi
     else
         print_warning "Build processed successfully, but output file couldn't be located automatically inside $OUTPUT_DIR"

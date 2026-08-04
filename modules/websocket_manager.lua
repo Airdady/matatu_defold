@@ -1107,9 +1107,15 @@ function M.connect()
   -- `b` is the Android versionCode, alongside the display version in `v`.
   -- The server gates on b when it has one (an integer needs no parsing) and
   -- falls back to v for builds older than the stamping change.
+  --
+  -- `p` is the package name, and it is what makes `b` comparable at all:
+  -- com.matatu.champ and com.matatu.nap are the same game counting builds
+  -- separately, so a versionCode without it is a number from an unknown
+  -- sequence. The REST side sends the same thing as X-App-Package.
   local url = config.WS_URL .. "/?deviceId=" .. tostring(device_id)
       .. "&v=" .. config.APP_VERSION
       .. "&b=" .. tostring(config.APP_BUILD or 0)
+      .. "&p=" .. tostring(config.APP_PACKAGE or "")
   print("[WS] connecting to " .. url)
   is_connecting = true
   connecting_since = now_s()

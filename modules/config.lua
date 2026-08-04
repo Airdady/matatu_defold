@@ -60,6 +60,19 @@ do
     if v ~= "" then M.APP_VERSION = v end
     local b = tonumber(cfg("android.version_code"))
     if b and b > 0 then M.APP_BUILD = b end
+
+    -- WHICH BINARY THIS IS, which is not the same question as which game.
+    --
+    -- matatu ships twice: com.matatu.champ and com.matatu.nap. Same game,
+    -- same rules, same server routes, same GAME_MODE — and two completely
+    -- separate versionCode sequences. The server's force-update floor is a
+    -- versionCode comparison, so it has to be told which sequence a build
+    -- belongs to or it will measure a nap install against champ's numbers
+    -- and refuse it for being "old" at a build it never had.
+    --
+    -- The package name already differs per target and is already in the
+    -- built game.project, so nothing has to be stamped for this to be true.
+    M.APP_PACKAGE = cfg("android.package")
 end
 -- ---------------------------------------------------------------------------
 -- SUPPORT CONTACT
