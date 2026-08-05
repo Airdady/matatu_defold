@@ -269,7 +269,14 @@ local function arm_connect_deadline(self, seconds, force)
     self._connect_deadline_timer = timer.delay(window, false, function()
         self._connect_deadline_timer = nil
         if identify_ok then return end
-        auth_debug("connect deadline (%ds) expired without connection", window)
+        -- "without connection" was wrong and it sent people looking in the
+        -- wrong place. From a reported log this fired at 20:54:12 on a socket
+        -- that had connected at 20:54:05 — seven seconds EARLIER. The gate is
+        -- `identify_ok`, so what this deadline actually measures is the time
+        -- to be IDENTIFIED, and a socket that is up but unanswered is its most
+        -- common cause. Say which.
+        auth_debug("identify deadline (%ds) expired — socket_connected=%s, is_identified=%s",
+            window, tostring(ws.socket_connected), tostring(ws.is_identified))
         self._silent_login_inflight = false
         if self._explicit_online or app_state.auth_state == "sending" or app_state.auth_state == "verifying" then
             app_state.auth_state = "error"

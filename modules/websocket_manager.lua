@@ -414,8 +414,36 @@ local function arm_identify_watchdog()
             send_identify("watchdog")
             arm_identify_watchdog()
         else
-            print("[WS-DEBUG] IDENTIFY never answered — reporting identify_error (timeout)")
+            -- A SOCKET THAT IGNORES IDENTIFY IS NOT A SOCKET TO KEEP TRYING ON.
+            --
+            -- From a reported log: connected at 20:54:05, four IDENTIFYs sent,
+            -- none answered, identify_error(timeout) — and the recovery
+            -- (controller's `reidentify` plan) called identify_and_connect,
+            -- which sent a FIFTH IDENTIFY down the same socket and then hit
+            --
+            --   [WS-DEBUG] connect() no-op: is_connecting=false socket_connected=true
+            --
+            -- because connect() no-ops while we believe we are connected. So
+            -- the recovery re-ran the identical action on the identical socket,
+            -- five cycles, ~25 IDENTIFYs, and then gave up. Nothing in that
+            -- loop could ever produce a different outcome.
+            --
+            -- Note what the same log rules out: the zombie watchdog never fired
+            -- across those thirty seconds, and it fires after 13s without a
+            -- single inbound frame. So frames WERE arriving — the server was
+            -- answering CLIENT_PING and not IDENTIFY. Whatever is wrong is at
+            -- the other end; what is wrong HERE is that we kept asking the same
+            -- socket. Dropping it costs one handshake and gives the next
+            -- IDENTIFY a genuinely fresh connection, on the normal backoff.
+            print(string.format(
+                "[WS-DEBUG] IDENTIFY unanswered %d times on this socket — dropping it and reconnecting",
+                IDENTIFY_MAX_TRIES))
             identify_tries = 0
+            -- Torn down BEFORE the event goes out: the listener's recovery
+            -- calls identify() again, and while socket_connected is still true
+            -- that just sends another one down the socket we are abandoning.
+            close_orphan_socket()
+            on_disconnected("identify unanswered")
             -- "timeout", and the distinction is the whole point. Nobody
             -- rejected this identity — the socket dropped, the server was slow,
             -- or it handled the reconnect down a branch that forgot to reply.
