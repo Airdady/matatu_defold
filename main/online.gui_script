@@ -176,6 +176,27 @@ local function make_ctx()
 end
 
 -- ── Banner System ─────────────────────────────────────────────────────────────
+-- Size the stashed countdown bar to whatever time_left is RIGHT NOW.
+--
+-- Called from draw_banner (so a fresh rebuild starts at the right width) and
+-- from update() every frame (so it slides instead of stepping). One node, one
+-- set_size, one set_color — cheap enough to run at frame rate, which a full
+-- rebuild is not.
+--
+-- pcall'd because the handle dies with the next clear(): draw_banner re-stashes
+-- on every rebuild so it is normally fresh, but a frame landing between the
+-- two would otherwise throw out of update().
+local function apply_banner_bar(b)
+    local bar = b and b._bar
+    if not bar or not bar.node then return end
+    local frac = math.max(0, math.min(1, (b.time_left or 0) / (b.max_time or 10)))
+    pcall(function()
+        gui.set_size(bar.node, vmath.vector3(bar.w * frac, 3, 0))
+        local col = (frac < 0.3) and COL_RED or COL_GREEN
+        gui.set_color(bar.node, vmath.vector4(col.x, col.y, col.z, (bar.alpha or 1)))
+    end)
+end
+
 local function draw_banner(self)
     for idx, b in ipairs(self.banners or {}) do
         local bw, slide = VISIBLE_W, (b.y_off or 0) * 132
@@ -193,9 +214,28 @@ local function draw_banner(self)
         self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(EDGE_R - 225, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.12, 0.19, 0.27, 0.85 * alpha))), id = "banner_decline", data = b.request_id }
         track(self, ui.text(vmath.vector3(EDGE_R - 225, cy, 0), "DECLINE", "btn_md", vmath.vector4(0.82,0.86,0.91,alpha)))
         if b.h2h then draw_h2h_row(self, EDGE_R - 430, cy, h2h_view(b.h2h), alpha) end
-        local barw = bw * math.max(0, math.min(1, (b.time_left or 10) / (b.max_time or 10)))
+        -- THE COUNTDOWN BAR IS ANIMATED, NOT REBUILT.
+        --
+        -- It used to be drawn at whatever width the last REBUILD happened to
+        -- catch, and update() only asked for a rebuild when the whole SECOND
+        -- changed. So over a ten-second invite the bar moved in ten steps of
+        -- 10% instead of sliding — reported as the progress not moving
+        -- smoothly.
+        --
+        -- Rebuilding every frame is not the answer: rebuild() deletes and
+        -- recreates every node on the screen, which is why the throttle was
+        -- there. The bar is ONE node, so it is stashed here and resized in
+        -- place by update() at frame rate. Nothing else on the banner changes
+        -- between rebuilds — there is no seconds text — so the per-second
+        -- rebuild the bar used to depend on now buys nothing and is gone.
         track(self, ui.box(vmath.vector3(CX, cy - 44, 0), vmath.vector3(bw, 3, 0), vmath.vector4(0.12, 0.19, 0.27, alpha)))
-        if barw > 1 then track(self, ui.box(vmath.vector3(CX - bw/2 + barw/2, cy - 44, 0), vmath.vector3(barw, 3, 0), barw/bw < 0.3 and COL_RED or COL_GREEN)) end
+        local fill = track(self, ui.box(vmath.vector3(CX - bw/2, cy - 44, 0), vmath.vector3(bw, 3, 0), COL_GREEN))
+        -- Anchored WEST so a width change grows and shrinks from the left edge
+        -- on its own. Repositioning it every frame alongside the resize is the
+        -- same result with twice the work and a chance of the two disagreeing.
+        gui.set_pivot(fill, gui.PIVOT_W)
+        b._bar = { node = fill, w = bw, alpha = alpha }
+        apply_banner_bar(b)
     end
 end
 
@@ -354,11 +394,13 @@ function update(self, dt)
         local expired = {}
         for _, b in ipairs(self.banners) do
             b.time_left = (b.time_left or 10) - dt
-            local cur_sec = math.floor(math.max(0, b.time_left))
-            if cur_sec ~= b._last_sec then
-                b._last_sec = cur_sec
-                need_rebuild = true
-            end
+            -- Every frame, and WITHOUT a rebuild. This used to set
+            -- need_rebuild whenever the whole second changed, which is the
+            -- only reason the bar ever moved — so it advanced in ten visible
+            -- steps over a ten-second invite instead of sliding. Nothing else
+            -- on the banner changes between rebuilds (there is no seconds
+            -- text), so that rebuild bought exactly this and did it badly.
+            apply_banner_bar(b)
 
             if b.time_left <= 0 then table.insert(expired, b) end
         end
