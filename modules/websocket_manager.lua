@@ -72,6 +72,12 @@ M.current_season_status = nil
 M.last_daily_bonus_status = nil
 M.last_daily_bonus_claim = nil
 M.current_savings_status = nil
+-- The longer day-by-day history, once the player has actually opened the
+-- stats view. Deliberately NOT part of current_savings_status: that one is
+-- pushed to every client on IDENTIFY and carries only a fortnight, and most
+-- players never open the panel at all.
+M.current_savings_history = nil
+M.savings_history_pending = false
 
 local connection = nil
 local is_connecting = false
@@ -497,6 +503,21 @@ function M.set_savings_auto_charge(enabled, amount)
   M.send_message("SET_SAVINGS_AUTO_CHARGE", { enabled = enabled, amount = amount })
 end
 
+-- Player opened the savings stats view and wants more than the fortnight that
+-- rode along with SAVINGS_STATUS.
+--
+-- `savings_history_pending` is set here and cleared when SAVINGS_HISTORY
+-- arrives, so the view can show "loading" rather than an empty list that looks
+-- like an answer. It is set even if the send fails: the reply handler clears
+-- it either way, and a stuck flag showing a spinner is recoverable by
+-- reopening the panel, whereas a cleared flag over no data reads as "you have
+-- never saved anything", which is a lie.
+function M.request_savings_history(days)
+  M.current_savings_history = nil
+  M.savings_history_pending = true
+  M.send_message("GET_SAVINGS_HISTORY", { days = days or 90 })
+end
+
 function M.send_emoji(name, sound, to)
   M.send_message("EMOJI_MESSAGE", {
     gameId = M.active_game_id,
@@ -860,6 +881,13 @@ local function parse_message(json_string)
       end
       if M.current_savings_status then M.current_savings_status.savingCoins = d.newSavingCoins end
     end
+  elseif t == "SAVINGS_HISTORY" then
+    -- The longer series, asked for by request_savings_history(). Cleared the
+    -- pending flag whether or not the server could produce it — a spinner that
+    -- never stops is worse than an empty state that says so.
+    M.savings_history_pending = false
+    M.current_savings_history = d
+    emit("savings_history", d)
   elseif t == "SAVINGS_SETTINGS_UPDATED" then
     -- Server's reply to a SET_SAVINGS_AUTO_CHARGE attempt.
     M.last_savings_settings = d

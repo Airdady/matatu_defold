@@ -439,7 +439,7 @@ end
 
 function on_message(self, message_id, message, sender)
     if message_id == hash("screen_enter") then
-        msg.post(".", "acquire_input_focus"); self._active, self.dialog, self.banners, self.list_scroll, self.battle_modal, self.invite_search, app_state.searching_invite, self.savings_info_open, self.savings_add_open, self.savings_plans_open = true, nil, nil, 0, nil, nil, false, nil, nil, nil
+        msg.post(".", "acquire_input_focus"); self._active, self.dialog, self.banners, self.list_scroll, self.battle_modal, self.invite_search, app_state.searching_invite, self.savings_info_open, self.savings_add_open, self.savings_plans_open, self.savings_stats_open = true, nil, nil, 0, nil, nil, false, nil, nil, nil, nil
         -- Auto-open the Savings explainer (modules/online_right.lua's
         -- draw_savings_info, normally only reached via a small "i" icon a
         -- first-time player would likely never notice) exactly once EVER —
@@ -686,6 +686,33 @@ function on_input(self, action_id, action)
                     end
                     self.savings_add_open = true; rebuild(self)
                 elseif id == "savings_add_close" or id == "savings_add_block" then self.savings_add_open = false; rebuild(self)
+                elseif id == "savings_stats" then
+                    -- Opens on whatever SAVINGS_STATUS already carried — a
+                    -- fortnight — and asks for the longer series in the
+                    -- background. The headline totals are computed over the
+                    -- whole history server-side, so they are already right;
+                    -- only the list gets longer when the reply lands.
+                    self.savings_stats_open = true
+                    right_panel.savings_stats_state(self).page = 0
+                    ws.request_savings_history(90)
+                    rebuild(self)
+                elseif id == "savings_stats_close" or id == "savings_stats_block" then
+                    self.savings_stats_open = false; rebuild(self)
+                elseif id == "savings_stats_tab_DAYS" or id == "savings_stats_tab_WEEKS" or id == "savings_stats_tab_MONTHS" then
+                    local st = right_panel.savings_stats_state(self)
+                    st.tab = id:gsub("^savings_stats_tab_", "")
+                    -- Page 3 of the days list means nothing in the months
+                    -- list, and leaving it there shows an empty page.
+                    st.page = 0
+                    rebuild(self)
+                elseif id == "savings_stats_prev" then
+                    local st = right_panel.savings_stats_state(self)
+                    st.page = math.max(0, st.page - 1); rebuild(self)
+                elseif id == "savings_stats_next" then
+                    local st = right_panel.savings_stats_state(self)
+                    -- Clamped against the real row count when it is drawn, so
+                    -- this only has to not go backwards.
+                    st.page = st.page + 1; rebuild(self)
                 elseif id == "savings_exchange_minus" or id == "savings_exchange_plus" then
                     local sa = self.savings_add
                     if sa and not sa.exchanging then

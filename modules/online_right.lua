@@ -4,6 +4,10 @@ local GameMode      = require("modules.game_mode")
 local app_state     = require("modules.app_state")
 local toast         = require("modules.toast")
 local twindow       = require("modules.tournament_window")
+-- Date/ordering/percentage shaping for the savings history modal. Its own
+-- module because it touches nothing Defold-specific, which is what lets
+-- tools/test_savings_stats.lua call these functions for real.
+local savings_stats_mod = require("modules.savings_stats")
 
 local M = {}
 
@@ -629,6 +633,208 @@ local function draw_savings_add(self, ctx)
     mkbtn(self, "savings_add_close", vmath.vector3(CX, close_y, 0), vmath.vector3(220, 52, 0), "CLOSE", "secondary_btn")
 end
 
+-- ── Savings History / Stats Modal ─────────────────────────────────────────────
+--
+-- WHAT THIS ANSWERS THAT NOTHING DID
+--
+-- The savings panel could show exactly one number: the balance. "How much did
+-- I actually save this week" had no answer anywhere — savingCoins is a running
+-- total with no ledger behind it, so by the time anyone asked, what happened
+-- on any given day was indistinguishable from everything else that had ever
+-- happened. The server now records every credit against a date; this is where
+-- a player reads it back.
+--
+-- Every number below comes from the payload. The shaping — dates, ordering,
+-- percentages, which rows to drop — is in modules/savings_stats.lua, which has
+-- no Defold dependencies and is tested directly; this function does nothing
+-- but place what that returns.
+local SAVINGS_TABS = { "DAYS", "WEEKS", "MONTHS" }
+local SAVINGS_ROWS_PER_PAGE = 7
+
+local function savings_stats_state(self)
+    if not self.savings_stats then
+        self.savings_stats = { tab = "DAYS", page = 0 }
+    end
+    return self.savings_stats
+end
+M.savings_stats_state = savings_stats_state
+M.SAVINGS_TABS = SAVINGS_TABS
+M.SAVINGS_ROWS_PER_PAGE = SAVINGS_ROWS_PER_PAGE
+
+--- The rows for the current tab, and how many pages of them there are.
+--- Separated out so paging can be reasoned about without the drawing.
+function M.savings_rows_for(stats, st, today)
+    if st.tab == "WEEKS" then return savings_stats_mod.week_rows(stats) end
+    if st.tab == "MONTHS" then return savings_stats_mod.month_rows(stats) end
+    return (savings_stats_mod.day_rows(stats, { today = today }))
+end
+
+local function draw_savings_stats(self, ctx)
+    if not self.savings_stats_open then return end
+
+    local track  = ctx.track
+    local ui     = ctx.ui
+    local txtL   = ctx.txtL
+    local txtR   = ctx.txtR
+    local mkbtn  = ctx.mkbtn
+    local C      = ctx.C
+    local CX, CY = ctx.CX, ctx.CY
+
+    local S  = savings_stats_mod
+    local st = savings_stats_state(self)
+
+    local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.78)))
+    self.buttons[#self.buttons+1] = { node = dim, id = "savings_stats_block" }
+
+    local panel_w, panel_h = 520, 760
+    track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
+
+    local COL_SAVINGS = vmath.vector4(0.20, 0.75, 0.55, 1.0)
+    local UNSEL_C     = vmath.vector4(0.16, 0.16, 0.18, 1)
+    local left  = CX - panel_w/2 + 22
+    local right = CX + panel_w/2 - 22
+    local top   = CY + panel_h/2
+
+    -- Prefer the longer history if it has arrived; fall back to the fortnight
+    -- that rode along with SAVINGS_STATUS. The fallback is what makes the
+    -- screen useful the instant it opens rather than after a round trip — the
+    -- headline totals are the same either way, because the server computes
+    -- them over the whole history and not over the window it happens to send.
+    local hist  = ws.current_savings_history
+    local stats = (type(hist) == "table" and hist.stats)
+        or (ws.current_savings_status or {}).stats
+    local today = type(stats) == "table" and stats.daily and #stats.daily > 0
+        and stats.daily[#stats.daily].date or nil
+
+    local cy = top - 36
+    track(self, ui.text(vmath.vector3(CX, cy, 0), "Savings History", "title", C.COL_GOLD))
+
+    -- The balance, first and largest. It is the number the player came for and
+    -- the one the app itself acts on; everything under it explains how it got
+    -- that big.
+    cy = cy - 40
+    track(self, ui.box(vmath.vector3(CX, cy, 0), vmath.vector3(panel_w - 44, 46, 0), C.COL_NAMEID_BG))
+    txtL(self, left + 10, cy, "SAVINGS BALANCE", "small", C.COL_DIM)
+    txtR(self, right - 10, cy, S.commas((stats or {}).banked or 0), "body", COL_SAVINGS)
+
+    -- ── the four headline windows ─────────────────────────────────────────
+    cy = cy - 54
+    local tiles = S.headlines(stats)
+    local tile_w = (panel_w - 44 - 3 * 8) / 4
+    for i, t in ipairs(tiles) do
+        local tx = left + (i - 1) * (tile_w + 8) + tile_w/2
+        track(self, ui.box(vmath.vector3(tx, cy, 0), vmath.vector3(tile_w, 58, 0), UNSEL_C))
+        track(self, ui.text(vmath.vector3(tx, cy + 14, 0), t.label, "small", C.COL_DIM))
+        track(self, ui.text(vmath.vector3(tx, cy - 10, 0), S.commas(t.value), "body",
+            t.value > 0 and COL_SAVINGS or C.COL_DIM))
+    end
+
+    -- The line that stops "ALL TIME 10" beside a balance of 8,000 reading as
+    -- a bug. It is not one: the balance predates the daily ledger.
+    local note = S.unrecorded_note(stats)
+    if note then
+        cy = cy - 44
+        track(self, ui.text(vmath.vector3(CX, cy, 0), note, "small", C.COL_DIM))
+        cy = cy - 12
+    else
+        cy = cy - 40
+    end
+
+    -- ── tabs ──────────────────────────────────────────────────────────────
+    cy = cy - 26
+    local tab_w = (panel_w - 44 - 2 * 8) / 3
+    for i, name in ipairs(SAVINGS_TABS) do
+        local tx = left + (i - 1) * (tab_w + 8) + tab_w/2
+        local on = (st.tab == name)
+        local box = track(self, ui.box(vmath.vector3(tx, cy, 0), vmath.vector3(tab_w, 44, 0), on and C_VICTORY or UNSEL_C))
+        self.buttons[#self.buttons+1] = { node = box, id = "savings_stats_tab_" .. name }
+        track(self, ui.text(vmath.vector3(tx, cy, 0), name, "btn_md", on and C_BTN_TEXT or C.COL_WHITE))
+    end
+
+    -- ── the list ──────────────────────────────────────────────────────────
+    cy = cy - 40
+    local rows = M.savings_rows_for(stats, st, today)
+    local pages = math.max(1, math.ceil(#rows / SAVINGS_ROWS_PER_PAGE))
+    -- Clamped on read, not only when the buttons are pressed: the tab can
+    -- change under a page number that was valid for the previous tab.
+    if st.page >= pages then st.page = pages - 1 end
+    if st.page < 0 then st.page = 0 end
+
+    local row_h = 46
+    local list_top = cy
+
+    if #rows == 0 then
+        -- Three different nothings, and they need three different sentences.
+        local _, msg = S.empty_reason(stats, ws.savings_history_pending)
+        track(self, ui.text(vmath.vector3(CX, list_top - 60, 0), msg or "Nothing here yet.", "small", C.COL_DIM))
+    else
+        local first = st.page * SAVINGS_ROWS_PER_PAGE + 1
+        for i = first, math.min(#rows, first + SAVINGS_ROWS_PER_PAGE - 1) do
+            local r = rows[i]
+            local ry = list_top - (i - first) * row_h - row_h/2
+            track(self, ui.box(vmath.vector3(CX, ry, 0), vmath.vector3(panel_w - 44, row_h - 4, 0),
+                ((i - first) % 2 == 0) and C.COL_NAMEID_BG or vmath.vector4(1, 1, 1, 0.03)))
+            txtL(self, left + 10, ry + 9, r.label, "small", C.COL_WHITE)
+
+            -- The second line is what a single total cannot say: a day of
+            -- "5 Auto" is a completely different day from "1,200 Season".
+            local sub
+            if st.tab == "DAYS" then
+                local parts = {}
+                for _, s in ipairs(r.sources or {}) do
+                    parts[#parts+1] = S.commas(s.value) .. " " .. s.short
+                end
+                sub = table.concat(parts, " + ")
+            else
+                sub = r.daysSaved .. (r.daysSaved == 1 and " day saved" or " days saved")
+            end
+            txtL(self, left + 10, ry - 10, sub, "small", C.COL_DIM)
+            txtR(self, right - 10, ry, "+" .. S.commas(r.credited), "body", COL_SAVINGS)
+        end
+
+        if pages > 1 then
+            local nav_y = list_top - SAVINGS_ROWS_PER_PAGE * row_h - 24
+            mkbtn(self, "savings_stats_prev", vmath.vector3(CX - 110, nav_y, 0), vmath.vector3(96, 42, 0), "PREV", "secondary_btn")
+            track(self, ui.text(vmath.vector3(CX, nav_y, 0), (st.page + 1) .. " / " .. pages, "small", C.COL_DIM))
+            mkbtn(self, "savings_stats_next", vmath.vector3(CX + 110, nav_y, 0), vmath.vector3(96, 42, 0), "NEXT", "secondary_btn")
+        end
+    end
+
+    -- ── the facts, and where it all came from ─────────────────────────────
+    local facts_y = CY - panel_h/2 + 186
+    local facts = S.facts(stats)
+    for i = 1, math.min(3, #facts) do
+        local fy = facts_y - (i - 1) * 22
+        txtL(self, left + 10, fy, facts[i].label, "small", C.COL_DIM)
+        txtR(self, right - 10, fy, facts[i].value, "small", C.COL_WHITE)
+    end
+
+    local br_y = CY - panel_h/2 + 96
+    track(self, ui.box(vmath.vector3(CX, br_y + 30, 0), vmath.vector3(panel_w - 44, 1, 0), vmath.vector4(1, 1, 1, 0.10)))
+    txtL(self, left + 10, br_y + 14, "WHERE IT CAME FROM", "small", C.COL_DIM)
+    local br = S.breakdown(stats)
+    local bw2 = (panel_w - 44 - 3 * 6) / 4
+    for i, b in ipairs(br) do
+        local bx = left + (i - 1) * (bw2 + 6) + bw2/2
+        track(self, ui.box(vmath.vector3(bx, br_y - 14, 0), vmath.vector3(bw2, 40, 0), UNSEL_C))
+        track(self, ui.text(vmath.vector3(bx, br_y - 4, 0), S.commas(b.value), "small",
+            b.value > 0 and COL_SAVINGS or C.COL_DIM))
+        track(self, ui.text(vmath.vector3(bx, br_y - 24, 0), b.percent .. "%", "small", C.COL_DIM))
+    end
+
+    local close_y = CY - panel_h/2 + 34
+    mkbtn(self, "savings_stats_close", vmath.vector3(CX, close_y, 0), vmath.vector3(220, 52, 0), "CLOSE", "secondary_btn")
+end
+
+-- Exposed for tools/test_savings_stats.lua, which draws this modal against a
+-- recording stub. Nothing else calls it — M.draw does, through the local.
+--
+-- Worth the export: this file has already shipped a savings dialog that drew
+-- its panel, its dividers and both its buttons around no content at all,
+-- because one indexed lookup threw and took the rest of the body with it. A
+-- render that never runs outside the engine cannot catch that; this one can.
+M._draw_savings_stats = draw_savings_stats
+
 -- ── Invite Modal Drawing ──────────────────────────────────────────────────────
 local function draw_invite_search(self, ctx)
     dialog_search.draw(self, ctx, self.invite_search, "invite_reel_node")
@@ -718,6 +924,19 @@ function M.draw(self, ctx, left_M)
     track(self, ui.box(vmath.vector3(info_cx, r2_y, 0), vmath.vector3(info_w, stat_h, 0), C.COL_NAMEID_BG))
     txtL(self, info_l + 8, r2_y, "SAVINGS BAL", "small", COL_SAVINGS)
     txtR(self, inner_r - 80, r2_y, commas(u.savingCoins or 0), "body", COL_SAVINGS)
+
+    -- The row itself opens the history. Registered BEFORE the two icons so
+    -- they still win the hit test — input walks self.buttons backwards, so the
+    -- last one registered over a point is the one that fires, and "i" and "+"
+    -- must keep doing what they have always done.
+    --
+    -- A row rather than a third icon: the two that are there already sit at
+    -- inner_r - 20 and inner_r - 54, with the figure itself at inner_r - 80.
+    -- A third would land on the number.
+    self.buttons[#self.buttons+1] = {
+        node = track(self, ui.box(vmath.vector3(info_cx, r2_y, 0), vmath.vector3(info_w, stat_h, 0), vmath.vector4(0, 0, 0, 0))),
+        id = "savings_stats",
+    }
 
     -- Savings Interactive Icons
     local sav_info_pos = vmath.vector3(inner_r - 20, r2_y, 0)
@@ -893,6 +1112,7 @@ function M.draw(self, ctx, left_M)
     draw_savings_info(self, ctx)
     draw_savings_plans(self, ctx)
     draw_savings_add(self, ctx)
+    draw_savings_stats(self, ctx)
 end
 
 -- ── Input Action Exports for Main Script ─────────────────────────────────────
