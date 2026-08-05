@@ -67,6 +67,23 @@ local function play_sound(_, name)
 end
 
 ----------------------------------------------------------------------
+-- Recovery: put the board back to what the server last told us
+----------------------------------------------------------------------
+-- Used by every "this should have finished by now" path. The server's state is
+-- the only thing that can be trusted after one of those, and re-applying it is
+-- cheap: finalize_state_sync syncs to target COUNTS rather than applying
+-- deltas, so running it over a partial or stale board is safe and idempotent.
+local function rebuild_from_server(self)
+    if not self.online_mode then return false end
+    local latest = ws.active_game_state
+    if type(latest) ~= "table" or next(latest) == nil then return false end
+    OnlineHandler.finalize_state_sync(self, latest, function()
+        RE.pre_validate_hand(self)
+    end)
+    return true
+end
+
+----------------------------------------------------------------------
 -- Input lock reconciliation
 ----------------------------------------------------------------------
 local function reconcile_input_locks(self)
@@ -462,12 +479,46 @@ function update(self, dt)
             -- rather than handing the player a half-built pile to play onto.
             -- finalize_state_sync syncs to target COUNTS rather than applying
             -- deltas, so running it again over a partial apply is safe.
-            local latest = ws.active_game_state
-            if self.online_mode and type(latest) == "table" and next(latest) ~= nil then
-                OnlineHandler.finalize_state_sync(self, latest, function()
-                    RE.pre_validate_hand(self)
-                end)
-            end
+            rebuild_from_server(self)
+        end
+
+        -- AND THE ONE FLAG THAT COULD FREEZE THE BOARD FOR GOOD.
+        --
+        -- Reported: the opponent played 8 of clubs and 3 of clubs, and after
+        -- that no card could be picked at all until the app was restarted.
+        --
+        -- is_waiting_for_server_response is set the moment a move is sent and
+        -- cleared in exactly ONE place — finalize_state_sync, i.e. when the
+        -- server answers. It had no watchdog, and it is a term in every OTHER
+        -- watchdog here: reconcile_input_locks counts it as server_busy, and
+        -- the `waiting`, stale-draw and lock watchdogs are all gated on
+        -- `not self.is_waiting_for_server_response`. One stuck flag disables
+        -- every recovery path at once.
+        --
+        -- The `now_my_turn` edge below cannot save it either: the server never
+        -- moved the turn, so is_player_turn() never went false and there is no
+        -- edge to observe. Nothing was left but restarting the app.
+        --
+        -- The server can leave it stuck without anything going wrong on the
+        -- wire — handleMove answers a draw it cannot satisfy with a bare ERROR
+        -- and returns, sending no state and never changing the turn. A
+        -- three-card penalty draw, which is exactly what 8C then 3C leaves you
+        -- owing, is the likeliest move to hit that path.
+        self._answer = self._answer or TL.new_answer_tracker()
+        local overdue = TL.track_server_answer(self._answer, {
+            awaiting = self.is_waiting_for_server_response,
+        }, dt)
+        if overdue then
+            print("[DEBUG] Server never answered our move (" .. overdue .. ") — rebuilding from its state")
+            -- The half-built action list belongs to a move the server may
+            -- never have accepted. Sending it again on the next end_turn would
+            -- replay cards we have already played.
+            self.current_turn_actions = {}
+            self.is_waiting_for_server_response = false
+            self.player_has_drawn = false
+            self.is_local_action_locked = false
+            self.waiting = false
+            rebuild_from_server(self)
         end
 
         if self.is_player_turn() and not self.is_processing_move and #self.move_queue == 0 and not self.is_waiting_for_server_response then
@@ -1210,6 +1261,24 @@ function on_message(self, message_id, message, sender)
 
     elseif message_id == hash("ws_timer_update") then
         if self.online_mode then OnlineHandler.sync_timers(self, message.data) end
+
+    elseif message_id == hash("ws_server_error") then
+        -- The server refused something. If we were waiting on a move, this IS
+        -- the answer: it is not coming, and every lock on this board is gated
+        -- on that wait. Released here rather than ten seconds later by the
+        -- watchdog in update().
+        if self.online_mode and not self.game_over then
+            print("[ONLINE] server error: " .. tostring(message.message))
+            if self.is_waiting_for_server_response then
+                self.current_turn_actions = {}
+                self.is_waiting_for_server_response = false
+                self.player_has_drawn = false
+                self.is_local_action_locked = false
+                self.waiting = false
+                self._answer = TL.new_answer_tracker()
+                rebuild_from_server(self)
+            end
+        end
 
     elseif message_id == hash("timer_expired") then
         if self.online_mode then return end

@@ -209,6 +209,75 @@ function M.track_processing(t, s, dt)
     return nil
 end
 
+-- ---------------------------------------------------------------------------
+-- THE ONE FLAG THAT COULD FREEZE THE BOARD FOR GOOD.
+--
+-- Reported: the opponent played 8 of clubs and 3 of clubs, after which no card
+-- could be picked at all — until the app was restarted.
+--
+-- is_waiting_for_server_response is set by online_handler.end_turn the moment a
+-- move is sent, and cleared in exactly ONE place: finalize_state_sync, i.e.
+-- when the server answers. It had no watchdog of its own — and it is a term in
+-- every OTHER watchdog on the board:
+--
+--   reconcile_input_locks .... server_busy includes it, and returns early
+--   the `waiting` watchdog ... gated on `not is_waiting_for_server_response`
+--   stale_draw_flag .......... lives inside that same gated block
+--   the lock watchdog ........ gated on it as well
+--
+-- So one stuck flag disables every recovery path at once. The only other reset
+-- is the false->true edge of `now_my_turn`, and that cannot fire here: the
+-- server never moved the turn, so is_player_turn() never went false, so there
+-- is no edge to observe. Nothing left but restarting the app.
+--
+-- AND THE SERVER CAN LEAVE IT STUCK WITHOUT ANYTHING GOING WRONG ON THE WIRE.
+-- handleMove answers a draw it cannot satisfy with a bare ERROR and returns —
+-- no state, no broadcast, no turn change:
+--
+--     if (!drawResult.success) {
+--       if (ws) ws.send({ ERROR: 'Sync Error: Deck mismatch' });
+--       return;
+--     }
+--
+-- and no client listener subscribes to that `error` event, so it is emitted
+-- into nothing. A three-card penalty draw — which is exactly what 8C then 3C
+-- leaves you owing — is the likeliest move to hit it.
+--
+-- The flag now has a deadline. A move that is never answered stops being a
+-- reason to hold the whole board.
+
+--- How long a sent move may go unanswered before the board stops waiting.
+--- Generous next to a real round trip (a slow mobile round trip is under two
+--- seconds) and far short of a turn timer.
+M.SERVER_ANSWER_SECONDS = 10.0
+
+function M.new_answer_tracker()
+    return { waited = 0, fired = false }
+end
+
+--- Advance the tracker one frame.
+---
+--- Returns a reason string ONCE when the wait becomes overdue, then nil until
+--- the flag clears — recovering is a one-shot action, not something to redo
+--- every frame while the answer is still missing.
+function M.track_server_answer(t, s, dt)
+    s = s or {}
+    if not t then return nil end
+
+    if not s.awaiting then
+        t.waited, t.fired = 0, false
+        return nil
+    end
+
+    t.waited = t.waited + (tonumber(dt) or 0)
+    if t.fired then return nil end
+    if t.waited >= M.SERVER_ANSWER_SECONDS then
+        t.fired = true
+        return string.format('no answer to our move for %.1fs', t.waited)
+    end
+    return nil
+end
+
 --- Everything holding the board, for the log line. Ordered, stable, cheap.
 function M.describe(s)
     s = s or {}

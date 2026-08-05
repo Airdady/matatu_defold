@@ -421,6 +421,21 @@ function M.setup_ws_listeners(self)
     table.insert(self.ws_listeners, ws.on("timer_update", function(d)
         msg.post(board, "ws_timer_update", { data = d })
     end))
+    -- NOBODY WAS LISTENING TO THIS, AND IT IS THE SERVER SAYING "NO".
+    --
+    -- websocket_manager emits `error` for every ERROR frame, and not one
+    -- subscriber existed anywhere in the client — so a refused move was
+    -- emitted into nothing. handleMove refuses a draw it cannot satisfy with
+    -- exactly that and returns, sending no state and never changing the turn,
+    -- which leaves is_waiting_for_server_response set with nothing to clear
+    -- it. The board then froze until the app was restarted.
+    --
+    -- An ERROR arriving while we are waiting IS the answer to our move. The
+    -- watchdog in update() would catch it ten seconds later regardless; this
+    -- makes it immediate, which is the difference between a hitch and a hang.
+    table.insert(self.ws_listeners, ws.on("error", function(message)
+        msg.post(board, "ws_server_error", { message = tostring(message or "") })
+    end))
     table.insert(self.ws_listeners, ws.on("game_over", function(results)
         ws.last_game_over = results or {}
         msg.post(board, "ws_game_over")
