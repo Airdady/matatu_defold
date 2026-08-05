@@ -163,17 +163,24 @@ check("and a username", profile_fn:find("username_complete", 1, true) ~= nil, tr
 check("phone_complete still exists for the screen to ask",
     app_state:find("function M.phone_complete", 1, true) ~= nil, true)
 local profile_gui = code_of(read("main/profile.gui_script"))
--- The screen asks phone_step_required now, which is phone_complete plus the
--- one thing this condition was missing: whether the player has an account at
--- all. "Signed in and only missing a name" was being sent to the number pad
--- and stopped there. Same intent — the SCREEN decides its step from the
--- account data, not the router — with the predicate lifted into app_state so
--- it can be tested directly (see test_phone_signin_routes.lua).
+-- And the answer is now NO, for everybody — the keypad is not a gate. It was
+-- forced on two different players and neither needed it: somebody the device
+-- had already identified who only wanted a name, and somebody the device did
+-- not know, whose account /auth/device/profile creates from a username, an
+-- avatar and the device id with no number involved.
+--
+-- The predicate is kept and named so there is one place that says so, and it
+-- is what the screen asks. phone_complete stays honest and still decides
+-- whether the step is OFFERED — see test_phone_signin_routes.lua.
 check("and the profile screen is what asks it",
     profile_gui:find("app_state.phone_step_required(u)", 1, true) ~= nil, true)
-check("which is built on phone_complete",
+check("which answers no, for everybody",
     app_state:find("function M.phone_step_required", 1, true) ~= nil
-        and app_state:match("function M%.phone_step_required.-\nend\n"):find("phone_complete", 1, true) ~= nil, true)
+        and app_state:match("function M%.phone_step_required.-\nend\n"):find("return false", 1, true) ~= nil, true)
+-- Removing the gate must not remove the door: the one player the number is
+-- genuinely the only route back for is somebody returning on a new handset.
+check("and the returning player still has a way in",
+    profile_gui:find('id = "phone_login_open"', 1, true) ~= nil, true)
 
 -- The one path that DOES lead there, and it is the only one.
 check("DEVICE_UNKNOWN is what opens it",

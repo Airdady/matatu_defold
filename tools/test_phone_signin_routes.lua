@@ -163,46 +163,76 @@ check("an account with no number does keep the phone step",
 
 -- ---------------------------------------------------------------------------
 print("")
-print("AND THE NUMBER IS ASKED FOR ONLY WHEN IT IS THE ONLY WAY IN")
+print("THE NUMBER IS NEVER DEMANDED — IT IS OFFERED")
 --
--- Reported: "when the user with device id exists already and is missing
--- username and avatar just take him to that screen to set them."
+-- Reported, in order:
+--   "user with device id exists and is missing username and avatar — just
+--    take him to that screen"
+--   "in case no device id is found attached to the device, skip the phone
+--    number screen"
 --
--- The step was decided by "phone_required and not phone_complete", which
--- caught two completely different players with one condition.
+-- Which together say: the keypad is not a gate. It was one, and it forced
+-- itself on two different players — somebody the device had already
+-- identified who only needed a name, and somebody the device did NOT know,
+-- whose account /auth/device/profile can create from a username, an avatar
+-- and the device id with no number involved at all.
 local GameMode = require("modules.game_mode")
-if not GameMode.is_matatu() then
-    print("  SKIP this build is not matatu, so no number is ever required")
-else
-    check("a handset nobody recognises is asked for a number",
-        app_state.phone_step_required({}) == true,
-        "DEVICE_UNKNOWN: nothing else identifies them and the number is the route in")
-    check("and so is a session with no id at all",
-        app_state.phone_step_required({ username = "Ada" }) == true)
 
-    check("but an account the device identified is NOT",
-        app_state.phone_step_required({ _id = "6512ab34cd56ef7890123456", avatar = 0 }) == false,
-        "this is the player the report is about; they need the avatar picker, not the number pad")
-    check("even with no number on file",
-        app_state.phone_step_required({ _id = "abc", phoneNumber = "" }) == false)
+check("a handset nobody recognises is NOT asked for a number",
+    app_state.phone_step_required({}) == false,
+    "the very first thing a new player does must not be a credential they may not have")
+check("nor is a session with no id",
+    app_state.phone_step_required({ username = "Ada" }) == false)
+check("nor an account the device identified",
+    app_state.phone_step_required({ _id = "6512ab34cd56ef7890123456", avatar = 0 }) == false,
+    "they need the avatar picker, not the number pad")
+check("nor one that already has a number",
+    app_state.phone_step_required({ _id = "abc", phoneNumber = "0700111222" }) == false)
+check("nobody at all, in fact",
+    app_state.phone_step_required(nil) == false
+        and app_state.phone_step_required("nope") == false
+        and app_state.phone_step_required({ _id = "" }) == false)
 
-    check("an account that already has a number is not asked either",
-        app_state.phone_step_required({ _id = "abc", phoneNumber = "0700111222" }) == false)
-    check("nor is a number-carrying account with no id",
-        app_state.phone_step_required({ phoneNumber = "0700111222" }) == false,
-        "the number is already there; there is nothing to ask for")
-
-    check("a blank id does not count as identified",
-        app_state.phone_step_required({ _id = "" }) == true)
-    check("and neither does a non-string one",
-        app_state.phone_step_required({ _id = 12345 }) == true)
+-- The predicate that still answers honestly, and is what the screen uses to
+-- decide whether to OFFER the step rather than force it.
+if GameMode.is_matatu() then
+    check("phone_complete still tells the truth",
+        app_state.phone_complete({ _id = "x" }) == false
+            and app_state.phone_complete({ _id = "x", phoneNumber = "0700111222" }) == true,
+        "the offer depends on it; only the gate is gone")
 end
 
-check("nothing throws on a missing user",
-    (function()
-        local ok = pcall(app_state.phone_step_required, nil)
-        return ok and pcall(app_state.phone_step_required, "nope")
-    end)())
+-- ---------------------------------------------------------------------------
+print("")
+print("BUT THE ROUTE BACK INTO AN OLD ACCOUNT SURVIVES")
+--
+-- The player this could have cost is specific: somebody returning on a new
+-- handset, or after a reinstall, whose device id has rerolled. Nothing on the
+-- profile screen identifies them, so picking a name there would mint a SECOND
+-- account and leave the one with their balance unreachable — with nothing on
+-- screen to say so. Removing a gate must not remove the door.
+local prof_code = slurp("main/profile.gui_script"):gsub("%-%-[^\n]*", "")
+
+check("the profile step offers a sign-in for a returning player",
+    prof_code:find('id = "phone_login_open"'),
+    "without it, skipping the keypad silently orphans accounts")
+check("worded as what it is for",
+    slurp("main/profile.gui_script"):find("Already have an account?", 1, true) ~= nil)
+check("and offered only while there is no account yet",
+    prof_code:find("if not has_account and app_state%.phone_required%(%) then"),
+    "afterwards the same journey is VERIFY YOUR PHONE, a different sentence")
+check("it opens the keypad in LOGIN mode, which signs in rather than links",
+    prof_code:match('id == "phone_login_open".-self%.phone_mode = "login"') ~= nil)
+
+check("the keypad always has a way out now",
+    prof_code:find('id = "phone_cancel"')
+        and not prof_code:find('if phone_mode%(self%) == "login" then'),
+    "both modes are entered deliberately, so both need a back button")
+check("and BACK returns to the profile step rather than the lobby",
+    prof_code:match('id == "phone_cancel".-self%.step = "profile"') ~= nil,
+    "dropping out to the lobby loses the name and avatar already picked")
+check("falling back to the lobby when there is no profile step behind it",
+    prof_code:match('id == "phone_cancel".-goto_lobby') ~= nil)
 
 local prof = slurp("main/profile.gui_script")
 check("the screen uses the shared predicate rather than its own condition",

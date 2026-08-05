@@ -163,33 +163,44 @@ function M.phone_complete(user)
   return type(p) == "string" and p ~= ""
 end
 
--- Should the profile screen ask for a number before anything else?
+-- Is the phone step MANDATORY? No. Never, for anybody.
 --
--- ONLY WHEN IT IS THE ONLY WAY IN. The screen used to ask this as
--- "phone_required() and not phone_complete(u)", which caught two completely
--- different players:
+-- Kept as a named predicate rather than deleted, because this decision has
+-- been wrong three times and each time it was re-derived at the call site.
+-- One place to read the answer, and one place to change it.
 --
---   no account at all   the handset was not recognised (DEVICE_UNKNOWN),
---                       nothing else identifies them, and the number is the
---                       entire route back in. Ask.
+-- HOW IT GOT HERE. The condition was "phone_required and not phone_complete",
+-- which forced the number pad on two completely different players:
 --
 --   an account already  the device id identified them; they are signed in and
 --                       have simply not picked a name and avatar yet. Asking
---                       here stops them at a screen they cannot get past.
+--                       here stopped them at a screen they could not pass.
 --
--- An `_id` tells the two apart: it exists only because the server resolved
--- this player. Which is what phone_required's own note above already argued
--- for — it must not "interrupt somebody the device already identified".
+--   no account at all   the handset was not recognised. This one READ as
+--                       correct — the number does look like the only way in —
+--                       and it is not. /auth/device/profile creates an account
+--                       from a username, an avatar and the device id, with no
+--                       number involved. So the screen was demanding a
+--                       credential that the very next screen did not need,
+--                       and a player without a mobile-money number to give
+--                       could not start at all.
 --
--- The number still matters and is still offered (the profile screen keeps its
--- VERIFY YOUR PHONE link, and it remains the identity that survives a new
--- handset). What it no longer does is block the step in front of it.
-function M.phone_step_required(user)
-  if not M.phone_required() then return false end
-  if M.phone_complete(user) then return false end
-  local id = type(user) == "table" and user._id or nil
-  local signed_in = type(id) == "string" and id ~= ""
-  return not signed_in
+-- WHAT IS GIVEN UP, STATED RATHER THAN DISCOVERED. An account created without
+-- a number is reachable only by its device id, and that does not survive a
+-- reinstall or a new handset. That was already true of every account made
+-- this way; what changes is that more of them will be. Two things answer it,
+-- and both are deliberate:
+--
+--   * the profile screen offers "I ALREADY HAVE AN ACCOUNT" whenever there is
+--     no account yet, which is the returning player whose id rerolled — the
+--     one case where the number really is the only way back
+--   * VERIFY YOUR PHONE stays on the profile screen afterwards
+--
+-- Offered, both of them. Not forced. A number a player chooses to give is
+-- worth more than one extracted at a gate they cannot get past, which is what
+-- the last three reports have all been about.
+function M.phone_step_required(_user)
+  return false
 end
 
 -- Account is "complete" when an avatar is chosen and the username is valid.
