@@ -1,6 +1,6 @@
 [project]
 title = Matatu
-version = 20.9.2
+version = 1.0.30
 bundle_resources = /bundle
 dependencies#0 = https://github.com/defold/extension-websocket/archive/refs/tags/4.2.3.zip
 
@@ -35,8 +35,8 @@ default_texture_mag_filter = linear
 [android]
 package = com.matatu.champ
 input_method = INPUT_METHOD_HIDDEN
-minimum_sdk_version = 23
-version_code = 232
+minimum_sdk_version = 21
+version_code = 30
 
 [firebase]
 project_id = matatu-7aba6
