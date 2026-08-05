@@ -125,9 +125,15 @@ function M.get_card_effect(card, is_penalty_active, rules)
   rules = rules or M.RULES_JOKERS
 
   if not M.is_classic(rules) and M.is_joker(card) then
+    -- A JOKER DOES NOT ASK FOR A SUIT. The rule sheet says so
+    -- (`jokerRules.effect.allowSuitChoice: false`) and the server agrees; the
+    -- next player answers the joker by COLOUR, which is the joker's own suit.
+    -- This field is read nowhere today, so the `true` it used to hold changed
+    -- nothing — it was simply a contradiction of the rules sitting in the
+    -- rules file, waiting for the first person to wire it up.
     return {
       type = NA.TRANSFER_PENALTY,
-      allow_suit_choice = true,
+      allow_suit_choice = false,
       penalty_cards = M.JOKER_PENALTY,
       message = string.format("Joker played - %d cards penalty transferred", M.JOKER_PENALTY),
     }
