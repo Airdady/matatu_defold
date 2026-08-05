@@ -52,10 +52,16 @@ M.BATTLE_TIERS = BATTLE_TIERS_BY_GAME[GameMode.GAME] or BATTLE_TIERS_BY_GAME.MAT
 -- claimed to eliminate you at 5 points.
 M.KNOCKOUT_CAPS = { 100, 200, 250, 300 }
 
--- Per-round charge by cap. NOT cap/2: that only matches on the first two
--- rungs (250 would be 125 and 300 would be 150). The server prices from the
--- same table — see KNOCKOUT_CHARGE_BY_CAP — so a mismatch here shows the
--- player one price and bills them another.
+-- Charge by cap, taken ONCE for the chamber. NOT cap/2: that only matches on
+-- the first two rungs (250 would be 125 and 300 would be 150). The server
+-- prices from the same table — see KNOCKOUT_CHARGE_BY_CAP — so a mismatch
+-- here shows the player one price and bills them another.
+--
+-- This said "per-round" and that is not what the server does. The charge is
+-- part of the chamber's STAKE, and a stake is taken once at the start of the
+-- match: rounds 2..N arrive as continuations, which skip the wallet entirely.
+-- Left uncorrected it is an invitation to display a running total that
+-- nobody is actually billed.
 M.KNOCKOUT_CHARGE_BY_CAP = { [100] = 50, [200] = 100, [250] = 150, [300] = 200 }
 
 function M.knockout_charge(cap)
@@ -67,7 +73,8 @@ end
 M.KNOCKOUT_DEFAULT_CAP_I = 1
 
 -- KNOCKOUT is a STAKED score-cap chamber: players put up one of these stake
--- amounts, and the per-round charge comes from M.KNOCKOUT_CHARGE_BY_CAP.
+-- amounts, and the chamber's charge comes from M.KNOCKOUT_CHARGE_BY_CAP —
+-- once, with the stake, not once per round.
 local KNOCKOUT_STAKES_BY_GAME = {
     MATATU = { 1000, 2000 },
     WHOT   = { 500,  1000 },
