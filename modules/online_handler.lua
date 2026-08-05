@@ -734,10 +734,19 @@ function M.process_my_actions(self, actions, done)
     end
 end
 
-local function sync_my_hand(self, state)
+-- `done` IS NOT OPTIONAL BOOKKEEPING — IT IS THE END OF THE APPLY.
+--
+-- handle_single_move called this and then released is_processing_move on the
+-- very next line. When the reconciliation below has cards to add, it LAUNCHES
+-- draw_to_hand and returns immediately, so the lock came off while the
+-- player's own new cards were still flying into their hand — which is exactly
+-- the window in the report: the opponent's move has landed, the board is still
+-- moving, and a tap goes straight out as a move.
+local function sync_my_hand(self, state, done)
+    local finish = function() if done then done() end end
     local me = (state.players or {})[self.my_player_id] or {}
     local real = (type(me.hand) == "table") and me.hand or nil
-    if not real then return end
+    if not real then finish(); return end
 
     -- Reconcile by card identity (value+suit) as a multiset, not by array
     -- position. The local and server hand arrays aren't guaranteed to stay
@@ -789,10 +798,12 @@ local function sync_my_hand(self, state)
                 end
             end
             self.pre_validate_hand()
+            finish()
         end)
     else
         self.position_hands(true)
         self.pre_validate_hand()
+        finish()
     end
 end
 
@@ -818,8 +829,7 @@ function M.handle_single_move(self, move_data, new_state, done)
             -- drifts from the server's authoritative hand and stays wrong
             -- until some later, unrelated resync happens to catch it.
             M.finalize_state_sync(self, new_state, function()
-                sync_my_hand(self, new_state or {})
-                done()
+                sync_my_hand(self, new_state or {}, done)
             end)
         end)
     elseif ai_for_me and has_actions then
@@ -831,8 +841,7 @@ function M.handle_single_move(self, move_data, new_state, done)
         self.is_local_action_locked = false
         M.process_my_actions(self, actions, function()
             M.finalize_state_sync(self, new_state, function()
-                sync_my_hand(self, new_state or {})
-                done()
+                sync_my_hand(self, new_state or {}, done)
             end)
         end)
     else

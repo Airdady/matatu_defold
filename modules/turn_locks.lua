@@ -108,6 +108,107 @@ function M.penalty_draw_blocked(s)
     return M.draw_in_flight(s)
 end
 
+-- ---------------------------------------------------------------------------
+-- IS THE INCOMING MOVE STUCK, OR JUST SLOW?
+--
+-- Reported: on a slow connection the opponent's cards take a while to come in,
+-- and DURING that delay the player can tap their own cards and the taps are
+-- sent as a move.
+--
+-- is_processing_move is what refuses those taps, and update() had a watchdog
+-- that cleared it after 3.5 seconds:
+--
+--     if #self.move_queue == 0 then
+--         if self.is_processing_move then
+--             self.stuck_count = self.stuck_count + dt
+--             if self.stuck_count > 3.5 then self.is_processing_move = false end
+--
+-- Both of its conditions are TRUE throughout a perfectly healthy move.
+-- pump_move_queue removes the item from the queue BEFORE processing it, so the
+-- queue is empty for the whole apply; and the apply itself genuinely takes
+-- seconds — process_opponent_actions spends 0.24s between plays and 0.42s
+-- settling, a penalty draw batches five cards, and finalize_state_sync can run
+-- a 1.3s reshuffle on top. So the watchdog was not detecting a stuck pipeline.
+-- It was putting a stopwatch on a slow one and calling time.
+--
+-- What made that a rules problem rather than a cosmetic one: by then
+-- finalize_state_sync has already assigned self.game_state (so is_player_turn()
+-- is true) and cleared is_waiting_for_server_response, so reconcile_input_locks
+-- releases `waiting` and `is_local_action_locked` too. The tap is then judged by
+-- evaluate_play against a pile that has not finished being built, and sent.
+--
+-- A STOPWATCH CANNOT TELL THE TWO APART. PROGRESS CAN. A move that is being
+-- applied changes the board constantly — cards leave a hand, land on the pile,
+-- come off the deck, animation locks go up and down. A move that is stuck
+-- changes nothing at all. So the timer is reset by any observable change, and
+-- only genuine silence counts toward the limit.
+--
+-- The absolute ceiling stays because the original freeze this watchdog was
+-- written for is real: a pipeline can wedge while still ticking an animation
+-- counter, and a board that never accepts input again is worse than one that
+-- resyncs.
+
+--- No observable change on the board for this long means the apply is dead.
+--- Comfortably longer than the longest gap a healthy apply ever leaves
+--- (finalize_state_sync's 1.3s reshuffle runs with animation locks held, and
+--- process_opponent_actions' quietest beat is 0.42s).
+M.STALL_SECONDS = 3.5
+
+--- And no apply may run longer than this however busy it looks, so a pipeline
+--- that wedges mid-animation still recovers.
+M.CEILING_SECONDS = 15.0
+
+--- A cheap, stable fingerprint of everything an apply moves.
+---
+--- Counts only: an apply that is running changes at least one of these every
+--- fraction of a second, and one that has died changes none of them.
+function M.board_signature(s)
+    s = s or {}
+    local n = function(v) return tonumber(v) or 0 end
+    return string.format('%d/%d/%d/%d/%d/%d',
+        n(s.player_hand), n(s.ai_hand), n(s.played),
+        n(s.deck), n(s.anim_locks), n(s.queue))
+end
+
+function M.new_stall_tracker()
+    return { since_progress = 0, since_start = 0, signature = nil }
+end
+
+--- Advance the tracker one frame.
+---
+--- Returns a REASON string when the apply should be declared dead, or nil while
+--- it is alive. The reason is what gets logged: "it was stuck" with no number
+--- attached is how this went unnoticed for so long.
+function M.track_processing(t, s, dt)
+    s = s or {}
+    if not t then return nil end
+
+    if not s.is_processing then
+        t.since_progress, t.since_start, t.signature = 0, 0, nil
+        return nil
+    end
+
+    dt = tonumber(dt) or 0
+    t.since_start = t.since_start + dt
+
+    if s.signature ~= t.signature then
+        t.signature = s.signature
+        t.since_progress = 0
+    else
+        t.since_progress = t.since_progress + dt
+    end
+
+    if t.since_progress >= M.STALL_SECONDS then
+        return string.format('no change on the board for %.1fs', t.since_progress)
+    end
+    -- Checked even when the signature IS moving: an apply that has been busy
+    -- for fifteen seconds is not applying, it is spinning.
+    if t.since_start >= M.CEILING_SECONDS then
+        return string.format('still applying after %.1fs', t.since_start)
+    end
+    return nil
+end
+
 --- Everything holding the board, for the log line. Ordered, stable, cheap.
 function M.describe(s)
     s = s or {}

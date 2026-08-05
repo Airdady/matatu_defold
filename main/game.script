@@ -407,16 +407,66 @@ function update(self, dt)
             end
         end
 
-        if #self.move_queue == 0 then
-            if self.is_processing_move then
-                self.stuck_count = (self.stuck_count or 0) + dt
-                if self.stuck_count > 3.5 then
-                    print("[DEBUG] Watchdog resetting is_processing_move lock!")
-                    self.is_processing_move = false
-                    self.stuck_count = 0
-                end
-            else
-                self.stuck_count = 0
+        -- IS THE INCOMING MOVE STUCK, OR JUST SLOW?
+        --
+        -- Reported: on a slow connection the opponent's cards take a while to
+        -- come in, and DURING that delay the player can tap their own cards
+        -- and the taps go out as a move.
+        --
+        -- is_processing_move is what refuses those taps. This used to be:
+        --
+        --     if #self.move_queue == 0 then
+        --         if self.is_processing_move then
+        --             self.stuck_count = self.stuck_count + dt
+        --             if self.stuck_count > 3.5 then ... = false
+        --
+        -- and BOTH of its conditions hold throughout a perfectly healthy move.
+        -- pump_move_queue takes the item OFF the queue before processing it, so
+        -- the queue is empty for the whole apply; and the apply really does take
+        -- seconds — 0.24s between combo plays, 0.42s to settle, a five-card
+        -- penalty batch, and finalize_state_sync's 1.3s reshuffle on top. It was
+        -- not detecting a stuck pipeline. It was timing a slow one.
+        --
+        -- And clearing the flag mid-apply does not only open the tap gate: by
+        -- then finalize_state_sync has assigned self.game_state (so
+        -- is_player_turn() is true) and cleared is_waiting_for_server_response,
+        -- so reconcile_input_locks releases `waiting` and
+        -- is_local_action_locked as well. The tap is then judged by
+        -- evaluate_play against a pile still being built, and sent.
+        --
+        -- A stopwatch cannot tell slow from stuck. PROGRESS can: an apply that
+        -- is running changes the board every fraction of a second, and one that
+        -- has died changes nothing. So the clock is reset by any change and only
+        -- silence counts. The absolute ceiling stays, because the freeze this
+        -- watchdog was written for is real.
+        self._stall = self._stall or TL.new_stall_tracker()
+        local stalled = TL.track_processing(self._stall, {
+            is_processing = self.is_processing_move,
+            signature = TL.board_signature({
+                player_hand = #self.player_hand,
+                ai_hand = #self.ai_hand,
+                played = #self.played_cards,
+                deck = #self.deck,
+                anim_locks = self._gs_anim_locks,
+                queue = #self.move_queue,
+            }),
+        }, dt)
+        if stalled then
+            -- Named, with the number, because "it was stuck" with nothing
+            -- attached is how the old one passed for working.
+            print("[DEBUG] Incoming move abandoned (" .. stalled .. ") — resyncing the board")
+            self.is_processing_move = false
+            self._stall = TL.new_stall_tracker()
+            -- The apply died PART WAY THROUGH, so the board is not the server's
+            -- board. Re-apply the last state we were sent before input reopens,
+            -- rather than handing the player a half-built pile to play onto.
+            -- finalize_state_sync syncs to target COUNTS rather than applying
+            -- deltas, so running it again over a partial apply is safe.
+            local latest = ws.active_game_state
+            if self.online_mode and type(latest) == "table" and next(latest) ~= nil then
+                OnlineHandler.finalize_state_sync(self, latest, function()
+                    RE.pre_validate_hand(self)
+                end)
             end
         end
 
