@@ -22,22 +22,22 @@ local M = {}
 -- were removed for Matatu; other games' top tiers scale down accordingly).
 local BATTLE_TIERS_BY_GAME = {
     MATATU = {
-        { amount = 500,   formats = { { games = 3, charge = 75,  points = 9 } } },
-        { amount = 1000,  formats = { { games = 3, charge = 75,  points = 9 }, { games = 5, charge = 125, points = 15 } } },
-        { amount = 2000,  formats = { { games = 3, charge = 75,  points = 9 }, { games = 5, charge = 125, points = 15 },
-                                      { games = 7, charge = 175, points = 21 }, { games = 9, charge = 225, points = 27 } } },
+        { amount = 500,   formats = { { games = 3, charge = 75,  points = 6 } } },
+        { amount = 1000,  formats = { { games = 3, charge = 75,  points = 6 }, { games = 5, charge = 125, points = 10 } } },
+        { amount = 2000,  formats = { { games = 3, charge = 75,  points = 6 }, { games = 5, charge = 125, points = 10 },
+                                      { games = 7, charge = 175, points = 14 }, { games = 9, charge = 225, points = 18 } } },
     },
     WHOT = {
-        { amount = 250,   formats = { { games = 3, charge = 40,  points = 9 } } },
-        { amount = 500,   formats = { { games = 3, charge = 40,  points = 9 }, { games = 5, charge = 65,  points = 15 } } },
-        { amount = 1000,  formats = { { games = 3, charge = 40,  points = 9 }, { games = 5, charge = 65,  points = 15 },
-                                      { games = 7, charge = 90,  points = 21 }, { games = 9, charge = 115, points = 27 } } },
+        { amount = 250,   formats = { { games = 3, charge = 40,  points = 6 } } },
+        { amount = 500,   formats = { { games = 3, charge = 40,  points = 6 }, { games = 5, charge = 65,  points = 10 } } },
+        { amount = 1000,  formats = { { games = 3, charge = 40,  points = 6 }, { games = 5, charge = 65,  points = 10 },
+                                      { games = 7, charge = 90,  points = 14 }, { games = 9, charge = 115, points = 18 } } },
     },
     KADI = {
-        { amount = 25,    formats = { { games = 3, charge = 4,  points = 9 } } },
-        { amount = 50,    formats = { { games = 3, charge = 4,  points = 9 }, { games = 5, charge = 7,  points = 15 } } },
-        { amount = 100,   formats = { { games = 3, charge = 4,  points = 9 }, { games = 5, charge = 7,  points = 15 },
-                                      { games = 7, charge = 9,  points = 21 }, { games = 9, charge = 12, points = 27 } } },
+        { amount = 25,    formats = { { games = 3, charge = 4,  points = 6 } } },
+        { amount = 50,    formats = { { games = 3, charge = 4,  points = 6 }, { games = 5, charge = 7,  points = 10 } } },
+        { amount = 100,   formats = { { games = 3, charge = 4,  points = 6 }, { games = 5, charge = 7,  points = 10 },
+                                      { games = 7, charge = 9,  points = 14 }, { games = 9, charge = 12, points = 18 } } },
     },
 }
 M.BATTLE_TIERS = BATTLE_TIERS_BY_GAME[GameMode.GAME] or BATTLE_TIERS_BY_GAME.MATATU
