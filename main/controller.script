@@ -6,6 +6,9 @@ local fbpush    = require("modules.firebase_push")
 local identify_recovery = require("modules.identify_recovery")
 local online_status = require("modules.lobby.online_status")
 local toast     = require("modules.toast")
+-- "Was that a sign-in?" — one question, asked by both the device path and the
+-- phone path, which had drifted into two different answers. See the module.
+local auth_result = require("modules.auth_result")
 
 local SCREENS = { "lobby", "auth", "profile", "online", "themes", "payments", "tournaments", "team_tournament", "standings", "game" }
 
@@ -584,15 +587,28 @@ handle_device_result = function(self, result)
     end
 
     -- ── transient ──────────────────────────────────────────────────────────
-    if not (result.success and data.token) then
+    -- AN ACCOUNT IS WHAT PROVES A SIGN-IN. A TOKEN IS A BONUS.
+    --
+    -- This tested `data.token` as well, and the server does not always issue
+    -- one — on a deployment with no JWT_SECRET it signs in and returns the
+    -- account with `token: null`, deliberately, so that a missing secret
+    -- cannot cost a player their account. Insisting on the token here turned
+    -- every one of those successful sign-ins into "Could not sign in on this
+    -- device", which is how a returning player ended up in front of the phone
+    -- screen with an account already waiting for them.
+    --
+    -- The check that matters is two lines below and always was: an id, or
+    -- there is nobody to be signed in as. That one is kept.
+    if not result.success then
         handle_login_failure(self, result.message or "Could not sign in on this device.")
         return
     end
 
     -- ── signed in ──────────────────────────────────────────────────────────
     local user = type(data.user) == "table" and data.user or {}
-    user.token = data.token
-    if type(user._id) ~= "string" and type(user.localId) ~= "string" then
+    local tok = auth_result.token(result)
+    if tok ~= "" then user.token = tok end
+    if not auth_result.signed_in(result) then
         handle_login_failure(self, "Signed in but no account came back")
         return
     end
@@ -1444,9 +1460,24 @@ function on_message(self, message_id, message, sender)
         auth_debug("phone_login: signing in with %s", phone)
         api.phone_login({ phoneNumber = phone }, function(result)
             local data = type(result.data) == "table" and result.data or {}
-            if result.success and data.token then
-                local user = type(data.user) == "table" and data.user or {}
-                user.token = data.token
+            local user = type(data.user) == "table" and data.user or {}
+            -- SIGNED IN MEANS AN ACCOUNT CAME BACK, not that a token did.
+            --
+            -- This required data.token, and the server does not always issue
+            -- one — with no JWT_SECRET it signs the player in and returns
+            -- `token: null` on purpose, so a missing secret cannot cost
+            -- somebody their account. So a number that WAS accepted fell
+            -- through to the error branch below: the screen showed a failure
+            -- and stayed on the number pad, with the account signed in behind
+            -- it. Exactly the reported "on success it stays on phone input".
+            --
+            -- An id is the thing that decides it. Without one there is nobody
+            -- to identify as and no bracket, balance or name to route to;
+            -- with one, everything downstream works whether a token came or
+            -- not (api_service only sets a bearer when there is one to set).
+            if auth_result.signed_in(result) then
+                local tok = auth_result.token(result)
+                if tok ~= "" then user.token = tok end
                 auth_debug("phone_login: signed in (new=%s)", tostring(data.isNewUser))
                 -- Stop the background retry: we have a session now, and
                 -- a silent sign-in landing later would replace this one. The
