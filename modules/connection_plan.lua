@@ -160,7 +160,33 @@ function M.next_action(s)
     end
 
     -- Done. This is the state the whole module exists to reach.
-    if s.is_identified then return "idle" end
+    --
+    -- BOTH HALVES, and the socket half is not decoration. is_identified means
+    -- "the server accepted us", which is a statement about a SOCKET — and a
+    -- stale true with no socket under it made this return "idle" for ever,
+    -- with nothing left to reopen the connection. on_disconnected clears both
+    -- together today, so this is a guard rather than a live bug; it is here
+    -- because a planner that can call itself finished while disconnected is
+    -- one edit away from being one.
+    if s.is_identified and s.socket_connected then return "idle" end
+
+    -- THE RETRY BUDGET IS SPENT, AND THAT IS A DECISION, NOT AN ACCIDENT.
+    --
+    -- schedule_reconnect stops at MAX_RECONNECT_ATTEMPTS, sets
+    -- reconnect_exhausted and emits reconnect_failed; the lobby greys its
+    -- online tiles and the network dialog offers RETRY. Every one of those
+    -- says the app has stopped trying.
+    --
+    -- This planner never read the flag, so it went on returning "connect"
+    -- every tick — one attempt a second, for ever, behind a dialog telling the
+    -- player nothing was happening and inviting them to press a button that
+    -- would do what was already being done. The budget existed and nothing
+    -- honoured it.
+    --
+    -- retry_connection() clears the flag, so RETRY is what starts it again.
+    if s.reconnect_exhausted and not s.is_connecting and not s.socket_connected then
+        return "idle"
+    end
 
     if s.socket_connected then
         -- A socket with no identity on it is the case that used to be able to
@@ -188,6 +214,96 @@ function M.next_action(s)
     if s.reconnect_scheduled then return "wait" end
 
     return "connect"
+end
+
+-- ---------------------------------------------------------------------------
+-- WHAT THE PLAYER SHOULD BE TOLD, DERIVED FROM THE SAME STATE.
+--
+-- Reported: a "RECONNECTING…" badge appears, and while it is up the app sends
+-- nothing to the backend at all — for a minute or more.
+--
+-- Both halves were true, and they were true TOGETHER because the badge was
+-- driven by the raw `disconnected` event, which on_disconnected emits BEFORE
+-- deciding whether it is going to reconnect:
+--
+--     emit("disconnected", reason)          -- badge -> RECONNECTING
+--     if is_manual_disconnect then return end          -- nothing scheduled
+--     if M.update_required then return end             -- nothing, ever
+--     if M.app_offline then return end                 -- nothing for 15 min
+--     schedule_reconnect()
+--
+-- So in three separate cases the badge announced a reconnect that had already
+-- been decided against. The longest is the account block, whose recheck window
+-- is APP_OFFLINE_RECHECK_SECONDS — fifteen minutes of a spinner promising
+-- something that is not happening, which is exactly "it takes very long and no
+-- socket events are exchanged".
+--
+-- The badge is not the bug on its own; the bug is that nothing owned the
+-- answer to "what is this connection doing". next_action above owns what to
+-- DO. This owns what to SAY, from the same inputs, so the two cannot disagree.
+--
+-- The invariant worth stating outright, and it is tested: whenever next_action
+-- says "idle" and we are not online, this must NOT say "reconnecting". A
+-- spinner is a promise that something is in flight.
+
+--- What to tell the player about the connection.
+--
+-- @return "online"          identified; nothing to show
+--         "connecting"      a socket or an IDENTIFY is genuinely in flight
+--         "reconnecting"    dropped, and a retry is on the clock
+--         "offline"         retries exhausted; RETRY is the only way forward
+--         "update_required" terminal until the app is updated
+--         "blocked"         the account is refused; we re-ask on a long timer
+--         "signed_out"      nobody to be, so no socket is wanted
+function M.status(s)
+    s = s or {}
+
+    -- Same order of precedence as next_action, deliberately: these two answer
+    -- the same question and disagreeing about which rule wins is how the
+    -- spinner got out of step with the loop in the first place.
+    if s.update_required then return "update_required" end
+    if s.app_offline then return "blocked" end
+
+    if s.socket_connected and s.is_identified then return "online" end
+
+    -- Nobody to be. A signed-out app holds no socket, so there is nothing to
+    -- report as broken.
+    if not s.identity and not s.has_cached_identity
+       and (not s.has_device_identity or s.device_identity_refused) then
+        return "signed_out"
+    end
+
+    -- A LIVE SOCKET BEATS A STALE GIVE-UP FLAG.
+    --
+    -- reconnect_exhausted is cleared by on_connected, so a socket that is up
+    -- while it is still set is a momentary overlap — but reading the flag
+    -- first meant answering "offline" about a link that was working and an
+    -- IDENTIFY that was in flight. Checked after, it can only ever describe
+    -- what it actually means: no socket, and nothing being done about it.
+    --
+    -- A socket with no identity on it is not "reconnecting" either. The link
+    -- is up and we are waiting on the server, which is a different thing to
+    -- say and a different thing to go and look at.
+    if s.socket_connected then return "connecting" end
+    if s.is_connecting then return "connecting" end
+
+    -- The automatic retries have given up. This is the one state with an
+    -- action attached, so it must not be dressed up as a spinner.
+    if s.reconnect_exhausted then return "offline" end
+
+    if s.reconnect_scheduled then return "reconnecting" end
+
+    -- No socket, nothing in flight, nothing on the clock — but we do have
+    -- somebody to be, so the reconciler is about to open one. Not a resting
+    -- state, and not a failure either.
+    return "connecting"
+end
+
+--- Does this status mean the app is trying to reach the server right now?
+--- The spinner is gated on this: an animated one that is not backed by an
+--- attempt is the thing being fixed.
+function M.status_is_active(status)
+    return status == "connecting" or status == "reconnecting"
 end
 
 return M

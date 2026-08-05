@@ -123,6 +123,18 @@ function M.set_app_offline(since)
   app_offline_at = now_s() - ago
 end
 
+--- Open the recheck window NOW, without clearing the latch.
+---
+--- The wait exists so a blocked app is not a reconnect loop, and fifteen
+--- minutes is right for a background retry. It is wrong for somebody standing
+--- in front of the phone pressing RETRY: they are owed an attempt, and one
+--- attempt is not a loop. The latch itself stays up — only the server
+--- accepting an identify takes it down.
+function M.recheck_app_offline_now()
+  if not M.app_offline then return end
+  app_offline_at = now_s() - APP_OFFLINE_RECHECK_SECONDS
+end
+
 --- Drop it. The server accepting an identify is the one event that proves the
 --- refusal no longer applies.
 function M.clear_app_offline()
@@ -965,6 +977,13 @@ end
 
 local on_disconnected -- forward decl
 
+-- Forward declaration, for the same reason on_disconnected and
+-- schedule_reconnect have one: a `local` introduced after a function body is
+-- not in scope inside it, so on_connected/on_disconnected below would resolve
+-- this to a nil global and raise on the call. Defined down with the reconciler,
+-- which is where the state it reads lives.
+local publish_status
+
 -- A socket reported as "connected" but with no inbound traffic for ZOMBIE_TIMEOUT
 -- seconds is a dead-but-open (zombie) link. Tear it down and let the normal
 -- reconnect/backoff path bring us back, instead of hanging forever.
@@ -1062,6 +1081,7 @@ local function on_connected()
   current_reconnect_delay = config.INITIAL_RECONNECT_DELAY
   start_keep_alive()
   emit("connected")
+  publish_status()
   print(string.format("[WS-DEBUG] on_connected: pending_identity=%s", tostring(pending_identity ~= nil)))
   if pending_identity then
     send_identify("socket opened")
@@ -1077,6 +1097,11 @@ on_disconnected = function(reason)
   stop_keep_alive()
   connection = nil
   emit("disconnected", reason)
+  -- BEFORE the three early returns below, and again after schedule_reconnect,
+  -- because those returns are exactly the cases the badge used to get wrong:
+  -- a manual teardown, a refused build and a blocked account all leave this
+  -- function without scheduling anything at all.
+  publish_status()
   if is_manual_disconnect then
     is_manual_disconnect = false
     return
@@ -1094,6 +1119,7 @@ on_disconnected = function(reason)
     return
   end
   schedule_reconnect()
+  publish_status()
 end
 
 schedule_reconnect = function()
@@ -1338,6 +1364,53 @@ local function has_cached_identity()
   return ok and type(cached) == "table" and tostring(cached._id or cached.localId or "") ~= ""
 end
 
+-- WHAT THE CONNECTION IS DOING, AS ONE ANSWER.
+--
+-- Reported: a "RECONNECTING…" badge appears and the app sends nothing to the
+-- backend for a minute or more. Both halves were true at once, because the
+-- badge was driven by the raw `disconnected` event — which on_disconnected
+-- emits BEFORE deciding whether to reconnect at all. In three cases it then
+-- decided not to: a manual disconnect, update_required, and app_offline. The
+-- last of those stays quiet for APP_OFFLINE_RECHECK_SECONDS, fifteen minutes,
+-- with a spinner on screen the whole time promising otherwise.
+--
+-- Derived from the same state the reconciler plans from, so the spinner and
+-- the loop cannot disagree about whether anything is in flight.
+local last_published_status = nil
+
+local function connection_state()
+  return {
+    identity            = pending_identity,
+    update_required     = M.update_required,
+    app_offline         = M.app_offline,
+    socket_connected    = M.socket_connected,
+    is_connecting       = is_connecting,
+    is_identified       = M.is_identified,
+    reconnect_scheduled = reconnect_handle ~= nil,
+    reconnect_exhausted = M.reconnect_exhausted,
+    has_cached_identity = has_cached_identity(),
+    has_device_identity = usable_device_id() ~= "",
+    device_identity_refused = M.device_identity_refused,
+  }
+end
+
+--- The current status, computed fresh. Safe to call at any time.
+function M.connection_status()
+  return conn_plan.status(connection_state())
+end
+
+--- Emit `connection_status` when — and only when — it has actually changed.
+--- Called from every place that can change it, plus the reconciler tick as a
+--- backstop, so nothing has to remember to announce anything.
+publish_status = function()
+  local status = M.connection_status()
+  if status == last_published_status then return end
+  last_published_status = status
+  print("[WS] connection status: " .. tostring(status))
+  emit("connection_status", status)
+end
+M.publish_status = publish_status
+
 local function reconcile_step()
   local action = conn_plan.next_action({
     identity            = pending_identity,
@@ -1408,11 +1481,17 @@ end
 -- nothing more can usefully be done. Bounded because a planner bug must cost a
 -- few wasted iterations, never a frozen app.
 local function reconcile()
+  local result = "wait"
   for _ = 1, 4 do
     local action = reconcile_step()
-    if action == "wait" or action == "idle" then return action end
+    if action == "wait" or action == "idle" then result = action; break end
   end
-  return "wait"
+  -- The backstop. Every caller that changes the connection publishes for
+  -- itself, but a status can also change with no event at all — a scheduled
+  -- retry firing, the exhaustion counter tipping over — and this tick is the
+  -- one thing guaranteed to notice.
+  publish_status()
+  return result
 end
 
 -- Idempotent. Started the first time an identity is set and left running: the

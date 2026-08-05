@@ -11,6 +11,7 @@
 local ws        = require("modules.websocket_manager")
 local F         = require("modules.fonts")
 local app_state = require("modules.app_state")
+local conn_plan = require("modules.connection_plan")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 
@@ -76,6 +77,9 @@ local BADGE_H = 28
 -- cramped, while shorter states ("ONLINE"/"OFFLINE") stay compact.
 local function badge_width_for(mode)
     if mode == "reconnecting" then return 168 end
+    if mode == "connecting" then return 150 end
+    if mode == "update_required" then return 128 end
+    if mode == "blocked" then return 148 end
     if mode == "offline" then return 110 end
     return 102 -- online / connected
 end
@@ -120,6 +124,23 @@ local function show_badge(self, mode)
         gui.set_color(self.badge_dot, C_GREEN)
         gui.set_text(self.badge_lbl, "ONLINE")
         gui.set_color(self.badge_lbl, C_BODY)
+    elseif mode == "update_required" then
+        -- Not a network state at all. Showing RECONNECTING… here is how a
+        -- player sat watching a spinner that was never going to resolve.
+        gui.set_color(self.badge_dot, C_RED)
+        gui.set_text(self.badge_lbl, "UPDATE APP")
+        gui.set_color(self.badge_lbl, C_BODY)
+    elseif mode == "blocked" then
+        gui.set_color(self.badge_dot, C_RED)
+        gui.set_text(self.badge_lbl, "UNAVAILABLE")
+        gui.set_color(self.badge_lbl, C_BODY)
+    elseif mode == "connecting" then
+        -- The link is up (or coming up) and we are waiting on the server —
+        -- a different thing from having dropped, and a different thing to
+        -- debug from the log.
+        gui.set_color(self.badge_dot, C_ACCENT)
+        gui.set_text(self.badge_lbl, "CONNECTING…")
+        gui.set_color(self.badge_lbl, C_BODY)
     else -- reconnecting
         gui.set_color(self.badge_dot, C_ACCENT)
         gui.set_text(self.badge_lbl, "RECONNECTING…")
@@ -152,29 +173,55 @@ function init(self)
             msg.post(ME, "net_badge", { mode = mode })
         end
     end
-    self._tokens = {
-        ws.on("disconnected", function()
-            -- Suppress the "RECONNECTING" badge during the Firebase auth flow:
-            -- intentional disconnect+reconnect cycles happen while signing in
-            -- and should not surface as a network problem to the player.
-            local auth = app_state.auth_state or "idle"
-            local auth_busy = auth == "sending" or auth == "verifying"
-            if ws.current_user_id ~= "" and not auth_busy then notify("reconnecting") end
-        end),
-        ws.on("connection_error", function()
-            local auth = app_state.auth_state or "idle"
-            local auth_busy = auth == "sending" or auth == "verifying"
-            if ws.current_user_id ~= "" and not auth_busy then notify("reconnecting") end
-        end),
-        ws.on("reconnect_failed", function()
-            notify("offline")
-        end),
-        ws.on("connected", function()
-            -- Always close the dialog; green + auto-hide the badge if showing.
+
+    -- ONE SUBSCRIPTION, TO WHAT THE CONNECTION IS ACTUALLY DOING.
+    --
+    -- Reported: a "RECONNECTING…" badge appears and the app sends nothing to
+    -- the backend for a minute or more.
+    --
+    -- This used to listen to `disconnected` and `connection_error` and show a
+    -- spinner for either. on_disconnected emits `disconnected` BEFORE deciding
+    -- whether it is going to reconnect — and in three cases it decides not to:
+    -- a manual teardown, a build the server has refused, and a blocked
+    -- account. The last stays silent for fifteen minutes. So the badge
+    -- promised a reconnect that had already been ruled out, and there was
+    -- nothing on screen or in the code that could tell the difference.
+    --
+    -- websocket_manager now publishes a resolved status derived from the same
+    -- state its reconciler plans from, so the spinner cannot disagree with the
+    -- loop about whether anything is in flight.
+    local function apply_status(status)
+        -- Intentional disconnect+reconnect cycles happen during the Firebase
+        -- auth flow and are not a network problem worth showing.
+        local auth = app_state.auth_state or "idle"
+        if auth == "sending" or auth == "verifying" then return end
+
+        if status == "online" then
             msg.post(ME, "net_hide")
             msg.post(ME, "net_badge", { mode = "connected" })
+        elseif status == "signed_out" then
+            -- No socket is wanted, so nothing is broken.
+            msg.post(ME, "net_hide")
+            msg.post(ME, "net_badge", { mode = "hide" })
+        else
+            -- connecting / reconnecting / offline / blocked / update_required
+            notify(status)
+        end
+    end
+
+    self._tokens = {
+        ws.on("connection_status", apply_status),
+        -- Kept only to close the dialog the instant the socket comes up,
+        -- rather than on the next status publish.
+        ws.on("connected", function()
+            msg.post(ME, "net_hide")
         end),
     }
+
+    -- The status may already be interesting before the first publish — this
+    -- component is built when its screen loads, which can be long after the
+    -- connection settled into whatever it is doing.
+    apply_status(ws.connection_status())
 end
 
 function final(self)
@@ -182,17 +229,46 @@ function final(self)
     app_state.modal_close("network")
 end
 
+-- EVERY STATE SAYS WHAT IT IS, AND THE RETRY BUTTON APPEARS WHERE RETRYING
+-- IS THE ANSWER.
+--
+-- There used to be two branches — "offline" and everything else — so a
+-- refused build and a blocked account both rendered as "CONNECTION LOST /
+-- Reconnecting…", with a spinner, with no retry, and with nothing actually
+-- reconnecting behind it.
 local function apply_mode(self, mode)
     self._mode = mode
     gui.set_enabled(self.scrim, true)
     app_state.modal_open("network")
+
     if mode == "offline" then
         gui.set_text(self.title, "YOU ARE OFFLINE")
         gui.set_color(self.strip, C_RED)
         gui.set_text(self.body, "Couldn't reach the server.")
         gui.set_text(self.hint, "Check your internet connection, then retry.")
         gui.set_enabled(self.retry_btn, true)
+
+    elseif mode == "update_required" then
+        -- Terminal. Retrying re-runs the same handshake and is refused
+        -- identically, so offering the button would be a lie.
+        gui.set_text(self.title, "UPDATE REQUIRED")
+        gui.set_color(self.strip, C_RED)
+        gui.set_text(self.body, "This version is no longer supported.")
+        gui.set_text(self.hint, "Update the app from the Play Store to keep playing.")
+        gui.set_enabled(self.retry_btn, false)
+
+    elseif mode == "blocked" then
+        -- Not permanent, but the app deliberately stays quiet between checks
+        -- (APP_OFFLINE_RECHECK_SECONDS). Saying so is the whole point: this is
+        -- the state that spent fifteen minutes pretending to reconnect.
+        gui.set_text(self.title, "ACCOUNT UNAVAILABLE")
+        gui.set_color(self.strip, C_RED)
+        gui.set_text(self.body, "The server isn't accepting this account.")
+        gui.set_text(self.hint, "We'll check again shortly. Contact support if this persists.")
+        gui.set_enabled(self.retry_btn, true)
+
     else
+        -- connecting / reconnecting: something IS in flight.
         gui.set_text(self.title, "CONNECTION LOST")
         gui.set_color(self.strip, C_ACCENT)
         gui.set_text(self.body, "Reconnecting")
@@ -202,7 +278,9 @@ local function apply_mode(self, mode)
 end
 
 function update(self, dt)
-    if self._mode == "reconnecting" and gui.is_enabled(self.scrim) then
+    -- The spinner is a promise that something is in flight. conn_plan owns
+    -- which statuses that is true for, so it cannot drift from the loop.
+    if conn_plan.status_is_active(self._mode) and gui.is_enabled(self.scrim) then
         self._dots_t = (self._dots_t or 0) + dt
         local dots = string.rep(".", 1 + (math.floor(self._dots_t * 2) % 3))
         gui.set_text(self.body, "Reconnecting" .. dots)
@@ -232,6 +310,13 @@ function on_message(self, message_id, message)
         app_state.modal_close("network")
     elseif message_id == hash("net_badge") then
         local mode = (message and message.mode) or "reconnecting"
+        -- Signed out: no socket is wanted, so there is nothing to report.
+        if mode == "hide" then
+            self._badge_hide_t = nil
+            self._badge_mode = nil
+            gui.set_enabled(self.badge, false)
+            return
+        end
         -- When online the dialog owns the UI; keep the badge hidden.
         if app_state.mode == "online" then
             self._badge_hide_t = nil
@@ -249,10 +334,20 @@ end
 function on_input(self, action_id, action)
     if not gui.is_enabled(self.scrim) then return false end
     if action_id == hash("touch") and action.pressed then
-        if self._mode == "offline" and gui.is_enabled(self.retry_btn)
+        if gui.is_enabled(self.retry_btn)
             and gui.pick_node(self.retry_btn, action.x, action.y) then
-            apply_mode(self, "reconnecting")
-            ws.connect()
+            if self._mode == "blocked" then
+                -- Spend the probe NOW rather than making the player wait out
+                -- the rest of the fifteen-minute window. Only the server
+                -- accepting an identify clears the latch for real; this just
+                -- lets the app ask again immediately.
+                apply_mode(self, "connecting")
+                ws.recheck_app_offline_now()
+                ws.retry_connection()
+            elseif self._mode == "offline" then
+                apply_mode(self, "reconnecting")
+                ws.retry_connection()
+            end
         end
     end
     -- Modal: swallow EVERYTHING while visible, not just touch+pressed — a
