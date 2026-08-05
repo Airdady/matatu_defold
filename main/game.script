@@ -12,6 +12,10 @@ local util  = require "modules.game_util"
 local BL    = require "modules.board_layout"
 local CV    = require "modules.card_view"
 local RE    = require "modules.rules_eval"
+-- Every lock that can refuse a tap, as plain testable functions. See the
+-- module: four of the five had a watchdog and the fifth did not, which is
+-- what made the draw pile go dead after an opponent's penalty.
+local TL             = require "modules.turn_locks"
 local GS    = require "modules.game_state"
 local GF    = require "modules.game_flow"
 
@@ -422,6 +426,46 @@ function update(self, dt)
                 self.waiting = false
                 RE.pre_validate_hand(self)
             end
+
+            -- AND THE ONE PER-TURN LOCK THAT HAD NO WATCHDOG AT ALL.
+            --
+            -- Reported: after the opponent plays a penalty the draw pile stops
+            -- responding — taps do nothing, and nothing on screen says why.
+            --
+            -- player_has_drawn means "this player has already drawn during THIS
+            -- turn". Every other lock on this board — waiting, is_animating,
+            -- is_local_action_locked — has a watchdog above or below this one.
+            -- This did not, and its only per-turn reset was the false->true
+            -- edge of `now_my_turn` further down update(). An edge is sampled
+            -- once a frame, and two state updates can land in the same frame:
+            -- the opponent's play and the turn coming back. When that happens
+            -- the intermediate "not my turn" is never observed, the edge never
+            -- fires, and the flag survives from the previous turn.
+            --
+            -- Ordinarily that costs nothing — the player can still play a card.
+            -- With a PENALTY pending, drawing is the only legal move there is,
+            -- so a stale flag is a dead turn. That is exactly the shape of the
+            -- report, including its "at times": it needs two updates in one
+            -- frame, which is timing.
+            --
+            -- Safe to clear here because of what this block already requires:
+            -- it is our turn, no move is being processed, the queue is empty
+            -- and nothing is awaited from the server. A draw in flight fails
+            -- all of those, so a flag still set in this state describes a draw
+            -- that has already finished — i.e. a previous turn's.
+            if TL.stale_draw_flag({
+                is_player_turn = true,          -- guaranteed by this block
+                player_has_drawn = self.player_has_drawn,
+                is_processing_move = self.is_processing_move,
+                move_queue_len = #self.move_queue,
+                is_waiting_for_server_response = self.is_waiting_for_server_response,
+                is_animating = self.is_animating,
+                is_local_action_locked = self.is_local_action_locked,
+            }) then
+                print("[DEBUG] Watchdog clearing stale player_has_drawn (previous turn's draw)")
+                self.player_has_drawn = false
+                RE.pre_validate_hand(self)
+            end
         end
 
         if self.is_player_turn() and not self.is_processing_move and #self.move_queue == 0 and self.is_animating then
@@ -742,6 +786,26 @@ function on_input(self, action_id, action)
         local p = go.get_position(deck_top.id)
         if math.abs(x - p.x) <= 120 and math.abs(y - p.y) <= 150 then
             if not self.is_player_turn() or self.waiting or self.is_local_action_locked or self.is_suit_selection_active then
+                -- A REFUSAL THAT SAYS NOTHING LOOKS LIKE A BROKEN BOARD.
+                --
+                -- The card branch above shakes the card when it refuses a tap.
+                -- This swallowed the tap in silence, so every one of the
+                -- reasons below — and any stuck lock — presented to the player
+                -- as "the deck does not work", with nothing to report but that.
+                -- Logged with the actual reason, so the next time somebody says
+                -- the pile is dead the log says which flag was holding it.
+                local flags = {
+                    is_player_turn = self.is_player_turn(),
+                    waiting = self.waiting,
+                    is_local_action_locked = self.is_local_action_locked,
+                    is_suit_selection_active = self.is_suit_selection_active,
+                    is_animating = self.is_animating,
+                    player_has_drawn = self.player_has_drawn,
+                    penalty = RE.get_active_penalty(self),
+                }
+                print("[DECK] tap refused (" .. tostring(TL.deck_tap_refusal(flags))
+                    .. ") -> " .. TL.describe(flags))
+                safe_shake_card(self, deck_top)
                 return true
             end
 
@@ -771,7 +835,29 @@ function on_input(self, action_id, action)
             local penalty = RE.get_active_penalty(self)
 
             if penalty > 0 then
-                if self.player_has_drawn then return true end
+                -- THE DOUBLE-TAP GUARD IS is_local_action_locked, NOT THIS FLAG.
+                --
+                -- This read `if self.player_has_drawn then return true end`,
+                -- which is the right intent — one draw per turn — and the wrong
+                -- variable to enforce it with. The line below sets
+                -- is_local_action_locked, and the outer gate at the top of this
+                -- block already refuses every tap while that is set, so the
+                -- second tap was covered twice over. The difference between the
+                -- two is recovery: is_local_action_locked has a watchdog and
+                -- player_has_drawn had none, so when the flag went stale (see
+                -- the watchdog in update()) this line killed the turn outright
+                -- with nothing on screen to explain it.
+                --
+                -- Kept as a guard, but only for a draw that is genuinely
+                -- underway — which is what is_animating means, and what the
+                -- flag was standing in for.
+                if TL.penalty_draw_blocked({
+                    player_has_drawn = self.player_has_drawn,
+                    is_animating = self.is_animating,
+                    is_local_action_locked = self.is_local_action_locked,
+                }) then
+                    return true
+                end
                 self.player_has_drawn = true
                 self.is_local_action_locked = true
                 t4_cancel_afk_timer(self)
