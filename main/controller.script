@@ -1520,8 +1520,25 @@ function on_message(self, message_id, message, sender)
         -- only button called an endpoint that requires the Bearer token it does
         -- not have, so the one route back into an existing account after
         -- changing handsets answered 401.
-        if not is_logged_in() then
-            auth_debug("link_phone with no session - signing in by phone instead")
+        --
+        -- AND THE TEST IS THE TOKEN, NOT THE SESSION. This asked
+        -- is_logged_in(), which answers "is there an account id" — from
+        -- ws.current_user_data or, failing that, the cached session on disk.
+        -- /auth/link-phone is behind verifyToken and needs a BEARER, which is
+        -- a different thing and is often absent while an id is present: a
+        -- cached session from a previous launch has an id and no token, and
+        -- the server issues no token at all when JWT_SECRET is not configured.
+        --
+        -- So the request went out, answered 401, and the flow stopped dead on
+        -- the number pad — reported as "when this is fired and no phone number
+        -- found it stops there".
+        --
+        -- /auth/phone is the route that always works: it finds the account on
+        -- that number or CREATES one, claims the calling device either way,
+        -- and needs no credential to do it. So when there is no bearer, the
+        -- number is the sign-in, exactly as it is with no session at all.
+        if not (is_logged_in() and api.has_auth_token()) then
+            auth_debug("link_phone without a bearer - signing in by phone instead")
             msg.post("#controller", "phone_login", { phoneNumber = phone })
             return
         end
@@ -1560,6 +1577,26 @@ function on_message(self, message_id, message, sender)
                 end
                 msg.post("#profile", "phone_link_result", { ok = true, merged = data.merged and true or false })
             else
+                -- A REFUSED CREDENTIAL IS NOT A REFUSED NUMBER.
+                --
+                -- The check above should have caught this, but a bearer can
+                -- also be present and stale — expired, or signed with a
+                -- secret the server no longer has. Either way the number
+                -- itself was never judged: verifyToken answers before the
+                -- handler runs, so nobody has looked the number up at all.
+                --
+                -- Telling the player "could not link phone number" for that
+                -- is both wrong and a dead end, on the one screen that is
+                -- their whole route back into an account. /auth/phone needs
+                -- no credential and either finds the account on the number or
+                -- creates one, so take it rather than stopping.
+                local status = tonumber(result.status_code) or 0
+                if status == 401 or status == 403 then
+                    auth_debug("link_phone refused (%d) - signing in by phone instead", status)
+                    pcall(api.set_auth_token, "")
+                    msg.post("#controller", "phone_login", { phoneNumber = phone })
+                    return
+                end
                 msg.post("#profile", "phone_link_result", { ok = false, message = result.message or "Could not link phone number." })
             end
         end)

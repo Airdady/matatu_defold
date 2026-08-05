@@ -41,6 +41,22 @@ function M.set_auth_token(token)
     _auth_token = token or ""
 end
 
+-- Is there a bearer to send?
+--
+-- Asked before anything routes to an endpoint behind verifyToken. Those are
+-- the ONLY calls that need one — /auth/link-phone, /users/details/me,
+-- /sms/track-conversion, /payments/balance — and every one of them answers
+-- 401 without it, whatever else is true about the session.
+--
+-- Which is not the same question as "am I signed in". An account id is what
+-- proves a sign-in (see modules/auth_result.lua); a token is separate, and
+-- the server deliberately issues none when JWT_SECRET is not configured. A
+-- caller that confuses the two sends a request that cannot succeed and then
+-- has to interpret the 401, instead of taking the route that works.
+function M.has_auth_token()
+    return _auth_token ~= nil and _auth_token ~= ""
+end
+
 -- STREAMING_CHUNK: Defining session persistence...
 local SESSION_FILE = sys.get_save_file("matatu_gdt", "session.json")
 

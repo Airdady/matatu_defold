@@ -163,6 +163,35 @@ function M.phone_complete(user)
   return type(p) == "string" and p ~= ""
 end
 
+-- Should the profile screen ask for a number before anything else?
+--
+-- ONLY WHEN IT IS THE ONLY WAY IN. The screen used to ask this as
+-- "phone_required() and not phone_complete(u)", which caught two completely
+-- different players:
+--
+--   no account at all   the handset was not recognised (DEVICE_UNKNOWN),
+--                       nothing else identifies them, and the number is the
+--                       entire route back in. Ask.
+--
+--   an account already  the device id identified them; they are signed in and
+--                       have simply not picked a name and avatar yet. Asking
+--                       here stops them at a screen they cannot get past.
+--
+-- An `_id` tells the two apart: it exists only because the server resolved
+-- this player. Which is what phone_required's own note above already argued
+-- for — it must not "interrupt somebody the device already identified".
+--
+-- The number still matters and is still offered (the profile screen keeps its
+-- VERIFY YOUR PHONE link, and it remains the identity that survives a new
+-- handset). What it no longer does is block the step in front of it.
+function M.phone_step_required(user)
+  if not M.phone_required() then return false end
+  if M.phone_complete(user) then return false end
+  local id = type(user) == "table" and user._id or nil
+  local signed_in = type(id) == "string" and id ~= ""
+  return not signed_in
+end
+
 -- Account is "complete" when an avatar is chosen and the username is valid.
 --
 -- Deliberately NOT phone_complete — see above. This is re-evaluated every time

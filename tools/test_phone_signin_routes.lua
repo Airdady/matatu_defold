@@ -161,6 +161,55 @@ check("an account with no number does keep the phone step",
     app_state.phone_complete({ _id = "x" }) == false,
     "the step is mandatory and state-driven; that part was never the bug")
 
+-- ---------------------------------------------------------------------------
+print("")
+print("AND THE NUMBER IS ASKED FOR ONLY WHEN IT IS THE ONLY WAY IN")
+--
+-- Reported: "when the user with device id exists already and is missing
+-- username and avatar just take him to that screen to set them."
+--
+-- The step was decided by "phone_required and not phone_complete", which
+-- caught two completely different players with one condition.
+local GameMode = require("modules.game_mode")
+if not GameMode.is_matatu() then
+    print("  SKIP this build is not matatu, so no number is ever required")
+else
+    check("a handset nobody recognises is asked for a number",
+        app_state.phone_step_required({}) == true,
+        "DEVICE_UNKNOWN: nothing else identifies them and the number is the route in")
+    check("and so is a session with no id at all",
+        app_state.phone_step_required({ username = "Ada" }) == true)
+
+    check("but an account the device identified is NOT",
+        app_state.phone_step_required({ _id = "6512ab34cd56ef7890123456", avatar = 0 }) == false,
+        "this is the player the report is about; they need the avatar picker, not the number pad")
+    check("even with no number on file",
+        app_state.phone_step_required({ _id = "abc", phoneNumber = "" }) == false)
+
+    check("an account that already has a number is not asked either",
+        app_state.phone_step_required({ _id = "abc", phoneNumber = "0700111222" }) == false)
+    check("nor is a number-carrying account with no id",
+        app_state.phone_step_required({ phoneNumber = "0700111222" }) == false,
+        "the number is already there; there is nothing to ask for")
+
+    check("a blank id does not count as identified",
+        app_state.phone_step_required({ _id = "" }) == true)
+    check("and neither does a non-string one",
+        app_state.phone_step_required({ _id = 12345 }) == true)
+end
+
+check("nothing throws on a missing user",
+    (function()
+        local ok = pcall(app_state.phone_step_required, nil)
+        return ok and pcall(app_state.phone_step_required, "nope")
+    end)())
+
+local prof = slurp("main/profile.gui_script")
+check("the screen uses the shared predicate rather than its own condition",
+    prof:find("app_state%.phone_step_required%(u%)")
+        and not prof:gsub("%-%-[^\n]*", ""):find("phone_required%(%) and not app_state%.phone_complete"),
+    "the old condition is what stopped a signed-in player on the number pad")
+
 -- And the number really is in the payload the sign-in returns, which is what
 -- makes the two checks above reachable at all.
 check("the sign-in payload carries the number",
@@ -173,6 +222,59 @@ check("and a fully-complete account skips the profile step entirely",
     profile:find("app_state%.profile_complete%(u%)")
         and profile:find('msg%.post%("#controller", "goto_online"%)'),
     "a merge onto an old account should not re-ask for a name it already has")
+
+-- ---------------------------------------------------------------------------
+print("")
+print("LINK-PHONE IS NEVER CALLED WHERE IT CANNOT WORK")
+--
+-- Reported, from the log: POST .../auth/link-phone fires and the flow stops
+-- there. That endpoint is behind verifyToken and answers 401 without a BEARER
+-- — which the app often does not have while still having an account id: a
+-- cached session carries an id and no token, and the server issues no token
+-- at all when JWT_SECRET is not configured. The old check asked
+-- is_logged_in(), which answers the id question, so the request went out and
+-- died before anybody had looked the number up.
+-- api_service pulls in config.lua, which reads sys at load time for the
+-- platform and the stamped build. None of it matters to the one accessor
+-- under test.
+_G.sys = _G.sys or {
+    get_sys_info = function() return { system_name = "Linux" } end,
+    get_config_string = function(_, d) return d or "" end,
+    get_save_file = function() return "/dev/null" end,
+}
+_G.http = _G.http or { request = function() end }
+_G.json = _G.json or { encode = function() return "" end, decode = function() return {} end }
+local api = require("modules.api_service")
+
+api.set_auth_token("")
+check("no bearer is reported honestly", api.has_auth_token() == false)
+api.set_auth_token("jwt.abc.123")
+check("and one is, once it exists", api.has_auth_token() == true)
+api.set_auth_token(nil)
+check("clearing it clears the answer", api.has_auth_token() == false)
+
+check("the decision requires a bearer, not just a session",
+    code:find("if not %(is_logged_in%(%) and api%.has_auth_token%(%)%) then"),
+    "is_logged_in alone is the check that sent a doomed request")
+check("and falls through to the phone sign-in, which needs no credential",
+    code:find('msg%.post%("#controller", "phone_login", { phoneNumber = phone }%)'))
+
+check("a 401 or 403 from link-phone falls back rather than dead-ending",
+    code:find("if status == 401 or status == 403 then"),
+    "a stale bearer refuses before the handler runs, so the number was never judged")
+check("and the dead bearer is dropped on the way",
+    code:find('pcall%(api%.set_auth_token, ""%)'),
+    "keeping it would send the next request into the same 401")
+check("it reads the status field the client actually returns",
+    code:find("tonumber%(result%.status_code%)"),
+    "parse_response names it status_code; result.status is always nil")
+
+-- /auth/phone is the endpoint this falls back to, and the reason the fallback
+-- is worth anything: it does not merely link, it CREATES.
+check("the phone sign-in sends the device id, so a created account keeps it",
+    slurp("modules/api_service.lua")
+        :find("payload%.deviceId = payload%.deviceId or M%.get_device_id%(%)"),
+    "an account created without one is unreachable on the next launch")
 
 print("")
 if failures == 0 then

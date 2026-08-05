@@ -514,7 +514,36 @@ end
 local function decide_step(self)
     local u = ws.current_user_data or {}
     self.phone_mode = "link"
-    if app_state.phone_required() and not app_state.phone_complete(u) then
+
+    -- THE NUMBER IS ASKED FOR WHEN IT IS THE ONLY WAY IN — NOT OTHERWISE.
+    --
+    -- This showed the phone step to anybody whose account had no number on
+    -- it, which caught two completely different players:
+    --
+    --   no account at all   the handset was not recognised (DEVICE_UNKNOWN),
+    --                       nothing else identifies them, and the number is
+    --                       the entire route back in. Ask.
+    --
+    --   an account already  the device id identified them; they are signed
+    --                       in and simply have not picked a name and avatar
+    --                       yet. Asking for a number here stops them at a
+    --                       screen they cannot get past — the reported "user
+    --                       with device id exists and is missing username and
+    --                       avatar" case.
+    --
+    -- An `_id` is what tells the two apart: it only exists because the server
+    -- resolved this player. So the phone step is now gated on there being no
+    -- account, which is also what phone_required's own note already argued
+    -- for — it must not "interrupt somebody the device already identified".
+    --
+    -- The number still matters and is still offered: the profile screen keeps
+    -- its VERIFY YOUR PHONE link, and it remains the identity that survives a
+    -- new handset. What it no longer does is block the step in front of it.
+    --
+    -- The predicate lives in app_state beside phone_required/phone_complete,
+    -- so it can be tested directly — this decision has now been wrong twice,
+    -- and both times it was unreachable from anything but the running app.
+    if app_state.phone_step_required(u) then
         self.step = "phone"
     else
         self.step = "profile"

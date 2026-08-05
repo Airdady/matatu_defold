@@ -163,8 +163,17 @@ check("and a username", profile_fn:find("username_complete", 1, true) ~= nil, tr
 check("phone_complete still exists for the screen to ask",
     app_state:find("function M.phone_complete", 1, true) ~= nil, true)
 local profile_gui = code_of(read("main/profile.gui_script"))
+-- The screen asks phone_step_required now, which is phone_complete plus the
+-- one thing this condition was missing: whether the player has an account at
+-- all. "Signed in and only missing a name" was being sent to the number pad
+-- and stopped there. Same intent — the SCREEN decides its step from the
+-- account data, not the router — with the predicate lifted into app_state so
+-- it can be tested directly (see test_phone_signin_routes.lua).
 check("and the profile screen is what asks it",
-    profile_gui:find("app_state.phone_complete(u)", 1, true) ~= nil, true)
+    profile_gui:find("app_state.phone_step_required(u)", 1, true) ~= nil, true)
+check("which is built on phone_complete",
+    app_state:find("function M.phone_step_required", 1, true) ~= nil
+        and app_state:match("function M%.phone_step_required.-\nend\n"):find("phone_complete", 1, true) ~= nil, true)
 
 -- The one path that DOES lead there, and it is the only one.
 check("DEVICE_UNKNOWN is what opens it",
@@ -173,8 +182,12 @@ check("DEVICE_UNKNOWN is what opens it",
 -- nothing to LINK a number to: the endpoint requires a Bearer token the player
 -- does not have yet, so the one route back into an account after changing
 -- handsets answered 401.
-check("the phone step signs in when there is no session",
-    controller:find("if not is_logged_in() then", 1, true) ~= nil, true)
+-- Tightened: a session is an account ID, and /auth/link-phone needs a BEARER.
+-- The two come apart constantly — a cached session has an id and no token, and
+-- the server issues no token at all without JWT_SECRET — so is_logged_in()
+-- alone still sent the doomed request, which 401'd and stopped the flow dead.
+check("the phone step signs in without a usable credential",
+    controller:find("if not (is_logged_in() and api.has_auth_token()) then", 1, true) ~= nil, true)
 check("by routing to phone_login, not link_phone",
     controller:find('msg.post("#controller", "phone_login", { phoneNumber = phone })', 1, true) ~= nil, true)
 
