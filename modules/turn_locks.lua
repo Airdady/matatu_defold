@@ -27,6 +27,22 @@
 -- PENALTY pending, drawing is the only legal move there is, so a stale flag is
 -- a dead turn. That is the report, including its "at times" — it needs two
 -- updates in one frame, which is timing.
+--
+-- AND TWO UPDATES IN ONE FRAME IS REACHABLE — checked, not assumed, because
+-- the whole argument rests on it. online_handler.pump_move_queue drains the
+-- queue by recursing from its own on_done, and finalize_state_sync's do_sync
+-- calls settle() SYNCHRONOUSLY whenever the opponent's hand did not grow:
+--
+--   else
+--       while #self.ai_hand > target do ... end
+--       self.position_hands(true)
+--       settle()          -- on_complete -> on_done -> pump_move_queue
+--   end
+--
+-- So a queued opponent PLAY and the state that returns the turn can both be
+-- applied inside one call stack, with no update() in between to sample the
+-- edge. A penalty play that costs the opponent a card takes exactly that
+-- branch.
 local M = {}
 
 local function truthy(v) return v and true or false end
