@@ -162,6 +162,17 @@ local function close_orphan_socket()
   connection = nil
 end
 
+-- FORWARD DECLARATIONS.
+--
+-- A `local` introduced after a function body is not in scope inside it: the
+-- reference compiles to a GLOBAL lookup and is nil at run time. This file has
+-- been bitten by that twice already (see the notes on now_s and
+-- SIGN_IN_CONNECT_GRACE), and both of these are called from functions defined
+-- well above where they are assigned — on_disconnected from send_message,
+-- publish_status from on_connected.
+local on_disconnected
+local publish_status
+
 -- ── pub/sub ─────────────────────────────────────────────────────────────────
 local listeners = {} -- event -> { id -> fn }
 local next_listener_id = 0
@@ -232,10 +243,63 @@ local function derive_sender(gs)
 end
 
 -- ── sending ─────────────────────────────────────────────────────────────────
+-- NOTHING LEAVES THIS APP IN SILENCE, AND NOTHING IS REPORTED AS SENT THAT
+-- WAS NOT.
+--
+-- Reported: while the connection badge is up the app sends nothing to the
+-- backend — and pressing RETRY produces no event there either.
+--
+-- This function was two lines:
+--
+--     if not M.socket_connected or not connection then return false end
+--     websocket.send(connection, json_util.encode(payload))
+--
+-- and both of them are a way to lose a message with no trace:
+--
+--   1. THE GUARD DROPS IN SILENCE. Every message sent while the socket is
+--      down vanishes — no log, no queue, no feedback. send_move does not even
+--      read the return value. So "the app sent nothing" was true, and there
+--      was nothing anywhere saying so, on either side.
+--
+--   2. THE SEND CLAIMS SUCCESS IT CANNOT KNOW. M.socket_connected is a flag
+--      set by on_connected and cleared by on_disconnected, so a socket that
+--      dies without reporting it — the OS reclaiming it, a network handover,
+--      the app being backgrounded — leaves it true. Every send then went to a
+--      dead socket and returned `true`, and the caller believed it. That is
+--      exactly "nothing arrives at the backend" with a client that thinks
+--      everything is fine. The zombie watchdog notices after ZOMBIE_TIMEOUT,
+--      and everything sent in that window is already lost.
+--
+-- Deliberately NOT a replay queue. A MOVE that arrives thirty seconds late
+-- belongs to a turn the server has already timed out and handed to the AI, and
+-- a GAME_REQUEST that arrives late invites somebody into a game they stopped
+-- waiting for. The right answer is to know it failed, say so, and let the
+-- caller decide — game.script's unanswered-move watchdog already recovers a
+-- board on exactly that signal.
+local function report_dropped(msg_type, why)
+  print(string.format("[WS] %s NOT SENT (%s)", tostring(msg_type), tostring(why)))
+  emit("message_dropped", tostring(msg_type), tostring(why))
+end
+
 function M.send_message(msg_type, data)
-  if not M.socket_connected or not connection then return false end
+  if not M.socket_connected or not connection then
+    report_dropped(msg_type, M.connection_status and M.connection_status() or "no socket")
+    return false
+  end
   local payload = { type = msg_type, data = data or {}, timestamp = os.time() }
-  websocket.send(connection, json_util.encode(payload))
+  -- pcall, because a send on a socket the OS has already closed RAISES. Left
+  -- unwrapped it propagates into whatever called this — on_input, a timer
+  -- callback — and takes that whole frame's script down with it.
+  local ok, err = pcall(websocket.send, connection, json_util.encode(payload))
+  if not ok then
+    report_dropped(msg_type, err)
+    -- A send that raises IS a dead socket, whatever the flag says. Reporting
+    -- it here is what turns a silent hole into a reconnect: on_disconnected
+    -- clears the flags and schedules the retry that the flag being stuck true
+    -- was preventing.
+    on_disconnected("send failed")
+    return false
+  end
   return true
 end
 
@@ -975,14 +1039,6 @@ local function stop_keep_alive()
   if keep_alive_handle then timer.cancel(keep_alive_handle); keep_alive_handle = nil end
 end
 
-local on_disconnected -- forward decl
-
--- Forward declaration, for the same reason on_disconnected and
--- schedule_reconnect have one: a `local` introduced after a function body is
--- not in scope inside it, so on_connected/on_disconnected below would resolve
--- this to a nil global and raise on the call. Defined down with the reconciler,
--- which is where the state it reads lives.
-local publish_status
 
 -- A socket reported as "connected" but with no inbound traffic for ZOMBIE_TIMEOUT
 -- seconds is a dead-but-open (zombie) link. Tear it down and let the normal
@@ -1008,7 +1064,21 @@ local function start_keep_alive()
       return
     end
     M._ping_sent_at = now_s()
-    websocket.send(connection, json_util.encode({ type = "CLIENT_PING", timestamp = os.time() }))
+    -- THROUGH send_message, NOT AROUND IT.
+    --
+    -- This was a bare websocket.send. A send on a socket the OS has already
+    -- closed RAISES, and this one runs inside a repeating timer callback —
+    -- so the error killed the keep-alive itself. No more CLIENT_PING, and no
+    -- more zombie checks either, because the check above lives in the same
+    -- callback. The socket then sat "connected" for ever with nothing going
+    -- out and nothing coming back, and connect() no-ops while
+    -- M.socket_connected is true, so nothing reopened it.
+    --
+    -- That is "the backend looks healthy but the app is reconnecting and
+    -- sending nothing", from the one line that was outside the guard rail.
+    -- send_message pcalls the send and reports a raise as a disconnect, which
+    -- is what starts the retry.
+    M.send_message("CLIENT_PING")
   end)
 end
 
@@ -1274,13 +1344,34 @@ function M.retry_connection()
     pcall(timer.cancel, reconnect_handle)
     reconnect_handle = nil
   end
-  -- A deliberate tap must not be swallowed by a stale in-flight flag. The
-  -- reconciler would clear this itself, but only after the stall window, and
-  -- somebody who just pressed RETRY is owed an attempt now.
-  if is_connecting and (now_s() - (connecting_since or 0)) >= conn_plan.CONNECT_STALL_SECONDS then
-    is_connecting = false
-    connection = nil
+  -- A DELIBERATE TAP OUTRANKS WHATEVER WE THINK WE HAVE.
+  --
+  -- Reported: pressing RETRY produces no event at the backend at all.
+  --
+  -- connect() no-ops on `is_connecting or M.socket_connected`, and this only
+  -- cleared the first of those, and only once it was ten seconds stale. So
+  -- RETRY did nothing whenever:
+  --
+  --   * an attempt was in flight and younger than the stall window, or
+  --   * M.socket_connected was stuck true over a socket that had died without
+  --     reporting it — which is the state somebody is pressing RETRY IN.
+  --
+  -- Either way the tap was swallowed, silently, and the player pressed it
+  -- again. Being asked to retry is itself the evidence that what we are
+  -- holding does not work, so it is torn down rather than protected.
+  if is_connecting or M.socket_connected then
+    print("[WS] manual retry: discarding the current socket "
+      .. string.format("(connecting=%s connected=%s)",
+        tostring(is_connecting), tostring(M.socket_connected)))
   end
+  is_connecting = false
+  M.socket_connected = false
+  M.is_identified = false
+  stop_keep_alive()
+  -- Closed, not just forgotten: an abandoned socket left open goes on
+  -- delivering events for a connection nobody is reading any more, and its
+  -- eventual DISCONNECTED would tear down the replacement.
+  close_orphan_socket()
   M.connect()
   M.start_reconciler()
 end
