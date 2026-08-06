@@ -39,6 +39,58 @@ function M.spawn_card(v, s, pos)
 end
 
 ----------------------------------------------------------------------
+-- A small object pool for anonymous DECK cards.
+--
+-- Every "Instance (null) not found" bug traced in this file's recent history
+-- (a frozen board after a reshuffle, a crash on the next tap, a drawn card
+-- that plays its sound but never appears) came from the same root shape:
+-- online_handler.lua's sync_deck_size go.delete's cards straight out of
+-- self.deck to shrink it to the server's count, and something else — an
+-- in-flight reshuffle's own snapshot of those cards, a draw already under
+-- way — was still holding a reference to one of them when it went. Filtering
+-- and pcall'ing every read of a card's position (see game_flow.lua,
+-- board_layout.lua, game.script) closed each crash as it was found, but a
+-- deck card is a face-down, anonymous placeholder — nothing about it is
+-- ACTUALLY different once it stops being needed, so there was never a good
+-- reason to delete it in the first place.
+--
+-- release_card hides a card and returns it here instead of deleting it;
+-- take_card hands one back out (relabelled, re-enabled, repositioned) before
+-- ever spawning a new one. A pooled card's game object is never deleted
+-- until the whole board is (game_state.lua's destroy_all), so the race this
+-- existed to guard against — a stale reference outliving the object it
+-- points to — cannot happen to a deck card again, at the root, rather than
+-- being caught after the fact wherever it next turned up.
+function M.release_card(self, c)
+    if not c or not c.id then return end
+    pcall(go.set_enabled, c.id, false)
+    self._card_pool = self._card_pool or {}
+    self._card_pool[#self._card_pool + 1] = c
+end
+
+function M.take_card(self, v, s, pos)
+    local pool = self._card_pool
+    if pool and #pool > 0 then
+        local c = table.remove(pool)
+        c.v, c.s = v, s
+        local ok = pcall(go.set_enabled, c.id, true)
+        if ok then
+            pcall(go.set_position, pos, c.id)
+            pcall(go.set, c.id, "scale", CARD_SCALE)
+            pcall(go.set, c.id, "euler.z", 0)
+            M.set_back(c)
+            return c
+        end
+        -- The pooled instance itself is somehow gone (should not happen —
+        -- nothing deletes a pooled card before teardown — but this is the
+        -- exact class of assumption that was wrong before). Fall through
+        -- and spawn a real one rather than handing back a card no caller
+        -- can use.
+    end
+    return M.spawn_card(v, s, pos)
+end
+
+----------------------------------------------------------------------
 -- Commit a card to the pile
 ----------------------------------------------------------------------
 ----------------------------------------------------------------------

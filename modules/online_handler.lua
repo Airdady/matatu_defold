@@ -110,14 +110,25 @@ function M.sync_deck_size(self, target_size)
         local diff = target_size - #self.deck
         for i = 1, diff do
             local idx = #self.deck + 1
-            local c = self.spawn_card(10, "H", vmath.vector3(self.DECK_POS.x + idx * 0.5, self.DECK_POS.y - idx * 0.5, idx * 0.001))
+            -- take_card reuses a hidden card from the pool this same
+            -- function's shrink branch below returns cards to, instead of
+            -- always spawning a fresh one. See card_view.lua.
+            local c = CV.take_card(self, 10, "H", vmath.vector3(self.DECK_POS.x + idx * 0.5, self.DECK_POS.y - idx * 0.5, idx * 0.001))
             table.insert(self.deck, c)
         end
     elseif #self.deck > target_size then
         local diff = #self.deck - target_size
         for i = 1, diff do
             local c = table.remove(self.deck, 1)
-            pcall(go.delete, c.id)
+            -- Hidden and pooled for reuse, NOT deleted — this was the root
+            -- of every "Instance (null) not found" traced in this codebase's
+            -- recent history: a reshuffle or a draw already under way can be
+            -- holding a reference to exactly the card this shrink is about
+            -- to touch, and a go.delete'd instance raises the moment
+            -- anything reads its position afterward. A hidden one is still
+            -- a perfectly valid object to read a stale position from — it
+            -- just isn't drawn. See card_view.lua's release_card/take_card.
+            CV.release_card(self, c)
         end
     end
 end
@@ -663,7 +674,12 @@ function M.finalize_state_sync(self, state, on_complete)
         else
             while #self.ai_hand > target do
                 local c = table.remove(self.ai_hand)
-                pcall(go.delete, c.id)
+                -- Same reasoning as sync_deck_size's shrink branch above: an
+                -- opponent card is just as anonymous/face-down as a deck
+                -- card until it is actually played, so it is just as safe to
+                -- hide and reuse instead of deleting out from under whatever
+                -- else might still be holding a reference to it.
+                CV.release_card(self, c)
             end
             self.position_hands(true)
             settle()
