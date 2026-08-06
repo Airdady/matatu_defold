@@ -56,24 +56,51 @@ local function reshuffle(g)
 		return
 	end
 	local top = played[#played]
-	local rest = {}
+	local shuffled = {}
 	for i = 1, #played - 1 do
-		rest[#rest + 1] = played[i]
+		shuffled[#shuffled + 1] = played[i]
 	end
-	deck_mod.shuffle(rest)
-	g.state.deck = rest
+	deck_mod.shuffle(shuffled)
+
+	-- MERGED, not assigned. `g.state.deck = shuffled` was safe for as long
+	-- as reshuffle only ever ran on a deck already at 0 — there was nothing
+	-- there to lose. draw_cards now calls this proactively once the deck
+	-- drops to RESHUFFLE_THRESHOLD, so it can easily still hold cards at
+	-- this point, and overwriting silently discarded them: fewer cards in
+	-- play for the rest of the game, and — if one of the discarded cards
+	-- was needed to actually empty a hand — a game that can no longer end at
+	-- all. Existing deck cards are kept at the END (drawn first, via
+	-- draw_cards' table.remove pop-from-top) so the card a draw is about to
+	-- return does not change out from under it; the newly shuffled pile
+	-- cards go underneath.
+	local merged = {}
+	for _, c in ipairs(shuffled) do merged[#merged + 1] = c end
+	for _, c in ipairs(g.state.deck) do merged[#merged + 1] = c end
+
+	g.state.deck = merged
 	g.state.played = { top }
 end
+
+-- Reshuffle BEFORE the deck actually runs out, not after.
+--
+-- Reported: offline, the deck drains and nothing comes — a draw that landed
+-- exactly when the deck hit 0 reshuffled AFTER the fact, and if the discard
+-- pile did not have enough in it yet (or, on a longer draw, ran itself back
+-- down to 0 again a few cards later), the loop just broke early and handed
+-- back fewer cards than asked for. Checking the threshold every card, not
+-- just when the deck is already empty, means a batch that crosses 10 mid-way
+-- reshuffles in time to keep supplying the rest of it.
+local RESHUFFLE_THRESHOLD = 10
 
 local function draw_cards(g, id, n)
 	local drew = {}
 	local hand = hand_of(g, id)
 	for _ = 1, n do
-		if #g.state.deck == 0 then
+		if #g.state.deck <= RESHUFFLE_THRESHOLD then
 			reshuffle(g)
-			if #g.state.deck == 0 then
-				break
-			end
+		end
+		if #g.state.deck == 0 then
+			break
 		end
 		local card = table.remove(g.state.deck) -- pop from top
 		hand[#hand + 1] = card

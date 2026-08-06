@@ -56,24 +56,36 @@ local function reshuffle(g)
 		return
 	end
 	local top = played[#played]
-	local rest = {}
+	local shuffled = {}
 	for i = 1, #played - 1 do
-		rest[#rest + 1] = played[i]
+		shuffled[#shuffled + 1] = played[i]
 	end
-	deck_mod.shuffle(rest)
-	g.state.deck = rest
+	deck_mod.shuffle(shuffled)
+
+	-- MERGED, not assigned — same fix and reasoning as
+	-- modules/games/matatu/game_logic.lua's reshuffle.
+	local merged = {}
+	for _, c in ipairs(shuffled) do merged[#merged + 1] = c end
+	for _, c in ipairs(g.state.deck) do merged[#merged + 1] = c end
+
+	g.state.deck = merged
 	g.state.played = { top }
 end
+
+-- Reshuffle BEFORE the deck actually runs out, not after — same fix and
+-- reasoning as modules/games/matatu/game_logic.lua's draw_cards. Reported:
+-- offline, the deck drains and nothing comes.
+local RESHUFFLE_THRESHOLD = 10
 
 local function draw_cards(g, id, n)
 	local drew = {}
 	local hand = hand_of(g, id)
 	for _ = 1, n do
-		if #g.state.deck == 0 then
+		if #g.state.deck <= RESHUFFLE_THRESHOLD then
 			reshuffle(g)
-			if #g.state.deck == 0 then
-				break
-			end
+		end
+		if #g.state.deck == 0 then
+			break
 		end
 		local card = table.remove(g.state.deck) -- pop from top
 		hand[#hand + 1] = card
