@@ -77,6 +77,31 @@ local function dlg_avatar(self, x, y, size, avatar_id, a)
     gui.set_color(track(self, ui.avatar(vmath.vector3(x, y, 0), vmath.vector3(size, size, 0), avatar_id)), vmath.vector4(1, 1, 1, a or 1))
 end
 
+-- Size the stashed countdown bar to whatever time_left is RIGHT NOW.
+--
+-- Mirrors online.gui_script's apply_banner_bar/draw_banner, which carries the
+-- fix for exactly this: the bar used to be sized only at whatever width the
+-- last REBUILD happened to catch, and update() below only asked for one when
+-- the whole SECOND changed — so over a 10s invite it stepped in ten 10%
+-- jumps instead of sliding. Rebuilding every frame is not the fix either:
+-- rebuild() deletes and recreates every node on screen, which is why the
+-- once-a-second throttle exists at all. The bar is ONE node, so it is
+-- stashed here and resized in place by update() at frame rate, independent
+-- of whether a full rebuild happens this frame.
+--
+-- pcall'd because the handle dies with the next clear(): draw_banner
+-- re-stashes on every rebuild so it is normally fresh, but a frame landing
+-- between the two would otherwise throw out of update().
+local function apply_banner_bar(d)
+    local bar = d and d._bar
+    if not bar or not bar.node then return end
+    local frac = math.max(0, math.min(1, (d.time_left or 0) / (d.max_time or 10)))
+    pcall(function()
+        gui.set_size(bar.node, vmath.vector3(bar.w * frac, 3, 0))
+        gui.set_color(bar.node, with_a(frac < 0.3 and COL_RED or COL_GREEN, bar.alpha))
+    end)
+end
+
 local function dlg_timer(self, x, y, time_left, max_time, a)
     local frac, R = math.max(0, math.min(1, (time_left or 0) / (max_time or 10))), 34
     local bg = track(self, gui.new_pie_node(vmath.vector3(x, y, 0), vmath.vector3(R*2, R*2, 0))); gui.set_perimeter_vertices(bg, 48); pcall(gui.set_inner_radius, bg, R * 0.80); gui.set_color(bg, vmath.vector4(0.25, 0.25, 0.25, 0.45 * (a or 1)))
@@ -238,14 +263,17 @@ local function draw_banner(self, d, a)
 
     if d.h2h then draw_h2h_row(self, m.R - 430, cy, h2h_view(d.h2h), a) end
 
-    -- Countdown along the bottom edge.
-    local frac  = math.max(0, math.min(1, (d.time_left or 0) / (d.max_time or 10)))
-    local bar_w = bw * frac
+    -- Countdown along the bottom edge. THE FILL IS ANIMATED, NOT REBUILT — see
+    -- apply_banner_bar above. Stashed as one node and resized in place by
+    -- update() every frame; nothing else on this banner needs a per-frame
+    -- touch, so the once-a-second rebuild throttle stays for everything else.
     track(self, ui.box(vmath.vector3(m.CX, bot, 0), vmath.vector3(bw, 3, 0), with_a(BAN_TRACK, a)))
-    if bar_w > 1 then
-        track(self, ui.box(vmath.vector3(m.L + bar_w / 2, bot, 0), vmath.vector3(bar_w, 3, 0),
-            with_a(frac < 0.3 and COL_RED or COL_GREEN, a)))
-    end
+    local fill = track(self, ui.box(vmath.vector3(m.L, bot, 0), vmath.vector3(bw, 3, 0), COL_GREEN))
+    -- Anchored WEST so a width change grows/shrinks from the left edge on its
+    -- own, without repositioning it every frame alongside the resize.
+    gui.set_pivot(fill, gui.PIVOT_W)
+    d._bar = { node = fill, w = bw, alpha = a }
+    apply_banner_bar(d)
 end
 
 -- ── Rendering ─────────────────────────────────────────────────────────────────
@@ -500,6 +528,10 @@ function update(self, dt)
         local need_reb = false
 
         self.dialog.time_left = (self.dialog.time_left or 10) - dt
+
+        -- Every frame, independent of need_reb below — see apply_banner_bar.
+        if self.dialog.banner then apply_banner_bar(self.dialog) end
+
         local cur_sec = math.floor(math.max(0, self.dialog.time_left))
         if cur_sec ~= self.dialog._last_sec then
             self.dialog._last_sec = cur_sec
