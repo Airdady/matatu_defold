@@ -4,6 +4,7 @@ local CV = require "modules.card_view"
 local GameMode = require "modules.game_mode"
 local BL = require "modules.board_layout"
 local config = require "modules.config"
+local RQ = require "modules.reshuffle_queue"
 
 local GUI_HUD   = "#game"
 local GUI_SUIT  = "#suit_select"
@@ -682,6 +683,19 @@ function M.finalize_state_sync(self, state, on_complete)
             self._online_reshuffling = false
             do_sync()
         end)
+    elseif RQ.is_running(self) then
+        -- A DIFFERENT sync's reshuffle is still animating (self.deck holds
+        -- its own snapshot of the pre-reshuffle deck the whole time — see
+        -- M.reshuffle_deck). This state sync didn't trigger should_reshuffle
+        -- itself, but running do_sync() right now would still call
+        -- sync_deck_size on self.deck WHILE that snapshot is in flight —
+        -- including go.delete'ing a card the reshuffle still holds a
+        -- reference to, which used to raise inside its own delayed
+        -- go.set/go.animate calls and abort it partway, leaving the board
+        -- locked and the recycled cards stranded mid-sweep. Queue behind the
+        -- reshuffle instead of racing it; RQ answers every waiter once it
+        -- finishes, abandoned or not.
+        RQ.wait(self, do_sync)
     else
         do_sync()
     end

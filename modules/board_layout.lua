@@ -153,9 +153,14 @@ end
 
 function M.restack_deck(self)
     if not self.deck then return end
+    -- pcall'd per card: called at the very tail of a reshuffle, right before
+    -- it releases (see game_flow.lua's M.reshuffle_deck) — one card whose
+    -- game object was deleted out from under it by a concurrent state sync
+    -- must not be able to throw here and skip that release, which is what
+    -- freezes the whole board until the app is restarted.
     for i, c in ipairs(self.deck) do
-        go.set_position(M.deck_slot_pos(self, i), c.id)
-        go.set(c.id, "euler.z", 0)
+        pcall(go.set_position, M.deck_slot_pos(self, i), c.id)
+        pcall(go.set, c.id, "euler.z", 0)
     end
 end
 

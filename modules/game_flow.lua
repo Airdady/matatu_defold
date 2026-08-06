@@ -542,10 +542,10 @@ function M.reshuffle_deck(self, done)
     for i, c in ipairs(final_deck) do index_of_card[c] = i end
 
     for i, c in ipairs(recycled) do
-        go.animate(c.id, "position", go.PLAYBACK_ONCE_FORWARD,
+        pcall(go.animate, c.id, "position", go.PLAYBACK_ONCE_FORWARD,
             vmath.vector3(self.CENTER.x, self.CENTER.y, 0.4 + i * 0.001), go.EASING_INOUTSINE, 0.22)
-        go.animate(c.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_LINEAR, 0.22)
-        timer.delay(0.1, false, function() if seq == self._seq then self.set_back(c) end end)
+        pcall(go.animate, c.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_LINEAR, 0.22)
+        timer.delay(0.1, false, function() if seq == self._seq then pcall(self.set_back, c) end end)
     end
 
     timer.delay(0.28, false, function()
@@ -559,12 +559,31 @@ function M.reshuffle_deck(self, done)
             if seq ~= self._seq then release(); return end
             self.play_sound("MoveDeck")
 
+            -- pcall'd per card, not just per loop: THE FREEZE THIS GUARDS.
+            --
+            -- Reported: after a reshuffle the board goes dead — can't select a
+            -- suit, can't play a card — and on a second or third reshuffle the
+            -- recycled cards visibly stop at the center sweep and never reach
+            -- the deck. stub/under/final_deck are snapshots of card records
+            -- taken when the reshuffle started, and this callback only fires
+            -- ~0.3-1.3s later. In that window, a concurrent state sync for an
+            -- ordinary draw can call sync_deck_size (online_handler.lua),
+            -- which go.delete's cards straight out of self.deck to shrink it
+            -- to the server's count — including, by bad luck, one this
+            -- reshuffle already snapshotted a reference to. go.set/go.animate
+            -- on a deleted id RAISES, and this whole function is not wrapped
+            -- in a pcall anywhere above it: one dead card aborted the entire
+            -- callback chain right here, before release() ever ran — which is
+            -- why the board stayed locked (see game.script's _gs_anim_locks)
+            -- and every later reshuffle queued behind a RQ flag that would
+            -- never clear. One bad card must cost that one card's animation,
+            -- not the reshuffle finishing at all.
             for _, c in ipairs(stub) do
                 local idx = index_of_card[c]
-                go.set(c.id, "scale", CARD_SCALE)
-                go.animate(c.id, "position", go.PLAYBACK_ONCE_FORWARD,
+                pcall(go.set, c.id, "scale", CARD_SCALE)
+                pcall(go.animate, c.id, "position", go.PLAYBACK_ONCE_FORWARD,
                     BL.deck_slot_pos(self, idx), go.EASING_OUTCUBIC, 0.30)
-                go.animate(c.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_OUTCUBIC, 0.30)
+                pcall(go.animate, c.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_OUTCUBIC, 0.30)
             end
 
             local tuck_delay = (existing_n > 0) and 0.04 or 0.18
@@ -572,10 +591,10 @@ function M.reshuffle_deck(self, done)
                 if seq ~= self._seq then release(); return end
                 for _, c in ipairs(under) do
                     local idx = index_of_card[c]
-                    go.set(c.id, "scale", CARD_SCALE)
-                    go.animate(c.id, "position", go.PLAYBACK_ONCE_FORWARD,
+                    pcall(go.set, c.id, "scale", CARD_SCALE)
+                    pcall(go.animate, c.id, "position", go.PLAYBACK_ONCE_FORWARD,
                         BL.deck_slot_pos(self, idx), go.EASING_INOUTCUBIC, 0.45)
-                    go.animate(c.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_INOUTCUBIC, 0.45)
+                    pcall(go.animate, c.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_INOUTCUBIC, 0.45)
                 end
 
                 -- MERGED, not assigned. Assignment silently discarded anything
@@ -591,7 +610,7 @@ function M.reshuffle_deck(self, done)
                     -- the sweep" z (set above, before the recycled cards'
                     -- animation started) down to its real resting depth,
                     -- now that nothing is animating above it anymore.
-                    go.set(top.id, "position.z", Z_PILE + 0.001)
+                    pcall(go.set, top.id, "position.z", Z_PILE + 0.001)
                     BL.restack_deck(self)
                     release()
                 end)
