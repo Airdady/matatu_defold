@@ -432,7 +432,19 @@ update_play_button = function(self)
     gui.set_enabled(self.play_coin_node, false)
     gui.set_enabled(self.play_lock_node, false)
 
-    if self.is_pre_launch then
+    if self.join_pending then
+        -- The JOIN_TOURNAMENT round-trip is in flight (see do_join_and_play).
+        -- Checked FIRST and unconditionally: every branch below ends by
+        -- setting self.play_disabled itself, current_level_index == 0's
+        -- included, so without this a rebuild landing mid-join (any of
+        -- several unrelated triggers call rebuild()) would silently flip
+        -- play_disabled back to false and the button back to its normal
+        -- texture — still un-tappable (join_pending itself gates handle()),
+        -- but LOOKING tappable again is exactly the "is this working?"
+        -- confusion this is here to prevent.
+        gui.set_text(self.play_txt_node, "JOINING...")
+        self.play_disabled = true
+    elseif self.is_pre_launch then
         -- Same stake + coin + lock display as the normal "not started yet"
         -- state below (current_level_index == 0) — no "COMING SOON" text,
         -- just the stake amount with the lock icon showing it can't be
@@ -1057,6 +1069,12 @@ local function do_join_and_play(self, d)
     self._pending_join_data = d
     self.play_disabled = true
     self.is_moving = true
+
+    -- Without this the tap gave NO visible feedback at all: nothing here used
+    -- to call rebuild(), so the button kept showing its normal cost/texture
+    -- for as long as the server took to answer (up to the 8s failsafe below)
+    -- — a silent lock that reads exactly as "the button isn't responding".
+    if self._active then rebuild(self) end
 
     msg.post("#controller", "tournament_join", { tournament_id = d.id })
 
