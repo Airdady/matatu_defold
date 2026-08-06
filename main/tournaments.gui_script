@@ -714,7 +714,12 @@ local function rebuild_body(self)
         local text_start_x = card_cx - card_w/2 + 16
 
         local name_col = is_final and vmath.vector4(1, 0.84, 0, 1) or vmath.vector4(0.95, 0.95, 0.95, 1)
-        local n_node = track(self, ui.text(vmath.vector3(text_start_x, row_cy + 14, 0), (lv.name or ("Level " .. i)), "body", name_col))
+        -- Title sits at +22 (was +14, an 8-unit widening) to match the same
+        -- 24-unit gap the Prize/Reward-to-Score fix below already gives —
+        -- the title read as run into the reward/prize line right under it at
+        -- the old spacing, the same complaint that spacing fix answered one
+        -- line down.
+        local n_node = track(self, ui.text(vmath.vector3(text_start_x, row_cy + 22, 0), (lv.name or ("Level " .. i)), "body", name_col))
         gui.set_pivot(n_node, gui.PIVOT_W)
 
         -- Prize/Reward sits at -2 and Score at -26 (was -4/-20, a 16-unit
@@ -953,16 +958,6 @@ function on_message(self, message_id, message, sender)
 
             if d then execute_jump_and_play(self, d) end
         end
-    elseif message_id == hash("ws_tournament_join_failed") then
-        if self.join_pending then
-            self.join_pending = false
-            if self.join_timeout_handle then pcall(timer.cancel, self.join_timeout_handle); self.join_timeout_handle = nil end
-            self._pending_join_data = nil
-            self.play_disabled = false
-            self.is_moving = false
-            if self._active then rebuild(self) end
-            msg.post("main:/controller", "show_transaction_modal")
-        end
     end
 end
 
@@ -1044,8 +1039,19 @@ end
 -- JOIN_TOURNAMENT round-trip, not a cosmetic local deduction. Matchmaking on
 -- the backend now refuses anyone without the active tournamentProgress row
 -- this creates, so the jump/search flow must wait for the server's
--- TOURNAMENT_JOINED before it proceeds — see ws_tournament_joined /
--- ws_tournament_join_failed in on_message.
+-- TOURNAMENT_JOINED before it proceeds — see ws_tournament_joined in
+-- on_message for the success path.
+local function fail_join(self)
+    if not self.join_pending then return end
+    self.join_pending = false
+    if self.join_timeout_handle then pcall(timer.cancel, self.join_timeout_handle); self.join_timeout_handle = nil end
+    self._pending_join_data = nil
+    self.play_disabled = false
+    self.is_moving = false
+    if self._active then rebuild(self) end
+    msg.post("main:/controller", "show_transaction_modal")
+end
+
 local function do_join_and_play(self, d)
     self.join_pending = true
     self._pending_join_data = d
@@ -1056,8 +1062,21 @@ local function do_join_and_play(self, d)
 
     -- Local failsafe matching the search dialog's own countdown: if the
     -- server never answers, unlock the UI rather than leaving PLAY dead.
+    --
+    -- This used to notify itself with msg.post(".", "ws_tournament_join_failed")
+    -- — every OTHER self/cross-script message in this file addresses this gui
+    -- component by its actual fragment ("#tournaments" from controller.script,
+    -- "#online" for the other screen), and "." is not that; nothing else in
+    -- the codebase posts a custom message to "." expecting its own on_message
+    -- to see it. That silent mis-address was very likely why PLAY looked dead
+    -- after a tap: join_pending latches true, the button's own guard then
+    -- blocks every further tap, and neither the success path (a real server
+    -- reply routes in fine, addressed correctly by controller.script) nor this
+    -- failsafe ever unlatches it if the reply never came. Calling fail_join
+    -- directly removes the messaging round-trip — and the address bug —
+    -- entirely.
     self.join_timeout_handle = timer.delay(8, false, function()
-        if self.join_pending then msg.post(".", "ws_tournament_join_failed") end
+        fail_join(self)
     end)
 end
 
