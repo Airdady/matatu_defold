@@ -872,6 +872,9 @@ function on_message(self, message_id, message, sender)
         self.search = nil
         self.is_moving = false
         app_state.searching_tournament = false
+        if self.join_timeout_handle then pcall(timer.cancel, self.join_timeout_handle); self.join_timeout_handle = nil end
+        self.join_pending = false
+        self._pending_join_data = nil
         rebuild(self)
         try_level_up_jump(self)
     elseif message_id == hash("enable") then
@@ -931,6 +934,35 @@ function on_message(self, message_id, message, sender)
         self.is_moving = false
         pcall(msg.post, "#snd_suspense", "stop_sound")
         fail_search(self, message and message.reason)
+    elseif message_id == hash("ws_tournament_joined") then
+        -- Reply to the JOIN_TOURNAMENT sent by do_join_and_play(). The
+        -- balance shown from here on is whatever the server actually
+        -- charged, not the locally-guessed cost — ws.current_user_data.balance
+        -- was already updated by websocket_manager before this arrives.
+        if self.join_pending then
+            self.join_pending = false
+            if self.join_timeout_handle then pcall(timer.cancel, self.join_timeout_handle); self.join_timeout_handle = nil end
+            local d = self._pending_join_data
+            self._pending_join_data = nil
+
+            local u = ws.current_user_data or {}
+            if self.top_left_balance_lbl then gui.set_text(self.top_left_balance_lbl, commas(tonumber(u.balance) or 0)) end
+            if (tonumber(message and message.entryCharged) or 0) > 0 then
+                play_deduction_animation(self)
+            end
+
+            if d then execute_jump_and_play(self, d) end
+        end
+    elseif message_id == hash("ws_tournament_join_failed") then
+        if self.join_pending then
+            self.join_pending = false
+            if self.join_timeout_handle then pcall(timer.cancel, self.join_timeout_handle); self.join_timeout_handle = nil end
+            self._pending_join_data = nil
+            self.play_disabled = false
+            self.is_moving = false
+            if self._active then rebuild(self) end
+            msg.post("main:/controller", "show_transaction_modal")
+        end
     end
 end
 
@@ -1008,6 +1040,27 @@ local function execute_jump_and_play(self, d)
     end
 end
 
+-- NO MORE FREELANCERS: the first PLAY tap on the ladder is now a real
+-- JOIN_TOURNAMENT round-trip, not a cosmetic local deduction. Matchmaking on
+-- the backend now refuses anyone without the active tournamentProgress row
+-- this creates, so the jump/search flow must wait for the server's
+-- TOURNAMENT_JOINED before it proceeds — see ws_tournament_joined /
+-- ws_tournament_join_failed in on_message.
+local function do_join_and_play(self, d)
+    self.join_pending = true
+    self._pending_join_data = d
+    self.play_disabled = true
+    self.is_moving = true
+
+    msg.post("#controller", "tournament_join", { tournament_id = d.id })
+
+    -- Local failsafe matching the search dialog's own countdown: if the
+    -- server never answers, unlock the UI rather than leaving PLAY dead.
+    self.join_timeout_handle = timer.delay(8, false, function()
+        if self.join_pending then msg.post(".", "ws_tournament_join_failed") end
+    end)
+end
+
 local function handle(self, b)
     if b.id == "back" then
         -- Plain navigation back to the online lobby. Leaving the map harms
@@ -1015,29 +1068,24 @@ local function handle(self, b)
         -- where the player left it when they return — so no warning dialog.
         msg.post("#controller", "goto_online")
     elseif b.id == "play" then
-        if self.play_disabled or self.is_moving then return end
-        
+        if self.play_disabled or self.is_moving or self.join_pending then return end
+
         local d = b.data or {}
         local u = ws.current_user_data or {}
         local cost = tonumber(d.stake.amount) or 0
         local balance = tonumber(u.balance) or 0
-        
+
         if self.current_level_index == 0 then
             if balance < cost then
                 msg.post("main:/controller", "show_transaction_modal")
                 return
             end
 
-            -- Deduct entry fee immediately upon starting the tournament climb
-            if cost > 0 then
-                u.balance = math.max(0, balance - cost)
-                if self.top_left_balance_lbl then gui.set_text(self.top_left_balance_lbl, commas(u.balance)) end
-                play_deduction_animation(self)
-            end
-            self.play_disabled = true
-            self.is_moving = true -- Lock UI inputs
-
-            execute_jump_and_play(self, d)
+            -- The entry charge and the tournamentProgress row are both
+            -- created server-side by JOIN_TOURNAMENT. The deduction
+            -- animation plays once the server confirms what it actually
+            -- charged (see ws_tournament_joined), not before.
+            do_join_and_play(self, d)
         else
             execute_jump_and_play(self, d)
         end

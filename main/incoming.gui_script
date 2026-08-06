@@ -135,12 +135,12 @@ local BAN_AV_BG   = vmath.vector4(0.10, 0.14, 0.18, 1.00)
 local BAN_TRACK   = vmath.vector4(0.12, 0.19, 0.27, 1.00)
 local BAN_ACCEPT  = vmath.vector4(0.00, 0.90, 0.63, 0.30)
 
--- CHAMPIONSHIP badge. Red on purpose: this banner already carries ordinary
+-- CHAMPIONSHIP badge. Orange on purpose: this banner already carries ordinary
 -- battles and one-level tournaments, and they look identical to a run at the
 -- multi-level ladder. Accepting one costs a level of real progress, so it
 -- should not be indistinguishable from a casual invite.
-local BAN_CHAMP_BG = vmath.vector4(0.78, 0.12, 0.16, 1.00)
-local BAN_CHAMP_TX = vmath.vector4(1.00, 0.94, 0.94, 1.00)
+local BAN_CHAMP_BG = vmath.vector4(0.94, 0.55, 0.09, 1.00)
+local BAN_CHAMP_TX = vmath.vector4(1.00, 0.97, 0.90, 1.00)
 
 -- TEAM CUP badge. Purple, matching the lobby tile's accent, so an invitation
 -- to somebody's cup is not mistaken at a glance for a match starting now —
@@ -176,7 +176,14 @@ local function level_count(t)
     return 1
 end
 
+-- scope is the server's own source of truth for "this is the global
+-- championship" (see isChampionship() in championshipStats.ts). Checked
+-- first; the level-count heuristic stays as a fallback for older tournament
+-- documents that predate the scope field ever being threaded onto the
+-- request payload.
 local function is_championship(tourney)
+    if type(tourney) ~= "table" then return false end
+    if tourney.scope == "GLOBAL" then return true end
     return level_count(tourney) >= MIN_CHAMPIONSHIP_LEVELS
 end
 local BAN_DECLINE = vmath.vector4(0.12, 0.19, 0.27, 0.85)
