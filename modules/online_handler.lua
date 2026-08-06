@@ -833,7 +833,14 @@ local function sync_my_hand(self, state, done)
             table.remove(bucket) -- consume one matching server card
             kept[#kept + 1] = c
         else
-            pcall(go.delete, c.id)
+            -- Released, not deleted — same reasoning as sync_deck_size's and
+            -- the AI-hand shrink's own release_card calls: this card being
+            -- reconciled away here could still be mid-animation (a play
+            -- that hasn't finished flying to the pile yet) even with the
+            -- self.game_state freshness fix above, and a hidden-but-alive
+            -- object degrades that race into nothing instead of "Instance
+            -- (null) not found".
+            CV.release_card(self, c)
         end
     end
     for i = #self.player_hand, 1, -1 do self.player_hand[i] = nil end
@@ -890,7 +897,19 @@ function M.handle_single_move(self, move_data, new_state, done)
             -- drifts from the server's authoritative hand and stays wrong
             -- until some later, unrelated resync happens to catch it.
             M.finalize_state_sync(self, new_state, function()
-                sync_my_hand(self, new_state or {}, done)
+                -- self.game_state, NOT the closure-captured new_state — same
+                -- reasoning as settle() above. process_opponent_actions runs
+                -- staggered per-card animations before this callback fires,
+                -- and finalize_state_sync's own do_sync can be deferred
+                -- behind a reshuffle for ~1.3s+ on top of that. A newer move
+                -- (the player's OWN just-played card getting confirmed, or
+                -- another opponent action) can land and overwrite
+                -- self.game_state while this chain is still unwinding —
+                -- reconciling against the stale new_state then means
+                -- sync_my_hand sees a hand that still includes a card the
+                -- player has since played, and adds it right back. Reported
+                -- as "I played a card and it reappeared in my hand".
+                sync_my_hand(self, self.game_state or new_state or {}, done)
             end)
         end)
     elseif ai_for_me and has_actions then
@@ -902,7 +921,9 @@ function M.handle_single_move(self, move_data, new_state, done)
         self.is_local_action_locked = false
         M.process_my_actions(self, actions, function()
             M.finalize_state_sync(self, new_state, function()
-                sync_my_hand(self, new_state or {}, done)
+                -- self.game_state, NOT new_state — see the identical fix and
+                -- reasoning just above in the opponent-move branch.
+                sync_my_hand(self, self.game_state or new_state or {}, done)
             end)
         end)
     else

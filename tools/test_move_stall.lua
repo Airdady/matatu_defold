@@ -219,10 +219,19 @@ do
     -- sync_my_hand LAUNCHES draw_to_hand and returns; releasing the lock on
     -- the next line let taps through while the player's own new cards were
     -- still flying in.
+    --
+    -- Reconciles against self.game_state now, not the closure-captured
+    -- new_state — the same staleness fix settle() already had (a newer move
+    -- can overwrite self.game_state while this chain is still unwinding
+    -- behind process_opponent_actions' animations and finalize_state_sync's
+    -- own possible reshuffle wait; reconciling against a stale new_state
+    -- meant a card the player had since played could get added right back).
+    -- new_state stays as the fallback for the one real gap: no
+    -- self.game_state has ever been set.
     check("the apply ends when the player's hand has finished arriving",
-        online:match("sync_my_hand%(self, new_state or {}, done%)") ~= nil, true)
+        online:match("sync_my_hand%(self, self%.game_state or new_state or {}, done%)") ~= nil, true)
     check("and never one line early",
-        online:match("sync_my_hand%(self, new_state or {}%)%s*\n%s*done%(%)") ~= nil, false)
+        online:match("sync_my_hand%(self, self%.game_state or new_state or {}%)%s*\n%s*done%(%)") ~= nil, false)
 end
 
 print("")
