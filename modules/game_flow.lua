@@ -597,12 +597,31 @@ function M.reshuffle_deck(self, done)
                     pcall(go.animate, c.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_INOUTCUBIC, 0.45)
                 end
 
+                -- FILTERED, not merged wholesale. A card whose game object was
+                -- deleted from under this reshuffle (see the pcall's above —
+                -- concurrent sync_deck_size in online_handler.lua is the usual
+                -- cause) used to still ride along into self.deck as a dead
+                -- record: the pcall stopped it from crashing the ANIMATION,
+                -- but did nothing to stop it from becoming deck_top later and
+                -- crashing the first go.get_position anything ran on it —
+                -- reported as "Instance (null) not found" on EVERY attempt to
+                -- draw, persisting until the app restarted. Checked with the
+                -- same probe the crash itself was: if go.get_position raises,
+                -- the object is gone and the card is dropped rather than
+                -- carried forward into nothing.
+                local alive_final_deck = {}
+                for _, c in ipairs(final_deck) do
+                    if pcall(go.get_position, c.id) then
+                        alive_final_deck[#alive_final_deck + 1] = c
+                    end
+                end
+
                 -- MERGED, not assigned. Assignment silently discarded anything
                 -- that reached the deck during the animation; serialising
                 -- reshuffles should mean nothing does, but that is exactly what
                 -- the original code assumed, and being wrong costs cards that
                 -- then exist in no collection at all.
-                self.deck = RQ.merge_deck(self.deck, final_deck)
+                self.deck = RQ.merge_deck(self.deck, alive_final_deck)
 
                 timer.delay(0.55, false, function()
                     if seq ~= self._seq then release(); return end

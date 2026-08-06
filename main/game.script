@@ -922,7 +922,21 @@ function on_input(self, action_id, action)
         -- No physical top card to anchor on while genuinely mid-reshuffle —
         -- the pile's own fixed board slot is exactly as good a hit target as
         -- the card that will shortly be sitting on it again.
-        local p = deck_top and go.get_position(deck_top.id) or self.DECK_POS
+        --
+        -- pcall'd: deck_top can be a RECORD whose game object has already
+        -- been deleted — a dead card that slipped into self.deck instead of
+        -- being filtered out (see M.reshuffle_deck's merge in game_flow.lua)
+        -- — and go.get_position on a deleted id raises "Instance (null) not
+        -- found". That used to hit every single tap on the deck after such a
+        -- card reached the top: reported as an error spamming the log on
+        -- every attempt to draw, persisting until the app was restarted.
+        -- Falls back to the deck's own fixed slot, same as the no-physical-
+        -- card case just above.
+        local p = self.DECK_POS
+        if deck_top then
+            local ok, got = pcall(go.get_position, deck_top.id)
+            if ok then p = got end
+        end
         if math.abs(x - p.x) <= 120 and math.abs(y - p.y) <= 150 then
             if not deck_top or not self.is_player_turn() or self.waiting or self.is_local_action_locked or self.is_suit_selection_active then
                 -- A REFUSAL THAT SAYS NOTHING LOOKS LIKE A BROKEN BOARD.
