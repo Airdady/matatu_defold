@@ -83,6 +83,13 @@ end
 --- in silence.
 function M.deck_tap_refusal(s)
     s = s or {}
+    -- Checked FIRST: none of the locks below mean anything while there is no
+    -- physical card to hand over. reshuffle_queue.lua empties self.deck for
+    -- the ~1.3s its animation runs, and a tap landing in that window used to
+    -- fall through the whole deck-tap block silently — not even reaching
+    -- this function — because the block itself was gated on `#self.deck >
+    -- 0`. See game.script's deck-tap handler.
+    if s.reshuffling then return 'reshuffling' end
     if not s.is_player_turn then return 'not your turn' end
     if s.waiting then return 'waiting' end
     if s.is_local_action_locked then return 'action in progress' end
@@ -282,11 +289,11 @@ end
 function M.describe(s)
     s = s or {}
     return string.format(
-        'my_turn=%s waiting=%s locked=%s suit_sel=%s animating=%s drew=%s penalty=%s',
+        'my_turn=%s waiting=%s locked=%s suit_sel=%s animating=%s drew=%s penalty=%s reshuffling=%s',
         tostring(truthy(s.is_player_turn)), tostring(truthy(s.waiting)),
         tostring(truthy(s.is_local_action_locked)), tostring(truthy(s.is_suit_selection_active)),
         tostring(truthy(s.is_animating)), tostring(truthy(s.player_has_drawn)),
-        tostring(tonumber(s.penalty) or 0))
+        tostring(tonumber(s.penalty) or 0), tostring(truthy(s.reshuffling)))
 end
 
 return M

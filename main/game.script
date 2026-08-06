@@ -18,6 +18,7 @@ local RE    = require "modules.rules_eval"
 local TL             = require "modules.turn_locks"
 local GS    = require "modules.game_state"
 local GF    = require "modules.game_flow"
+local RQ    = require "modules.reshuffle_queue"
 
 local OnlineHandler = require "modules.online_handler"
 local OfflineHandler = require "modules.offline_handler"
@@ -882,11 +883,27 @@ function on_input(self, action_id, action)
         return true
     end
 
-    if #self.deck > 0 then
-        local deck_top = self.deck[#self.deck]
-        local p = go.get_position(deck_top.id)
+    -- WHAT THE DECK PILE WILL RESPOND TO.
+    --
+    -- This used to be `#self.deck > 0`, which is exactly false for the ~1.3s
+    -- a reshuffle spends animating — reshuffle_queue.lua empties self.deck on
+    -- its very first line and only refills it once the recycled cards land
+    -- back at the end. A tap that lands in that window fell through this
+    -- whole block with NOTHING happening: no shake, no log, not even the
+    -- refusal message below, because the block never runs when the deck is
+    -- (momentarily) empty. That is "the deck does not work" with even less
+    -- to go on than the refusal case already had. See offline_handler.lua's
+    -- identical stalemate-detection fix for the same root cause on a
+    -- different symptom.
+    local deck_top = self.deck[#self.deck]
+    local reshuffling = RQ.is_running(self)
+    if deck_top or reshuffling or RQ.can_recycle(self.played_cards) then
+        -- No physical top card to anchor on while genuinely mid-reshuffle —
+        -- the pile's own fixed board slot is exactly as good a hit target as
+        -- the card that will shortly be sitting on it again.
+        local p = deck_top and go.get_position(deck_top.id) or self.DECK_POS
         if math.abs(x - p.x) <= 120 and math.abs(y - p.y) <= 150 then
-            if not self.is_player_turn() or self.waiting or self.is_local_action_locked or self.is_suit_selection_active then
+            if not deck_top or not self.is_player_turn() or self.waiting or self.is_local_action_locked or self.is_suit_selection_active then
                 -- A REFUSAL THAT SAYS NOTHING LOOKS LIKE A BROKEN BOARD.
                 --
                 -- The card branch above shakes the card when it refuses a tap.
@@ -903,10 +920,11 @@ function on_input(self, action_id, action)
                     is_animating = self.is_animating,
                     player_has_drawn = self.player_has_drawn,
                     penalty = RE.get_active_penalty(self),
+                    reshuffling = (not deck_top) and reshuffling or nil,
                 }
                 print("[DECK] tap refused (" .. tostring(TL.deck_tap_refusal(flags))
                     .. ") -> " .. TL.describe(flags))
-                safe_shake_card(self, deck_top)
+                if deck_top then safe_shake_card(self, deck_top) end
                 return true
             end
 

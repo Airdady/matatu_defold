@@ -171,6 +171,32 @@ check("and describe() names every lock",
     end)(),
     "the next time somebody says the pile is dead, the log should say which flag")
 
+-- ---------------------------------------------------------------------------
+print("")
+print("A RESHUFFLE IN FLIGHT IS ITS OWN REASON, NOT SILENCE")
+--
+-- Reported: "when the cards are reshuffled we can't pick from the deck."
+-- reshuffle_queue.lua empties self.deck for the ~1.3s its animation runs, and
+-- the deck-tap block in game.script used to be gated on `#self.deck > 0` —
+-- so a tap in that window never even reached this function. It now does,
+-- carrying `reshuffling = true`, and it has to win over every other flag:
+-- there is no physical card to hand over regardless of whose turn it is.
+
+check("reshuffling wins even on an otherwise idle turn",
+    TL.deck_tap_refusal(idle({ reshuffling = true })) == "reshuffling")
+
+check("reshuffling wins over every other lock too",
+    TL.deck_tap_refusal(idle({
+        reshuffling = true, waiting = true, is_local_action_locked = true,
+    })) == "reshuffling",
+    "none of the other locks mean anything with no card to give")
+
+check("but an idle turn with no reshuffle is still not refused",
+    TL.deck_tap_refusal(idle({ reshuffling = false })) == nil)
+
+check("describe() carries it too",
+    TL.describe(idle({ reshuffling = true })):find("reshuffling=true") ~= nil)
+
 check("describe survives a nil state",
     (function() local ok = pcall(TL.describe, nil); return ok end)())
 
@@ -227,6 +253,13 @@ check("the deck refusal gives feedback, like the card branch does",
         return i and code:find("safe_shake_card", i, false)
     end)(),
     "a silent refusal is indistinguishable from a broken board")
+
+check("the naive #self.deck > 0 gate is gone",
+    not code:find("if #self%.deck > 0 then"),
+    "that condition is false for the ~1.3s a reshuffle spends animating")
+check("the deck gate uses the reshuffle queue", code:find("RQ%.is_running%(self%)"))
+check("and requires it", code:find('require "modules%.reshuffle_queue"'))
+check("the refusal flags carry reshuffling through", code:find("reshuffling = "))
 
 print("")
 if failures == 0 then
