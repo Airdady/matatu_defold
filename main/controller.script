@@ -1194,13 +1194,6 @@ function init(self)
         if app_state.searching_invite then msg.post("#online", "ws_search_failed", { reason = reason }) else msg.post("#tournaments", "ws_search_failed", { reason = reason }) end
     end))
 
-    -- Reply to tournament_join above — only the map screen ever sends that,
-    -- so the relay is unconditional (unlike the search-failed one, there is
-    -- no second screen this could mean).
-    table.insert(self.tokens, ws.on("tournament_joined", function(d)
-        msg.post("#tournaments", "ws_tournament_joined", d or {})
-    end))
-
     table.insert(self.tokens, ws.on("head_to_head", function() msg.post("#online", "ws_head_to_head") end))
 
     forward("online_users",           "#online", "ws_online_users")
@@ -1717,12 +1710,6 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("tournament_play") then
         pcall(msg.post, "#snd_suspense", "play_sound")
         ws.send_game_request({}, message.stake, { gameType = "TOURNAMENT", tournamentId = message.tournament_id, tournamentName = message.tournament_name, rules = "JOKERS" })
-
-    elseif message_id == hash("tournament_join") then
-        -- The explicit "no more freelancers" step: tournaments.gui_script's
-        -- PLAY button on level 0 sends this and waits for tournament_joined
-        -- (relayed below) before it opens the opponent search dialog.
-        ws.join_tournament(message.tournament_id)
 
     elseif message_id == hash("connect_online") then
         if not ws.socket_connected then ws.connect() end

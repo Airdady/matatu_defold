@@ -432,19 +432,7 @@ update_play_button = function(self)
     gui.set_enabled(self.play_coin_node, false)
     gui.set_enabled(self.play_lock_node, false)
 
-    if self.join_pending then
-        -- The JOIN_TOURNAMENT round-trip is in flight (see do_join_and_play).
-        -- Checked FIRST and unconditionally: every branch below ends by
-        -- setting self.play_disabled itself, current_level_index == 0's
-        -- included, so without this a rebuild landing mid-join (any of
-        -- several unrelated triggers call rebuild()) would silently flip
-        -- play_disabled back to false and the button back to its normal
-        -- texture — still un-tappable (join_pending itself gates handle()),
-        -- but LOOKING tappable again is exactly the "is this working?"
-        -- confusion this is here to prevent.
-        gui.set_text(self.play_txt_node, "JOINING...")
-        self.play_disabled = true
-    elseif self.is_pre_launch then
+    if self.is_pre_launch then
         -- Same stake + coin + lock display as the normal "not started yet"
         -- state below (current_level_index == 0) — no "COMING SOON" text,
         -- just the stake amount with the lock icon showing it can't be
@@ -889,9 +877,6 @@ function on_message(self, message_id, message, sender)
         self.search = nil
         self.is_moving = false
         app_state.searching_tournament = false
-        if self.join_timeout_handle then pcall(timer.cancel, self.join_timeout_handle); self.join_timeout_handle = nil end
-        self.join_pending = false
-        self._pending_join_data = nil
         rebuild(self)
         try_level_up_jump(self)
     elseif message_id == hash("enable") then
@@ -951,25 +936,6 @@ function on_message(self, message_id, message, sender)
         self.is_moving = false
         pcall(msg.post, "#snd_suspense", "stop_sound")
         fail_search(self, message and message.reason)
-    elseif message_id == hash("ws_tournament_joined") then
-        -- Reply to the JOIN_TOURNAMENT sent by do_join_and_play(). The
-        -- balance shown from here on is whatever the server actually
-        -- charged, not the locally-guessed cost — ws.current_user_data.balance
-        -- was already updated by websocket_manager before this arrives.
-        if self.join_pending then
-            self.join_pending = false
-            if self.join_timeout_handle then pcall(timer.cancel, self.join_timeout_handle); self.join_timeout_handle = nil end
-            local d = self._pending_join_data
-            self._pending_join_data = nil
-
-            local u = ws.current_user_data or {}
-            if self.top_left_balance_lbl then gui.set_text(self.top_left_balance_lbl, commas(tonumber(u.balance) or 0)) end
-            if (tonumber(message and message.entryCharged) or 0) > 0 then
-                play_deduction_animation(self)
-            end
-
-            if d then execute_jump_and_play(self, d) end
-        end
     end
 end
 
@@ -1047,57 +1013,18 @@ local function execute_jump_and_play(self, d)
     end
 end
 
--- NO MORE FREELANCERS: the first PLAY tap on the ladder is now a real
--- JOIN_TOURNAMENT round-trip, not a cosmetic local deduction. Matchmaking on
--- the backend now refuses anyone without the active tournamentProgress row
--- this creates, so the jump/search flow must wait for the server's
--- TOURNAMENT_JOINED before it proceeds — see ws_tournament_joined in
--- on_message for the success path.
-local function fail_join(self)
-    if not self.join_pending then return end
-    self.join_pending = false
-    if self.join_timeout_handle then pcall(timer.cancel, self.join_timeout_handle); self.join_timeout_handle = nil end
-    self._pending_join_data = nil
-    self.play_disabled = false
-    self.is_moving = false
-    if self._active then rebuild(self) end
-    msg.post("main:/controller", "show_transaction_modal")
-end
-
-local function do_join_and_play(self, d)
-    self.join_pending = true
-    self._pending_join_data = d
-    self.play_disabled = true
-    self.is_moving = true
-
-    -- Without this the tap gave NO visible feedback at all: nothing here used
-    -- to call rebuild(), so the button kept showing its normal cost/texture
-    -- for as long as the server took to answer (up to the 8s failsafe below)
-    -- — a silent lock that reads exactly as "the button isn't responding".
-    if self._active then rebuild(self) end
-
-    msg.post("#controller", "tournament_join", { tournament_id = d.id })
-
-    -- Local failsafe matching the search dialog's own countdown: if the
-    -- server never answers, unlock the UI rather than leaving PLAY dead.
-    --
-    -- This used to notify itself with msg.post(".", "ws_tournament_join_failed")
-    -- — every OTHER self/cross-script message in this file addresses this gui
-    -- component by its actual fragment ("#tournaments" from controller.script,
-    -- "#online" for the other screen), and "." is not that; nothing else in
-    -- the codebase posts a custom message to "." expecting its own on_message
-    -- to see it. That silent mis-address was very likely why PLAY looked dead
-    -- after a tap: join_pending latches true, the button's own guard then
-    -- blocks every further tap, and neither the success path (a real server
-    -- reply routes in fine, addressed correctly by controller.script) nor this
-    -- failsafe ever unlatches it if the reply never came. Calling fail_join
-    -- directly removes the messaging round-trip — and the address bug —
-    -- entirely.
-    self.join_timeout_handle = timer.delay(8, false, function()
-        fail_join(self)
-    end)
-end
-
+-- NO MORE FREELANCERS, WITHOUT A SEPARATE JOIN ROUND-TRIP.
+--
+-- The first PLAY tap on the ladder used to send a JOIN_TOURNAMENT message and
+-- wait for the server's confirmation before doing anything else — an extra
+-- request/response the rest of this screen's flow never needed. The server
+-- no longer requires that: handleTournamentRequest now joins (and charges)
+-- the player itself, transparently, the moment it sees they have no active
+-- tournamentProgress row for the tournament — see ensureJoined in
+-- be_matatu's tournaments/index.ts. So this goes back to exactly what a tap
+-- on any other level already does: deduct locally, animate it, and go
+-- straight into the jump/search flow. The server's charge is the one that
+-- actually happens; this is just what the player sees happen.
 local function handle(self, b)
     if b.id == "back" then
         -- Plain navigation back to the online lobby. Leaving the map harms
@@ -1105,7 +1032,7 @@ local function handle(self, b)
         -- where the player left it when they return — so no warning dialog.
         msg.post("#controller", "goto_online")
     elseif b.id == "play" then
-        if self.play_disabled or self.is_moving or self.join_pending then return end
+        if self.play_disabled or self.is_moving then return end
 
         local d = b.data or {}
         local u = ws.current_user_data or {}
@@ -1118,11 +1045,16 @@ local function handle(self, b)
                 return
             end
 
-            -- The entry charge and the tournamentProgress row are both
-            -- created server-side by JOIN_TOURNAMENT. The deduction
-            -- animation plays once the server confirms what it actually
-            -- charged (see ws_tournament_joined), not before.
-            do_join_and_play(self, d)
+            -- Deduct entry fee immediately upon starting the tournament climb
+            if cost > 0 then
+                u.balance = math.max(0, balance - cost)
+                if self.top_left_balance_lbl then gui.set_text(self.top_left_balance_lbl, commas(u.balance)) end
+                play_deduction_animation(self)
+            end
+            self.play_disabled = true
+            self.is_moving = true -- Lock UI inputs
+
+            execute_jump_and_play(self, d)
         else
             execute_jump_and_play(self, d)
         end

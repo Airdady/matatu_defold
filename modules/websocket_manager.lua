@@ -575,15 +575,6 @@ function M.send_game_request(opponent, stake, extra_data)
   M.send_message("GAME_REQUEST", payload)
 end
 
--- Explicit "I want to join this championship" step. Charges the level 1
--- entry (if any) server-side and creates the active tournamentProgress row —
--- matchmaking now refuses anyone without one, so this must be sent, and the
--- TOURNAMENT_JOINED reply awaited, before a GAME_REQUEST for the tournament
--- goes out. See tournaments.gui_script's PLAY button handler.
-function M.join_tournament(tournament_id)
-  M.send_message("JOIN_TOURNAMENT", { tournamentId = tournament_id })
-end
-
 function M.accept_game_request(request_id)
   M.send_message("GAME_REQUEST_ACCEPTED", { requestId = request_id })
 end
@@ -939,14 +930,6 @@ local function parse_message(json_string)
     end
   elseif t == "TOURNAMENT_NO_OPPONENTS_FOUND" or t == "TOURNAMENT_REQUESTS_CANCELLED" then
     emit("tournament_no_opponents", d)
-  elseif t == "TOURNAMENT_JOINED" then
-    -- Server's reply to join_tournament() — the confirmed balance after
-    -- whatever level-1 entry was charged, never inferred locally. The PLAY
-    -- button handler waits on this event before proceeding with matchmaking.
-    if d and M.current_user_data and d.balance ~= nil then
-      M.current_user_data.balance = d.balance
-    end
-    emit("tournament_joined", d or {})
   elseif t == "HEAD_TO_HEAD" then
     -- All-time scores + last-5 form vs a specific opponent (response to
     -- GET_HEAD_TO_HEAD). Parked here — the nested stats table is too big to
