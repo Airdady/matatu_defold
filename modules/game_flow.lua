@@ -414,6 +414,32 @@ function M.draw_to_hand(self, hand, is_player, count, done)
         end
 
         local c = table.remove(self.deck)
+        if not (c and c.id and pcall(go.get_position, c.id)) then
+            -- A PHANTOM CARD, POPPED.
+            --
+            -- Reported: after a reshuffle a draw "works" — the sound plays,
+            -- the move goes through — but no card appears. The engine log
+            -- for it is not even a Lua error pcall can catch: "Instance
+            -- '/instance5' could not be found when dispatching message
+            -- 'play_animation'" — sprite.play_flipbook posts that message
+            -- asynchronously, so the instance can be alive when this card
+            -- was popped and still gone by the time the engine actually
+            -- delivers it a moment later. The reshuffle-merge filter above
+            -- (self.deck = RQ.merge_deck(...)) only checks liveness ONCE, at
+            -- merge time — a card can pass that check and still be deleted
+            -- later by an ordinary sync_deck_size reconciliation (
+            -- online_handler.lua) before it is ever actually drawn.
+            --
+            -- Checked again here, at the only moment that actually matters:
+            -- the instant this card is about to be dealt. A dead one is
+            -- discarded and replaced with the next draw rather than counted
+            -- as placed — the player is entitled to see every card they
+            -- were dealt, not a silent gap where a sound played and nothing
+            -- showed up. Recursion terminates because self.deck strictly
+            -- shrinks by one on every call, including this one.
+            place_one()
+            return
+        end
         -- This card may have lived in a hand before (pile -> reshuffle ->
         -- deck): wipe its remembered hand slot so layout_hand's same-slot
         -- skip can never mistake the stale target for "already there" and
