@@ -257,8 +257,17 @@ function M.layout_hand(self, hand, y, animate, geometry_n)
         -- runs on every play, every draw and every layout change. Each write
         -- dirties the object's transform, so "setting it to the value it
         -- already has" is not free.
+        -- pcall'd per card: a card can reach hand/deck arrays with its game
+        -- object already deleted (a concurrent state sync racing a reshuffle
+        -- or a draw — see the liveness filter in M.reshuffle_deck and the
+        -- pcall's in M.draw_to_hand, both in game_flow.lua). Guarded per call
+        -- rather than around the whole loop so one dead card among many
+        -- still-live ones costs only ITS OWN positioning, not the rest of
+        -- the hand's — this function runs on every draw, every play and
+        -- every reflow, so skipping the whole hand over one bad card would
+        -- leave every other card frozen in its last position too.
         if is_ai_hand and c._scaled_for_opponent ~= true then
-            go.set(c.id, "scale", M.OPPONENT_CARD_SCALE)
+            pcall(go.set, c.id, "scale", M.OPPONENT_CARD_SCALE)
             c._scaled_for_opponent = true
         elseif not is_ai_hand and c._scaled_for_opponent then
             c._scaled_for_opponent = nil
@@ -268,16 +277,16 @@ function M.layout_hand(self, hand, y, animate, geometry_n)
             -- already flying toward) this exact slot — only cards whose
             -- slot actually changed animate.
             if not same_target(c._hand_target, target) then
-                go.animate(c.id, "position", go.PLAYBACK_ONCE_FORWARD, target, go.EASING_OUTSINE, M.HAND_TWEEN)
+                pcall(go.animate, c.id, "position", go.PLAYBACK_ONCE_FORWARD, target, go.EASING_OUTSINE, M.HAND_TWEEN)
                 c._hand_target = vmath.vector3(target.x, target.y, target.z)
             end
         else
-            go.set_position(target, c.id)
+            pcall(go.set_position, target, c.id)
             c._hand_target = vmath.vector3(target.x, target.y, target.z)
         end
         local rot_z = -t * fan_amt * dir
         if c._hand_rot ~= rot_z then
-            go.set(c.id, "euler.z", rot_z)
+            pcall(go.set, c.id, "euler.z", rot_z)
             c._hand_rot = rot_z
         end
     end

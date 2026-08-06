@@ -661,7 +661,21 @@ local HALF_H = BL.TARGET_H / 2
 
 local function hit(card, x, y)
     if not card or not card.id then return false end
-    local p = go.get_position(card.id)
+    -- pcall'd: called on EVERY card in self.player_hand for EVERY touch, in a
+    -- loop that on_input runs BEFORE it ever reaches the deck-tap block below
+    -- it. An unguarded go.get_position raising "Instance (null) not found"
+    -- on one stale hand card — a card whose game object was deleted out from
+    -- under it, the same class of race the reshuffle merge filter and the
+    -- deck-tap hit test were already hardened against — used to abort the
+    -- WHOLE on_input call right there: not just that one card refusing to
+    -- respond, but every tap anywhere on the board (hand cards after it in
+    -- the loop, and the deck past the loop) doing nothing at all for as long
+    -- as that one dead card sat in the hand. That is "even the cards freeze
+    -- at times after reshuffle" — the deck-side fixes closed the one path
+    -- that put a dead card at the top of self.deck; this closes the same
+    -- failure mode wherever it reaches a HAND card instead.
+    local ok, p = pcall(go.get_position, card.id)
+    if not ok then return false end
     return math.abs(x - p.x) <= (HALF_W * 1.5) and math.abs(y - p.y) <= (HALF_H * 1.5)
 end
 

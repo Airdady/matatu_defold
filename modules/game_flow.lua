@@ -426,20 +426,33 @@ function M.draw_to_hand(self, hand, is_player, count, done)
         end
 
         local y = is_player and self.PLAYER_HAND_Y or self.AI_HAND_Y
-        go.set(c.id, "position.z", Z_FLY)
+        -- pcall'd from here down: c came off self.deck, and a card can reach
+        -- there with an already-deleted game object (see the reshuffle-merge
+        -- liveness filter above, and sync_deck_size in online_handler.lua —
+        -- this is the same class of race, just caught here instead). c is
+        -- already table.insert'd into hand by this point, so a card THIS
+        -- dead now sits in the hand array regardless; what an unguarded
+        -- go.set/go.animate here used to do about it was throw and abort
+        -- place_one before placed/finish ever ran — the draw stuck
+        -- (is_local_action_locked/player_has_drawn only cleared later by
+        -- their own watchdogs, reported as "[STUCK?] ... locked=true
+        -- drew=true"), and the dead card left sitting in the hand to crash
+        -- the very next hit() check on it (see game.script). A phantom card
+        -- placed with nothing thrown at least lets the draw actually finish.
+        pcall(go.set, c.id, "position.z", Z_FLY)
         self.play_sound("SoundDraw")
 
         if is_player then
-            go.animate(c.id, "scale.x", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_INSINE, FLIP_T, 0, function()
+            pcall(go.animate, c.id, "scale.x", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_INSINE, FLIP_T, 0, function()
                 if seq ~= self._seq then return end
-                self.set_face(c)
-                go.animate(c.id, "scale.x", go.PLAYBACK_ONCE_FORWARD, CARD_SCALE_F, go.EASING_OUTSINE, FLIP_T)
+                pcall(self.set_face, c)
+                pcall(go.animate, c.id, "scale.x", go.PLAYBACK_ONCE_FORWARD, CARD_SCALE_F, go.EASING_OUTSINE, FLIP_T)
             end)
         else
-            self.set_back(c)
+            pcall(self.set_back, c)
         end
 
-        BL.layout_hand(self, hand, y, true, final_n)
+        pcall(BL.layout_hand, self, hand, y, true, final_n)
 
         placed = placed + 1
         if placed >= count then
