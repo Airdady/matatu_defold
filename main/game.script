@@ -710,18 +710,39 @@ end
 
 local function safe_shake_card(self, card)
     if not card or not card.id then return end
-    
+
     go.cancel_animations(card.id, "position.x")
-    
-    local idx = 1
+
+    local idx = nil
     for i, c in ipairs(self.player_hand) do
         if c.id == card.id then idx = i; break end
     end
-    
-    local spacing = self.calc_spacing(#self.player_hand)
-    local start_x = self.CENTER.x - ((#self.player_hand - 1) * spacing) / 2.0
-    local true_x = start_x + (idx - 1) * spacing
-    
+
+    local true_x
+    if idx then
+        -- A HAND card: snap it back to its correct slot before shaking, so a
+        -- card that had drifted (e.g. mid pinch-spread release) settles at
+        -- the right spot instead of shaking in place at the wrong one.
+        local spacing = self.calc_spacing(#self.player_hand)
+        local start_x = self.CENTER.x - ((#self.player_hand - 1) * spacing) / 2.0
+        true_x = start_x + (idx - 1) * spacing
+    else
+        -- NOT a hand card — this is the deck's top card refusing a tap, the
+        -- only other caller (see the deck-tap block below). idx used to
+        -- default to 1 here, so this card was SNAPPED to hand slot 1's x —
+        -- moving the deck's actual top card object over towards the hand
+        -- (reported as landing "close to the left coins pot") and leaving it
+        -- there, since nothing else repositions it until the next card is
+        -- played onto the pile or a reshuffle restacks the deck. Every later
+        -- interaction reads THIS object's position — the tap hitbox above,
+        -- and the fly-to-hand animation when it is actually drawn — so the
+        -- corruption was sticky: the player had to tap where the card had
+        -- drifted to, and a draw (the player's own or the opponent's) visibly
+        -- started from that same wrong spot. Shake around wherever the card
+        -- already is instead of snapping it anywhere.
+        true_x = go.get_position(card.id).x
+    end
+
     local p = go.get_position(card.id)
     p.x = true_x
     go.set_position(p, card.id)
