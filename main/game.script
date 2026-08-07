@@ -1520,7 +1520,6 @@ function on_message(self, message_id, message, sender)
         end
 
     elseif message_id == hash("ws_player_rc") then
-        notify_gui(self.gui_hud, "conn_overlay", { show = false })
         -- Opponent reconnected: refresh the turn rings so the active player shows.
         -- self.game_state is whatever we last had BEFORE the disconnect, so its
         -- turnExpiresAt is already in the past — sync_timers would clamp the
@@ -1528,12 +1527,20 @@ function on_message(self, message_id, message, sender)
         -- (invisible) instead of showing whose turn it actually is. Prefer the
         -- fresh state PLAYER_RECONNECTED carried, falling back to whatever
         -- ws.active_game_state was last updated to (IDENTIFY/GAME_STATE_SYNC).
+        --
+        -- Applied BEFORE the "OPPONENT DISCONNECTED" banner closes, not after.
+        -- This used to close the banner first: the board still showed the
+        -- stale pre-disconnect state for a beat after it was gone, so the
+        -- timer/turn indicator visibly jumped a moment later with nothing on
+        -- screen to explain why. Resyncing while the banner is still up means
+        -- the board is already caught up by the time it clears — no surprise.
         if self.online_mode and not self.game_over then
             local fresh = (type(message.state) == "table" and next(message.state) ~= nil and message.state)
                 or (type(ws.active_game_state) == "table" and next(ws.active_game_state) ~= nil and ws.active_game_state)
             if fresh then self.game_state = fresh end
             OnlineHandler.sync_timers(self, self.game_state or {})
         end
+        notify_gui(self.gui_hud, "conn_overlay", { show = false })
 
     elseif message_id == hash("ws_ai_played") then
         local mode = (message and message.mode) or "SINGLE_MOVE"
