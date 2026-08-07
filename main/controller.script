@@ -1687,7 +1687,27 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("theme_switch") then
         local uid = (ws.current_user_data or {})._id or ""
         api.switch_theme(uid, message.theme_id, function(result)
-            if result.success then app_state.theme = message.theme_id end
+            if result.success then
+                app_state.theme = message.theme_id
+                -- Keep the CACHED user object in step with the switch, not
+                -- just the live app_state.theme. sync_theme_from_user reads
+                -- user.themes[].active — from the base IDENTIFY payload on
+                -- every future sign-in, but ALSO from this same cached
+                -- ws.current_user_data whenever something re-derives the
+                -- player's own theme without a fresh round trip (leaving an
+                -- online match — see game.script's "disable" handler, which
+                -- restores app_state.theme from exactly this object after
+                -- OnlineHandler.start_game overrode it with the match's
+                -- shared theme). Without this, that restore would silently
+                -- revert to whichever theme was active BEFORE this switch,
+                -- for as long as the session stayed cached.
+                local themes = ws.current_user_data and ws.current_user_data.themes
+                if type(themes) == "table" then
+                    for _, t in ipairs(themes) do
+                        t.active = (t.id == message.theme_id)
+                    end
+                end
+            end
             msg.post("#themes", "theme_action_result", { ok = result.success, message = result.message })
         end)
 

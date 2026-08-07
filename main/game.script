@@ -1274,6 +1274,18 @@ function on_message(self, message_id, message, sender)
         self._h2h = nil
         GS.destroy_all(self)
 
+        -- BACK TO THE PLAYER'S OWN THEME.
+        --
+        -- OnlineHandler.start_game overrides app_state.theme with the
+        -- MATCH's theme (the higher-priced of the two players', shared so
+        -- both see the same one — see the comment there) for as long as this
+        -- screen is showing that game. Leaving it screen-scoped: re-derive
+        -- from the player's own account data the same way sign-in does,
+        -- rather than trying to remember and restore whatever it was before
+        -- the match started, which would drift the moment sync_theme_from_
+        -- user or next_theme ran for any other reason while a game was open.
+        app.sync_theme_from_user(ws.current_user_data)
+
     elseif message_id == hash("layout_changed") then
         BL.update_layout(self)
 
