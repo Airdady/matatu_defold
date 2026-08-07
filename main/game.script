@@ -1520,27 +1520,39 @@ function on_message(self, message_id, message, sender)
         end
 
     elseif message_id == hash("ws_player_rc") then
-        -- Opponent reconnected: refresh the turn rings so the active player shows.
-        -- self.game_state is whatever we last had BEFORE the disconnect, so its
-        -- turnExpiresAt is already in the past — sync_timers would clamp the
-        -- remaining time to 0 and the pie would come back enabled but empty
-        -- (invisible) instead of showing whose turn it actually is. Prefer the
-        -- fresh state PLAYER_RECONNECTED carried, falling back to whatever
-        -- ws.active_game_state was last updated to (IDENTIFY/GAME_STATE_SYNC).
+        -- Opponent reconnected. Prefer the fresh state PLAYER_RECONNECTED
+        -- carried, falling back to whatever ws.active_game_state was last
+        -- updated to (IDENTIFY/GAME_STATE_SYNC) — self.game_state is
+        -- whatever we last had BEFORE the disconnect.
         --
-        -- Applied BEFORE the "OPPONENT DISCONNECTED" banner closes, not after.
-        -- This used to close the banner first: the board still showed the
-        -- stale pre-disconnect state for a beat after it was gone, so the
-        -- timer/turn indicator visibly jumped a moment later with nothing on
-        -- screen to explain why. Resyncing while the banner is still up means
-        -- the board is already caught up by the time it clears — no surprise.
+        -- FULL resync, not just the turn timer. This used to call only
+        -- OnlineHandler.sync_timers, which touches nothing but
+        -- currentTurn/turnExpiresAt/activePenaltyCount/chosenSuit/
+        -- pendingMarketDraw on self.game_state — never the actual card
+        -- objects. Whatever happened while the opponent (or this client
+        -- itself, before they reconnected — a move can settle server-side
+        -- with the confirmation lost to the same drop) was offline —
+        -- a play never confirmed locally, a penalty draw whose count moved,
+        -- a reshuffle — left self.player_hand/self.played_cards/self.deck
+        -- stale, with nothing to catch them up until some LATER move
+        -- happened to trigger a real resync. Reported as a played card
+        -- missing from both hand and the played pile, only to reappear
+        -- (visually drawn from the deck) once the next move finally forced
+        -- a full sync. full_resync runs the same catch-up an ordinary move
+        -- already gets (finalize_state_sync + sync_my_hand), and the banner
+        -- closes only once it completes — not before, and not synchronously
+        -- assumed-instant, since a reshuffle/hand catch-up inside it can
+        -- take over a second.
         if self.online_mode and not self.game_over then
             local fresh = (type(message.state) == "table" and next(message.state) ~= nil and message.state)
                 or (type(ws.active_game_state) == "table" and next(ws.active_game_state) ~= nil and ws.active_game_state)
             if fresh then self.game_state = fresh end
-            OnlineHandler.sync_timers(self, self.game_state or {})
+            OnlineHandler.full_resync(self, self.game_state or {}, function()
+                notify_gui(self.gui_hud, "conn_overlay", { show = false })
+            end)
+        else
+            notify_gui(self.gui_hud, "conn_overlay", { show = false })
         end
-        notify_gui(self.gui_hud, "conn_overlay", { show = false })
 
     elseif message_id == hash("ws_ai_played") then
         local mode = (message and message.mode) or "SINGLE_MOVE"
@@ -1576,18 +1588,31 @@ function on_message(self, message_id, message, sender)
         -- global network dialog handles the visual
 
     elseif message_id == hash("ws_net_up") then
-        notify_gui(self.gui_hud, "conn_overlay", { show = false })
-        -- Reconnected: re-assert the turn timer from the freshest known state so
-        -- the active player's pie ring reappears. self.game_state is whatever
-        -- we had BEFORE this client dropped offline, so its turnExpiresAt is
-        -- already in the past — sync_timers would clamp remaining time to 0
-        -- and the pie would come back enabled but empty (invisible) on both
-        -- avatars instead of showing whose turn it is. IDENTIFY (which every
+        -- THIS client's own socket reconnected. self.game_state is whatever
+        -- we had BEFORE this client dropped offline; IDENTIFY (which every
         -- reconnect runs) keeps ws.active_game_state current, so prefer that.
+        --
+        -- Same full resync as ws_player_rc above, for the same reason: our
+        -- OWN last play might have gone through server-side with the
+        -- confirmation lost to the drop, the opponent might have moved
+        -- several times while we were gone, a penalty draw we were mid-way
+        -- through never reached the server (see M.play_card — a card is
+        -- removed from hand and animated to the pile OPTIMISTICALLY, before
+        -- the network round trip, and multi-action turns like a suit choice
+        -- or a multi-card penalty draw are only sent as ONE bundled move
+        -- once the whole turn resolves — so anything still in progress
+        -- locally when the drop happened was never sent at all). sync_timers
+        -- alone left the deck/hand/pile stale until the next move forced a
+        -- real resync — the banner closes only once this one actually
+        -- finishes, not before.
         if self.online_mode and not self.game_over then
             local fresh = type(ws.active_game_state) == "table" and next(ws.active_game_state) ~= nil and ws.active_game_state
             if fresh then self.game_state = fresh end
-            OnlineHandler.sync_timers(self, self.game_state or {})
+            OnlineHandler.full_resync(self, self.game_state or {}, function()
+                notify_gui(self.gui_hud, "conn_overlay", { show = false })
+            end)
+        else
+            notify_gui(self.gui_hud, "conn_overlay", { show = false })
         end
 
     elseif message_id == hash("ws_net_failed") then

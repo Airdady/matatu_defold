@@ -875,6 +875,35 @@ local function sync_my_hand(self, state, done)
     end
 end
 
+-- FULL BOARD RESYNC — deck, opponent hand, played pile/timers, AND our own
+-- hand, all reconciled against server truth. Exactly the sequence
+-- handle_single_move already runs after every ordinary move (finalize_state_
+-- sync then sync_my_hand); exposed here so a live in-app reconnect
+-- (ws_player_rc/ws_net_up in game.script) can run the SAME full catch-up
+-- instead of only sync_timers's narrow turn/timer bookkeeping.
+--
+-- That narrower sync was the actual bug behind two reports that looked
+-- unrelated: a card played right before a disconnect (or one that arrived
+-- from the opponent, or a partial penalty draw) never showing up anywhere —
+-- not in hand, not on the played pile — until some LATER move finally
+-- triggered a real resync via handle_single_move and the board visibly
+-- lurched to catch up all at once. sync_timers alone was never going to fix
+-- that: it only ever touched currentTurn/turnExpiresAt/activePenaltyCount/
+-- chosenSuit/pendingMarketDraw on self.game_state, never the actual card
+-- objects in self.player_hand, self.played_cards or self.deck. A reconnect
+-- has exactly as much to catch up on as an ordinary move does — it needs
+-- the same machinery, not a smaller one.
+function M.full_resync(self, state, done)
+    M.finalize_state_sync(self, state, function()
+        -- self.game_state, not the `state` argument — finalize_state_sync's
+        -- own do_sync can be deferred behind a reshuffle for over a second,
+        -- and a newer state can land and overwrite self.game_state while
+        -- that's in flight. Same reasoning as handle_single_move's two call
+        -- sites for sync_my_hand.
+        sync_my_hand(self, self.game_state or state or {}, done)
+    end)
+end
+
 function M.handle_single_move(self, move_data, new_state, done)
     if self.game_over then done(); return end
 
