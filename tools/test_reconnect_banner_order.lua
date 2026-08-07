@@ -122,7 +122,8 @@ if fr_start then
     check("calls finalize_state_sync (deck + opponent hand + timers)",
         fr_body:find("M%.finalize_state_sync%(self, state, function%(%)") ~= nil)
     check("and THEN sync_my_hand (our own hand), inside its completion callback",
-        fr_body:find("sync_my_hand%(self, self%.game_state or state or {}, done%)") ~= nil)
+        fr_body:find("sync_my_hand%(self, self%.game_state or state or {}, finish%)") ~= nil,
+        "finish (not the raw `done` argument) is what lets full_resync clear its own re-entrancy flag and run a coalesced follow-up before the caller's done() fires")
 
     -- Ordering within the body text itself, not just presence — a version
     -- that called sync_my_hand first (before finalize_state_sync even ran)
@@ -164,6 +165,31 @@ check("also gives up and runs anyway once self.game_over — a dead board is not
 check("the wait is CAPPED, not indefinite",
     fr_full:find("waited >= RESYNC_WAIT_CAP_S") ~= nil and fr_full:find("waited = waited %+ RESYNC_WAIT_POLL_S") ~= nil,
     "the flag WILL eventually clear on its own (the move finishes, or the stall watchdog forces it), but a coordinated wait must still not be able to poll forever if the game object is torn down while pending")
+
+-- ---------------------------------------------------------------------------
+print("")
+print("full_resync NEVER RACES ITSELF EITHER — ws_net_up and ws_player_rc both")
+print("fire for the SAME reconnect episode, moments apart")
+
+check("a call while one is already running does not start a second, concurrent run",
+    fr_full:find("if self%._resyncing then") ~= nil,
+    "ws_net_up (this client's own socket reconnecting) and ws_player_rc (PLAYER_RECONNECTED, sent to the reconnecting client about itself — see heartbeatCleanup.ts) both call full_resync for one reconnect; nothing upstream serializes them")
+
+check("it is stashed as PENDING, not dropped, so the newer state still lands",
+    fr_full:find("self%._pending_resync = { state = state, done = done }") ~= nil,
+    "dropping the second call outright would mean a reconnect that raced could miss catching up on whatever changed between the two")
+
+check("the guard is set to true before the wait/run path, not after",
+    (function()
+        local guard_pos = fr_full:find("self%._resyncing = true")
+        local run_call_pos = fr_full:find("run%(%)")
+        return guard_pos ~= nil and run_call_pos ~= nil and guard_pos < run_call_pos
+    end)(),
+    "setting the flag after run() could already start means a second call arriving during the is_processing_move wait would race in anyway")
+
+check("finish() clears the flag and replays exactly the LATEST pending state, not the one it just ran",
+    fr_full:find("M%.full_resync%(self, pending%.state, pending%.done%)") ~= nil,
+    "coalesced to latest rather than queued — a second call mid-run means the first run's target is already stale")
 
 print("")
 if failures == 0 then

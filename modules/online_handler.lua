@@ -920,7 +920,48 @@ end
 local RESYNC_WAIT_POLL_S = 0.1
 local RESYNC_WAIT_CAP_S  = 5.0
 
+-- A RECONNECT MUST NEVER RACE ANOTHER RESYNC EITHER, NOT JUST A MOVE.
+--
+-- ws_net_up (this client's own socket reconnecting) and ws_player_rc (the
+-- PLAYER_RECONNECTED message the server sends the SAME reconnecting client
+-- about ITSELF — see heartbeatCleanup.ts's handleReconnection, which fires
+-- it straight at the reconnecting player's own socket, not their opponent's)
+-- both call full_resync for the SAME reconnect episode, moments apart: the
+-- socket layer's "connected" event fires the instant the handshake
+-- completes, and PLAYER_RECONNECTED lands right after, once IDENTIFY
+-- resolves server-side. Nothing serialized the two.
+--
+-- Each ran its own finalize_state_sync/sync_my_hand independently, both
+-- deciding self.player_hand/self.ai_hand were short the same N cards —
+-- neither had finished writing what the other was about to add — and both
+-- drew them. Reported as the exact same card appearing twice at the same
+-- hand slot after a reconnect (e.g. two 4-of-diamonds stacked on top of
+-- each other), and, when the two calls' clear-then-refill windows inside
+-- sync_my_hand interleaved instead of just both adding, as fewer cards than
+-- the player actually held.
+--
+-- Coalesced to the LATEST state, not queued: a second resync request
+-- arriving mid-run means the first run's target is already stale, so there
+-- is nothing to gain from letting it finish and then replaying a second one
+-- back to back. It replaces whatever was already pending, and the coalesced
+-- run happens exactly once, right after the in-flight one completes.
 function M.full_resync(self, state, done)
+    if self._resyncing then
+        self._pending_resync = { state = state, done = done }
+        return
+    end
+    self._resyncing = true
+
+    local function finish()
+        self._resyncing = false
+        local pending = self._pending_resync
+        self._pending_resync = nil
+        if done then done() end
+        if pending then
+            M.full_resync(self, pending.state, pending.done)
+        end
+    end
+
     local function run()
         M.finalize_state_sync(self, state, function()
             -- self.game_state, not the `state` argument — finalize_state_sync's
@@ -928,7 +969,7 @@ function M.full_resync(self, state, done)
             -- and a newer state can land and overwrite self.game_state while
             -- that's in flight. Same reasoning as handle_single_move's two call
             -- sites for sync_my_hand.
-            sync_my_hand(self, self.game_state or state or {}, done)
+            sync_my_hand(self, self.game_state or state or {}, finish)
         end)
     end
 
@@ -1042,6 +1083,11 @@ function M.start_game(self, state)
     self.is_waiting_for_server_response = false
     self._online_reshuffling = false
     self._await_start = false
+    -- A resync from the PREVIOUS round/game must never carry into this one
+    -- and coalesce a fresh full_resync call away — see full_resync's own
+    -- comment for what these two guard against.
+    self._resyncing = false
+    self._pending_resync = nil
 
     -- THE MATCH'S THEME, NOT EITHER PLAYER'S OWN.
     --
