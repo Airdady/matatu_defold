@@ -76,6 +76,24 @@ end
 -- deltas, so running it over a partial or stale board is safe and idempotent.
 local function rebuild_from_server(self)
     if not self.online_mode then return false end
+    -- NEVER during a round transition. ws_game_over sets round_transition_busy
+    -- the instant GAME_OVER arrives and holds it until the round-summary story
+    -- and flip/count animation chain both finish — start_new_online_game parks
+    -- an incoming next-round state behind that same flag for exactly this
+    -- reason (main/game.script's ws_new_game_start handler). But
+    -- ws.active_game_state is a SINGLE shared cache that parse_message
+    -- overwrites the moment GAME_REQUEST_ACCEPTED for the next round is
+    -- parsed — synchronously, before that gate even runs — and the server
+    -- pushes that message right after GAME_OVER, with no delay. A stall/
+    -- overdue-move watchdog (or a stray ws_server_error) firing anywhere in
+    -- that window used to read the ALREADY-NEXT-ROUND state through this
+    -- function and hand it straight to finalize_state_sync, which does
+    -- touch self.ai_hand/self.deck — dealing the next round's opponent
+    -- cards onto a board still showing the round that just ended, before
+    -- the actual deal was ever meant to run. Skipping here is safe: the
+    -- round-transition machinery (round_story_done/round_transition_finished)
+    -- reconciles the real next round once it genuinely completes.
+    if self.round_transition_busy then return false end
     local latest = ws.active_game_state
     if type(latest) ~= "table" or next(latest) == nil then return false end
     OnlineHandler.finalize_state_sync(self, latest, function()

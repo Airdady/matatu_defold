@@ -167,6 +167,25 @@ do
         err and err:match("if self%.is_waiting_for_server_response then") ~= nil, true)
     check("and recovers the same way",
         err and err:match("rebuild_from_server") ~= nil, true)
+
+    -- rebuild_from_server reads ws.active_game_state, a single shared cache
+    -- parse_message overwrites the instant GAME_REQUEST_ACCEPTED for the
+    -- NEXT round is parsed — which the server sends right after GAME_OVER,
+    -- with no delay. Any of the three watchdogs above firing during the
+    -- round-ending window (flip/count animation, round-summary banner) used
+    -- to read that already-advanced state and deal the next round's
+    -- opponent cards onto a board still showing the round that just ended.
+    local rebuild_fn = game:match("local function rebuild_from_server%(self%).-\nend")
+    check_truthy("rebuild_from_server itself still exists", rebuild_fn)
+    check("it now refuses to run during a round transition",
+        rebuild_fn and rebuild_fn:match("if self%.round_transition_busy then return false end") ~= nil, true)
+    check("the guard sits before the ws.active_game_state read, not after",
+        (function()
+            if not rebuild_fn then return false end
+            local guard = rebuild_fn:find("round_transition_busy")
+            local read = rebuild_fn:find("ws%.active_game_state")
+            return guard ~= nil and read ~= nil and guard < read
+        end)(), true)
 end
 
 print("")
