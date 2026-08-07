@@ -790,7 +790,22 @@ local function parse_message(json_string)
   elseif t == "ONLINE_USERS" then
     handle_online_users(d)
   elseif t == "PUBLIC_ANNOUNCEMENTS" then
-    emit("announcements", d)
+    -- One WS message, two possible item shapes: `type == "banner"` is a
+    -- static image+CTA banner (main/promo_banner.gui_script), anything else
+    -- (including a missing type, from a caller that predates this field —
+    -- see getTopPlayersWithPrizes.ts) is the original scrolling marquee
+    -- (main/announcement.gui_script). Split here, once, so neither listener
+    -- has to know the other type exists or filter the list itself.
+    local marquee, banners = {}, {}
+    for _, item in ipairs(d or {}) do
+      if item.type == "banner" then
+        banners[#banners + 1] = item
+      else
+        marquee[#marquee + 1] = item
+      end
+    end
+    if #marquee > 0 then emit("announcements", marquee) end
+    if #banners > 0 then emit("banners", banners) end
   elseif t == "GAME_REQUEST" then
     M.last_game_request = { user = d.user or {}, stake = d.stake or {}, requestId = d.requestId or "", raw = d }
     emit("game_request", d.user or {}, d.stake or {}, d.requestId or "", d)
