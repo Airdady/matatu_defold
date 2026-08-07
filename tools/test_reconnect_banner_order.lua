@@ -139,6 +139,32 @@ check("handle_single_move still exists and full_resync sits right before it",
         return fr_start ~= nil and hsm_pos ~= nil and fr_start < hsm_pos
     end)())
 
+-- ---------------------------------------------------------------------------
+print("")
+print("full_resync NEVER RACES A MOVE THAT IS ALREADY BEING APPLIED")
+
+-- The full function body this time, not just the run() sub-function — up to
+-- the next top-level function is the boundary.
+local hsm_pos = oh_code:find("function M%.handle_single_move")
+local fr_full = (fr_start and hsm_pos) and oh_code:sub(fr_start, hsm_pos - 1) or ""
+
+check("checks self.is_processing_move before running immediately",
+    fr_full:find("if not self%.is_processing_move then%s*\n%s*run%(%)") ~= nil,
+    "handle_single_move holds this flag for its whole apply (pump_move_queue) — a reconnect landing mid-apply must not start a second, concurrent finalize_state_sync racing the first over self.ai_hand/self.player_hand")
+
+check("defers via timer.delay when a move IS in flight, rather than running anyway",
+    fr_full:find("timer%.delay%(RESYNC_WAIT_POLL_S, false, poll%)") ~= nil)
+
+check("the poll re-checks is_processing_move each time, not just once",
+    fr_full:find("if self%.game_over or not self%.is_processing_move or waited >= RESYNC_WAIT_CAP_S then") ~= nil)
+
+check("also gives up and runs anyway once self.game_over — a dead board is not worth waiting on",
+    fr_full:find("self%.game_over or not self%.is_processing_move") ~= nil)
+
+check("the wait is CAPPED, not indefinite",
+    fr_full:find("waited >= RESYNC_WAIT_CAP_S") ~= nil and fr_full:find("waited = waited %+ RESYNC_WAIT_POLL_S") ~= nil,
+    "the flag WILL eventually clear on its own (the move finishes, or the stall watchdog forces it), but a coordinated wait must still not be able to poll forever if the game object is torn down while pending")
+
 print("")
 if failures == 0 then
     print("ALL PASS")

@@ -893,15 +893,59 @@ end
 -- objects in self.player_hand, self.played_cards or self.deck. A reconnect
 -- has exactly as much to catch up on as an ordinary move does — it needs
 -- the same machinery, not a smaller one.
+-- A RECONNECT MUST NEVER RACE A MOVE THAT IS ALREADY BEING APPLIED.
+--
+-- handle_single_move's own finalize_state_sync/sync_my_hand run serialized —
+-- pump_move_queue holds self.is_processing_move true for the whole apply, so
+-- only ever one is in flight. full_resync did not check that flag at all: a
+-- reconnect landing WHILE a healthy (not stuck — the stall watchdog is a
+-- separate, already-safe path that explicitly clears the flag before taking
+-- over, see rebuild_from_server in game.script) move was still animating
+-- would start a SECOND, concurrent finalize_state_sync racing the first —
+-- both independently deciding self.ai_hand needs N more cards, from a count
+-- neither had finished writing yet, and both drawing them. Reported as extra
+-- cards on the opponent's side that were never real and never went away,
+-- even once the game ended, because destroy_all deletes whatever ends up IN
+-- self.ai_hand — it just never asked whether some of it was a duplicate.
+--
+-- Polled rather than queued through pump_move_queue itself: this can fire
+-- from a screen the queue is not currently draining (round transition,
+-- suit-selection wait), and the ordinary move it is waiting on will finish
+-- and flip the flag on its own regardless of who else is watching for that.
+-- Capped, not indefinite — the flag WILL eventually go false (the move
+-- finishes, or the stall watchdog forces it), but a coordinated wait must
+-- still not be a way for a Lua state to leak polling forever if the game
+-- object is torn down while this is pending.
+local RESYNC_WAIT_POLL_S = 0.1
+local RESYNC_WAIT_CAP_S  = 5.0
+
 function M.full_resync(self, state, done)
-    M.finalize_state_sync(self, state, function()
-        -- self.game_state, not the `state` argument — finalize_state_sync's
-        -- own do_sync can be deferred behind a reshuffle for over a second,
-        -- and a newer state can land and overwrite self.game_state while
-        -- that's in flight. Same reasoning as handle_single_move's two call
-        -- sites for sync_my_hand.
-        sync_my_hand(self, self.game_state or state or {}, done)
-    end)
+    local function run()
+        M.finalize_state_sync(self, state, function()
+            -- self.game_state, not the `state` argument — finalize_state_sync's
+            -- own do_sync can be deferred behind a reshuffle for over a second,
+            -- and a newer state can land and overwrite self.game_state while
+            -- that's in flight. Same reasoning as handle_single_move's two call
+            -- sites for sync_my_hand.
+            sync_my_hand(self, self.game_state or state or {}, done)
+        end)
+    end
+
+    if not self.is_processing_move then
+        run()
+        return
+    end
+
+    local waited = 0
+    local function poll()
+        if self.game_over or not self.is_processing_move or waited >= RESYNC_WAIT_CAP_S then
+            run()
+            return
+        end
+        waited = waited + RESYNC_WAIT_POLL_S
+        timer.delay(RESYNC_WAIT_POLL_S, false, poll)
+    end
+    timer.delay(RESYNC_WAIT_POLL_S, false, poll)
 end
 
 function M.handle_single_move(self, move_data, new_state, done)
