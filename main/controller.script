@@ -1,6 +1,7 @@
 local ws        = require("modules.websocket_manager")
 local api       = require("modules.api_service")
 local app_state = require("modules.app_state")
+local GameMode  = require("modules.game_mode")
 -- Push only. Sign-in is the device id, over api.device_login.
 local fbpush    = require("modules.firebase_push")
 local identify_recovery = require("modules.identify_recovery")
@@ -1459,6 +1460,22 @@ function on_message(self, message_id, message, sender)
         -- work at all. No code, no second step: the server validates the
         -- number, finds or creates the account, and answers with a session.
         -- Two possible answers now, signed in or an error.
+
+        -- KADI: NO NEW REGISTRATIONS. This is the one path that can CREATE
+        -- an account (/auth/phone finds the number or creates one — see the
+        -- link_phone comment above), and this branch only ever runs without
+        -- an existing session (link_phone falls back here specifically
+        -- because there is no bearer to link ONTO), so there is no way to
+        -- tell "this number already has a Kadi account" from "this would
+        -- register a new one" without asking the server — which is exactly
+        -- what disabling registration client-side means not doing. Refused
+        -- outright rather than let the request decide it either way.
+        if GameMode.is_kadi() then
+            msg.post("#profile", "phone_link_result",
+                { ok = false, message = "New Kadi accounts aren't available yet." })
+            return
+        end
+
         local phone = message.phoneNumber or ""
         if phone == "" then
             msg.post("#profile", "phone_link_result", { ok = false, message = "Enter a phone number." })

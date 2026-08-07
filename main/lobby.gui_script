@@ -252,13 +252,24 @@ local function rebuild(self)
     -- retries have been given up on, there is nothing running in the
     -- background, and the tile has to say so or RETRY is a button with no
     -- reason to exist.
-    local is_exhausted = st == "offline"
-    local connecting   = st == "verifying" or st == "signing_in"
+    -- KADI HAS NO ONLINE PLAY YET. Checked first and unconditionally — none
+    -- of the connection states below (offline, app-offline, connecting,
+    -- error) matter when there is nothing on the other end to connect FOR.
+    -- The tile stays in its normal spot (not hidden) so the lobby's layout
+    -- doesn't shift and the game reads as "not yet", not "missing a
+    -- feature". See go_online() below for the matching guard on the tap.
+    local is_kadi = GameMode.is_kadi()
+
+    local is_exhausted = (not is_kadi) and st == "offline"
+    local connecting   = (not is_kadi) and (st == "verifying" or st == "signing_in")
 
     local cta_text = "PLAY NOW"
     local sub_text = "Real players • Live coin stakes"
 
-    if st == "app_offline" then
+    if is_kadi then
+        cta_text = "COMING SOON"
+        sub_text = "Online play is on its way"
+    elseif st == "app_offline" then
         -- No RETRY here. The server has already answered, and a button that
         -- invites the player to ask again is a button that lies to them.
         --
@@ -284,13 +295,14 @@ local function rebuild(self)
     -- refuses while an attempt is genuinely in flight — but visually nothing
     -- happens.
     local play_btn_id, play_disabled =
-        auth_cta.online_tile_action(is_exhausted, false, "play_online")
+        is_kadi and "noop" or auth_cta.online_tile_action(is_exhausted, false, "play_online")
+    if is_kadi then play_disabled = true end
 
     mode_tile(self, {
         x = play_cx, y = row_a_cy, w = play_w, h = row_a_h,
-        accent      = is_exhausted and C_MUTED or C_RED,
-        top_left    = is_exhausted and "OFFLINE" or "LIVE",
-        blink_tl    = not is_exhausted,
+        accent      = (is_kadi or is_exhausted) and C_MUTED or C_RED,
+        top_left    = is_kadi and "SOON" or (is_exhausted and "OFFLINE" or "LIVE"),
+        blink_tl    = not (is_kadi or is_exhausted),
         top_left_2  = "MULTI PLAYER",
         title       = "PLAY ONLINE",
         sub         = sub_text,
@@ -299,6 +311,8 @@ local function rebuild(self)
         cta_label   = cta_text,
         -- Exhausted is greyed but TAPPABLE, and the tap means "try again" -
         -- see auth_cta.online_tile_action for why that distinction matters.
+        -- Kadi is greyed and NOT tappable — "noop" (already handled at the
+        -- top of handle()) and disabled = true.
         btn_id      = play_btn_id,
         disabled    = play_disabled,
     })
@@ -609,6 +623,12 @@ local function handle(self, b)
         rebuild(self)
 
     elseif b.id == "play_online" then
+        -- Belt and braces: the tile itself is "noop"+disabled for Kadi
+        -- already, so this should never actually fire, but go_online() is
+        -- shared with the TEAM CUPS "CREATE" tap too and this guard is
+        -- specific to PLAY ONLINE only — it must not silently no-op that
+        -- shared function for every caller.
+        if GameMode.is_kadi() then return end
         go_online(self)
 
     elseif b.id == "quick_play" then

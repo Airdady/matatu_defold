@@ -121,9 +121,13 @@ check("the tile asks the module", lobby:find("online_status.tile_state", 1, true
 -- that is everything going dull and back for no visible reason; on a slow one
 -- it is a lobby that looks broken while nothing is wrong. Sign-in is automatic
 -- and silent, so only the button says anything.
+-- (is_kadi or ...) joined the expression alongside is_exhausted when Kadi's
+-- "PLAY ONLINE is coming soon" tile was added — same reasoning, same
+-- exemption for "connecting", now also covering the case with nothing to
+-- connect FOR at all.
 check("the accent does not grey while connecting",
-    lobby:find("accent      = is_exhausted and C_MUTED or C_RED", 1, true) ~= nil, true)
-check("LIVE keeps blinking", lobby:find("blink_tl    = not is_exhausted", 1, true) ~= nil, true)
+    lobby:find("accent      = (is_kadi or is_exhausted) and C_MUTED or C_RED", 1, true) ~= nil, true)
+check("LIVE keeps blinking", lobby:find("blink_tl    = not (is_kadi or is_exhausted)", 1, true) ~= nil, true)
 -- Comments stripped for the ABSENCE checks. This file explains the historical
 -- bug at length and quotes the very strings being asserted gone, so the raw
 -- text "contains" them no matter what the code does — the same prose-for-code
