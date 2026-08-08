@@ -861,6 +861,17 @@ end
 -- Lifecycle
 -- ---------------------------------------------------------------------------
 function init(self)
+    -- BELT AND SUSPENDERS: the lobby is the first screen a player actually
+    -- sees, so check again here too, on top of controller.script's own
+    -- cold-start and foreground-resume calls. Deliberately redundant, not a
+    -- replacement for either — getAppUpdateInfo() is a stateless query Play
+    -- is fine being asked more than once, and this is cheap insurance against
+    -- the exact failure mode that already happened once: a call site quietly
+    -- disappearing in some future edit without anyone noticing, because the
+    -- other two still made the feature look like it worked in every manual
+    -- test that starts from a cold boot.
+    if gameservices then pcall(gameservices.check_update) end
+
     self.nodes, self.buttons = {}, {}
     self.state               = STATE_LOBBY
     self.tut_page            = 1

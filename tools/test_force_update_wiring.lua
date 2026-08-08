@@ -16,8 +16,11 @@
 -- because nothing ever asked it to. Reported as "the force update API isn't
 -- effective any more".
 --
--- Both call sites are restored. This pins them so a future cleanup pass
--- cannot silently delete them again without a test noticing.
+-- Both call sites are restored, plus a third (deliberately redundant) one in
+-- main/lobby.gui_script's own init — the first screen a player actually
+-- sees, and cheap insurance against exactly this failure mode recurring.
+-- This pins all three so a future cleanup pass cannot silently delete them
+-- again without a test noticing.
 
 local dir = debug.getinfo(1, "S").source:match("@(.*/)") or "./"
 local function slurp(rel)
@@ -77,6 +80,23 @@ if listener_start then
     check("pcall-guarded, unlike the cold-start call",
         recheck_pos ~= nil and listener_body:sub(recheck_pos, recheck_pos + 60):find("pcall") ~= nil,
         "a resume check running many times over an app's life must not be able to kill the window listener on one bad call")
+end
+
+print("")
+print("LOBBY INIT — belt and suspenders on top of the two above")
+
+local lobby_src = slurp("main/lobby.gui_script")
+local lobby_code = lobby_src:gsub("%-%-[^\n]*", "")
+
+local lobby_init_start = lobby_code:find("\nfunction init%(self%)")
+check("lobby's init(self) exists", lobby_init_start ~= nil)
+
+if lobby_init_start then
+    local lobby_init_end = lobby_code:find("\nfunction ", lobby_init_start + 1)
+    local lobby_init_body = lobby_code:sub(lobby_init_start, lobby_init_end and (lobby_init_end - 1) or nil)
+    check("also checks for an update, the moment the lobby loads",
+        lobby_init_body:find("if gameservices then pcall%(gameservices%.check_update%) end") ~= nil,
+        "deliberately redundant with controller.script's cold-start call — cheap insurance against a call site quietly disappearing again")
 end
 
 print("")
