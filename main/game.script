@@ -1130,7 +1130,16 @@ function on_message(self, message_id, message, sender)
         -- (invisible) instead of showing whose turn it actually is. Prefer the
         -- fresh state PLAYER_RECONNECTED carried, falling back to whatever
         -- ws.active_game_state was last updated to (IDENTIFY/GAME_STATE_SYNC).
-        if self.online_mode and not self.game_over then
+        -- Skip the state/timer refresh while a move is actively animating or
+        -- still queued: that move's own finalize_state_sync (see
+        -- online_handler.lua) is about to call sync_timers with data that is
+        -- guaranteed current at the moment it lands. This reconnect snapshot
+        -- was captured independently, at whatever instant the backend saw
+        -- the opponent come back — landing it in between let the pie flip to
+        -- a momentarily-stale currentTurn that only straightened itself out
+        -- once the in-flight move's real update arrived a beat later.
+        if self.online_mode and not self.game_over
+            and not self.is_processing_move and #(self.move_queue or {}) == 0 then
             local fresh = (type(message.state) == "table" and next(message.state) ~= nil and message.state)
                 or (type(ws.active_game_state) == "table" and next(ws.active_game_state) ~= nil and ws.active_game_state)
             if fresh then self.game_state = fresh end
@@ -1179,7 +1188,12 @@ function on_message(self, message_id, message, sender)
         -- and the pie would come back enabled but empty (invisible) on both
         -- avatars instead of showing whose turn it is. IDENTIFY (which every
         -- reconnect runs) keeps ws.active_game_state current, so prefer that.
-        if self.online_mode and not self.game_over then
+        -- Same in-flight-move guard as ws_player_rc above, and for the same
+        -- reason: skip stomping self.game_state with this independently-timed
+        -- snapshot while a move is still animating/queued, and let that
+        -- move's own finalize_state_sync bring the current turn/timer.
+        if self.online_mode and not self.game_over
+            and not self.is_processing_move and #(self.move_queue or {}) == 0 then
             local fresh = type(ws.active_game_state) == "table" and next(ws.active_game_state) ~= nil and ws.active_game_state
             if fresh then self.game_state = fresh end
             OnlineHandler.sync_timers(self, self.game_state or {})
