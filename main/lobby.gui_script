@@ -25,6 +25,8 @@ local D      = require("modules.lobby.draw")
 local Tiles  = require("modules.lobby.tiles")
 local Season = require("modules.lobby.season")
 local Cups   = require("modules.lobby.cups")
+local auth_cta = require("modules.lobby.auth_cta")
+local online_status = require("modules.lobby.online_status")
 
 -- Local aliases keep the rest of this file reading as it did before the split.
 local track     = D.track
@@ -40,9 +42,7 @@ local C_DARK, C_TRANSP, C_MUTED = T.DARK, T.TRANSP, T.MUTED
 local C_COPPER, C_TAN           = T.GOLD, T.GOLD
 local C_U_TEAM, C_DISABLED      = T.TEAM, T.DISABLED
 
-local CONSENT_PANEL, CONSENT_ACCENT = T.CONSENT_PANEL, T.CONSENT_ACCENT
-local CONSENT_BODY_C, CONSENT_DARK  = T.CONSENT_BODY, T.CONSENT_DARK
-local CONSENT_NEUTRAL, CONSENT_DONE = T.CONSENT_NEUTRAL, T.CONSENT_DONE
+
 
 local LOGICAL_W, LOGICAL_H = T.LOGICAL_W, T.LOGICAL_H
 local GUTTER, PADDING, HEADER_H = T.GUTTER, T.PADDING, T.HEADER_H
@@ -83,13 +83,15 @@ local function suggested_levels(max_players)
     return lv
 end
 
--- Percent-encodes a string for a wa.me ?text= query value.
+-- Percent-encodes a string for a mailto: subject or body.
 --
--- Newlines are encoded as a bare LF (%0A), NOT the CRLF a mailto: body wants:
--- WhatsApp renders the stray CR as a visible box on some clients, so the
--- diagnostic block below would arrive speckled with junk characters.
+-- Newlines are normalised to CRLF, which is what RFC 6068 says a mailto body
+-- is. The previous version deliberately stripped the CR, because it was
+-- feeding WhatsApp and some clients drew the stray CR as a visible box; mail
+-- clients want the opposite, and a bare LF is what makes a diagnostic block
+-- arrive as one run-on line in some of them.
 local function url_encode(str)
-    str = tostring(str or ""):gsub("\r\n", "\n")
+    str = tostring(str or ""):gsub("\r\n", "\n"):gsub("\n", "\r\n")
     str = str:gsub("([^%w%-%_%.%~])", function(c)
         return string.format("%%%02X", string.byte(c))
     end)
@@ -109,14 +111,11 @@ local Overlays = require("modules.lobby.overlays")
 local tutorial_seen      = Overlays.tutorial_seen
 local mark_tutorial_seen = Overlays.mark_tutorial_seen
 local draw_tutorial      = Overlays.tutorial
-local draw_consent       = Overlays.consent
 local draw_ai_select     = Overlays.ai_select
 local draw_tournament    = Overlays.tournament
 local draw_team_menu     = Overlays.team_menu
 local draw_team_join     = Overlays.team_join
 local TUTORIAL_PAGES     = Overlays.TUTORIAL_PAGES
-local INSTALL_STEPS      = Overlays.INSTALL_STEPS
-local INSTALL_DURATION   = Overlays.INSTALL_DURATION
 local TEAM_CODE_MAX      = Overlays.TEAM_CODE_MAX
 
 -- Forward reference: the rail's loader repaints once its request lands.
@@ -187,17 +186,29 @@ local function rebuild(self)
     set_pivot(n_m, gui.PIVOT_W)
     pcall(gui.set_scale, n_m, vmath.vector3(1.1, 1.1, 1))
 
-    local n_ocg = track(self, ui.text(vmath.vector3(grid_l + 16, h_y - 32, 0), "ONLINE CARD GAME", "small", C_MUTED))
+    -- Version, inline with the brand's own subtitle rather than a new node at
+    -- a guessed x position next to the title itself — "MATATU" is set-piece
+    -- width and this file has no glyph-metrics API to place something flush
+    -- after it without risking an overlap on a font/scale that changes later.
+    -- config.APP_VERSION is the same value the support-email diagnostic block
+    -- already sends (see the contact_open handler below), so this is a
+    -- second place to SEE it, not a second source of truth for it.
+    local config = require("modules.config")
+    local n_ocg = track(self, ui.text(vmath.vector3(grid_l + 16, h_y - 32, 0),
+        "ONLINE CARD GAME  ·  v" .. tostring(config.APP_VERSION), "small", C_MUTED))
     set_pivot(n_ocg, gui.PIVOT_W)
 
-    -- Right Guest Status. Explicit ~= "" check (not just truthiness) —
-    -- username is no longer auto-filled from Google Play Games at signup,
-    -- so a signed-in-but-not-yet-named user has username == "", which is
-    -- truthy in Lua and would otherwise blank out the header and wrongly
-    -- read "RANKED ACCOUNT" instead of prompting sign-in.
+    -- Right Guest Status. Explicit ~= "" check (not just truthiness): a
+    -- signed-in-but-not-yet-named user has username == "", which is truthy in
+    -- Lua and would otherwise blank out the header and wrongly read "RANKED
+    -- ACCOUNT" instead of prompting them to finish setting up.
     local has_username = ws.current_user_data and ws.current_user_data.username and ws.current_user_data.username ~= ""
     local user_txt = has_username and ws.current_user_data.username or "GUEST"
-    local sub_txt  = has_username and "RANKED ACCOUNT" or "TAP 'PLAY ONLINE' TO SIGN IN"
+    -- The prompt used to read "SIGN IN WITH GOOGLE". Google sign-in is gone —
+    -- nothing in the app calls /auth/google any more — so it was telling the
+    -- player to do something the app cannot do. What actually completes an
+    -- account here is picking a name, which is where tapping this goes.
+    local sub_txt  = has_username and "RANKED ACCOUNT" or "TAP TO SET UP"
 
     local n_guest = track(self, ui.text(vmath.vector3(grid_r, h_y, 0), user_txt, "title", C_CREAM))
     set_pivot(n_guest, gui.PIVOT_E)
@@ -212,30 +223,107 @@ local function rebuild(self)
     -- -----------------------------------------------------------------------
     -- Tile 1: PLAY ONLINE
     -- -----------------------------------------------------------------------
+    -- Disable the tile while we have a cached user but the WebSocket IDENTIFY
+    -- hasn't come back yet: the player is known locally but not yet confirmed
+    -- live by the server, so entering matchmaking would fire against a socket
+    -- that isn't registered. Once identify_success fires (ws.is_identified),
+    -- the lobby repaints and the tile becomes fully interactive.
+    local has_cached_user = ws.current_user_data and (ws.current_user_data._id or "") ~= ""
+
+    -- Derived from the connection, not from a note left by whichever code path
+    -- last began a sign-in. The badge in the top-right corner and this tile
+    -- were reading different things and reporting opposite answers — ONLINE up
+    -- there, "Signing in with Firebase…" down here, with the session cached
+    -- the whole time. See modules/lobby/online_status.lua.
+    local st = online_status.tile_state({
+        is_identified       = ws.is_identified,
+        reconnect_exhausted = ws.reconnect_exhausted == true,
+        has_cached_user     = has_cached_user,
+        auth_state          = app_state.auth_state,
+        app_offline         = app_state.app_offline == true,
+    })
+
+    -- SIGNING IN IS A BACKGROUND ACTIVITY, AND THE TILE SHOULD LOOK LIKE IT.
+    --
+    -- Connecting used to repaint the whole tile: the accent went grey, LIVE
+    -- stopped blinking, the subtitle was replaced by a status line and the
+    -- panel itself was greyed out. On a good connection that is a flicker of
+    -- everything going dull and coming back for no reason the player can see,
+    -- and on a slow one it is a lobby that looks broken while nothing is
+    -- wrong. Sign-in needs no announcement — it is automatic, it is silent,
+    -- and it succeeds.
+    --
+    -- So the tile keeps its colour, its LIVE tag, its blink and its subtitle
+    -- throughout, and the ONLY thing that says anything is the button, which
+    -- is exactly where somebody looks when they want to press it.
+    --
+    -- OFFLINE is deliberately still loud. That one is not signing in — the
+    -- retries have been given up on, there is nothing running in the
+    -- background, and the tile has to say so or RETRY is a button with no
+    -- reason to exist.
+    -- KADI HAS NO ONLINE PLAY YET. Checked first and unconditionally — none
+    -- of the connection states below (offline, app-offline, connecting,
+    -- error) matter when there is nothing on the other end to connect FOR.
+    -- The tile stays in its normal spot (not hidden) so the lobby's layout
+    -- doesn't shift and the game reads as "not yet", not "missing a
+    -- feature". See go_online() below for the matching guard on the tap.
+    local is_kadi = GameMode.is_kadi()
+
+    local is_exhausted = (not is_kadi) and st == "offline"
+    local connecting   = (not is_kadi) and (st == "verifying" or st == "signing_in")
+
     local cta_text = "PLAY NOW"
     local sub_text = "Real players • Live coin stakes"
-    local is_connecting = app_state.auth_state == "sending" or app_state.auth_state == "verifying"
-    
-    if is_connecting then
+
+    if is_kadi then
+        cta_text = "COMING SOON"
+        sub_text = "Online play is on its way"
+    elseif st == "app_offline" then
+        -- No RETRY here. The server has already answered, and a button that
+        -- invites the player to ask again is a button that lies to them.
+        --
+        -- The tile stays where it is and keeps its place in the lobby, so
+        -- nothing about the app looks broken or missing — it simply says that
+        -- the online half is unavailable, which is what is true from where the
+        -- player is sitting.
+        cta_text = "APP OFFLINE"
+        sub_text = "Online play unavailable • Everything else still works"
+    elseif is_exhausted then
+        cta_text = "RETRY"
+        sub_text = "Offline • Tap to reconnect"
+    elseif connecting then
+        -- The button, and nothing else.
         cta_text = "CONNECTING..."
-        sub_text = "Authenticating with Google Play Games..."
-    elseif app_state.auth_state == "error" then
+    elseif st == "error" then
         cta_text = "TRY AGAIN"
         sub_text = app_state.auth_error ~= "" and tostring(app_state.auth_error):upper() or "CONNECTION FAILED"
     end
 
+    -- `connecting` is NOT passed as the waiting flag any more: that argument is
+    -- what greyed and disabled the tile. The tap is still gated — go_online()
+    -- refuses while an attempt is genuinely in flight — but visually nothing
+    -- happens.
+    local play_btn_id, play_disabled =
+        is_kadi and "noop" or auth_cta.online_tile_action(is_exhausted, false, "play_online")
+    if is_kadi then play_disabled = true end
+
     mode_tile(self, {
         x = play_cx, y = row_a_cy, w = play_w, h = row_a_h,
-        accent      = C_RED,
-        top_left    = "LIVE",
-        blink_tl    = true,
+        accent      = (is_kadi or is_exhausted) and C_MUTED or C_RED,
+        top_left    = is_kadi and "SOON" or (is_exhausted and "OFFLINE" or "LIVE"),
+        blink_tl    = not (is_kadi or is_exhausted),
         top_left_2  = "MULTI PLAYER",
         title       = "PLAY ONLINE",
         sub         = sub_text,
         season_countdown = self.season_text,
         season_deadline  = self.season_deadline_text,
         cta_label   = cta_text,
-        btn_id      = "play_online",
+        -- Exhausted is greyed but TAPPABLE, and the tap means "try again" -
+        -- see auth_cta.online_tile_action for why that distinction matters.
+        -- Kadi is greyed and NOT tappable — "noop" (already handled at the
+        -- top of handle()) and disabled = true.
+        btn_id      = play_btn_id,
+        disabled    = play_disabled,
     })
 
     -- -----------------------------------------------------------------------
@@ -243,10 +331,15 @@ local function rebuild(self)
     -- and above the offline modes. CREATE and JOIN are their own buttons
     -- directly on the tile so both are reachable in a single tap, instead
     -- of tapping the tile to open a separate CREATE/JOIN BY CODE picker
-    -- first (STATE_TEAM_MENU / draw_team_menu are still used for the
-    -- has_team_tournament case below, since there is nothing to create or
-    -- join once you are already in one). CREATE now opens the dedicated
-    -- team-tournament screen rather than an in-lobby dialog.
+    -- first. CREATE now opens the dedicated team-tournament screen rather
+    -- than an in-lobby dialog.
+    --
+    -- OPEN, for a player already in somebody else's cup, goes to that cup's
+    -- bracket. It used to open the CREATE / JOIN BY CODE picker, which was the
+    -- one menu that could not apply: the comment here even said "there is
+    -- nothing to create or join once you are already in one" while routing to
+    -- exactly that. Reported as "it tells me I'm in one, then OPEN offers me
+    -- create and join again".
     -- -----------------------------------------------------------------------
     local has_team_tournament = ws.current_user_data and ws.current_user_data.myTeamTournamentId
         and tostring(ws.current_user_data.myTeamTournamentId) ~= ""
@@ -333,16 +426,29 @@ local function rebuild(self)
         team_sub = "Fund a prize, invite your team"
     end
 
+    -- Same rule as PLAY ONLINE above: connecting is silent. This tile has no
+    -- CTA of its own most of the time, so the only thing that changed while
+    -- signing in was the whole tile going grey with "Connecting..." under it,
+    -- which is pure noise for a state that resolves itself in under a second.
+    local team_btn_id, team_disabled = auth_cta.online_tile_action(
+        is_exhausted, false,
+        (has_team_tournament and not owns_cup) and "team_action_open" or nil)
+
     mode_tile(self, {
         x = team_cx, y = row_a_cy, w = team_w, h = row_a_h,
-        accent      = C_U_TEAM,
-        top_left    = "ONLINE",
+        accent      = is_exhausted and C_MUTED or C_U_TEAM,
+        top_left    = is_exhausted and "OFFLINE" or "ONLINE",
         top_left_2  = "TEAM",
         title       = "TEAM CUPS",
-        sub         = team_sub,
-        cta_label   = (has_team_tournament and not owns_cup) and "OPEN" or nil,
-        btn_id      = (has_team_tournament and not owns_cup) and "team_action_open" or nil,
-        child_buttons = team_children,
+        sub         = is_exhausted and "Offline • Tap to retry" or team_sub,
+        cta_label   = is_exhausted and "RETRY"
+            or ((has_team_tournament and not owns_cup) and "OPEN" or nil),
+        -- Same as PLAY ONLINE: offline is a state you can tap your way out of,
+        -- not a wall. The child CREATE / JOIN buttons stay hidden either way,
+        -- because those DO need a live socket.
+        btn_id      = team_btn_id,
+        child_buttons = is_exhausted and nil or team_children,
+        disabled    = team_disabled,
     })
 
     -- -----------------------------------------------------------------------
@@ -413,9 +519,12 @@ local function rebuild(self)
         })
     end
 
-    local deco = track(self, gui.new_box_node(vmath.vector3(grid_r + 4, util_cy, 0), vmath.vector3(44, 44, 0)))
-    pcall(gui.play_flipbook, deco, hash("diamonds"))
-    gui.set_color(deco, vmath.vector4(0.5, 0.5, 0.5, 1))
+    -- (A 44x44 decorative box used to sit at grid_r + 4 here, meant to show a
+    -- "diamonds" flipbook. No texture was ever set on the node and the
+    -- play_flipbook was wrapped in pcall, so it failed silently on every build
+    -- and left an untextured square filled with its own colour — a grey block
+    -- hanging off the right edge of the utility strip that reads as a missing
+    -- avatar. Removed rather than fixed: it decorated nothing.)
 
     -- -----------------------------------------------------------------------
     -- Draw Active Overlays on top of the main Lobby UI
@@ -431,7 +540,6 @@ local function rebuild(self)
     end
 
     draw_tutorial(self)
-    draw_consent(self)
 end
 
 -- ---------------------------------------------------------------------------
@@ -453,31 +561,21 @@ end
 -- "CREATE" option, both of which need the same sign-in-if-needed-then-
 -- route-to-online dance before anything else can happen.
 local function go_online(self)
-    if app_state.auth_state == "sending" or app_state.auth_state == "verifying" then
-        return -- Block multiple taps whilst already attempting connection
+    -- Block multiple taps whilst genuinely mid-attempt — but NOT once the
+    -- server has accepted us. A stranded "sending" used to make this return
+    -- for the rest of the session, so the tile both read "Signing in with
+    -- Firebase…" and did nothing when tapped. Relabelling it alone would have
+    -- produced a PLAY NOW button that silently ignores you, which is worse.
+    if not ws.is_identified and online_status.auth_is_busy(app_state.auth_state) then
+        return
     end
 
-    local has_account = ws.current_user_data and ws.current_user_data.username and ws.current_user_data.username ~= ""
-
-    -- If they are a guest AND the auth state hasn't succeeded, trigger the Google Play sign in.
-    if not has_account and app_state.auth_state ~= "done" then
-        app_state.auth_state = "sending"
-        msg.post("#controller", "auth_retry_silent_login") -- Re-uses controller's native login routing
-        rebuild(self)
-    else
-        -- Already have an account/authenticated, proceed immediately
-        msg.post("#controller", "play_online")
-    end
+    msg.post("#controller", "play_online")
 end
 
 local function handle(self, b)
     -- Prevent clicks from falling through the overlays
-    if b.id == "consent_block" or b.id == "tut_block" or b.id == "dialog_block" then return end
-
-    if     b.id == "consent_install" then self.consent_phase = "installing"; self._install_t = 0; rebuild(self); return
-    elseif b.id == "consent_done"    then self.consent_active = false; rebuild(self); return
-    elseif b.id == "consent_later"   then self.consent_active = false; rebuild(self); return
-    end
+    if b.id == "tut_block" or b.id == "dialog_block" then return end
 
     if     b.id == "tut_skip"   then self.tutorial_active = false; mark_tutorial_seen(); rebuild(self); return
     elseif b.id == "tut_back"   then self.tut_page = math.max(1, (self.tut_page or 1) - 1); rebuild(self); return
@@ -499,23 +597,47 @@ local function handle(self, b)
         local uname = (me.username and me.username ~= "") and me.username or "Not set"
         local phone = (me.phoneNumber and me.phoneNumber ~= "") and me.phoneNumber or "Not set"
         local acct  = (me._id and me._id ~= "") and me._id or "Unknown"
-        -- Same diagnostic block the email carried — support still needs to
-        -- know who is writing, and asking a player to find their account id
-        -- by hand is asking them not to bother.
-        local text = GameMode.BRAND .. " Support\n\nPlease describe your issue below:\n\n\n---\nUsername: "
+        -- The diagnostic block, kept whatever the channel is: support needs to
+        -- know who is writing, and asking a player to find their own account
+        -- id by hand is asking them not to bother.
+        local subject = GameMode.BRAND .. " Support"
+        local body = "Please describe your issue below:\n\n\n---\nUsername: "
             .. uname
             .. "\nPhone: " .. phone
             .. "\nAccount ID: " .. acct
             .. "\nApp: " .. tostring(config.APP_VERSION)
             .. " (" .. tostring(config.APP_BUILD or 0) .. ")"
-        -- wa.me opens WhatsApp if installed and the web client otherwise, so
-        -- this works on a device with no mail client — which the mailto: link
-        -- it replaces did not.
-        sys.open_url("https://wa.me/" .. config.SUPPORT_WHATSAPP .. "?text=" .. url_encode(text))
+        -- EMAIL, EXCLUSIVELY — support has moved off WhatsApp.
+        --
+        -- A mailto: opens nothing at all on a phone with no mail client
+        -- configured, and that is not rare here; it is the reason this was
+        -- WhatsApp before. So the address is ALSO shown on screen. The tile is
+        -- a small labelled button with nowhere to print it, so it goes in a
+        -- toast — which costs nothing when the link works and is the whole
+        -- difference between "support is unreachable" and "write to this
+        -- address" when it does not.
+        toast.info("Support: " .. config.SUPPORT_EMAIL_DISPLAY)
+        sys.open_url("mailto:" .. config.SUPPORT_EMAIL
+            .. "?subject=" .. url_encode(subject)
+            .. "&body=" .. url_encode(body))
     end); return
     elseif b.id == "theme_open" then msg.post("#controller", "goto_themes"); return end
 
-    if b.id == "play_online" then
+    if b.id == "retry_connection" then
+        -- The automatic reconnects gave up. This is the player saying they
+        -- believe the network is back, so the attempt budget is reset and the
+        -- socket tries again from scratch (see ws.retry_connection).
+        toast.info("Reconnecting...")
+        pcall(ws.retry_connection)
+        rebuild(self)
+
+    elseif b.id == "play_online" then
+        -- Belt and braces: the tile itself is "noop"+disabled for Kadi
+        -- already, so this should never actually fire, but go_online() is
+        -- shared with the TEAM CUPS "CREATE" tap too and this guard is
+        -- specific to PLAY ONLINE only — it must not silently no-op that
+        -- shared function for every caller.
+        if GameMode.is_kadi() then return end
         go_online(self)
 
     elseif b.id == "quick_play" then
@@ -548,7 +670,27 @@ local function handle(self, b)
         msg.post("#controller", "goto_game")
 
     elseif b.id == "team_action_open" then
-        set_state(self, STATE_TEAM_MENU)
+        -- Straight to the bracket of the cup they are in. Falls back to the
+        -- CREATE / JOIN picker only when there turns out to be no cup after
+        -- all — a stale myTeamTournamentId left over from a cup its owner
+        -- deleted, which is the one case where creating or joining IS the
+        -- thing to offer.
+        -- Resolved from the live cup list first, not from the cached
+        -- myTeamTournamentId: the list is refetched on every screen entry, so
+        -- a cup its owner has since deleted simply is not in it, and the
+        -- fallback below then offers the right thing instead of opening a
+        -- bracket for something that no longer exists.
+        local id
+        for _, t in ipairs(self.team_cups or {}) do
+            if t.isOwner or t.hasJoined then id = t._id break end
+        end
+        id = id or (ws.current_user_data or {}).myTeamTournamentId
+        if id and tostring(id) ~= "" then
+            app_state.standings_cup_id = tostring(id)
+            msg.post("#controller", "goto_standings")
+        else
+            set_state(self, STATE_TEAM_MENU)
+        end
 
     elseif b.id == "team_cup_start" then
         -- b.data is set when the tap came from a rail card; the tile's own
@@ -728,12 +870,25 @@ end
 -- Lifecycle
 -- ---------------------------------------------------------------------------
 function init(self)
+    -- BELT AND SUSPENDERS: the lobby is the first screen a player actually
+    -- sees, so check again here too, on top of controller.script's own
+    -- cold-start and foreground-resume calls. Deliberately redundant, not a
+    -- replacement for either — getAppUpdateInfo() is a stateless query Play
+    -- is fine being asked more than once, and this is cheap insurance against
+    -- the exact failure mode that already happened once: a call site quietly
+    -- disappearing in some future edit without anyone noticing, because the
+    -- other two still made the feature look like it worked in every manual
+    -- test that starts from a cold boot.
+    if gameservices then pcall(gameservices.check_update) end
+
     self.nodes, self.buttons = {}, {}
     self.state               = STATE_LOBBY
     self.tut_page            = 1
-    self.tutorial_active     = not tutorial_seen()
-    self.consent_active      = not akira.installed()
-    self.consent_phase       = "ask"
+    -- Never auto-show tutorial on first launch — it blocks the screen right
+    -- when the player is trying to sign in after clearing data. The tutorial
+    -- is still always reachable via the HELP button in the utility strip.
+    self.tutorial_active     = false
+    self.consent_active      = false
     self._season_tick        = 0
 
     -- Force idle state on boot so it waits for user interaction
@@ -751,8 +906,25 @@ function init(self)
         app_state.chamber_threshold = GameMode.is_matatu() and 200 or 100
     end
 
+    -- Cup membership changes underneath this screen — somebody joins, the
+    -- owner starts it — and the tile's "3/8 players" line is read straight off
+    -- a list fetched on screen entry. Without this the toast and the tile
+    -- disagree until the player leaves the lobby and comes back.
+    --
+    -- Posted to ME rather than reloading here: the callback runs in the socket
+    -- owner's context, and load_team_cups ends in a rebuild that touches gui.*.
+    local ME = msg.url("#")
+    self._ws_tokens = {
+        ws.on("cup_event",  function() msg.post(ME, "cups_changed") end),
+        ws.on("cup_invite", function() msg.post(ME, "cups_changed") end),
+    }
+
     msg.post(".", "acquire_input_focus")
     rebuild(self)
+end
+
+function final(self)
+    for _, t in ipairs(self._ws_tokens or {}) do pcall(ws.off, t) end
 end
 
 function update(self, dt)
@@ -764,26 +936,7 @@ function update(self, dt)
         if self.season_text ~= prev then rebuild(self) end
     end
 
-    if self.consent_active and self.consent_phase == "installing" then
-        self._install_t = (self._install_t or 0) + dt
-        local p = math.min(1, self._install_t / INSTALL_DURATION)
-        if self._install_fill then gui.set_size(self._install_fill, vmath.vector3(math.max(1, 480 * p), 10, 0)) end
-        if self._install_pct then gui.set_text(self._install_pct, string.format("%d%%", math.floor(p * 100))) end
-        if self._install_status then
-            local label = INSTALL_STEPS[1].label
-            if     p >= 0.75 then label = INSTALL_STEPS[3].label
-            elseif p >= 0.40 then label = INSTALL_STEPS[2].label end
-            gui.set_text(self._install_status, label)
-        end
-        if p >= 1 then
-            akira.set_installed()
-            self.consent_phase   = "done"
-            self._install_fill   = nil
-            self._install_pct    = nil
-            self._install_status = nil
-            rebuild(self)
-        end
-    end
+
 end
 
 function on_message(self, message_id, message, sender)
@@ -794,8 +947,8 @@ function on_message(self, message_id, message, sender)
         refresh_wh()
         update_lobby_season(self)
         set_state(self, self.state or STATE_LOBBY)
-        -- Refreshed on entry rather than polled: coming back from creating or
-        -- joining a cup is exactly when the rail is stale.
+        -- Costs nothing: the rail is read off the user object the socket keeps
+        -- current, so this is a repaint rather than a fetch.
         load_team_cups(self)
         
     elseif message_id == hash("enable") or message_id == hash("layout_changed") then
@@ -808,6 +961,19 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("disable") then
         clear(self)
         
+    elseif message_id == hash("cups_changed") then
+        -- Only while the lobby is the screen on show. app_state.current_screen
+        -- rather than a new _active flag: controller.show() already maintains
+        -- it, and load_team_cups ends in a rebuild — firing that against a
+        -- disabled component would rebuild nodes nobody is looking at, and
+        -- screen_enter repaints anyway when they come back.
+        --
+        -- Repaint from the whole list rather than patching the count in place:
+        -- the event carries one cup's numbers and the tile reads all of them.
+        -- The server pushes the refreshed rail down the same socket ahead of
+        -- this event, so what is on the user object here is already current.
+        if app_state.current_screen == "lobby" then load_team_cups(self) end
+
     elseif message_id == hash("auth_state_changed") then
         -- Just repaint. This used to post "play_online" whenever sign-in
         -- completed, which force-navigated to the online screen — fine when
@@ -819,7 +985,28 @@ function on_message(self, message_id, message, sender)
         if app_state.auth_state == "done" then
             app_state.auth_state = "idle"
         end
-        rebuild(self) -- Will dynamically change the button text to connection/error states
+
+        -- ONLY WHILE THE LOBBY IS THE SCREEN ON SHOW.
+        --
+        -- This rebuilt unconditionally, and auth_state_changed fires on every
+        -- socket state change — which during a reconnect loop is one every
+        -- retry, indefinitely. So a player sitting on the phone-number screen
+        -- with a flaky connection was tearing down and rebuilding the entire
+        -- lobby, nodes and all, tens of times a minute, for a screen that was
+        -- disabled and not on display.
+        --
+        -- That is what exhausted lobby.gui's node budget: "Out of nodes (max
+        -- 1024)" raised from the very first ui.cover of a rebuild, which then
+        -- came back out of on_message as RESULT_SCRIPT_ERROR against this
+        -- message. The same guard the cups_changed branch above already uses,
+        -- and for the same reason.
+        --
+        -- Nothing is missed by skipping it: screen_enter rebuilds on the way
+        -- back in, so the CTA is repainted from current state when it is next
+        -- actually visible.
+        if app_state.current_screen == "lobby" and self.nodes then
+            rebuild(self) -- button text tracks the connection/error states
+        end
     end
 end
 

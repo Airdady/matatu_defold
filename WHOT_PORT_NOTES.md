@@ -1,91 +1,99 @@
-# Whot port — status notes
+Searched for "classify"
+Viewed firebase_auth.lua:65-115
+Viewed firebase_auth.lua:1-65
+Viewed game.project:1-55
+Listed directory be_matatu
+Searched for "firebase"
+Listed directory firebaseauth
+Listed directory src
+Viewed FirebaseAuthDefold.java:1-150
+Viewed FirebaseAuthDefold.java:150-293
+Viewed .env:1-60
+Viewed .env:60-116
+Viewed serviceAccountKey.json:1-14
+Searched for "google-services"
+Searched for "431938576253"
+Searched for "431938576253"
+Searched for "keystore"
+Viewed release.sh:70-120
+Viewed champion-keystore.pass.txt
+Ran command: `keytool -list -v -keystore champion-keystore.jks -storepass Kanyanyama01 -alias upload`
+Viewed nap-keystore.pass.txt
+Ran command: `keytool -list -v -keystore nap-keystore.jks -storepass Kanyanyama01 -alias upload`
+Ran command: `keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey`
+Viewed whot.pass.txt
+Ran command: `keytool -list -v -keystore whot.keystore -storepass matatu -alias matatu_alias`
+Ran command: `adb devices`
 
-This branch reskins the Matatu client into **Whot**: same game-mode shell
-(Battle, Battle-vs-AI best-of, Elimination Chamber → Quick/Play/Battle-AI/
-Tournament) but Whot rules, Whot deck and Whot card art, talking to the
-`/whot` backend endpoints.
+### Why You Are Getting "SIGN-IN MISCONFIGURED"
 
-## Done (verified)
+When the Google sign-in dialog opens fine on Android but immediately returns **"SIGN-IN MISCONFIGURED"** after selecting an account, Google Play Services is returning status code **10 (`DEVELOPER_ERROR`)** or **12500 (`SIGN_IN_FAILED`)**.
 
-Pure-logic foundation (runs and was simulated headlessly — see below):
+This happens when Google Play Services validates your APK against the Firebase/Google Cloud project (`matatu-7aba6`) and finds an OAuth configuration mismatch.
 
-- `modules/config.lua` — `BASE_URL`/`WS_URL` now point at `/whot` and
-  `/whot/ws`.
-- `modules/card_rules.lua` — replaced with the Whot rule engine (shapes
-  C/T/X/S/R + Whot wildcard W; Hold-On 1, Pick-Two 2, Pick-Three 5,
-  Suspension 8, General-Market 14, Whot 20; non-stacking penalties;
-  choose-shape). Old Matatu API names kept as harmless aliases
-  (`CHOOSE_SUIT → CHOOSE_SHAPE`, `RULES_JOKERS`, `is_master_card`,
-  `is_joker`, …) so existing call sites don't break.
-- `modules/deck.lua` — builds the 54-card Whot deck (5 Whots).
-- `modules/card_defs.lua` — Whot frame names (`"<v><s>"`, e.g. `10T`, `20W`),
-  `BACK_DEFAULT` back, Whot card/shape names.
-- `modules/ai_player.lua` — replaced with the Whot AI (ported from
-  `whot_ai.lua`), plus a `decide(state, hand, has_drawn)` /
-  `best_suit_for_hand` / `score_card` adapter so the existing offline and
-  tournament drivers keep calling it unchanged.
-- `modules/rules_eval.lua` — Whot evaluation (no cutting card, chosen-shape
-  getter, Whot hand scoring, sound mapping onto the existing sound atlas).
-- `modules/game_logic.lua` — self-contained offline engine now handles
-  Hold-On / General-Market / Suspension / choose-shape and a Whot starter.
-- Card art: Whot PNGs copied to `assets/cards/whot/`, `assets/cards/cards.atlas`
-  regenerated to reference them, `card.go` default frame → `BACK_DEFAULT`,
-  `card.script` no longer swaps per-theme sheets.
-- `main/suit_select.gui_script` — now a 5-shape (C/T/X/S/R) selector using the
-  real shape art (`circle/triangle/cross/square/star`, copied into the `ui`
-  atlas).
-- `modules/game_flow.lua` — the shared play handler now branches on **Hold-On
-  (1)** (actor plays again) and **General Market (14)** (opponent draws 1, then
-  the actor plays again) for the animated board, in addition to choose-shape /
-  suspension / penalties.
-- No cutting card: the offline deal (`offline_handler.build_and_deal`) no
-  longer flips a side "cutting card". Instead it places a **normal** starter
-  card (never 1/2/5/8/14/20) face-up in the **centre** discard pile, so the
-  first player must match it by shape or number. (`game_logic.lua`'s standalone
-  engine already did this via `is_plain_starter`.)
-- Quick Play is now a true single game: `game_logic.new` persists `series`, so
-  Quick Play (series 1) no longer falls through to `app.ai_series` (default 3)
-  and therefore shows **no scoreboard**; Battle-AI best-of still does.
+---
 
-### Verification
+### Root Causes & Checklist
 
-`lua` simulation of `game_logic.lua` (pure Lua, no Defold deps): 200 offline
-games AI-vs-AI all reach `GAME_OVER` with no stalls/crashes, balanced 100/100
-win split, deck = 54 cards / 5 Whots, and targeted rule assertions (Whot
-wildcard, Hold-On, Pick-Two transfer, General-Market, forced-shape match)
-pass. All touched `.lua` files pass `luac -p`.
+#### 1. Keystore SHA-1 / SHA-256 Fingerprint Mismatch (Most Common)
+Google Play Services verifies the certificate fingerprint of the APK installed on your device against the Android App registered in Firebase. If the SHA-1 has not been added under your Android app in Firebase Console, Google rejects the token request with error `10`.
 
-## Remaining (board-controller integration — not yet wired)
+Here are the exact SHA fingerprints for your project keystores:
 
-The shared online/offline board controller is still Matatu-shaped in places:
+* **For `com.matatu.champ` (`champion-keystore.jks`):**
+  * **SHA-1:** `01:91:F3:04:CC:B0:9E:BC:65:75:F9:92:09:EC:FB:53:A9:AF:C0:BA`
+  * **SHA-256:** `96:32:F7:CA:EA:13:78:42:D0:BD:25:B3:D5:0B:7D:FC:1B:D3:0E:CE:AF:89:11:7C:2C:FA:42:E0:37:49:F7:A6`
 
-- Online mode: General Market currently keeps the actor's turn but relies on
-  the server to apply the opponents' draw (no local opponent draw online).
-  Online presentation of Whot effects + chosen-shape badge still needs a pass.
-  (The backend already validates Whot moves — see below — so this is
-  presentation only.)
-- `modules/tournament4.lua` (4-player chamber / score-cap / bracket / 4-player
-  battles) now implements the Whot rules too:
-  - No cutting card — a NORMAL starter is flipped into the centre pile; the
-    first player must match it by shape or number.
-  - Hold-On (1): the same seat plays again (`apply_hold_on`).
-  - General Market (14): every other alive seat draws 1 (AI seats via
-    `ai_draw`, the human seat via the standard draw), then the actor plays
-    again (`apply_general_market`). Wired into both the AI seat handler and the
-    human path (`game_flow.after_play_settled`).
-- Branding: all on-screen "Matatu" labels are now "Whot" (app title, lobby
-  title + welcome, "vs Whot Bot", bot name, share text, shape-selector). Opaque
-  internals are intentionally left: save-file keys (`matatu_defold*`), Android
-  package id (`com.matatu.champ`, tied to signing/store), the real contact
-  email, and source comments that explain the port's Matatu origin.
-- Theming: `themes.*` still references the Matatu drago/batman sheets (left
-  intact so the project still builds); Whot ships a single deck art set.
+* **For `com.matatu.nap` (`nap-keystore.jks`):**
+  * **SHA-1:** `56:36:F9:1E:16:7E:64:35:65:F4:34:09:13:83:FD:3A:4E:77:7C:98`
+  * **SHA-256:** `43:04:B8:A8:A2:F3:EE:1E:95:B4:8A:6D:B4:F8:88:E6:F2:C8:36:5D:57:D6:B8:47:FB:9B:7E:E8:23:FC:B6:87`
 
-## Backend (be_matatu)
+* **For `com.matatu.pro` (`whot.keystore`):**
+  * **SHA-1:** `E2:BC:73:D8:66:28:DF:80:45:97:C7:E1:BA:B9:B8:20:0F:F7:5A:0B`
+  * **SHA-256:** `CE:3D:8F:C2:A8:5D:8E:7F:27:20:8E:3C:C3:8C:D3:79:E8:57:31:51:A7:12:7A:AA:4E:DD:AA:F3:50:52:3B:3F`
 
-The Whot rule engine, move handler and AI already exist (`src/whot/**`) and the
-server mounts `/whot` + `/whot/ws`. This branch adds **path-based game
-detection** (`getGameFromPath`) so hitting `/whot` selects the Whot rules even
-on a raw-IP host (previously detection was host-only, so a dev IP fell back to
-Matatu). HTTP `setGameContext` and the WS upgrade now prefer the path and fall
-back to host for `/api`.
+* **If downloaded from Google Play Store (Internal / Closed Testing):**
+  * Google Play re-signs the APK with Play App Signing.
+  * Go to **Google Play Console > Release > Setup > App Integrity (App Signing)**, copy the **App signing key certificate SHA-1**, and add it to Firebase.
+
+---
+
+#### 2. Package Name in Firebase vs `game.project`
+* In [`game.project`](file:///Users/mubarakruganda/Documents/defold/game.project#L36):
+  ```ini
+  [android]
+  package = com.matatu.champ
+  ```
+* In **Firebase Console > Project Settings > Your Android Apps**, ensure an app exists with package name `com.matatu.champ` (and has the SHA-1 fingerprints above added under it).
+
+---
+
+#### 3. Web Client ID Type Mismatch
+In [`game.project`](file:///Users/mubarakruganda/Documents/defold/game.project#L44):
+```ini
+[firebase]
+web_client_id = 431938576253-53tdml3h9mrjb1eb6562k56ogqo9gsef.apps.googleusercontent.com
+```
+* The ID in `web_client_id` **must be the Type: Web Application OAuth 2.0 Client ID** (auto-created by Firebase under Google Cloud Console / Firebase Auth), **not** the Type: Android client ID.
+
+---
+
+#### 4. Google Sign-In Provider in Firebase Console
+* In **Firebase Console > Authentication > Sign-in method**:
+  * Ensure **Google** is set to **Enabled**.
+  * Ensure a **Project support email** is selected.
+
+---
+
+### Step-by-Step Fix
+
+1. Open **[Firebase Console](https://console.firebase.google.com/)** and select project **`matatu-7aba6`**.
+2. Go to **Project Settings** (gear icon ⚙️) > **General** > scroll down to **Your apps**.
+3. Under your Android app (`com.matatu.champ`):
+   - Click **Add fingerprint**.
+   - Paste `01:91:F3:04:CC:B0:9E:BC:65:75:F9:92:09:EC:FB:53:A9:AF:C0:BA` (SHA-1).
+   - Click **Add fingerprint** again and paste `96:32:F7:CA:EA:13:78:42:D0:BD:25:B3:D5:0B:7D:FC:1B:D3:0E:CE:AF:89:11:7C:2C:FA:42:E0:37:49:F7:A6` (SHA-256).
+4. Go to **Authentication > Sign-in method > Google**:
+   - Ensure it is enabled.
+   - Under **Web SDK configuration**, copy the **Web client ID** and confirm it matches `431938576253-53tdml3h9mrjb1eb6562k56ogqo9gsef.apps.googleusercontent.com`.
+5. Re-run or rebuild the app on your device — the sign-in will succeed immediately without misconfiguration errors.

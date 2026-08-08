@@ -14,6 +14,7 @@ local util           = require "modules.game_util"
 local BL             = require "modules.board_layout"
 local RE             = require "modules.rules_eval"
 local Tut            = require "modules.tutorial"
+local RQ             = require "modules.reshuffle_queue"
 
 -- Tutorial hooks must never be able to break live play: route every call
 -- through pcall so a walkthrough bug can only ever no-op.
@@ -24,6 +25,34 @@ end
 local GS             = require "modules.game_state"
 local OnlineHandler  = require "modules.online_handler"
 local OfflineHandler = require "modules.offline_handler"
+-- Required for its timings only (SHOW_IN / HOLD / SHOW_OUT / TOTAL). The
+-- module touches the `gui` API inside its functions, never at load, so this
+-- is safe from the game script side.
+local RoundStory     = require "modules.round_story_ui"
+
+-- WHEN THE NEXT ROUND MAY START.
+--
+-- Nothing here is a guess about how long a phone needs. The order the player
+-- sees is: cards flip face-up, (knockout) the hands are counted, then the
+-- round-complete banner. Only once that banner has been up for its full hold
+-- is the queue allowed to run and the next round begin.
+--
+-- NEXT_ROUND_AFTER_BANNER is measured from the moment the banner is posted,
+-- so it covers the banner arriving and being readable for RoundStory.HOLD.
+local NEXT_ROUND_AFTER_BANNER = RoundStory.SHOW_IN + RoundStory.HOLD
+
+-- The banner posts "round_story_done" when it has fully gone, and that is the
+-- normal trigger. This is the fallback for when that message never arrives
+-- (hud gui not loaded, screen torn down mid-transition), so it must sit AFTER
+-- the banner's own full length — a net that fires first is not a net, it is
+-- the primary path, which is exactly how the old flat 1.5s ended up cutting
+-- the banner short.
+local NEXT_ROUND_FALLBACK = RoundStory.TOTAL + 0.5
+
+-- Ordinary game over (no round to follow): the flip has already happened by
+-- the time we get here, and this is the extra beat before anything queued is
+-- allowed to pull the player into another game.
+local NEW_GAME_AFTER_FLIP = 2.0
 
 local M = {}
 
@@ -130,10 +159,17 @@ function M.after_play_settled(self, rec, is_player, result, ticket)
             else
                 self.is_suit_selection_active = true
                 RE.pre_validate_hand(self)
-                timer.delay(0.05, false, function() 
+                timer.delay(0.05, false, function()
                     local cx = self.CENTER and self.CENTER.x or 640
                     local dx = self.DECK_POS and self.DECK_POS.x or 1150
                     local mid_x = cx + (dx - cx) / 2
+                    -- Re-asserted HERE, at the moment the picker actually
+                    -- appears, not only when it was queued. A close arriving
+                    -- inside this 0.05s window now clears the flag (see
+                    -- suit_select.gui_script), and without this that clear
+                    -- would win and leave a picker on screen that the game
+                    -- thinks is not there.
+                    self.is_suit_selection_active = true
                     notify_gui(self.gui_suit, "suit_select", { mode = "open", x = mid_x })
                     tut("on_suit_opened")
                 end)
@@ -311,11 +347,21 @@ function M.draw_to_hand(self, hand, is_player, count, done)
     local seq         = self._seq
     local STAGGER     = 0.13
     local FLIP_T      = 0.14
-    local SETTLE      = 0.30
+    -- Long enough for the card to actually LAND.
+    --
+    -- This was 0.30 while layout_hand flies the card in over BL.HAND_TWEEN
+    -- (0.42), so the draw called itself finished 0.12s before the card
+    -- arrived — and `done` is what raises the SKIP prompt. That is the
+    -- reported "tap to skip turn opens while the drawing card is ongoing":
+    -- the prompt appearing over a card still in mid-air.
+    --
+    -- Derived from the tween rather than written again, because two numbers
+    -- describing one motion is how they came apart in the first place. The
+    -- small margin covers the frame the tween completes on.
+    local SETTLE      = BL.HAND_TWEEN + 0.04
     local placed      = 0
     local launched    = 0
     local finished    = false
-    local reshuffling = false
     -- Fixed for the whole batch — see layout_hand's geometry_n note. Without
     -- this, a multi-card draw (e.g. a stacked penalty) reflowed the WHOLE
     -- hand's spacing/arc on every single card, restarting every
@@ -340,37 +386,65 @@ function M.draw_to_hand(self, hand, is_player, count, done)
         if seq ~= self._seq then finish(); return end
 
         if #self.deck == 0 then
-            -- Check "a reshuffle is already in flight" BEFORE "is there
-            -- nothing left to reshuffle" — reshuffle_deck drains
-            -- self.played_cards down to just the top card on its very first
-            -- line, long before its ~1.1-1.3s of animation actually finishes
-            -- and refills self.deck. Every OTHER staggered place_one() call
-            -- that lands while that reshuffle is still animating (near-
-            -- guaranteed, since draws are staggered only 0.13s apart) used to
-            -- see that temporarily-drained played_cards and mistake it for
-            -- "genuinely nothing left to recycle," finishing the draw early
-            -- with fewer cards than requested instead of waiting for the
-            -- reshuffle already in progress to deliver them.
-            if reshuffling then
-                timer.delay(0.05, false, place_one); return
+            -- "Is a reshuffle already running" is asked FIRST, and it is asked
+            -- of the BOARD rather than of this draw.
+            --
+            -- reshuffle_deck empties played_cards on its first line, then spends
+            -- ~1.3s animating before the cards reach the deck. Throughout that
+            -- window the board looks exactly like "nothing left to recycle".
+            -- This check used to consult a flag local to each draw_to_hand call,
+            -- which cannot see a reshuffle another draw started — and overlapping
+            -- draws are the normal case here, not an edge one: a penalty stack
+            -- resolving while the opponent draws, a General Market, any Whot
+            -- pick-2 chain. The second batch saw the drained pile, called it an
+            -- exhausted deck, and finished short.
+            if RQ.is_running(self) then
+                RQ.wait(self, function()
+                    if seq == self._seq then place_one() else finish() end
+                end)
+                return
             end
-            if #self.played_cards <= 1 then
+            if not RQ.can_recycle(self.played_cards) then
                 finish(); return
             end
-            reshuffling = true
             M.reshuffle_deck(self, function()
-                reshuffling = false
                 if seq == self._seq then place_one() else finish() end
             end)
             return
         end
 
         local c = table.remove(self.deck)
+        if not (c and c.id and pcall(go.get_position, c.id)) then
+            -- A PHANTOM CARD, POPPED.
+            --
+            -- Reported: after a reshuffle a draw "works" — the sound plays,
+            -- the move goes through — but no card appears. The engine log
+            -- for it is not even a Lua error pcall can catch: "Instance
+            -- '/instance5' could not be found when dispatching message
+            -- 'play_animation'" — sprite.play_flipbook posts that message
+            -- asynchronously, so the instance can be alive when this card
+            -- was popped and still gone by the time the engine actually
+            -- delivers it a moment later. The reshuffle-merge filter above
+            -- (self.deck = RQ.merge_deck(...)) only checks liveness ONCE, at
+            -- merge time — a card can pass that check and still be deleted
+            -- later by an ordinary sync_deck_size reconciliation (
+            -- online_handler.lua) before it is ever actually drawn.
+            --
+            -- Checked again here, at the only moment that actually matters:
+            -- the instant this card is about to be dealt. A dead one is
+            -- discarded and replaced with the next draw rather than counted
+            -- as placed — the player is entitled to see every card they
+            -- were dealt, not a silent gap where a sound played and nothing
+            -- showed up. Recursion terminates because self.deck strictly
+            -- shrinks by one on every call, including this one.
+            place_one()
+            return
+        end
         -- This card may have lived in a hand before (pile -> reshuffle ->
         -- deck): wipe its remembered hand slot so layout_hand's same-slot
         -- skip can never mistake the stale target for "already there" and
         -- leave it sitting on the deck.
-        c._hand_target = nil
+        BL.forget_hand_slot(c)
         table.insert(hand, c)
 
         if is_player and self.online_mode and self.is_player_turn() then
@@ -378,20 +452,33 @@ function M.draw_to_hand(self, hand, is_player, count, done)
         end
 
         local y = is_player and self.PLAYER_HAND_Y or self.AI_HAND_Y
-        go.set(c.id, "position.z", Z_FLY)
+        -- pcall'd from here down: c came off self.deck, and a card can reach
+        -- there with an already-deleted game object (see the reshuffle-merge
+        -- liveness filter above, and sync_deck_size in online_handler.lua —
+        -- this is the same class of race, just caught here instead). c is
+        -- already table.insert'd into hand by this point, so a card THIS
+        -- dead now sits in the hand array regardless; what an unguarded
+        -- go.set/go.animate here used to do about it was throw and abort
+        -- place_one before placed/finish ever ran — the draw stuck
+        -- (is_local_action_locked/player_has_drawn only cleared later by
+        -- their own watchdogs, reported as "[STUCK?] ... locked=true
+        -- drew=true"), and the dead card left sitting in the hand to crash
+        -- the very next hit() check on it (see game.script). A phantom card
+        -- placed with nothing thrown at least lets the draw actually finish.
+        pcall(go.set, c.id, "position.z", Z_FLY)
         self.play_sound("SoundDraw")
 
         if is_player then
-            go.animate(c.id, "scale.x", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_INSINE, FLIP_T, 0, function()
+            pcall(go.animate, c.id, "scale.x", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_INSINE, FLIP_T, 0, function()
                 if seq ~= self._seq then return end
-                self.set_face(c)
-                go.animate(c.id, "scale.x", go.PLAYBACK_ONCE_FORWARD, CARD_SCALE_F, go.EASING_OUTSINE, FLIP_T)
+                pcall(self.set_face, c)
+                pcall(go.animate, c.id, "scale.x", go.PLAYBACK_ONCE_FORWARD, CARD_SCALE_F, go.EASING_OUTSINE, FLIP_T)
             end)
         else
-            self.set_back(c)
+            pcall(self.set_back, c)
         end
 
-        BL.layout_hand(self, hand, y, true, final_n)
+        pcall(BL.layout_hand, self, hand, y, true, final_n)
 
         placed = placed + 1
         if placed >= count then
@@ -417,7 +504,32 @@ end
 -- Reshuffle
 ----------------------------------------------------------------------
 function M.reshuffle_deck(self, done)
-    if #self.played_cards <= 1 then if done then done() end return end
+    -- Only one at a time, board-wide. Two overlapping reshuffles each end by
+    -- assigning self.deck, so whichever finishes last wins and the other's cards
+    -- are referenced by nothing at all — not the deck, not the pile. That is
+    -- how the deck "drains completely": the cards do not run out, they are
+    -- discarded by the second writer.
+    --
+    -- A second caller is not turned away, it is QUEUED. Turning it away would
+    -- hand it the drained board it is trying to escape.
+    if not RQ.begin(self) then
+        RQ.wait(self, done)
+        return
+    end
+
+    -- From here every exit MUST go through release(), including the abandoned
+    -- ones. A reshuffle dropped without releasing leaves the flag set forever,
+    -- and every future draw then waits on a reshuffle that will never finish —
+    -- the same frozen game by a different route.
+    local released = false
+    local function release()
+        if released then return end
+        released = true
+        if done then pcall(done) end
+        RQ.finish(self)
+    end
+
+    if not RQ.can_recycle(self.played_cards) then release(); return end
     log("Reshuffling deck...")
 
     local seq = self._seq
@@ -469,49 +581,96 @@ function M.reshuffle_deck(self, done)
     for i, c in ipairs(final_deck) do index_of_card[c] = i end
 
     for i, c in ipairs(recycled) do
-        go.animate(c.id, "position", go.PLAYBACK_ONCE_FORWARD,
+        pcall(go.animate, c.id, "position", go.PLAYBACK_ONCE_FORWARD,
             vmath.vector3(self.CENTER.x, self.CENTER.y, 0.4 + i * 0.001), go.EASING_INOUTSINE, 0.22)
-        go.animate(c.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_LINEAR, 0.22)
-        timer.delay(0.1, false, function() if seq == self._seq then self.set_back(c) end end)
+        pcall(go.animate, c.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_LINEAR, 0.22)
+        timer.delay(0.1, false, function() if seq == self._seq then pcall(self.set_back, c) end end)
     end
 
     timer.delay(0.28, false, function()
-        if seq ~= self._seq then return end
+        -- A sequence bump means the round was torn down mid-animation. The
+        -- cards are about to be rebuilt from scratch, so there is nothing to
+        -- salvage — but the waiters still have to be answered or their draws
+        -- hang for the life of the board.
+        if seq ~= self._seq then release(); return end
 
         self.animate_shuffle(recycled, function()
-            if seq ~= self._seq then return end
+            if seq ~= self._seq then release(); return end
             self.play_sound("MoveDeck")
 
+            -- pcall'd per card, not just per loop: THE FREEZE THIS GUARDS.
+            --
+            -- Reported: after a reshuffle the board goes dead — can't select a
+            -- suit, can't play a card — and on a second or third reshuffle the
+            -- recycled cards visibly stop at the center sweep and never reach
+            -- the deck. stub/under/final_deck are snapshots of card records
+            -- taken when the reshuffle started, and this callback only fires
+            -- ~0.3-1.3s later. In that window, a concurrent state sync for an
+            -- ordinary draw can call sync_deck_size (online_handler.lua),
+            -- which go.delete's cards straight out of self.deck to shrink it
+            -- to the server's count — including, by bad luck, one this
+            -- reshuffle already snapshotted a reference to. go.set/go.animate
+            -- on a deleted id RAISES, and this whole function is not wrapped
+            -- in a pcall anywhere above it: one dead card aborted the entire
+            -- callback chain right here, before release() ever ran — which is
+            -- why the board stayed locked (see game.script's _gs_anim_locks)
+            -- and every later reshuffle queued behind a RQ flag that would
+            -- never clear. One bad card must cost that one card's animation,
+            -- not the reshuffle finishing at all.
             for _, c in ipairs(stub) do
                 local idx = index_of_card[c]
-                go.set(c.id, "scale", CARD_SCALE)
-                go.animate(c.id, "position", go.PLAYBACK_ONCE_FORWARD,
+                pcall(go.set, c.id, "scale", CARD_SCALE)
+                pcall(go.animate, c.id, "position", go.PLAYBACK_ONCE_FORWARD,
                     BL.deck_slot_pos(self, idx), go.EASING_OUTCUBIC, 0.30)
-                go.animate(c.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_OUTCUBIC, 0.30)
+                pcall(go.animate, c.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_OUTCUBIC, 0.30)
             end
 
             local tuck_delay = (existing_n > 0) and 0.04 or 0.18
             timer.delay(tuck_delay, false, function()
-                if seq ~= self._seq then return end
+                if seq ~= self._seq then release(); return end
                 for _, c in ipairs(under) do
                     local idx = index_of_card[c]
-                    go.set(c.id, "scale", CARD_SCALE)
-                    go.animate(c.id, "position", go.PLAYBACK_ONCE_FORWARD,
+                    pcall(go.set, c.id, "scale", CARD_SCALE)
+                    pcall(go.animate, c.id, "position", go.PLAYBACK_ONCE_FORWARD,
                         BL.deck_slot_pos(self, idx), go.EASING_INOUTCUBIC, 0.45)
-                    go.animate(c.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_INOUTCUBIC, 0.45)
+                    pcall(go.animate, c.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_INOUTCUBIC, 0.45)
                 end
 
-                self.deck = final_deck
+                -- FILTERED, not merged wholesale. A card whose game object was
+                -- deleted from under this reshuffle (see the pcall's above —
+                -- concurrent sync_deck_size in online_handler.lua is the usual
+                -- cause) used to still ride along into self.deck as a dead
+                -- record: the pcall stopped it from crashing the ANIMATION,
+                -- but did nothing to stop it from becoming deck_top later and
+                -- crashing the first go.get_position anything ran on it —
+                -- reported as "Instance (null) not found" on EVERY attempt to
+                -- draw, persisting until the app restarted. Checked with the
+                -- same probe the crash itself was: if go.get_position raises,
+                -- the object is gone and the card is dropped rather than
+                -- carried forward into nothing.
+                local alive_final_deck = {}
+                for _, c in ipairs(final_deck) do
+                    if pcall(go.get_position, c.id) then
+                        alive_final_deck[#alive_final_deck + 1] = c
+                    end
+                end
+
+                -- MERGED, not assigned. Assignment silently discarded anything
+                -- that reached the deck during the animation; serialising
+                -- reshuffles should mean nothing does, but that is exactly what
+                -- the original code assumed, and being wrong costs cards that
+                -- then exist in no collection at all.
+                self.deck = RQ.merge_deck(self.deck, alive_final_deck)
 
                 timer.delay(0.55, false, function()
-                    if seq ~= self._seq then return end
+                    if seq ~= self._seq then release(); return end
                     -- Drop the preserved top card from its temporary "above
                     -- the sweep" z (set above, before the recycled cards'
                     -- animation started) down to its real resting depth,
                     -- now that nothing is animating above it anymore.
-                    go.set(top.id, "position.z", Z_PILE + 0.001)
+                    pcall(go.set, top.id, "position.z", Z_PILE + 0.001)
                     BL.restack_deck(self)
-                    if done then done() end
+                    release()
                 end)
             end)
         end)
@@ -657,20 +816,15 @@ function M.finish_round_transition(self, force)
 
     if not self.is_transitioning_round then return end
     self.is_transitioning_round = false
-    
-    if self.online_mode and self._continuation_request_id then
-        log("Sending GAME_REQUEST_ACCEPTED for continuation: " .. tostring(self._continuation_request_id))
-        ws.accept_game_request(self._continuation_request_id)
-        self._continuation_request_id = nil
-        -- Mirror awaiting_replay's role for the manual-rematch flow: if the
-        -- opponent never mutually accepts (they disconnected mid-transition
-        -- and the backend's 45s continuation window expires), a
-        -- GAME_REQUEST_DECLINED notice can now arrive for this too — without
-        -- this flag it would be silently ignored and we'd wait forever with
-        -- no further server message ever coming.
-        self._awaiting_round_continuation = true
-        return -- Do NOT call M.start_game here. Wait for the server's START event.
-    end
+    self._continuation_request_id = nil
+
+    -- The round has finished ending. Release the parked next-round state (see
+    -- game.script's round_transition_busy): while this was set, an incoming
+    -- next round was held rather than built, so something has to say when it
+    -- may be built. Posted rather than called because start_new_online_game is
+    -- a local in game.script, the same way round_story_ui reports its banner.
+    self.round_transition_busy = false
+    pcall(function() msg.post("/controller#game_logic", "round_transition_finished") end)
 
     if self.queued_start_game then
         self.queued_start_game = false
@@ -842,18 +996,24 @@ function M.end_game(self, player_won, is_cut, backend_results)
                 self.round_story_active = true
                 if story then notify_gui(self.gui_hud, "round_story", story) end
                 
-                -- Wait for ROUND WON text to settle, then tell the backend to
-                -- start the next round right away. The chamber history
-                -- expand/hold/collapse below is a purely local visual
-                -- flourish — it used to gate the backend request behind its
-                -- own ~3s tail (hold + collapse), making the server (and the
-                -- opponent) wait far longer than the round-status banner
-                -- itself implied. start_new_online_game already defers the
-                -- actual board rebuild until round_story_active clears
-                -- (round_story_ui.lua's banner finishing), so firing the
-                -- request here is safe: the new round still can't visually
-                -- start until that banner is gone.
-                timer.delay(1.5, false, function()
+                -- KNOCKOUT ORDER: flip -> count -> banner -> next round.
+                --
+                -- The flip and the counting have both already run by the time
+                -- final_resolution is reached (see the chain at the bottom of
+                -- this function), so what is left is to let the banner be read
+                -- before the next round starts.
+                --
+                -- This timer is the ONLY thing that releases a knockout round.
+                -- round_story_done routes to finish_round_transition WITHOUT
+                -- force, and _knockout_story_locked (set just above) makes
+                -- that call return early — so unlike the tournament branch
+                -- below, there is no second path waiting to catch this. It
+                -- fires once the banner has been up for its full hold.
+                --
+                -- The chamber history expand/hold/collapse underneath is a
+                -- local visual flourish and deliberately does not gate any of
+                -- this; it plays out across the start of the next round.
+                timer.delay(NEXT_ROUND_AFTER_BANNER, false, function()
                     M.finish_round_transition(self, true)
 
                     -- This round just settled — reorder the standings board
@@ -879,19 +1039,16 @@ function M.end_game(self, player_won, is_cut, backend_results)
                     self.round_story_active = true
                     notify_gui(self.gui_hud, "round_story", story)
                 end
-                -- Same reasoning as the knockout branch above: round_story_ui's
-                -- own banner (0.42s in + 1.35s hold + 0.30s out ~= 2.1s) already
-                -- posts "round_story_done" -> game.script's handler -> this same
-                -- finish_round_transition, and finish_round_transition is
-                -- idempotent (is_transitioning_round guards it), so this is only
-                -- a safety net for the odd case that message never arrives. For
-                -- online continuations this only sends GAME_REQUEST_ACCEPTED —
-                -- it does NOT render the next round (that waits on the server's
-                -- own START push) — so firing it promptly can't show anything
-                -- before the banner is actually done. The previous flat 8.0s
-                -- had no such requirement behind it; it just made the backend
-                -- (and the opponent) wait ~6s longer than the banner needed.
-                timer.delay(1.5, false, function() M.finish_round_transition(self) end)
+                -- The banner posts "round_story_done" when it has fully gone,
+                -- which routes to this same (idempotent) call — that is the
+                -- normal path and it lands at RoundStory.TOTAL. This timer is
+                -- only the net for when that message never arrives, so it sits
+                -- deliberately after it.
+                --
+                -- It used to be a flat 1.5s, i.e. BEFORE the banner had
+                -- finished, which quietly made the net the primary path and
+                -- released the round while the result was still on screen.
+                timer.delay(NEXT_ROUND_FALLBACK, false, function() M.finish_round_transition(self) end)
             end
             
         else
@@ -903,7 +1060,14 @@ function M.end_game(self, player_won, is_cut, backend_results)
             if is_series_active and not is_series_over then
                 timer.delay(4.0, false, function() M.finish_round_transition(self) end)
             else
-                M.finish_round_transition(self)
+                -- The flip has already run by the time we are here, and this
+                -- released the queue in the same frame as the game-over modal
+                -- appeared — so anything queued could pull the player straight
+                -- into the next game over the top of their own result. The
+                -- beat is the point.
+                timer.delay(NEW_GAME_AFTER_FLIP, false, function()
+                    M.finish_round_transition(self)
+                end)
             end
         end
     end
@@ -1089,7 +1253,13 @@ function M.end_game(self, player_won, is_cut, backend_results)
 
         for i, c in ipairs(self.ai_hand) do
             local cc = c
-            timer.delay((i - 1) * 0.03 + 0.5, false, function()
+            -- Stagger only. The +0.5s lead-in that used to sit here delayed
+            -- the FIRST card of the reveal by half a second on top of
+            -- everything already waited out to get here, for no reason the
+            -- animation needs — the stagger alone is what makes it read as a
+            -- sweep across the hand. The flip is the first thing that should
+            -- happen when a round ends, so it starts immediately.
+            timer.delay((i - 1) * 0.03, false, function()
                 if not pcall(go.get_position, cc.id) then
                     flipped = flipped + 1; if flipped == total then on_complete() end
                     return

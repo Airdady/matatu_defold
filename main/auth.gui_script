@@ -38,13 +38,18 @@ local function build_auth(self)
     ktext(self, vmath.vector3(44, 720 - 40, 0), "X", 26, C_STATE)
     self.buttons[#self.buttons+1] = { node = cb, id = "cancel" }
 
-    ktext(self, vmath.vector3(CX, CY + 120, 0), "GOOGLE PLAY GAMES", 32, C_CREAM)
+    ktext(self, vmath.vector3(CX, CY + 120, 0), "SIGNING YOU IN", 32, C_CREAM)
 
-    -- Sign-in is always silent — there is no manual "SIGN IN" button here.
-    -- controller.script retries automatically a few times on failure; this
-    -- screen only ever shows a status line, plus a quiet "TRY AGAIN" once
-    -- the retry budget is exhausted.
     local s = app_state.auth_state
+
+    -- There is nothing to tap here, and that is the design. Sign-in is the
+    -- device id: no account picker, no consent screen, no provider. This
+    -- screen is a status line and, if the retries genuinely run out, a quiet
+    -- TRY AGAIN.
+    --
+    -- The one answer that is NOT retried never reaches this screen at all —
+    -- a handset the backend does not recognise goes straight to the phone
+    -- number, because no number of retries invents an account.
     if s == "error" then
         if app_state.auth_error ~= "" then
             ktext(self, vmath.vector3(CX, CY + 20, 0), tostring(app_state.auth_error):upper(), 18, vmath.vector4(1, 0.4, 0.4, 1))
@@ -55,6 +60,8 @@ local function build_auth(self)
     else
         ktext(self, vmath.vector3(CX, CY, 0), "Connecting...", 24, C_STATE)
     end
+
+
 end
 
 function init(self)

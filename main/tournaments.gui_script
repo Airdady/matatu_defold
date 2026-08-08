@@ -6,6 +6,7 @@ local app_state     = require("modules.app_state")
 local ws            = require("modules.websocket_manager")
 local screen        = require("modules.screen")
 local dialog_search = require("modules.dialog_search")
+local api           = require("modules.api_service")
 
 -- Palette shared with the search dialog (mirrors online.gui_script's C table).
 local DLG_COLORS = {
@@ -91,18 +92,20 @@ local function pick_tournament()
 
     -- Helper to check if a tournament is valid for the multi-level (7-level) map
     local function is_valid_map_tournament(t)
+        if not t then return false end
         local count = (type(t.levels) == "table") and #t.levels or 0
         if count == 7 then return true end
         if count > 1 then return true end
         if count == 1 then return false end -- Reject 1-level tournaments explicitly
-        -- If no levels defined (0), assume GLOBAL scope is our 7-level default
-        if t.scope == "GLOBAL" then return true end
+        -- If no levels defined (0), check if it's the global tournament
+        if t.scope == "GLOBAL" or t.name == "Global Championship" or t.type == "public" then return true end
         return false
     end
 
     -- 1. Try to find a GLOBAL active tournament that fits the multi-level criteria
     for _, t in ipairs(ts) do
-        if t.scope == "GLOBAL" and t.status == "active" and is_valid_map_tournament(t) then 
+        local is_global = (t.scope == "GLOBAL" or t.name == "Global Championship" or t.type == "public")
+        if is_global and t.status == "active" and is_valid_map_tournament(t) then 
             return t 
         end
     end
@@ -448,7 +451,18 @@ update_play_button = function(self)
         gui.set_enabled(self.play_lock_node, true)
         self.play_disabled = true
     else
-        if self.current_level_index == 0 then
+        -- current_level_index == 0 is ALSO true for a player who already
+        -- joined and paid but hasn't won level 1 yet — backend_lvl is 1
+        -- either way (see rebuild_body). Showing the entry-fee coin/lock
+        -- styling there told an already-joined returning player to pay
+        -- again, which is exactly the bug the PLAY handler below was fixed
+        -- for — the button has to agree with it. userProgress.status is the
+        -- same "active row already exists" signal the server's own
+        -- ensureJoined checks (joinService.ts), sent down in every
+        -- tournament this user is on (see handleNearbyPlayers.ts).
+        local up = t.userProgress or {}
+        local already_joined = up.status == "active"
+        if self.current_level_index == 0 and not already_joined then
             gui.set_text(self.play_txt_node, commas(stake.amount or 0))
             gui.set_enabled(self.play_coin_node, true)
             gui.set_enabled(self.play_lock_node, true)
@@ -614,7 +628,12 @@ local function rebuild_body(self)
     gui.set_pivot(progress_note, gui.PIVOT_W)
 
     -- ── PRO TIP BOX ──
-    local tip_w = 260
+    -- 360, up from 260. The tips are drawn as plain unwrapped text lines, so a
+    -- line longer than the box does not wrap — it runs out of the panel and
+    -- across whatever is beside it. "Only joined players will participate only"
+    -- is half again as long as the line it replaced, and the box still ends
+    -- well short of the timeline dock on the right.
+    local tip_w = 360
     local tip_cx = LEFT_TEXT_X + tip_w / 2
     local tip_cy = EDGE_B + 96
     
@@ -626,7 +645,11 @@ local function rebuild_body(self)
     local tip_title = track(self, ui.text(vmath.vector3(tip_cx - tip_w/2 + 20, tip_cy + 42, 0), "PRO TIP", "small", vmath.vector4(1, 0.84, 0, 1)))
     gui.set_pivot(tip_title, gui.PIVOT_W)
     
-    local tips = { "Online Multiplayer", "Exit anytime on Quarter Finals", "Progress saved between seasons" }
+    -- "Exit anytime on Quarter Finals" is gone: it was not true of the
+    -- multi-level ladder and it told players the opposite of what actually
+    -- matters here, which is that the field is fixed once the tournament
+    -- starts. Only players who joined take part; nobody is added later.
+    local tips = { "Online Multiplayer", "Only joined players will participate only", "Progress saved between seasons" }
     for ti, tip in ipairs(tips) do
         local tip_node = track(self, ui.text(vmath.vector3(tip_cx - tip_w/2 + 20, tip_cy + 14 - (ti - 1) * 22, 0), "• " .. tip, "small", vmath.vector4(0.9, 0.9, 0.9, 0.85)))
         gui.set_pivot(tip_node, gui.PIVOT_W)
@@ -703,7 +726,12 @@ local function rebuild_body(self)
         local text_start_x = card_cx - card_w/2 + 16
 
         local name_col = is_final and vmath.vector4(1, 0.84, 0, 1) or vmath.vector4(0.95, 0.95, 0.95, 1)
-        local n_node = track(self, ui.text(vmath.vector3(text_start_x, row_cy + 14, 0), (lv.name or ("Level " .. i)), "body", name_col))
+        -- Title sits at +22 (was +14, an 8-unit widening) to match the same
+        -- 24-unit gap the Prize/Reward-to-Score fix below already gives —
+        -- the title read as run into the reward/prize line right under it at
+        -- the old spacing, the same complaint that spacing fix answered one
+        -- line down.
+        local n_node = track(self, ui.text(vmath.vector3(text_start_x, row_cy + 22, 0), (lv.name or ("Level " .. i)), "body", name_col))
         gui.set_pivot(n_node, gui.PIVOT_W)
 
         -- Prize/Reward sits at -2 and Score at -26 (was -4/-20, a 16-unit
@@ -997,6 +1025,27 @@ local function execute_jump_and_play(self, d)
     end
 end
 
+-- THE JOIN IS CONFIRMED BY THE SERVER BEFORE ANYTHING IS SHOWN, ONCE.
+--
+-- This used to deduct+animate locally whenever current_level_index == 0 —
+-- a guess at "this is the player's first attempt at level 1" that the
+-- server's own idempotent join (ensureJoined, be_matatu's joinService.ts)
+-- never agreed with: current_level_index reads 0 both for a player who has
+-- never joined AND for one who already joined and paid but hasn't won level
+-- 1 yet. So a player who tapped PLAY, found no opponent, and tapped PLAY
+-- again got a SECOND local coin animation for a charge the server only ever
+-- took once — the balance shown on screen kept dropping while the real one
+-- didn't. Reported as "the balance only drops on the frontend, the backend
+-- stays the same."
+--
+-- Fixed by asking first instead of guessing: POST /tournaments/:id/join
+-- runs the exact same ensureJoined and reports back exactly what happened —
+-- charged or not, and the real resulting balance. Only THEN, once that is
+-- known, does anything animate or move: charged > 0 plays the coin burst
+-- (using the server's own charged/newBalance, never a locally computed
+-- guess), charged == 0 skips straight to the jump/search flow — which is
+-- also why "no opponent found, tap PLAY again" costs nothing a second time,
+-- and why a returning player who already joined earlier just presses PLAY.
 local function handle(self, b)
     if b.id == "back" then
         -- Plain navigation back to the online lobby. Leaving the map harms
@@ -1005,29 +1054,89 @@ local function handle(self, b)
         msg.post("#controller", "goto_online")
     elseif b.id == "play" then
         if self.play_disabled or self.is_moving then return end
-        
+
         local d = b.data or {}
         local u = ws.current_user_data or {}
-        local cost = tonumber(d.stake.amount) or 0
-        local balance = tonumber(u.balance) or 0
-        
-        if self.current_level_index == 0 then
-            if balance < cost then
-                msg.post("main:/controller", "show_transaction_modal")
+        local user_id = tostring(u._id or "")
+        local tournament_id = tostring(d.id or "")
+
+        if tournament_id == "" or user_id == "" then
+            -- Nothing to confirm a join against (no tournament/session) —
+            -- fall through to the ordinary flow rather than stranding the
+            -- player on a locked button. Matches what always ran here for a
+            -- return visit anyway.
+            execute_jump_and_play(self, d)
+            return
+        end
+
+        -- Locked for the round trip, same as any other in-flight request on
+        -- this screen — a second tap while this is pending must not fire a
+        -- second join call.
+        self.play_disabled = true
+        self.is_moving = true
+
+        -- INSTANT FEEDBACK. The join round trip can take a genuinely
+        -- noticeable moment on a slow connection, and until now nothing on
+        -- screen changed between the tap landing and the response coming
+        -- back — no press, no dimming, nothing — which read as "the button
+        -- doesn't respond" and invited a second (or third) tap. This fires
+        -- the instant the tap registers; only the ACKNOWLEDGEMENT is
+        -- instant, not the charge — the real coin-deduction animation below
+        -- still waits for the server's confirmed `charged` amount, exactly
+        -- as before.
+        if self.play_btn_node then
+            pcall(gui.cancel_animation, self.play_btn_node, "scale")
+            gui.set_scale(self.play_btn_node, vmath.vector3(0.93, 0.93, 1))
+            gui.animate(self.play_btn_node, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTSINE, 0.15)
+            pcall(gui.play_flipbook, self.play_btn_node, "default_btn")
+        end
+        if self.play_lock_node then gui.set_enabled(self.play_lock_node, false) end
+        if self.play_coin_node then gui.set_enabled(self.play_coin_node, false) end
+        if self.play_txt_node then gui.set_text(self.play_txt_node, "...") end
+
+        api.join_championship(tournament_id, user_id, function(result)
+            -- Not moving into the jump/search flow yet either way — that
+            -- only starts once we know what actually happened.
+            self.is_moving = false
+
+            if not result.success then
+                self.play_disabled = false
+                local data = type(result.data) == "table" and result.data or {}
+                local err_msg = tostring(data.error or "")
+                if err_msg:match("[Ii]nsufficient") or err_msg == "" then
+                    msg.post("main:/controller", "show_transaction_modal")
+                end
+                -- Anything else (tournament/user not found, "still
+                -- processing") just re-enables the button — the next
+                -- rebuild (or the player's own retry) sorts it out; there is
+                -- nothing this screen can locally correct itself.
+                -- Restores the button from the instant-feedback "..." press
+                -- state above back to its real, current state (stake/lock,
+                -- PLAY, whatever the data actually says) — left alone it
+                -- would sit on "..." forever after a failed join.
+                if self._active then rebuild(self) end
                 return
             end
 
-            -- Defer the visual coin deduction until an opponent is actually
-            -- found (ws_match_found) instead of playing it up front — a failed
-            -- search shouldn't have already animated coins leaving the balance.
-            self.pending_stake_deduction = cost
-            self.play_disabled = true
-            self.is_moving = true -- Lock UI inputs
+            local data = result.data or {}
+            local charged = tonumber(data.charged) or 0
+            local new_balance = tonumber(data.newBalance)
+            if new_balance then
+                u.balance = new_balance
+                if self.top_left_balance_lbl then gui.set_text(self.top_left_balance_lbl, commas(new_balance)) end
+            end
 
-            execute_jump_and_play(self, d)
-        else
-            execute_jump_and_play(self, d)
-        end
+            self.play_disabled = true
+            self.is_moving = true -- Lock UI inputs through the jump/search flow
+
+            if charged > 0 then
+                play_deduction_animation(self, function()
+                    execute_jump_and_play(self, d)
+                end)
+            else
+                execute_jump_and_play(self, d)
+            end
+        end)
     end
 end
 

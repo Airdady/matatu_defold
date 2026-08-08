@@ -3,6 +3,11 @@ local dialog_search = require("modules.dialog_search")
 local GameMode      = require("modules.game_mode")
 local app_state     = require("modules.app_state")
 local toast         = require("modules.toast")
+local twindow       = require("modules.tournament_window")
+-- Date/ordering/percentage shaping for the savings history modal. Its own
+-- module because it touches nothing Defold-specific, which is what lets
+-- tools/test_savings_stats.lua call these functions for real.
+local savings_stats_mod = require("modules.savings_stats")
 
 local M = {}
 
@@ -17,22 +22,22 @@ local M = {}
 -- were removed for Matatu; other games' top tiers scale down accordingly).
 local BATTLE_TIERS_BY_GAME = {
     MATATU = {
-        { amount = 500,   formats = { { games = 3, charge = 75,  points = 9 } } },
-        { amount = 1000,  formats = { { games = 3, charge = 75,  points = 9 }, { games = 5, charge = 125, points = 15 } } },
-        { amount = 2000,  formats = { { games = 3, charge = 75,  points = 9 }, { games = 5, charge = 125, points = 15 },
-                                      { games = 7, charge = 175, points = 21 }, { games = 9, charge = 225, points = 27 } } },
+        { amount = 500,   formats = { { games = 3, charge = 75,  points = 6 } } },
+        { amount = 1000,  formats = { { games = 3, charge = 75,  points = 6 }, { games = 5, charge = 125, points = 10 } } },
+        { amount = 2000,  formats = { { games = 3, charge = 75,  points = 6 }, { games = 5, charge = 125, points = 10 },
+                                      { games = 7, charge = 175, points = 14 }, { games = 9, charge = 225, points = 18 } } },
     },
     WHOT = {
-        { amount = 250,   formats = { { games = 3, charge = 40,  points = 9 } } },
-        { amount = 500,   formats = { { games = 3, charge = 40,  points = 9 }, { games = 5, charge = 65,  points = 15 } } },
-        { amount = 1000,  formats = { { games = 3, charge = 40,  points = 9 }, { games = 5, charge = 65,  points = 15 },
-                                      { games = 7, charge = 90,  points = 21 }, { games = 9, charge = 115, points = 27 } } },
+        { amount = 250,   formats = { { games = 3, charge = 40,  points = 6 } } },
+        { amount = 500,   formats = { { games = 3, charge = 40,  points = 6 }, { games = 5, charge = 65,  points = 10 } } },
+        { amount = 1000,  formats = { { games = 3, charge = 40,  points = 6 }, { games = 5, charge = 65,  points = 10 },
+                                      { games = 7, charge = 90,  points = 14 }, { games = 9, charge = 115, points = 18 } } },
     },
     KADI = {
-        { amount = 25,    formats = { { games = 3, charge = 4,  points = 9 } } },
-        { amount = 50,    formats = { { games = 3, charge = 4,  points = 9 }, { games = 5, charge = 7,  points = 15 } } },
-        { amount = 100,   formats = { { games = 3, charge = 4,  points = 9 }, { games = 5, charge = 7,  points = 15 },
-                                      { games = 7, charge = 9,  points = 21 }, { games = 9, charge = 12, points = 27 } } },
+        { amount = 25,    formats = { { games = 3, charge = 4,  points = 6 } } },
+        { amount = 50,    formats = { { games = 3, charge = 4,  points = 6 }, { games = 5, charge = 7,  points = 10 } } },
+        { amount = 100,   formats = { { games = 3, charge = 4,  points = 6 }, { games = 5, charge = 7,  points = 10 },
+                                      { games = 7, charge = 9,  points = 14 }, { games = 9, charge = 12, points = 18 } } },
     },
 }
 M.BATTLE_TIERS = BATTLE_TIERS_BY_GAME[GameMode.GAME] or BATTLE_TIERS_BY_GAME.MATATU
@@ -47,10 +52,16 @@ M.BATTLE_TIERS = BATTLE_TIERS_BY_GAME[GameMode.GAME] or BATTLE_TIERS_BY_GAME.MAT
 -- claimed to eliminate you at 5 points.
 M.KNOCKOUT_CAPS = { 100, 200, 250, 300 }
 
--- Per-round charge by cap. NOT cap/2: that only matches on the first two
--- rungs (250 would be 125 and 300 would be 150). The server prices from the
--- same table — see KNOCKOUT_CHARGE_BY_CAP — so a mismatch here shows the
--- player one price and bills them another.
+-- Charge by cap, taken ONCE for the chamber. NOT cap/2: that only matches on
+-- the first two rungs (250 would be 125 and 300 would be 150). The server
+-- prices from the same table — see KNOCKOUT_CHARGE_BY_CAP — so a mismatch
+-- here shows the player one price and bills them another.
+--
+-- This said "per-round" and that is not what the server does. The charge is
+-- part of the chamber's STAKE, and a stake is taken once at the start of the
+-- match: rounds 2..N arrive as continuations, which skip the wallet entirely.
+-- Left uncorrected it is an invitation to display a running total that
+-- nobody is actually billed.
 M.KNOCKOUT_CHARGE_BY_CAP = { [100] = 50, [200] = 100, [250] = 150, [300] = 200 }
 
 function M.knockout_charge(cap)
@@ -62,7 +73,8 @@ end
 M.KNOCKOUT_DEFAULT_CAP_I = 1
 
 -- KNOCKOUT is a STAKED score-cap chamber: players put up one of these stake
--- amounts, and the per-round charge comes from M.KNOCKOUT_CHARGE_BY_CAP.
+-- amounts, and the chamber's charge comes from M.KNOCKOUT_CHARGE_BY_CAP —
+-- once, with the stake, not once per round.
 local KNOCKOUT_STAKES_BY_GAME = {
     MATATU = { 1000, 2000 },
     WHOT   = { 500,  1000 },
@@ -276,106 +288,16 @@ local function draw_battle_modal(self, ctx)
     track(self, ui.text(vmath.vector3(CX, sub_y, 0), sub_label, "btn_lg", C_BTN_TEXT))
 end
 
--- ── Team Tournament Bracket View ─────────────────────────────────────────────
--- Every joined player, and the owner whether or not they're playing, can
--- see who's on which level and how they're doing. The owner additionally
--- gets ADVANCE/DROP overrides per row (see advanceTeamTournamentPlayer/
--- dropTeamTournamentPlayer on the backend — neither can mint the grand
--- prize; that's still only ever awarded through real gameplay).
-local MAX_BRACKET_ROWS = 8
+-- Used by format_redemption_date below, and ONLY by it now.
+--
+-- This sat between the team-bracket modal and this function, and went with the
+-- modal when that was removed — it was inside the cut, not part of it. The
+-- savings dialogue then drew nothing: format_redemption_date indexes
+-- MONTH_NAMES, indexing a nil value throws, and the error takes out the rest
+-- of the modal's content with it.
+local MONTH_NAMES = {"January","February","March","April","May","June","July",
+    "August","September","October","November","December"}
 
-local function draw_team_bracket_modal(self, ctx)
-    local br = self.team_bracket_modal
-    if not br then return end
-
-    local track = ctx.track
-    local ui    = ctx.ui
-    local mkbtn = ctx.mkbtn
-    local txtL  = ctx.txtL
-    local commas = ctx.commas
-    -- Anchored to the full screen — this dialog's content (a list of player
-    -- rows plus ADVANCE/DROP buttons) is wider than the right panel's own
-    -- column, so it gets the full screen to work with rather than being
-    -- squeezed into that narrower strip.
-    local CX, CY = ctx.CX, ctx.CY
-    local C     = ctx.C
-    local NOTE_C = vmath.vector4(0.6, 0.6, 0.6, 1)
-
-    local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.85)))
-    self.buttons[#self.buttons+1] = { node = dim, id = "tbr_block" }
-    track(self, ui.grad_backdrop(ctx.LOGICAL_W, ctx.LOGICAL_H))
-
-    local panel_w, panel_h = 520, 560
-    track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
-
-    local cursor_y = CY + panel_h/2 - 18
-    track(self, ui.text(vmath.vector3(CX, cursor_y - 10, 0), "TEAM TOURNAMENT BRACKET", "subtitle2", C.COL_WHITE))
-    mkbtn(self, "tbr_close", vmath.vector3(CX + panel_w/2 - 32, cursor_y - 10, 0), vmath.vector3(40, 40, 0), "X", "secondary_btn")
-    cursor_y = cursor_y - 34
-    track(self, ui.box(vmath.vector3(CX, cursor_y, 0), vmath.vector3(panel_w - 48, 1, 0), vmath.vector4(1, 1, 1, 0.14)))
-    cursor_y = cursor_y - 24
-
-    if br.loading then
-        track(self, ui.text(vmath.vector3(CX, cursor_y, 0), "Loading...", "small", C_NEUTRAL))
-        return
-    end
-    if br.error then
-        track(self, ui.text(vmath.vector3(CX, cursor_y, 0), br.error, "small", vmath.vector4(1, 0.35, 0.35, 1)))
-        return
-    end
-
-    local data = br.data or {}
-    local totalLevels = #(data.levels or {})
-    track(self, ui.text(vmath.vector3(CX, cursor_y, 0),
-        string.format("%s  ·  %s coins  ·  code %s", data.name or "Team Tournament",
-            commas((data.grandPrize or {}).value or 0), data.invitationCode or "?"), "small", C_NEUTRAL))
-    cursor_y = cursor_y - 30
-
-    local players = data.players or {}
-    -- Highest level first — the closest to winning are the most interesting
-    -- to see at a glance.
-    table.sort(players, function(a, b) return (a.currentLevel or 1) > (b.currentLevel or 1) end)
-
-    if #players == 0 then
-        track(self, ui.text(vmath.vector3(CX, cursor_y, 0), "No players have joined yet.", "small", NOTE_C))
-    end
-
-    local row_h = 52
-    local is_owner = br.is_owner
-    for i = 1, math.min(#players, MAX_BRACKET_ROWS) do
-        local p = players[i]
-        local py = cursor_y - (i - 0.5) * row_h
-        track(self, ui.box(vmath.vector3(CX, py, 0), vmath.vector3(panel_w - 40, row_h - 6, 0), vmath.vector4(1,1,1,0.04)))
-
-        local status_col = (p.status == "completed") and vmath.vector4(1.0, 0.843, 0.0, 1) or C.COL_WHITE
-        txtL(self, CX - panel_w/2 + 30, py + 8, tostring(p.username or "Player"), "body", status_col)
-        txtL(self, CX - panel_w/2 + 30, py - 12, string.format("Level %d/%d  ·  %s", p.currentLevel or 1, totalLevels, tostring(p.status or "active")), "small", NOTE_C)
-
-        if is_owner then
-            local adv_x = CX + panel_w/2 - 130
-            local drop_x = CX + panel_w/2 - 60
-            mkbtn(self, "tbr_advance", vmath.vector3(adv_x, py, 0), vmath.vector3(60, 34, 0), "ADV", "secondary_btn", p.playerId, "btn_sm")
-            mkbtn(self, "tbr_drop", vmath.vector3(drop_x, py, 0), vmath.vector3(60, 34, 0), "DROP", "secondary_btn", p.playerId, "btn_sm")
-        end
-    end
-
-    if #players > MAX_BRACKET_ROWS then
-        track(self, ui.text(vmath.vector3(CX, cursor_y - (MAX_BRACKET_ROWS + 0.5) * row_h, 0),
-            string.format("+ %d more player(s)", #players - MAX_BRACKET_ROWS), "small", NOTE_C))
-    end
-
-    if br.msg then
-        track(self, ui.text(vmath.vector3(CX, CY - panel_h/2 + 30, 0), br.msg, "small",
-            br.msg_ok and vmath.vector4(0.3, 1.0, 0.3, 1) or vmath.vector4(1, 0.3, 0.3, 1)))
-    end
-end
-
--- ── Savings helpers (backend-driven config, with a safe fallback while the
--- first SAVINGS_STATUS round-trip hasn't landed yet) ────────────────────────
--- Must be defined before draw_savings_info/draw_savings_plans below, which
--- call format_redemption_date — Lua doesn't hoist locals within a chunk, so
--- a forward reference here would resolve to an undefined global and error.
-local MONTH_NAMES = {"January","February","March","April","May","June","July","August","September","October","November","December"}
 local function format_redemption_date(iso)
     local y, m, d = tostring(iso or ""):match("(%d+)-(%d+)-(%d+)")
     if not y then return "" end
@@ -405,9 +327,18 @@ local function draw_savings_info(self, ctx)
     -- landing as one wall of text. Every typed string here is plain ASCII —
     -- string.sub() slices by byte, and a multi-byte UTF-8 char (✓, —) cut
     -- mid-sequence would render as garbage, so those stay outside the budget.
+    --
+    -- FAILS OPEN, and that is the important part. The clock lives in another
+    -- file's update(); when it was dropped from there, `_savings_type_t`
+    -- stayed nil, the budget was permanently 0, and typed() returned "" for
+    -- every line — so the dialog drew its panel, coin bundle, dividers,
+    -- progress bar and both buttons around no words at all. A decorative
+    -- animation must not be able to delete the content it is decorating: no
+    -- clock ticking means show the copy, not hide it.
     local CHAR_INTERVAL = 0.015
-    local typing = not self._savings_type_done
-    local budget = typing and math.floor((self._savings_type_t or 0) / CHAR_INTERVAL) or math.huge
+    local ticking = type(self._savings_type_t) == "number"
+    local typing = ticking and not self._savings_type_done
+    local budget = typing and math.floor(self._savings_type_t / CHAR_INTERVAL) or math.huge
     local function typed(full)
         if not typing then return full end
         if budget >= #full then
@@ -709,6 +640,208 @@ local function draw_savings_add(self, ctx)
     mkbtn(self, "savings_add_close", vmath.vector3(CX, close_y, 0), vmath.vector3(220, 52, 0), "CLOSE", "secondary_btn")
 end
 
+-- ── Savings History / Stats Modal ─────────────────────────────────────────────
+--
+-- WHAT THIS ANSWERS THAT NOTHING DID
+--
+-- The savings panel could show exactly one number: the balance. "How much did
+-- I actually save this week" had no answer anywhere — savingCoins is a running
+-- total with no ledger behind it, so by the time anyone asked, what happened
+-- on any given day was indistinguishable from everything else that had ever
+-- happened. The server now records every credit against a date; this is where
+-- a player reads it back.
+--
+-- Every number below comes from the payload. The shaping — dates, ordering,
+-- percentages, which rows to drop — is in modules/savings_stats.lua, which has
+-- no Defold dependencies and is tested directly; this function does nothing
+-- but place what that returns.
+local SAVINGS_TABS = { "DAYS", "WEEKS", "MONTHS" }
+local SAVINGS_ROWS_PER_PAGE = 7
+
+local function savings_stats_state(self)
+    if not self.savings_stats then
+        self.savings_stats = { tab = "DAYS", page = 0 }
+    end
+    return self.savings_stats
+end
+M.savings_stats_state = savings_stats_state
+M.SAVINGS_TABS = SAVINGS_TABS
+M.SAVINGS_ROWS_PER_PAGE = SAVINGS_ROWS_PER_PAGE
+
+--- The rows for the current tab, and how many pages of them there are.
+--- Separated out so paging can be reasoned about without the drawing.
+function M.savings_rows_for(stats, st, today)
+    if st.tab == "WEEKS" then return savings_stats_mod.week_rows(stats) end
+    if st.tab == "MONTHS" then return savings_stats_mod.month_rows(stats) end
+    return (savings_stats_mod.day_rows(stats, { today = today }))
+end
+
+local function draw_savings_stats(self, ctx)
+    if not self.savings_stats_open then return end
+
+    local track  = ctx.track
+    local ui     = ctx.ui
+    local txtL   = ctx.txtL
+    local txtR   = ctx.txtR
+    local mkbtn  = ctx.mkbtn
+    local C      = ctx.C
+    local CX, CY = ctx.CX, ctx.CY
+
+    local S  = savings_stats_mod
+    local st = savings_stats_state(self)
+
+    local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.78)))
+    self.buttons[#self.buttons+1] = { node = dim, id = "savings_stats_block" }
+
+    local panel_w, panel_h = 520, 760
+    track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
+
+    local COL_SAVINGS = vmath.vector4(0.20, 0.75, 0.55, 1.0)
+    local UNSEL_C     = vmath.vector4(0.16, 0.16, 0.18, 1)
+    local left  = CX - panel_w/2 + 22
+    local right = CX + panel_w/2 - 22
+    local top   = CY + panel_h/2
+
+    -- Prefer the longer history if it has arrived; fall back to the fortnight
+    -- that rode along with SAVINGS_STATUS. The fallback is what makes the
+    -- screen useful the instant it opens rather than after a round trip — the
+    -- headline totals are the same either way, because the server computes
+    -- them over the whole history and not over the window it happens to send.
+    local hist  = ws.current_savings_history
+    local stats = (type(hist) == "table" and hist.stats)
+        or (ws.current_savings_status or {}).stats
+    local today = type(stats) == "table" and stats.daily and #stats.daily > 0
+        and stats.daily[#stats.daily].date or nil
+
+    local cy = top - 36
+    track(self, ui.text(vmath.vector3(CX, cy, 0), "Savings History", "title", C.COL_GOLD))
+
+    -- The balance, first and largest. It is the number the player came for and
+    -- the one the app itself acts on; everything under it explains how it got
+    -- that big.
+    cy = cy - 40
+    track(self, ui.box(vmath.vector3(CX, cy, 0), vmath.vector3(panel_w - 44, 46, 0), C.COL_NAMEID_BG))
+    txtL(self, left + 10, cy, "SAVINGS BALANCE", "small", C.COL_DIM)
+    txtR(self, right - 10, cy, S.commas((stats or {}).banked or 0), "body", COL_SAVINGS)
+
+    -- ── the four headline windows ─────────────────────────────────────────
+    cy = cy - 54
+    local tiles = S.headlines(stats)
+    local tile_w = (panel_w - 44 - 3 * 8) / 4
+    for i, t in ipairs(tiles) do
+        local tx = left + (i - 1) * (tile_w + 8) + tile_w/2
+        track(self, ui.box(vmath.vector3(tx, cy, 0), vmath.vector3(tile_w, 58, 0), UNSEL_C))
+        track(self, ui.text(vmath.vector3(tx, cy + 14, 0), t.label, "small", C.COL_DIM))
+        track(self, ui.text(vmath.vector3(tx, cy - 10, 0), S.commas(t.value), "body",
+            t.value > 0 and COL_SAVINGS or C.COL_DIM))
+    end
+
+    -- The line that stops "ALL TIME 10" beside a balance of 8,000 reading as
+    -- a bug. It is not one: the balance predates the daily ledger.
+    local note = S.unrecorded_note(stats)
+    if note then
+        cy = cy - 44
+        track(self, ui.text(vmath.vector3(CX, cy, 0), note, "small", C.COL_DIM))
+        cy = cy - 12
+    else
+        cy = cy - 40
+    end
+
+    -- ── tabs ──────────────────────────────────────────────────────────────
+    cy = cy - 26
+    local tab_w = (panel_w - 44 - 2 * 8) / 3
+    for i, name in ipairs(SAVINGS_TABS) do
+        local tx = left + (i - 1) * (tab_w + 8) + tab_w/2
+        local on = (st.tab == name)
+        local box = track(self, ui.box(vmath.vector3(tx, cy, 0), vmath.vector3(tab_w, 44, 0), on and C_VICTORY or UNSEL_C))
+        self.buttons[#self.buttons+1] = { node = box, id = "savings_stats_tab_" .. name }
+        track(self, ui.text(vmath.vector3(tx, cy, 0), name, "btn_md", on and C_BTN_TEXT or C.COL_WHITE))
+    end
+
+    -- ── the list ──────────────────────────────────────────────────────────
+    cy = cy - 40
+    local rows = M.savings_rows_for(stats, st, today)
+    local pages = math.max(1, math.ceil(#rows / SAVINGS_ROWS_PER_PAGE))
+    -- Clamped on read, not only when the buttons are pressed: the tab can
+    -- change under a page number that was valid for the previous tab.
+    if st.page >= pages then st.page = pages - 1 end
+    if st.page < 0 then st.page = 0 end
+
+    local row_h = 46
+    local list_top = cy
+
+    if #rows == 0 then
+        -- Three different nothings, and they need three different sentences.
+        local _, msg = S.empty_reason(stats, ws.savings_history_pending)
+        track(self, ui.text(vmath.vector3(CX, list_top - 60, 0), msg or "Nothing here yet.", "small", C.COL_DIM))
+    else
+        local first = st.page * SAVINGS_ROWS_PER_PAGE + 1
+        for i = first, math.min(#rows, first + SAVINGS_ROWS_PER_PAGE - 1) do
+            local r = rows[i]
+            local ry = list_top - (i - first) * row_h - row_h/2
+            track(self, ui.box(vmath.vector3(CX, ry, 0), vmath.vector3(panel_w - 44, row_h - 4, 0),
+                ((i - first) % 2 == 0) and C.COL_NAMEID_BG or vmath.vector4(1, 1, 1, 0.03)))
+            txtL(self, left + 10, ry + 9, r.label, "small", C.COL_WHITE)
+
+            -- The second line is what a single total cannot say: a day of
+            -- "5 Auto" is a completely different day from "1,200 Season".
+            local sub
+            if st.tab == "DAYS" then
+                local parts = {}
+                for _, s in ipairs(r.sources or {}) do
+                    parts[#parts+1] = S.commas(s.value) .. " " .. s.short
+                end
+                sub = table.concat(parts, " + ")
+            else
+                sub = r.daysSaved .. (r.daysSaved == 1 and " day saved" or " days saved")
+            end
+            txtL(self, left + 10, ry - 10, sub, "small", C.COL_DIM)
+            txtR(self, right - 10, ry, "+" .. S.commas(r.credited), "body", COL_SAVINGS)
+        end
+
+        if pages > 1 then
+            local nav_y = list_top - SAVINGS_ROWS_PER_PAGE * row_h - 24
+            mkbtn(self, "savings_stats_prev", vmath.vector3(CX - 110, nav_y, 0), vmath.vector3(96, 42, 0), "PREV", "secondary_btn")
+            track(self, ui.text(vmath.vector3(CX, nav_y, 0), (st.page + 1) .. " / " .. pages, "small", C.COL_DIM))
+            mkbtn(self, "savings_stats_next", vmath.vector3(CX + 110, nav_y, 0), vmath.vector3(96, 42, 0), "NEXT", "secondary_btn")
+        end
+    end
+
+    -- ── the facts, and where it all came from ─────────────────────────────
+    local facts_y = CY - panel_h/2 + 186
+    local facts = S.facts(stats)
+    for i = 1, math.min(3, #facts) do
+        local fy = facts_y - (i - 1) * 22
+        txtL(self, left + 10, fy, facts[i].label, "small", C.COL_DIM)
+        txtR(self, right - 10, fy, facts[i].value, "small", C.COL_WHITE)
+    end
+
+    local br_y = CY - panel_h/2 + 96
+    track(self, ui.box(vmath.vector3(CX, br_y + 30, 0), vmath.vector3(panel_w - 44, 1, 0), vmath.vector4(1, 1, 1, 0.10)))
+    txtL(self, left + 10, br_y + 14, "WHERE IT CAME FROM", "small", C.COL_DIM)
+    local br = S.breakdown(stats)
+    local bw2 = (panel_w - 44 - 3 * 6) / 4
+    for i, b in ipairs(br) do
+        local bx = left + (i - 1) * (bw2 + 6) + bw2/2
+        track(self, ui.box(vmath.vector3(bx, br_y - 14, 0), vmath.vector3(bw2, 40, 0), UNSEL_C))
+        track(self, ui.text(vmath.vector3(bx, br_y - 4, 0), S.commas(b.value), "small",
+            b.value > 0 and COL_SAVINGS or C.COL_DIM))
+        track(self, ui.text(vmath.vector3(bx, br_y - 24, 0), b.percent .. "%", "small", C.COL_DIM))
+    end
+
+    local close_y = CY - panel_h/2 + 34
+    mkbtn(self, "savings_stats_close", vmath.vector3(CX, close_y, 0), vmath.vector3(220, 52, 0), "CLOSE", "secondary_btn")
+end
+
+-- Exposed for tools/test_savings_stats.lua, which draws this modal against a
+-- recording stub. Nothing else calls it — M.draw does, through the local.
+--
+-- Worth the export: this file has already shipped a savings dialog that drew
+-- its panel, its dividers and both its buttons around no content at all,
+-- because one indexed lookup threw and took the rest of the body with it. A
+-- render that never runs outside the engine cannot catch that; this one can.
+M._draw_savings_stats = draw_savings_stats
+
 -- ── Invite Modal Drawing ──────────────────────────────────────────────────────
 local function draw_invite_search(self, ctx)
     dialog_search.draw(self, ctx, self.invite_search, "invite_reel_node")
@@ -798,6 +931,19 @@ function M.draw(self, ctx, left_M)
     track(self, ui.box(vmath.vector3(info_cx, r2_y, 0), vmath.vector3(info_w, stat_h, 0), C.COL_NAMEID_BG))
     txtL(self, info_l + 8, r2_y, "SAVINGS BAL", "small", COL_SAVINGS)
     txtR(self, inner_r - 80, r2_y, commas(u.savingCoins or 0), "body", COL_SAVINGS)
+
+    -- The row itself opens the history. Registered BEFORE the two icons so
+    -- they still win the hit test — input walks self.buttons backwards, so the
+    -- last one registered over a point is the one that fires, and "i" and "+"
+    -- must keep doing what they have always done.
+    --
+    -- A row rather than a third icon: the two that are there already sit at
+    -- inner_r - 20 and inner_r - 54, with the figure itself at inner_r - 80.
+    -- A third would land on the number.
+    self.buttons[#self.buttons+1] = {
+        node = track(self, ui.box(vmath.vector3(info_cx, r2_y, 0), vmath.vector3(info_w, stat_h, 0), vmath.vector4(0, 0, 0, 0))),
+        id = "savings_stats",
+    }
 
     -- Savings Interactive Icons
     local sav_info_pos = vmath.vector3(inner_r - 20, r2_y, 0)
@@ -925,49 +1071,55 @@ function M.draw(self, ctx, left_M)
     track(self, ui.box(vmath.vector3(cx, tcy2, 0), vmath.vector3(pw, t_h, 0), C.COL_BG))
     mkbtn(self, "nav_tournaments", vmath.vector3(cx, tcy2, 0), vmath.vector3(pw, t_h, 0), nil, "container_bg")
     
-    local icon_x = cx - 80
-    local t_icon = track(self, ui.image(vmath.vector3(icon_x, tcy2, 0), vmath.vector3(32, 32, 0), "tournament_icon"))
+    local icon_x = row_l + 24
+    -- 34, not 48. The battle rows above use 48 for battle_icon/knockout/party
+    -- and read correctly at it, but the tournament artwork fills far more of
+    -- its box than those do, so at the same nominal size it came out visibly
+    -- heavier than every other icon on the screen. Matched by eye rather than
+    -- by number; the label offset comes down with it so the gap the larger
+    -- icon needed does not turn into a hole.
+    local T_ICON = 34
+    local t_icon = track(self, ui.image(vmath.vector3(icon_x, tcy2, 0), vmath.vector3(T_ICON, T_ICON, 0), "tournament_icon"))
     gui.set_color(t_icon, C.COL_WHITE)
-    txtL(self, icon_x + 28, tcy2, "TOURNAMENTS", "btn_lg", C.COL_WHITE)
+    txtL(self, icon_x + T_ICON / 2 + 12, tcy2, "TOURNAMENTS", "btn_lg", C.COL_WHITE)
 
-    local nx = cx + pw/2 - 40
+    -- OPEN / CLOSED, NOT "NEW".
+    local t_state = twindow.state(twindow.headline(u.tournaments))
+    local t_label = twindow.BADGE_LABEL[t_state] or "CLOSED"
+
+    local BADGE_H, BADGE_PAD, BADGE_MIN_W = 24, 12, 60
+    local badge_col =
+        (t_state == "open")  and vmath.vector4(0.106, 0.725, 0.267, 1.0) or   -- green
+        (t_state == "soon")  and vmath.vector4(0.949, 0.702, 0.020, 1.0) or   -- amber
+                                 vmath.vector4(0.412, 0.435, 0.478, 1.0)      -- slate
+
+    local badge_w = math.max(BADGE_MIN_W, #t_label * 10 + BADGE_PAD * 2)
+
+    -- Right-aligned to the panel row like every other trailing control
+    local nx = row_r - badge_w/2
     local ny = tcy2
-    track(self, ui.box(vmath.vector3(nx, ny, 0), vmath.vector3(48, 22, 0), vmath.vector4(0.15, 0.8, 0.25, 1.0)))
-    track(self, ui.box(vmath.vector3(nx, ny + 11, 0), vmath.vector3(48, 1, 0), C.COL_WHITE))
-    track(self, ui.text(vmath.vector3(nx, ny, 0), "NEW", "btn_sm", C.COL_WHITE))
+    track(self, ui.box(vmath.vector3(nx, ny, 0), vmath.vector3(badge_w, BADGE_H, 0), badge_col))
+    track(self, ui.box(vmath.vector3(nx, ny + BADGE_H/2 - 1, 0), vmath.vector3(badge_w, 1, 0),
+        vmath.vector4(1, 1, 1, 0.25)))
+    
+    local n_badge_txt = track(self, ui.text(vmath.vector3(nx, ny, 0), t_label, "btn_sm", C.COL_WHITE))
+    gui.set_pivot(n_badge_txt, gui.PIVOT_CENTER)
     cy = cy - t_h - C.BLOCK_GAP
 
-    -- ── Team Tournaments panel — only shown once this account has actually
-    -- created or joined one (tracked client-side since last create/join —
-    -- see lobby.gui_script's tc_submit/team_join_submit). Creating one now
-    -- happens entirely on the main lobby screen, so there's nothing to do
-    -- about team tournaments from here until you're already in one; this
-    -- row exists purely as quick return access to VIEW BRACKET.
-    local has_team = u.myTeamTournamentId and tostring(u.myTeamTournamentId) ~= ""
-    if has_team then
-        local team_h  = 72
-        local team_cy = cy - team_h/2
-        track(self, ui.box(vmath.vector3(cx, team_cy, 0), vmath.vector3(pw, team_h, 0), C.COL_BG))
-
-        local team_icon_x = cx - 80
-        local team_icon = track(self, ui.image(vmath.vector3(team_icon_x, team_cy, 0), vmath.vector3(32, 32, 0), "tournament_icon"))
-        gui.set_color(team_icon, C.COL_WHITE)
-        txtL(self, team_icon_x + 28, team_cy, "TEAM TOURNAMENTS", "btn_lg", C.COL_WHITE)
-
-        local team_btn_w = 180
-        local team_bx = cx + pw/2 - team_btn_w/2 - 20
-        txtL(self, team_icon_x + 28, team_cy - 14, "Your team tournament", "small", C.COL_DIM)
-        mkbtn(self, "nav_team_bracket", vmath.vector3(team_bx, team_cy, 0), vmath.vector3(team_btn_w, 48, 0), "VIEW BRACKET", "primary_btn", nil, "btn_md")
-        cy = cy - team_h - C.BLOCK_GAP
-    end
+    -- Team tournaments are managed entirely from the main lobby now: its cup
+    -- rail creates, joins and opens them, and the standings screen carries the
+    -- bracket and the owner controls. The row that used to sit here was only
+    -- ever quick return access to a VIEW BRACKET modal — a second place to do
+    -- a subset of the same thing — and that modal went with it, since this row
+    -- was its only way in.
 
     -- ── Draw Extracted Modals on Top ──────────────────────────────────────
     draw_battle_modal(self, ctx)
-    draw_team_bracket_modal(self, ctx)
     draw_invite_search(self, ctx)
     draw_savings_info(self, ctx)
     draw_savings_plans(self, ctx)
     draw_savings_add(self, ctx)
+    draw_savings_stats(self, ctx)
 end
 
 -- ── Input Action Exports for Main Script ─────────────────────────────────────
@@ -1062,85 +1214,6 @@ function M.bm_submit(self, rebuild_cb)
     else
         api.create_tournament(payload, on_result)
     end
-end
-
-function M.open_team_bracket(self, rebuild_cb)
-    local u = ws.current_user_data or {}
-    local tid = u.myTeamTournamentId
-    if not tid or tostring(tid) == "" then return end
-
-    self.team_bracket_modal = { loading = true, is_owner = u.myTeamTournamentIsOwner and true or false }
-    rebuild_cb()
-
-    local api = require("modules.api_service")
-    api.get_team_tournament_bracket(tid, function(result)
-        local cur = self.team_bracket_modal
-        if not cur then return end
-        cur.loading = false
-        if result.success then
-            cur.data = result.data
-        else
-            cur.error = result.message or "Could not load the bracket."
-        end
-        if self._active then rebuild_cb() end
-    end)
-end
-
-local function refresh_team_bracket(self, rebuild_cb)
-    local br = self.team_bracket_modal
-    if not br then return end
-    local u = ws.current_user_data or {}
-    local tid = u.myTeamTournamentId
-    if not tid or tostring(tid) == "" then return end
-    local api = require("modules.api_service")
-    api.get_team_tournament_bracket(tid, function(result)
-        local cur = self.team_bracket_modal
-        if not cur then return end
-        if result.success then cur.data = result.data end
-        if self._active then rebuild_cb() end
-    end)
-end
-
-function M.tbr_advance(self, player_id, rebuild_cb)
-    local br = self.team_bracket_modal
-    local u = ws.current_user_data or {}
-    local tid = u.myTeamTournamentId
-    if not br or not tid or not player_id then return end
-    local api = require("modules.api_service")
-    api.advance_team_tournament_player(tid, { userId = u._id, playerId = player_id }, function(result)
-        local cur = self.team_bracket_modal
-        if not cur then return end
-        if result.success then
-            cur.msg, cur.msg_ok = "Player advanced.", true
-            refresh_team_bracket(self, rebuild_cb)
-        else
-            local err = result.message or "Could not advance this player."
-            cur.msg, cur.msg_ok = err, false
-            toast.error(err)
-            if self._active then rebuild_cb() end
-        end
-    end)
-end
-
-function M.tbr_drop(self, player_id, rebuild_cb)
-    local br = self.team_bracket_modal
-    local u = ws.current_user_data or {}
-    local tid = u.myTeamTournamentId
-    if not br or not tid or not player_id then return end
-    local api = require("modules.api_service")
-    api.drop_team_tournament_player(tid, { userId = u._id, playerId = player_id }, function(result)
-        local cur = self.team_bracket_modal
-        if not cur then return end
-        if result.success then
-            cur.msg, cur.msg_ok = "Player dropped.", true
-            refresh_team_bracket(self, rebuild_cb)
-        else
-            local err = result.message or "Could not drop this player."
-            cur.msg, cur.msg_ok = err, false
-            toast.error(err)
-            if self._active then rebuild_cb() end
-        end
-    end)
 end
 
 function M.start_invite_search(self, app_state, rebuild_cb, battle_type)

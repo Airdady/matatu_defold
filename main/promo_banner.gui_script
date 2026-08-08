@@ -1,0 +1,310 @@
+-- GLOBAL promo banner: a static image banner with an optional title and a
+-- tap-through CTA, docked in its own slot on the LOBBY only — distinct from
+-- announcement.gui_script's scrolling marquee ticker, which is a full-width
+-- text ribbon shown across every non-game screen. This is a single card,
+-- shown one at a time, that lives directly under the lobby's header.
+--
+-- Fed by the SAME server message as the marquee ("PUBLIC_ANNOUNCEMENTS", see
+-- modules/websocket_manager.lua) — that dispatcher splits the payload by
+-- `type` and re-emits banner items on their own "banners" event, so this
+-- script never has to know the marquee exists or filter the list itself.
+-- Item shape: { id, type="banner", text, title, imageUrl, ctaText, ctaLink,
+-- duration, isDismissable }. `rounds` is a marquee-only concept and is never
+-- sent for a banner (see broadcastAnnouncement.ts).
+--
+-- LOBBY ONLY, not "not game" — the marquee's rule is "anywhere but the game
+-- screen"; a banner is scoped tighter, to the lobby specifically, so it never
+-- competes for attention on the online/matchmaking or tournament screens
+-- either. Hidden (and the current item put back at the front of the queue,
+-- exactly like the marquee's game-screen interrupt) the instant the player
+-- leaves the lobby, and replayed in full on the way back.
+--
+-- REMOTE IMAGE: imageUrl is fetched and decoded at runtime (http.request +
+-- image.load + a dynamically built gui texture) rather than bundled — an
+-- admin can post a new banner without an app release. Every step of that
+-- pipeline is pcall-guarded: a network failure, a non-image response, or a
+-- decode error never crashes the banner, it just shows the card without a
+-- picture (title/body/CTA still render). A token guards against a slow
+-- response for an OLD item landing after the queue has already moved on to
+-- a new one.
+
+local ws         = require "modules.websocket_manager"
+local F          = require "modules.fonts"
+local ui         = require "modules.ui"
+local app_state  = require "modules.app_state"
+local theme      = require "modules.lobby.theme"
+
+local LOGICAL_W, LOGICAL_H = 1280, 720
+
+local CARD_W, CARD_H = 900, 170
+local GAP_BELOW_HEADER = 14
+
+local IMG_W = 150
+local IMG_MARGIN = 16
+
+local MIN_DURATION_MS = 4000
+local FALLBACK_DURATION_MS = 8000
+
+local BANNER_TEX_ID = "promo_banner_img"
+
+local C_WHITE = vmath.vector4(1, 1, 1, 1)
+local C_DIM   = vmath.vector4(1, 1, 1, 0.75)
+local C_MUTED = ui.MUTED
+
+-- Parked far above the screen until something is queued, same convention as
+-- announcement.gui_script's PARKED_Y.
+local PARKED_Y = LOGICAL_H + CARD_H + 200
+
+local function box(pos, size, color)
+    local n = gui.new_box_node(pos, size)
+    gui.set_color(n, color)
+    return n
+end
+
+local function text(pos, str, role, color, pivot, px)
+    local n = gui.new_text_node(pos, str)
+    gui.set_font(n, role.name)
+    gui.set_color(n, color or C_WHITE)
+    if pivot then gui.set_pivot(n, pivot) end
+    if px then
+        local s = F.scale(role, px)
+        gui.set_scale(n, vmath.vector3(s, s, 1))
+    end
+    return n
+end
+
+-- Docked Y, in the lobby's OWN safe-area coordinate space (modules/lobby/
+-- theme.lua — the same module lobby.gui_script itself reads EDGE_T/HEADER_H/
+-- PADDING from), so the banner lands right under the header regardless of
+-- device notches/safe-area insets, without this script needing to know
+-- anything about the lobby's own layout beyond that shared module.
+local function docked_y()
+    local grid_t = theme.EDGE_T - theme.PADDING - theme.HEADER_H
+    return grid_t - GAP_BELOW_HEADER - CARD_H / 2
+end
+
+----------------------------------------------------------------------
+-- Remote image: fetch, decode, bind to a dynamic texture.
+----------------------------------------------------------------------
+local IMAGE_TYPE_TO_GUI = nil
+local function image_type_name(t)
+    if not IMAGE_TYPE_TO_GUI then
+        IMAGE_TYPE_TO_GUI = {}
+        pcall(function() IMAGE_TYPE_TO_GUI[image.TYPE_RGB] = "rgb" end)
+        pcall(function() IMAGE_TYPE_TO_GUI[image.TYPE_RGBA] = "rgba" end)
+        pcall(function() IMAGE_TYPE_TO_GUI[image.TYPE_LUMINANCE] = "l" end)
+    end
+    return IMAGE_TYPE_TO_GUI[t] or "rgba"
+end
+
+-- Loads `url` and calls on_ready(ok, width, height). Never throws.
+local function load_banner_image(url, on_ready)
+    if not url or url == "" then on_ready(false); return end
+    local ok = pcall(function()
+        http.request(url, "GET", function(_, _, response)
+            local status = response and (response.status or 0) or 0
+            if not response or status < 200 or status >= 300 or not response.response or response.response == "" then
+                on_ready(false); return
+            end
+            local decoded
+            pcall(function() decoded = image.load(response.response) end)
+            if not decoded or not decoded.buffer or not decoded.width or not decoded.height then
+                on_ready(false); return
+            end
+            pcall(function() gui.delete_texture(BANNER_TEX_ID) end)
+            local tex_ok = pcall(function()
+                gui.new_texture(BANNER_TEX_ID, decoded.width, decoded.height, image_type_name(decoded.type), decoded.buffer)
+            end)
+            if not tex_ok then on_ready(false); return end
+            on_ready(true, decoded.width, decoded.height)
+        end, nil, nil, { timeout = 10 })
+    end)
+    if not ok then on_ready(false) end
+end
+
+----------------------------------------------------------------------
+-- Build (once): every node the card will ever need, hidden until shown.
+----------------------------------------------------------------------
+local function build(self)
+    self.root = ui.panel9(vmath.vector3(LOGICAL_W / 2, PARKED_Y, 0), vmath.vector3(CARD_W, CARD_H, 0), "container_bg")
+
+    -- Image slot: left edge of the card, as TWO stacked sibling nodes rather
+    -- than one node whose texture gets swapped — Defold's gui module has no
+    -- documented way to cleanly unbind a texture once set, and reusing one
+    -- node risked a stale texture from a PREVIOUS banner showing through
+    -- (tinted by whatever colour got set on top of it) the moment a NEW
+    -- banner's image fails to load. img_fallback is always there as the
+    -- plain-fill default; img_photo only carries a texture and is enabled
+    -- (covering the fallback exactly) once load_banner_image actually
+    -- succeeds, and disabled again — never re-textured — at the start of
+    -- every new item.
+    local img_pos = vmath.vector3(-CARD_W / 2 + IMG_MARGIN + IMG_W / 2, 0, 0)
+    local img_size = vmath.vector3(IMG_W, CARD_H - 2 * IMG_MARGIN, 0)
+    self.img_fallback = box(img_pos, img_size, ui.PANEL2)
+    gui.set_parent(self.img_fallback, self.root)
+    self.img_photo = box(img_pos, img_size, C_WHITE)
+    gui.set_parent(self.img_photo, self.root)
+    gui.set_enabled(self.img_photo, false)
+
+    local text_x = -CARD_W / 2 + IMG_MARGIN * 2 + IMG_W
+    local text_w = CARD_W / 2 - 60 - text_x -- leaves room for the close X
+
+    self.title = text(vmath.vector3(text_x, CARD_H / 2 - 34, 0), "", F.BUTTON, C_WHITE, gui.PIVOT_W, 24)
+    gui.set_parent(self.title, self.root)
+
+    self.body = text(vmath.vector3(text_x, CARD_H / 2 - 68, 0), "", F.BODY, C_DIM, gui.PIVOT_NW, 18)
+    pcall(gui.set_line_break, self.body, true)
+    pcall(gui.set_size, self.body, vmath.vector3(text_w, CARD_H - 90, 0))
+    gui.set_parent(self.body, self.root)
+
+    -- CTA: a small pill button, bottom-left of the text column.
+    local cta_w, cta_h = 160, 40
+    self.cta_bg = ui.btn9(vmath.vector3(text_x + cta_w / 2, -CARD_H / 2 + 28, 0), vmath.vector3(cta_w, cta_h, 0), "primary_btn")
+    gui.set_parent(self.cta_bg, self.root)
+    self.cta_lbl = text(vmath.vector3(0, 0, 0), "", F.SMALL, C_WHITE, gui.PIVOT_CENTER, 18)
+    gui.set_parent(self.cta_lbl, self.cta_bg)
+    gui.set_enabled(self.cta_bg, false)
+
+    -- Close X: top-right corner.
+    self.close_bg = box(vmath.vector3(CARD_W / 2 - 26, CARD_H / 2 - 24, 0), vmath.vector3(30, 30, 0), vmath.vector4(0, 0, 0, 0))
+    gui.set_pivot(self.close_bg, gui.PIVOT_CENTER)
+    gui.set_parent(self.close_bg, self.root)
+    self.close_lbl = text(vmath.vector3(0, 0, 0), "X", F.SMALL, C_MUTED, gui.PIVOT_CENTER)
+    gui.set_parent(self.close_lbl, self.close_bg)
+    gui.set_enabled(self.close_bg, false)
+
+    gui.set_enabled(self.root, false)
+end
+
+function init(self)
+    msg.post(".", "acquire_input_focus")
+    gui.set_render_order(19) -- same tier as announcement.gui_script; the two never coincide (marquee vs. banner items are split upstream), so order between them does not matter.
+    self.queue = {}
+    self.showing = false
+    self._img_token = 0
+    build(self)
+
+    local ME = msg.url("#")
+    self._token = ws.on("banners", function(list)
+        if type(list) == "table" and #list > 0 then
+            msg.post(ME, "banners_push", { list = list })
+        end
+    end)
+end
+
+function final(self)
+    if self._token then ws.off(self._token) end
+    pcall(function() gui.delete_texture(BANNER_TEX_ID) end)
+end
+
+local show_next -- forward declaration
+
+local function hide_and_advance(self)
+    self._img_token = self._img_token + 1 -- any in-flight image load for this item stops mattering
+    gui.animate(self.root, "position.y", PARKED_Y, gui.EASING_INSINE, 0.25, 0, function()
+        self.showing = false
+        gui.set_enabled(self.root, false)
+        timer.delay(0.15, false, function() show_next(self) end)
+    end)
+end
+
+show_next = function(self)
+    if self.showing then return end
+    -- Lobby only. Leave it queued until the player is back on the lobby —
+    -- never on the online/matchmaking screen, a tournament screen, or a game.
+    if app_state.current_screen ~= "lobby" then return end
+    local item = table.remove(self.queue, 1)
+    if not item then return end
+    self.showing = true
+    self.current_item = item
+
+    gui.set_text(self.title, tostring(item.title or ""))
+    gui.set_enabled(self.title, (item.title or "") ~= "")
+    gui.set_text(self.body, tostring(item.text or ""))
+
+    local dismissable = item.isDismissable and true or false
+    gui.set_enabled(self.close_bg, dismissable)
+
+    local has_cta = item.ctaText and item.ctaText ~= "" and item.ctaLink and item.ctaLink ~= ""
+    gui.set_enabled(self.cta_bg, has_cta and true or false)
+    if has_cta then gui.set_text(self.cta_lbl, tostring(item.ctaText)) end
+
+    -- Image: back to the plain fallback fill immediately (img_photo carries
+    -- no texture binding of its own to worry about resetting), then reveal
+    -- img_photo only if/when the real one actually loads. The token means a
+    -- slow response for a PREVIOUS item (already advanced past) is discarded
+    -- rather than painting onto whatever is showing now.
+    gui.set_enabled(self.img_photo, false)
+    self._img_token = self._img_token + 1
+    local my_token = self._img_token
+    load_banner_image(item.imageUrl, function(ok)
+        if my_token ~= self._img_token then return end
+        if ok then
+            local bound = pcall(function() gui.set_texture(self.img_photo, BANNER_TEX_ID) end)
+            if bound then gui.set_enabled(self.img_photo, true) end
+        end
+    end)
+
+    gui.set_position(self.root, vmath.vector3(LOGICAL_W / 2, PARKED_Y, 0))
+    gui.set_enabled(self.root, true)
+    gui.animate(self.root, "position.y", docked_y(), gui.EASING_OUTSINE, 0.35)
+
+    local dur = tonumber(item.duration) or 0
+    if dur <= 0 then dur = FALLBACK_DURATION_MS end
+    dur = math.max(MIN_DURATION_MS, dur)
+
+    self._hide_timer = timer.delay(dur / 1000.0, false, function()
+        self.current_item = nil
+        hide_and_advance(self)
+    end)
+end
+
+function update(self, dt)
+    local on_lobby = (app_state.current_screen == "lobby")
+
+    if not on_lobby then
+        if self.showing and not self._interrupting then
+            self._interrupting = true
+            if self._hide_timer then timer.cancel(self._hide_timer); self._hide_timer = nil end
+            if self.current_item then
+                table.insert(self.queue, 1, self.current_item)
+                self.current_item = nil
+            end
+            hide_and_advance(self)
+        end
+    else
+        self._interrupting = false
+        if not self.showing and #self.queue > 0 then
+            show_next(self)
+        end
+    end
+end
+
+function on_message(self, message_id, message)
+    if message_id == hash("banners_push") then
+        local list = (message and message.list) or {}
+        for _, item in ipairs(list) do
+            self.queue[#self.queue + 1] = item
+        end
+        show_next(self)
+    end
+end
+
+function on_input(self, action_id, action)
+    if not gui.is_enabled(self.root) then return false end
+    if action_id == hash("touch") and action.pressed then
+        if gui.is_enabled(self.close_bg) and gui.pick_node(self.close_bg, action.x, action.y) then
+            if self._hide_timer then timer.cancel(self._hide_timer); self._hide_timer = nil end
+            self.current_item = nil
+            hide_and_advance(self)
+            return true
+        end
+        if gui.is_enabled(self.cta_bg) and gui.pick_node(self.cta_bg, action.x, action.y) then
+            local link = self.current_item and self.current_item.ctaLink
+            if link and link ~= "" then pcall(sys.open_url, link) end
+            return true
+        end
+    end
+    -- Non-modal: never swallow input outside its own buttons.
+    return false
+end

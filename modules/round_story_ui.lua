@@ -1,5 +1,21 @@
 local M = {}
 
+-- THE ROUND-COMPLETE BANNER'S OWN CLOCK, AND THE ONLY COPY OF IT.
+--
+-- The round banner ("ROUND WON!" / "ROUND LOST") is the thing the player reads
+-- between one round and the next, so how long it is up decides when the next
+-- round may start. game_flow.lua has to line its own timers up with that, and
+-- it used to do so with bare numbers that had drifted out of agreement — its
+-- "safety net" fired at 1.5s while the banner was still on screen until ~2.1s,
+-- which made the net the primary path and cut the banner off in practice.
+--
+-- Exported so game_flow derives its waits from these instead of restating
+-- them. Changing the hold here changes the whole sequence, once.
+M.SHOW_IN   = 0.42  -- scale/fade in
+M.HOLD      = 2.00  -- how long the banner sits fully readable
+M.SHOW_OUT  = 0.30  -- fade/expand out
+M.TOTAL     = M.SHOW_IN + M.HOLD + M.SHOW_OUT
+
 local C_WHITE     = vmath.vector4(1.0, 1.0, 1.0, 1.0)
 local C_FORM_W    = vmath.vector4(0.15, 0.70, 0.25, 1.0)
 local C_FORM_L    = vmath.vector4(0.90, 0.25, 0.25, 1.0)
@@ -62,12 +78,12 @@ local function story_phase(self, seq, title, sub, color, hold, next_fn)
     local c = gui.get_color(self.story_wrap); c.w = 0; gui.set_color(self.story_wrap, c)
     
     gui.animate(self.story_wrap, "color.w", 1.0, gui.EASING_OUTSINE, 0.22)
-    gui.animate(self.story_wrap, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTBACK, 0.42, 0, function()
+    gui.animate(self.story_wrap, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTBACK, M.SHOW_IN, 0, function()
         if seq ~= self.story_seq then return end
         timer.delay(hold, false, function()
             if seq ~= self.story_seq then return end
-            gui.animate(self.story_wrap, "color.w", 0.0, gui.EASING_INSINE, 0.30)
-            gui.animate(self.story_wrap, "scale", vmath.vector3(1.18, 1.18, 1), gui.EASING_INSINE, 0.30, 0, function()
+            gui.animate(self.story_wrap, "color.w", 0.0, gui.EASING_INSINE, M.SHOW_OUT)
+            gui.animate(self.story_wrap, "scale", vmath.vector3(1.18, 1.18, 1), gui.EASING_INSINE, M.SHOW_OUT, 0, function()
                 if seq ~= self.story_seq then return end
                 next_fn()
             end)
@@ -96,7 +112,9 @@ function M.show(self, m, opp_display_name)
     else s1 = string.format("All square at %d - %d", p, o) end
 
     -- Only play the single phase, then finish
-    story_phase(self, seq, t1, s1, c1, 1.35, function()
+    -- Held for M.HOLD (2s) — the round result is meant to be read, and the
+    -- next round is not started until it has been.
+    story_phase(self, seq, t1, s1, c1, M.HOLD, function()
         story_finish(self, seq)
     end)
 end

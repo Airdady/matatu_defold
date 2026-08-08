@@ -19,6 +19,9 @@ local ws     = require("modules.websocket_manager")
 local screen = require("modules.screen")
 local app_state = require("modules.app_state")
 local dialog_incoming = require("modules.dialog_incoming")
+local api    = require("modules.api_service")
+local toast  = require("modules.toast")
+local budget = require("modules.incoming_budget")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local CX, CY = 640, 360
@@ -72,6 +75,31 @@ local function with_a(c, a) return vmath.vector4(c.x, c.y, c.z, c.w * (a or 1)) 
 local function dlg_avatar(self, x, y, size, avatar_id, a)
     track(self, ui.pie(vmath.vector3(x, y, 0), size/2 + 6, with_a(DLG_AV_BG, a)))
     gui.set_color(track(self, ui.avatar(vmath.vector3(x, y, 0), vmath.vector3(size, size, 0), avatar_id)), vmath.vector4(1, 1, 1, a or 1))
+end
+
+-- Size the stashed countdown bar to whatever time_left is RIGHT NOW.
+--
+-- Mirrors online.gui_script's apply_banner_bar/draw_banner, which carries the
+-- fix for exactly this: the bar used to be sized only at whatever width the
+-- last REBUILD happened to catch, and update() below only asked for one when
+-- the whole SECOND changed — so over a 10s invite it stepped in ten 10%
+-- jumps instead of sliding. Rebuilding every frame is not the fix either:
+-- rebuild() deletes and recreates every node on screen, which is why the
+-- once-a-second throttle exists at all. The bar is ONE node, so it is
+-- stashed here and resized in place by update() at frame rate, independent
+-- of whether a full rebuild happens this frame.
+--
+-- pcall'd because the handle dies with the next clear(): draw_banner
+-- re-stashes on every rebuild so it is normally fresh, but a frame landing
+-- between the two would otherwise throw out of update().
+local function apply_banner_bar(d)
+    local bar = d and d._bar
+    if not bar or not bar.node then return end
+    local frac = math.max(0, math.min(1, (d.time_left or 0) / (d.max_time or 10)))
+    pcall(function()
+        gui.set_size(bar.node, vmath.vector3(bar.w * frac, 3, 0))
+        gui.set_color(bar.node, with_a(frac < 0.3 and COL_RED or COL_GREEN, bar.alpha))
+    end)
 end
 
 local function dlg_timer(self, x, y, time_left, max_time, a)
@@ -132,12 +160,29 @@ local BAN_AV_BG   = vmath.vector4(0.10, 0.14, 0.18, 1.00)
 local BAN_TRACK   = vmath.vector4(0.12, 0.19, 0.27, 1.00)
 local BAN_ACCEPT  = vmath.vector4(0.00, 0.90, 0.63, 0.30)
 
--- CHAMPIONSHIP badge. Red on purpose: this banner already carries ordinary
+-- CHAMPIONSHIP badge. Orange on purpose: this banner already carries ordinary
 -- battles and one-level tournaments, and they look identical to a run at the
 -- multi-level ladder. Accepting one costs a level of real progress, so it
 -- should not be indistinguishable from a casual invite.
-local BAN_CHAMP_BG = vmath.vector4(0.78, 0.12, 0.16, 1.00)
-local BAN_CHAMP_TX = vmath.vector4(1.00, 0.94, 0.94, 1.00)
+local BAN_CHAMP_BG = vmath.vector4(0.94, 0.55, 0.09, 1.00)
+local BAN_CHAMP_TX = vmath.vector4(1.00, 0.97, 0.90, 1.00)
+
+-- TEAM CUP badge. Purple, matching the lobby tile's accent, so an invitation
+-- to somebody's cup is not mistaken at a glance for a match starting now —
+-- the two arrive on the same strip and are answered on very different clocks.
+local BAN_CUP_BG = vmath.vector4(0.596, 0.298, 0.796, 1.00)
+local BAN_CUP_TX = vmath.vector4(1.00, 0.97, 1.00, 1.00)
+
+-- How long a cup invitation stays on the strip.
+--
+-- Much longer than a game request's 10s, and — the part that matters — it
+-- expires by HIDING, never by answering. A game request has to be resolved
+-- either way, because an opponent is sitting there waiting; an invitation to a
+-- cup that fills over hours has nobody waiting on it, and auto-declining one
+-- the player merely did not look at in ten seconds would throw away the thing
+-- the push notification was sent to deliver. The invitation stays on the TEAM
+-- CUPS tile regardless.
+local CUP_BANNER_SECONDS = 15
 
 -- Matches MIN_LEVELS_FOR_PUSH / MIN_TOURNAMENT_LEVELS_FOR_ANNOUNCEMENT on the
 -- server. Kept as its own constant rather than "more than one level", so the
@@ -156,7 +201,14 @@ local function level_count(t)
     return 1
 end
 
+-- scope is the server's own source of truth for "this is the global
+-- championship" (see isChampionship() in championshipStats.ts). Checked
+-- first; the level-count heuristic stays as a fallback for older tournament
+-- documents that predate the scope field ever being threaded onto the
+-- request payload.
 local function is_championship(tourney)
+    if type(tourney) ~= "table" then return false end
+    if tourney.scope == "GLOBAL" then return true end
     return level_count(tourney) >= MIN_CHAMPIONSHIP_LEVELS
 end
 local BAN_DECLINE = vmath.vector4(0.12, 0.19, 0.27, 0.85)
@@ -180,6 +232,12 @@ local function draw_banner(self, d, a)
             with_a(BAN_CHAMP_BG, a)))
         track(self, ui.text(vmath.vector3(m.CX, top, 0), "[CHAMPIONSHIP]", "small",
             with_a(BAN_CHAMP_TX, a)))
+    elseif d.cup_invite then
+        local pill_w, pill_h = 120, 22
+        track(self, ui.box(vmath.vector3(m.CX, top, 0), vmath.vector3(pill_w, pill_h, 0),
+            with_a(BAN_CUP_BG, a)))
+        track(self, ui.text(vmath.vector3(m.CX, top, 0), "[TEAM CUP]", "small",
+            with_a(BAN_CUP_TX, a)))
     end
 
     -- Sender avatar (framed disc) on the left.
@@ -195,21 +253,27 @@ local function draw_banner(self, d, a)
         tostring(d.desc or ""), "small", with_a(BAN_DESC, a))), gui.PIVOT_W)
 
     -- Actions on the right, in the same order as the online screen's banner.
+    -- Labels are overridable because a cup invitation is not answered the way
+    -- a match request is: there is no opponent waiting, so the left-hand button
+    -- puts it off rather than turning it down.
     mkbtn(self, "decline", vmath.vector3(m.R - 225, cy, 0), vmath.vector3(120, 46, 0),
-        "DECLINE", with_a(BAN_DECLINE, a), nil, "btn_md", with_a(COL_MID, a))
+        d.decline_label or "DECLINE", with_a(BAN_DECLINE, a), nil, "btn_md", with_a(COL_MID, a))
     mkbtn(self, "accept",  vmath.vector3(m.R - 90,  cy, 0), vmath.vector3(120, 46, 0),
-        "ACCEPT",  with_a(BAN_ACCEPT,  a), nil, "btn_md", with_a(COL_WHITE, a))
+        d.accept_label or "ACCEPT",  with_a(BAN_ACCEPT,  a), nil, "btn_md", with_a(COL_WHITE, a))
 
     if d.h2h then draw_h2h_row(self, m.R - 430, cy, h2h_view(d.h2h), a) end
 
-    -- Countdown along the bottom edge.
-    local frac  = math.max(0, math.min(1, (d.time_left or 0) / (d.max_time or 10)))
-    local bar_w = bw * frac
+    -- Countdown along the bottom edge. THE FILL IS ANIMATED, NOT REBUILT — see
+    -- apply_banner_bar above. Stashed as one node and resized in place by
+    -- update() every frame; nothing else on this banner needs a per-frame
+    -- touch, so the once-a-second rebuild throttle stays for everything else.
     track(self, ui.box(vmath.vector3(m.CX, bot, 0), vmath.vector3(bw, 3, 0), with_a(BAN_TRACK, a)))
-    if bar_w > 1 then
-        track(self, ui.box(vmath.vector3(m.L + bar_w / 2, bot, 0), vmath.vector3(bar_w, 3, 0),
-            with_a(frac < 0.3 and COL_RED or COL_GREEN, a)))
-    end
+    local fill = track(self, ui.box(vmath.vector3(m.L, bot, 0), vmath.vector3(bw, 3, 0), COL_GREEN))
+    -- Anchored WEST so a width change grows/shrinks from the left edge on its
+    -- own, without repositioning it every frame alongside the resize.
+    gui.set_pivot(fill, gui.PIVOT_W)
+    d._bar = { node = fill, w = bw, alpha = a }
+    apply_banner_bar(d)
 end
 
 -- ── Rendering ─────────────────────────────────────────────────────────────────
@@ -226,31 +290,109 @@ local function rebuild(self)
     if not ok then
         print("[INCOMING] draw error: " .. tostring(err))
         clear(self)
+        -- And DROP it. clear() alone leaves self.dialog set with no buttons in
+        -- it, and on_input reads that as "a full dialog is up, swallow every
+        -- tap" — an invisible modal over the whole app, with nothing on screen
+        -- to explain it and nothing to press to get rid of it.
+        --
+        -- Losing one request to a draw error is a small, honest failure. The
+        -- opponent gets their answer from the server's own timeout.
+        self.dialog = nil
+        app_state.modal_close("incoming")
     end
 end
 
 -- ── Dialog lifecycle ──────────────────────────────────────────────────────────
+-- Banner wording for a PLAIN game request, which normally never needs any: it
+-- gets the full dialog, and the dialog composes its own copy from the fields.
+-- Used only when the input budget has run out and the challenge is being shown
+-- on the non-blocking strip instead (see modules/incoming_budget.lua).
+local function plain_banner_text(d)
+    local amt = tonumber((d.stake or {}).amount) or 0
+    return "GAME REQUEST  -  " .. tostring(d.name or "A PLAYER"):upper(),
+           amt > 0 and (commas(amt * 2) .. " Coins pot") or "Practice Mode"
+end
+
 -- `d` is the request as it should be shown:
 --   { name, stake, request_id, avatar, opponent_id, h2h, banner, title, desc }
 -- A table rather than nine positional arguments — the last three exist only for
 -- the banner, and threading them through as trailing nils was how the old
 -- signature grew unreadable.
 local function open_dialog(self, d)
+    -- REPLACING an unanswered request.
+    --
+    -- A second request arriving before the first is answered overwrites
+    -- self.dialog, and the player never sees the first one again. Leaving its
+    -- request_id unanswered means the opponent sits watching a spinner until
+    -- the server's own timeout expires — for a request that vanished off this
+    -- screen seconds ago. Decline it now: that is what would have happened at
+    -- its own 10-second mark anyway, just sooner and honestly.
+    --
+    -- Not for a cup invitation: it has no socket request behind it, and
+    -- nobody is waiting on the answer.
+    local prev = self.dialog
+    if prev and not prev.cup_invite and prev.request_id and prev.request_id ~= ""
+       and prev.request_id ~= d.request_id then
+        pcall(ws.decline_game_request, prev.request_id)
+    end
+
+    -- A cup invitation runs on a different clock: nobody is sitting waiting on
+    -- the answer, so it gets a long window and, crucially, expires by HIDING
+    -- rather than by answering (see update()).
+    local window = d.cup_invite and CUP_BANNER_SECONDS or 10
+
+    -- Which surface. Tournament / battle / cup invites are always the banner.
+    -- A plain game request is normally the full modal dialog — unless this
+    -- overlay has already been holding the app's input for too long, in which
+    -- case it drops to the banner as well so the rest of the app keeps working
+    -- through the burst.
+    local as_banner = budget.surface(self.budget, d.banner and true or false)
+        == "banner"
+    local title, desc = d.title, d.desc
+    if as_banner and not d.banner and not title then
+        title, desc = plain_banner_text(d)
+    end
+
     self.dialog = {
         kind = "incoming",
         name = d.name, stake = d.stake or {}, request_id = d.request_id,
-        avatar = tonumber(d.avatar) or 1, time_left = 10, max_time = 10,
+        avatar = tonumber(d.avatar) or 1, time_left = window, max_time = window,
         opponent_id = d.opponent_id and tostring(d.opponent_id) or nil, h2h = d.h2h,
         -- Tournament / battle / knockout invites render as the top banner; a
-        -- plain game request always gets the full dialog (set in on_message).
-        banner = d.banner and true or false,
-        title = d.title, desc = d.desc,
+        -- plain game request gets the full dialog (set in on_message) until the
+        -- input budget demotes it.
+        banner = as_banner,
+        title = title, desc = desc,
+        championship = d.championship and true or false,
+        -- Team cup invitation: no request_id, answered over HTTP rather than
+        -- the socket, and never auto-declined.
+        cup_invite = d.cup_invite and true or false,
+        cup_id = d.cup_id,
+        accept_label = d.accept_label, decline_label = d.decline_label,
     }
-    self.dlg_alpha = 0
-    -- Claim top input priority. The FULL dialog is modal, so nothing beneath
-    -- it may act on a tap; the top banner is deliberately non-disruptive and
-    -- makes no claim, letting whatever is underneath carry on.
-    if not self.dialog.banner then app_state.modal_open("incoming") end
+    self.dlg_alpha = 1
+    -- Claim top input priority, or RELEASE it. Both directions, every time.
+    --
+    -- This used to only ever claim, and that is what froze the app.
+    --
+    -- A full dialog claims "incoming" in the modal registry. A banner
+    -- deliberately does not, because it is non-disruptive and play carries on
+    -- underneath it. But when a banner REPLACED a full dialog — a tournament
+    -- invite landing while a plain game request was still on screen, which is
+    -- exactly what happens when requests arrive in a burst — the claim from
+    -- the dialog it replaced was left standing.
+    --
+    -- Every screen in the app begins its on_input with
+    -- `if app_state.input_blocked() then return false end`, and that is true
+    -- while ANY claim is held. So the visible thing was a banner that lets
+    -- taps through, and the actual state was: nothing anywhere responds. No
+    -- error, nothing on screen to explain it, and no way out but restarting
+    -- the app.
+    if self.dialog.banner then
+        app_state.modal_close("incoming")
+    else
+        app_state.modal_open("incoming")
+    end
     -- Audible cue when an opponent's challenge arrives. EVERY incoming request
     -- (normal, battle, tournament, knockout — full dialog or top banner) uses
     -- the same request.ogg cue (snd_notify on the sibling controller object).
@@ -270,6 +412,9 @@ function init(self)
     msg.post(".", "acquire_input_focus")
     gui.set_render_order(15)
     self.nodes, self.buttons, self.dialog, self.dlg_alpha = {}, {}, nil, 0
+    -- How long this overlay has been blocking the app, and whether it is
+    -- currently serving a burst on the non-blocking surface.
+    self.budget = budget.new()
     refresh_wh()
 
     -- WS callbacks run in the socket owner's (controller) context — post back to
@@ -292,6 +437,33 @@ function init(self)
         ws.on("game_start", function()
             msg.post(ME, "incoming_clear", {})
         end),
+        -- Team cups. The invitation is a decision, so it takes the same banner
+        -- an incoming tournament request takes; a join is ambient news about a
+        -- cup you are already in, so it takes a toast and nothing else.
+        --
+        -- Both post back to ME rather than acting here: these callbacks run in
+        -- the socket owner's context, and building the banner from there would
+        -- touch gui.* from the wrong script.
+        ws.on("cup_invite", function(d)
+            msg.post(ME, "cup_invite", {
+                cup_id  = tostring((d or {}).cupId or ""),
+                name    = tostring((d or {}).name or "Team Cup"),
+                owner   = tostring((d or {}).ownerUsername or ""),
+                avatar  = tonumber((d or {}).ownerAvatar) or 1,
+                prize   = tonumber((d or {}).grandPrize) or 0,
+                members = tonumber((d or {}).members) or 0,
+                max     = tonumber((d or {}).maxPlayers) or 0,
+            })
+        end),
+        ws.on("cup_event", function(d)
+            msg.post(ME, "cup_event", {
+                event   = tostring((d or {}).event or ""),
+                name    = tostring((d or {}).name or "the cup"),
+                who     = tostring((d or {}).actorUsername or "A player"),
+                members = tonumber((d or {}).members) or 0,
+                max     = tonumber((d or {}).maxPlayers) or 0,
+            })
+        end),
     }
 end
 
@@ -303,16 +475,80 @@ function update(self, dt)
     -- Countdown ALWAYS runs (no _active gate): this overlay is live on every
     -- screen, so the dialog fade-in + 10s auto-decline must advance regardless
     -- of which screen is showing underneath.
+    -- WATCHDOG. Nothing on screen must never mean nothing responds.
+    --
+    -- The claim above and every close() below are meant to keep these two in
+    -- step, and the paths that broke it are fixed. This is here anyway,
+    -- because the cost of the two disagreeing is not a glitch — it is an app
+    -- that accepts no input at all, on any screen, with nothing visible to
+    -- explain it and no recovery but a restart. That is worth one comparison
+    -- per frame.
+    --
+    -- Deliberately one-directional: it only ever RELEASES a claim nothing is
+    -- showing for. Claiming from here would paper over a genuine bug in
+    -- open_dialog instead of leaving it to be found.
+    if not self.dialog and app_state.modals and app_state.modals["incoming"] then
+        print("[INCOMING] releasing a stale modal claim with no dialog on screen")
+        app_state.modal_close("incoming")
+    end
+
+    -- The other direction of the same failure: a dialog that IS set but has no
+    -- buttons in it. on_input reads that as "modal is up, swallow every tap"
+    -- while there is nothing on screen and nothing to press — the app is dead
+    -- until the countdown expires. rebuild() drops the dialog on a draw error
+    -- now, so this should never fire; it costs one comparison a frame and the
+    -- thing it catches costs a restart.
+    if self.dialog and not self.dialog.banner and #(self.buttons or {}) == 0 then
+        print("[INCOMING] dropping a full dialog that has no buttons to press")
+        self.dialog = nil
+        app_state.modal_close("incoming")
+    end
+
+    -- THE INPUT BUDGET.
+    --
+    -- Each request gets its own countdown, but a burst restarts that countdown
+    -- over and over, and the modal claim underneath is held the whole time —
+    -- which is an app that accepts no input at all for as long as challenges
+    -- keep arriving. Past the budget the overlay demotes to the top banner:
+    -- every invite is still shown and still acceptable, and everything behind
+    -- it works again.
+    local showing = self.dialog and (self.dialog.banner and "banner" or "dialog") or nil
+    if budget.tick(self.budget, dt, showing) == "demote" then
+        print("[INCOMING] input held too long by a burst of requests - "
+            .. "switching to the non-blocking banner")
+        self.dialog.banner = true
+        if not self.dialog.title then
+            self.dialog.title, self.dialog.desc = plain_banner_text(self.dialog)
+        end
+        app_state.modal_close("incoming")
+        rebuild(self)
+    end
+
     if self.dialog then
-        self.dlg_alpha = math.min(1, (self.dlg_alpha or 0) + dt * 4)
+        local need_reb = false
+
         self.dialog.time_left = (self.dialog.time_left or 10) - dt
+
+        -- Every frame, independent of need_reb below — see apply_banner_bar.
+        if self.dialog.banner then apply_banner_bar(self.dialog) end
+
+        local cur_sec = math.floor(math.max(0, self.dialog.time_left))
+        if cur_sec ~= self.dialog._last_sec then
+            self.dialog._last_sec = cur_sec
+            need_reb = true
+        end
+
         if self.dialog.time_left <= 0 then
-            if self.dialog.request_id and self.dialog.request_id ~= "" then
+            if not self.dialog.cup_invite
+               and self.dialog.request_id and self.dialog.request_id ~= "" then
                 ws.decline_game_request(self.dialog.request_id)
             end
             self.dialog = nil
+            app_state.modal_close("incoming")
+            need_reb = true
         end
-        rebuild(self)
+
+        if need_reb then rebuild(self) end
     end
 end
 
@@ -378,6 +614,50 @@ function on_message(self, message_id, message)
         })
 
 
+    elseif message_id == hash("cup_invite") then
+        -- Never over a live one. A game request has ten seconds and an opponent
+        -- waiting on the other end; an invitation to a cup that fills over
+        -- hours can wait for the next IDENTIFY replay, which is guaranteed.
+        if self.dialog then return end
+        local cup_id = tostring((message or {}).cup_id or "")
+        if cup_id == "" then return end
+
+        local prize = tonumber(message.prize) or 0
+        local seats = ""
+        if (tonumber(message.max) or 0) > 0 then
+            seats = string.format("   -   %d/%d players", tonumber(message.members) or 0, tonumber(message.max) or 0)
+        end
+
+        open_dialog(self, {
+            name          = message.name,
+            avatar        = message.avatar,
+            banner        = true,
+            cup_invite    = true,
+            cup_id        = cup_id,
+            title         = "TEAM CUP  -  " .. (message.owner ~= "" and tostring(message.owner):upper() or "INVITATION"),
+            desc          = (prize > 0 and (commas(prize) .. " Coins prize") or "Team cup invitation") .. seats,
+            accept_label  = "JOIN",
+            -- Not DECLINE. There is no decline endpoint for an invitation and
+            -- there should not be one — putting the banner away is not the
+            -- same as turning the cup down, and the tile still carries it.
+            decline_label = "LATER",
+        })
+
+    elseif message_id == hash("cup_event") then
+        -- Ambient news about a cup this player is already in. No decision, so
+        -- no banner: a toast, and it never interrupts whatever they are doing.
+        local who  = tostring((message or {}).who or "A player")
+        local name = tostring((message or {}).name or "the cup")
+        local max  = tonumber(message.max) or 0
+        local seats = max > 0 and string.format(" (%d/%d)", tonumber(message.members) or 0, max) or ""
+        if message.event == "STARTED" then
+            toast.success(name .. " has started - good luck!")
+        elseif message.event == "JOINED" then
+            toast.info(who .. " joined " .. name .. seats)
+        elseif message.event == "LEFT" then
+            toast.info(who .. " left " .. name .. seats)
+        end
+
     elseif message_id == hash("incoming_clear") then
         -- Clear if the event targets the dialog we're showing (or carries no id).
         local rid = message and message.request_id
@@ -398,15 +678,46 @@ function on_input(self, action_id, action)
             local b = self.buttons[i]
             if gui.pick_node(b.node, action.x, action.y) then
                 local id = b.id
+                local cup = self.dialog and self.dialog.cup_invite and self.dialog.cup_id or nil
                 if id == "accept" then
-                    if self.dialog and self.dialog.request_id and self.dialog.request_id ~= "" then
+                    if cup then
+                        -- Joining a cup is an HTTP call, not a socket message:
+                        -- the cup is owned by the tournament controller, and
+                        -- the accept endpoint is the same one the lobby tile
+                        -- uses. Answered with a toast either way — the banner
+                        -- is already gone by the time the reply lands.
+                        local uid = tostring(ws.get_current_user_id() or "")
+                        api.accept_team_invitation(cup, uid, function(res)
+                            if res.success then
+                                local t = (res.data or {}).tournament or {}
+                                local u = ws.current_user_data or {}
+                                u.myTeamTournamentId = t._id or cup
+                                u.myTeamTournamentIsOwner = false
+                                ws.current_user_data = u
+                                toast.success("You're in " .. tostring(t.name or "the cup") .. "!")
+                                -- The server's JOINED broadcast deliberately
+                                -- skips the joiner, so nothing else would tell
+                                -- the tile behind this banner that its numbers
+                                -- moved.
+                                pcall(msg.post, "#lobby", "cups_changed")
+                            else
+                                toast.error((res.data and res.data.error) or res.message
+                                    or "Could not join that cup.")
+                            end
+                        end)
+                    elseif self.dialog and self.dialog.request_id and self.dialog.request_id ~= "" then
                         ws.accept_game_request(self.dialog.request_id)
                     end
                     self.dialog = nil
                     app_state.modal_close("incoming")
                     rebuild(self)
                 elseif id == "decline" then
-                    if self.dialog and self.dialog.request_id and self.dialog.request_id ~= "" then
+                    -- LATER on a cup invitation sends nothing at all. There is
+                    -- no decline endpoint and there should not be one: the
+                    -- invitation stays on the TEAM CUPS tile, and putting a
+                    -- banner away is not the same as turning an invitation
+                    -- down.
+                    if not cup and self.dialog and self.dialog.request_id and self.dialog.request_id ~= "" then
                         ws.decline_game_request(self.dialog.request_id)
                     end
                     self.dialog = nil

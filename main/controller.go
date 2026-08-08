@@ -95,6 +95,10 @@ components {
   component: "/main/announcement.gui"
 }
 components {
+  id: "promo_banner"
+  component: "/main/promo_banner.gui"
+}
+components {
   id: "toast"
   component: "/main/toast.gui"
 }

@@ -36,10 +36,9 @@ function M.avatar()
 	return s.avatar
 end
 
--- Has the user completed the Akira install/consent flow?
+-- Has the user completed the Akira install/consent flow? (Always true now)
 function M.installed()
-	local s = load_state()
-	return s.agreed == true
+	return true
 end
 
 function M.set_installed()

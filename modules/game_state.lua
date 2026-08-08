@@ -57,6 +57,13 @@ function M.destroy_all(self)
     if self.cutting_card then pcall(go.delete, self.cutting_card.id); self.cutting_card = nil end
     self.deck, self.player_hand, self.ai_hand, self.played_cards = {}, {}, {}, {}
 
+    -- Cards released to the pool (card_view.lua's release_card/take_card —
+    -- currently just the deck's shrink path) are hidden, not deleted, for as
+    -- long as the board is alive. The board itself ending is the one point
+    -- they really do go away.
+    purge(self._card_pool)
+    self._card_pool = {}
+
     -- Tear down any 4-player tournament seat visuals + state.
     if self.t4 then
         for _, s in ipairs(self.t4.seats or {}) do purge(s.cards) end
