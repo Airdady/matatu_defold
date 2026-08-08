@@ -27,7 +27,15 @@ function init(self)
         go.set("#sprite", "image", self.atlas_whot)
         return
     end
-    local set = (app.get_theme() or {}).card_set or "default"
+    -- Prefer the match-shared theme (set from the backend's gameState.theme
+    -- for the duration of the current online match, see app_state.lua) over
+    -- the player's own local menu preference, so both sides of a match
+    -- render identical card art. Falls back to the local preference (and
+    -- ultimately "default") whenever there is no active match — app.get_theme()
+    -- already handles that fallback for a nil/unknown app.theme.
+    local theme_id = app.match_theme
+    local theme = (theme_id and app.THEMES[theme_id]) or app.get_theme()
+    local set = (theme or {}).card_set or "default"
     if set == "drago" then
         go.set("#sprite", "image", self.atlas_drago)
     elseif set == "batman" then

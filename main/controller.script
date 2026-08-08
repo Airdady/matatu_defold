@@ -720,6 +720,15 @@ function init(self)
         arm_connect_deadline(self)
         identify_and_connect(cached)
 
+        -- Restore the player's chosen theme from the cached session too.
+        -- route_after_auth (which normally does this) is deliberately never
+        -- called on this boot-time path — see the comment above it — so
+        -- without this, a previously-set theme silently reverted to
+        -- "default" on every cold restart until the player next went
+        -- through a route_after_auth path (fresh login, phone login, or an
+        -- explicit "Play Online" reconnect).
+        app_state.sync_theme_from_user(cached)
+
         -- Mandatory profile fields (avatar/username, and phone number for
         -- Matatu) are re-checked against the CACHED data immediately —
         -- no need to wait on the network round trip above. Without this,
@@ -819,14 +828,25 @@ function init(self)
     end
 
     table.insert(self.tokens, ws.on("game_start", function(gs)
-        if type(gs) == "table" and next(gs) ~= nil then ws.active_game_state = gs end
+        if type(gs) == "table" and next(gs) ~= nil then
+            ws.active_game_state = gs
+            -- Shared match theme (A10 backend field): the heavier of the two
+            -- players' themes, so both clients render identical card art for
+            -- this match. Only stashed when present — an older backend that
+            -- doesn't send it yet simply leaves match_theme untouched/nil and
+            -- card.script falls back to the local menu theme, same as today.
+            if gs.theme then app_state.match_theme = gs.theme end
+        end
         app_state.mode = "online"
         if intercept_for_search(self) then return end
         if self.screen ~= "game" then show(self, "game") else msg.post("#game_logic", "ws_new_game_start") end
     end))
 
     table.insert(self.tokens, ws.on("game_request_accepted", function(gs)
-        if type(gs) == "table" and next(gs) ~= nil then ws.active_game_state = gs end
+        if type(gs) == "table" and next(gs) ~= nil then
+            ws.active_game_state = gs
+            if gs.theme then app_state.match_theme = gs.theme end
+        end
         app_state.mode = "online"
         if intercept_for_search(self) then return end
         local is_round_continuation = (self.screen == "game") and app_state.game_active

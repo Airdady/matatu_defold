@@ -24,8 +24,19 @@ M.offline_game = nil
 -- Stake chosen in the lobby for the next match.
 M.selected_stake = { amount = 0, charge = 0, points = 0 }
 
--- Active theme name (matches THEMES table keys).
+-- Active theme name (matches THEMES table keys). This is the player's own
+-- MENU preference — never overwritten by match_theme below.
 M.theme = "default"
+
+-- Shared, match-scoped theme override. Set from gameState.theme the moment a
+-- match's initial state arrives (see main/controller.script's "game_start"/
+-- "game_request_accepted" websocket handlers) — the backend picks the
+-- higher-priced ("heavier") of the two players' themes so both clients render
+-- the same card art for that match. nil outside an active match, in which
+-- case card.script falls back to the local M.theme. Cleared when the game
+-- screen is left (main/game.script's "disable" handler) so it can never leak
+-- into a later offline game or linger as a stale value across matches.
+M.match_theme = nil
 
 -- Auth state for the GPGS (Google Play Game Services) flow.
 -- "idle" | "sending" | "verifying" | "done" | "error"
