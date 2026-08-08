@@ -855,7 +855,9 @@ local function parse_message(json_string)
     emit("player_disconnected", {
       reason = d.reason or "Unknown",
       grace = tonumber(d.gracePeriod) or 30,
-      player_id = tostring(d._id or d.playerId or d.userId or ""),
+      -- Backend sends the id as data.disconnectedPlayer (matatu-api's field
+      -- name); the other keys are kept as fallbacks.
+      player_id = tostring(d.disconnectedPlayer or d._id or d.playerId or d.userId or ""),
     })
   elseif t == "PLAYER_RECONNECTED" then
     local gs = M.extract_game_state(d)
