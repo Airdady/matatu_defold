@@ -1,5 +1,6 @@
 local M = {}
 local akira = require("modules.akira")
+local app_state = require("modules.app_state")
 
 local C_WHITE       = vmath.vector4(1.0, 1.0, 1.0, 1.0)
 local C_SKIP_TEXT   = vmath.vector4(0.90, 0.91, 0.92, 1.0)
@@ -241,9 +242,16 @@ function M.set_conn_overlay(self, opts)
             gui.set_enabled(self.conn_count, false)
             gui.set_text(self.conn_count, "")
         end
+        -- Claim the "network" modal slot so app.input_blocked() (checked first
+        -- thing in game.script's on_input) swallows board taps for us — the
+        -- same mechanism game over/incoming-request dialogs use. Without this
+        -- the scrim was purely visual: a player could still touch cards while
+        -- the opponent (or they themselves) showed as disconnected.
+        app_state.modal_open("network")
     else
         gui.set_enabled(self.conn_scrim, false)
         self.conn_count_active = false
+        app_state.modal_close("network")
     end
 end
 
