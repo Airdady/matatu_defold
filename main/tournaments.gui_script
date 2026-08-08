@@ -6,6 +6,7 @@ local app_state     = require("modules.app_state")
 local ws            = require("modules.websocket_manager")
 local screen        = require("modules.screen")
 local dialog_search = require("modules.dialog_search")
+local api           = require("modules.api_service")
 
 -- Palette shared with the search dialog (mirrors online.gui_script's C table).
 local DLG_COLORS = {
@@ -450,7 +451,18 @@ update_play_button = function(self)
         gui.set_enabled(self.play_lock_node, true)
         self.play_disabled = true
     else
-        if self.current_level_index == 0 then
+        -- current_level_index == 0 is ALSO true for a player who already
+        -- joined and paid but hasn't won level 1 yet — backend_lvl is 1
+        -- either way (see rebuild_body). Showing the entry-fee coin/lock
+        -- styling there told an already-joined returning player to pay
+        -- again, which is exactly the bug the PLAY handler below was fixed
+        -- for — the button has to agree with it. userProgress.status is the
+        -- same "active row already exists" signal the server's own
+        -- ensureJoined checks (joinService.ts), sent down in every
+        -- tournament this user is on (see handleNearbyPlayers.ts).
+        local up = t.userProgress or {}
+        local already_joined = up.status == "active"
+        if self.current_level_index == 0 and not already_joined then
             gui.set_text(self.play_txt_node, commas(stake.amount or 0))
             gui.set_enabled(self.play_coin_node, true)
             gui.set_enabled(self.play_lock_node, true)
@@ -1013,18 +1025,27 @@ local function execute_jump_and_play(self, d)
     end
 end
 
--- NO MORE FREELANCERS, WITHOUT A SEPARATE JOIN ROUND-TRIP.
+-- THE JOIN IS CONFIRMED BY THE SERVER BEFORE ANYTHING IS SHOWN, ONCE.
 --
--- The first PLAY tap on the ladder used to send a JOIN_TOURNAMENT message and
--- wait for the server's confirmation before doing anything else — an extra
--- request/response the rest of this screen's flow never needed. The server
--- no longer requires that: handleTournamentRequest now joins (and charges)
--- the player itself, transparently, the moment it sees they have no active
--- tournamentProgress row for the tournament — see ensureJoined in
--- be_matatu's tournaments/index.ts. So this goes back to exactly what a tap
--- on any other level already does: deduct locally, animate it, and go
--- straight into the jump/search flow. The server's charge is the one that
--- actually happens; this is just what the player sees happen.
+-- This used to deduct+animate locally whenever current_level_index == 0 —
+-- a guess at "this is the player's first attempt at level 1" that the
+-- server's own idempotent join (ensureJoined, be_matatu's joinService.ts)
+-- never agreed with: current_level_index reads 0 both for a player who has
+-- never joined AND for one who already joined and paid but hasn't won level
+-- 1 yet. So a player who tapped PLAY, found no opponent, and tapped PLAY
+-- again got a SECOND local coin animation for a charge the server only ever
+-- took once — the balance shown on screen kept dropping while the real one
+-- didn't. Reported as "the balance only drops on the frontend, the backend
+-- stays the same."
+--
+-- Fixed by asking first instead of guessing: POST /tournaments/:id/join
+-- runs the exact same ensureJoined and reports back exactly what happened —
+-- charged or not, and the real resulting balance. Only THEN, once that is
+-- known, does anything animate or move: charged > 0 plays the coin burst
+-- (using the server's own charged/newBalance, never a locally computed
+-- guess), charged == 0 skips straight to the jump/search flow — which is
+-- also why "no opponent found, tap PLAY again" costs nothing a second time,
+-- and why a returning player who already joined earlier just presses PLAY.
 local function handle(self, b)
     if b.id == "back" then
         -- Plain navigation back to the online lobby. Leaving the map harms
@@ -1036,28 +1057,62 @@ local function handle(self, b)
 
         local d = b.data or {}
         local u = ws.current_user_data or {}
-        local cost = tonumber(d.stake.amount) or 0
-        local balance = tonumber(u.balance) or 0
+        local user_id = tostring(u._id or "")
+        local tournament_id = tostring(d.id or "")
 
-        if self.current_level_index == 0 then
-            if balance < cost then
-                msg.post("main:/controller", "show_transaction_modal")
+        if tournament_id == "" or user_id == "" then
+            -- Nothing to confirm a join against (no tournament/session) —
+            -- fall through to the ordinary flow rather than stranding the
+            -- player on a locked button. Matches what always ran here for a
+            -- return visit anyway.
+            execute_jump_and_play(self, d)
+            return
+        end
+
+        -- Locked for the round trip, same as any other in-flight request on
+        -- this screen — a second tap while this is pending must not fire a
+        -- second join call.
+        self.play_disabled = true
+        self.is_moving = true
+
+        api.join_championship(tournament_id, user_id, function(result)
+            -- Not moving into the jump/search flow yet either way — that
+            -- only starts once we know what actually happened.
+            self.is_moving = false
+
+            if not result.success then
+                self.play_disabled = false
+                local data = type(result.data) == "table" and result.data or {}
+                local err_msg = tostring(data.error or "")
+                if err_msg:match("[Ii]nsufficient") or err_msg == "" then
+                    msg.post("main:/controller", "show_transaction_modal")
+                end
+                -- Anything else (tournament/user not found, "still
+                -- processing") just re-enables the button — the next
+                -- rebuild (or the player's own retry) sorts it out; there is
+                -- nothing this screen can locally correct itself.
                 return
             end
 
-            -- Deduct entry fee immediately upon starting the tournament climb
-            if cost > 0 then
-                u.balance = math.max(0, balance - cost)
-                if self.top_left_balance_lbl then gui.set_text(self.top_left_balance_lbl, commas(u.balance)) end
-                play_deduction_animation(self)
+            local data = result.data or {}
+            local charged = tonumber(data.charged) or 0
+            local new_balance = tonumber(data.newBalance)
+            if new_balance then
+                u.balance = new_balance
+                if self.top_left_balance_lbl then gui.set_text(self.top_left_balance_lbl, commas(new_balance)) end
             end
-            self.play_disabled = true
-            self.is_moving = true -- Lock UI inputs
 
-            execute_jump_and_play(self, d)
-        else
-            execute_jump_and_play(self, d)
-        end
+            self.play_disabled = true
+            self.is_moving = true -- Lock UI inputs through the jump/search flow
+
+            if charged > 0 then
+                play_deduction_animation(self, function()
+                    execute_jump_and_play(self, d)
+                end)
+            else
+                execute_jump_and_play(self, d)
+            end
+        end)
     end
 end
 

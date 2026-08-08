@@ -65,8 +65,15 @@ local function opts_for(endpoint)
     -- unescaped it matched nothing and every endpoint read as MISSING.
     local at = code:find('request%("%u+", "' .. endpoint:gsub("%-", "%%-"))
     if not at then return "MISSING" end
-    -- The call's own text, to its terminating paren-line.
-    local chunk = code:sub(at, at + 400)
+    -- The call's own text — bounded by the START OF THE NEXT request() call,
+    -- not a flat character count. Some of these calls are one line
+    -- (create_tournament); others wrap a callback across several (device/
+    -- phone login, whose retries option sits on the LAST line, past any
+    -- fixed line or character cutoff short enough to also exclude a
+    -- neighbouring function). Stopping at the next call's own opening is
+    -- exact either way.
+    local next_call = code:find('request%(', at + 10)
+    local chunk = code:sub(at, next_call and (next_call - 1) or (at + 1000))
     return chunk:find("retries", 1, true) ~= nil and "retries" or "none"
 end
 
@@ -78,7 +85,21 @@ check("    /auth/link-phone retries", opts_for("/auth/link-phone"), "retries")
 print("  and the ones where a repeat could cost a player twice:")
 check("    /payments does NOT", opts_for("/payments"), "none")
 check("    /themes/purchase does NOT", opts_for("/themes/purchase"), "none")
-check("    /tournaments does NOT", opts_for("/tournaments"), "none")
+check("    /tournaments (create) does NOT", opts_for("/tournaments"), "none")
+
+-- The championship JOIN is a different animal from creating a tournament —
+-- ensureJoined is idempotent server-side (a repeat reports charged: 0
+-- rather than charging again), so it belongs with the find-or-create group
+-- above, not this one. Checked separately: opts_for's prefix match on
+-- "/tournaments" only ever finds the FIRST such call (create_tournament),
+-- so it can't see this one at all.
+do
+    local at = code:find('request%("POST", "/tournaments/" %.%. tournament_id %.%. "/join"')
+    local next_call = at and code:find('request%(', at + 10)
+    local chunk = at and code:sub(at, next_call and (next_call - 1) or (at + 200))
+    check("    /tournaments/:id/join DOES retry — it's idempotent, not a create",
+        chunk ~= nil and chunk:find("retries", 1, true) ~= nil, true)
+end
 
 print("")
 print("THE TUNNEL'S OTHER FAILURE MODE IS CLOSED OFF TOO")

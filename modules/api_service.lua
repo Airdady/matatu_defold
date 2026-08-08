@@ -454,6 +454,24 @@ function M.update_tournament(tournament_id, payload, cb)
     request("PUT", "/tournaments/" .. tournament_id, payload, cb)
 end
 
+-- THE GLOBAL CHAMPIONSHIP JOIN — CONFIRMED, ONCE.
+--
+-- Was folded silently into the WS matchmaking request, so the client had no
+-- way to know whether a PLAY tap actually charged anything and fell back to
+-- a local guess — which drifted from the server's own idempotent join the
+-- moment a player tapped PLAY more than once at the same level. See
+-- main/tournaments.gui_script's PLAY handler for the client side of the fix:
+-- call this FIRST, animate a coin deduction only when result.data.charged is
+-- nonzero, then send the ordinary matchmaking request.
+--
+-- Retried like phone_login/link_phone above, for the same reason: this is
+-- find-or-charge-once, not charge-every-call — a response lost on the way
+-- home and retried finds the join the lost one already made (charged: 0,
+-- alreadyJoined: true) rather than charging a second time.
+function M.join_championship(tournament_id, user_id, cb)
+    request("POST", "/tournaments/" .. tournament_id .. "/join", { userId = user_id }, cb, { retries = 2 })
+end
+
 -- Team Tournaments — player-created, owner-funded multi-level brackets.
 -- payload = { userId, name?, grandPrizeCoins, maxPlayers, gamesPerLevel,
 --             invitationCode?, inviteUsernames? }
