@@ -35,7 +35,8 @@ default_texture_mag_filter = linear
 [android]
 package = com.matatu.nap
 input_method = INPUT_METHOD_HIDDEN
-minimum_sdk_version = 23
+minimum_sdk_version = 21
+target_sdk_version = 36
 
 [firebase]
 project_id = matatu-7aba6

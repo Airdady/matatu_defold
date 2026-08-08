@@ -442,6 +442,13 @@ local function rebuild(self)
     pcall(gui.play_flipbook, deco, hash("diamonds"))
     gui.set_color(deco, vmath.vector4(0.5, 0.5, 0.5, 1))
 
+    -- Small, unobtrusive build version label — previously only shown inside
+    -- the forced-update modal and a support deep-link, never on the normal
+    -- lobby screen itself.
+    local n_ver = track(self, ui.text(vmath.vector3(grid_l, EDGE_B + 6, 0), "v" .. tostring(config.APP_VERSION), "small", vmath.vector4(0.45, 0.45, 0.45, 0.8)))
+    set_pivot(n_ver, gui.PIVOT_SW)
+    pcall(gui.set_scale, n_ver, vmath.vector3(0.7, 0.7, 1))
+
     -- -----------------------------------------------------------------------
     -- Draw Active Overlays on top of the main Lobby UI
     -- -----------------------------------------------------------------------
