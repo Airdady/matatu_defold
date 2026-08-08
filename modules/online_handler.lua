@@ -1042,7 +1042,21 @@ function M.handle_single_move(self, move_data, new_state, done)
             end)
         end)
     else
-        M.finalize_state_sync(self, new_state, function() done() end)
+        -- Our own ordinary move, with no actions to replay (a plain
+        -- TIMER_UPDATE never reaches here at all — see ws_game_move; this is
+        -- specifically the quiet full-state MOVE the backend sends when OUR
+        -- own draw picked a card the server's deck no longer had at that
+        -- position — same count, different identity, so not a rule
+        -- violation and never worth the disruptive RESYNC/"SYNCING BOARD"
+        -- path). We already animated locally with whatever card we guessed;
+        -- reconcile player_hand against server truth now so a stale guess
+        -- doesn't sit there being unplayable (server never finds it in hand)
+        -- until some later, unrelated resync happens to catch it. Safe to
+        -- call unconditionally — sync_my_hand is a no-op multiset diff when
+        -- the two hands already agree, which is the common case.
+        M.finalize_state_sync(self, new_state, function()
+            sync_my_hand(self, self.game_state or new_state or {}, done)
+        end)
     end
 end
 
