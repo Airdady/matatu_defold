@@ -629,7 +629,12 @@ function init(self)
     --      that was interrupted (app killed or backgrounded mid-flow) —
     --      checkForUpdate() routes that case to resumeUpdate().
     window.set_listener(function(_, event)
+        if event == window.WINDOW_EVENT_FOCUS_LOST then
+            ws.on_app_focus_lost()
+            return
+        end
         if event ~= window.WINDOW_EVENT_FOCUS_GAINED then return end
+        ws.on_app_focus_gained()
         if gameservices then pcall(gameservices.check_update) end
 
         -- Coming back to the foreground is the single best moment to retry a

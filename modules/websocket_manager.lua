@@ -45,6 +45,7 @@ local current_reconnect_delay = config.INITIAL_RECONNECT_DELAY
 local pending_identity = nil
 local keep_alive_handle = nil
 local reconnect_handle = nil
+local last_pause_time = nil
 
 -- Wall-clock (seconds) of the last inbound traffic on the socket. Used by the
 -- zombie-connection watchdog. socket.gettime() is a Defold/luasocket global.
@@ -747,6 +748,50 @@ function M.disconnect()
   connection = nil
   M.socket_connected = false
   M.is_identified = false
+end
+
+-- ── app focus (background/foreground) ─────────────────────────────────────
+-- Ported from matatu-gdt's _notification()/_handle_app_resume(): mobile OSes
+-- suspend sockets (and Defold's own timers, so the zombie watchdog above
+-- doesn't tick) while the app is backgrounded, so a connection that looked
+-- fine on the way out can be silently dead by the time the player comes
+-- back. The caller is controller.script's window.set_listener, the app's
+-- one registered focus listener.
+function M.on_app_focus_lost()
+  last_pause_time = now_s()
+end
+
+function M.on_app_focus_gained()
+  local time_away = last_pause_time and (now_s() - last_pause_time) or 0
+  last_pause_time = nil
+
+  if time_away > config.MAX_BACKGROUND_TIME_BEFORE_RESET then
+    print(string.format("[WS] backgrounded for %.1fs — forcing fresh reconnect", time_away))
+    if connection and websocket then pcall(websocket.disconnect, connection) end
+    if M.socket_connected or is_connecting then
+      -- Runs the normal teardown/emit path, which also arms the usual
+      -- backoff reconnect timer — cancelled below in favor of connecting
+      -- right now instead of waiting it out.
+      on_disconnected("app_resume_stale")
+    end
+    if reconnect_handle then timer.cancel(reconnect_handle); reconnect_handle = nil end
+    reconnect_attempts = 0
+    current_reconnect_delay = config.INITIAL_RECONNECT_DELAY
+    if not M.update_required then M.connect() end
+    return
+  end
+
+  if not M.socket_connected or not connection then
+    print("[WS] socket not connected on resume — reconnecting")
+    if not is_connecting and not M.update_required then M.connect() end
+  else
+    -- Short pause: the link is probably fine. Reset the zombie clock (a
+    -- backgrounded app gets no inbound traffic either, so `last_rx_time`
+    -- would otherwise already read as stale) and nudge a ping right away
+    -- instead of waiting for the next keep-alive tick.
+    last_rx_time = now_s()
+    websocket.send(connection, json_util.encode({ type = "CLIENT_PING", timestamp = os.time() }))
+  end
 end
 
 function M.get_active_game() return M.active_game_state end

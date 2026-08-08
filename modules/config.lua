@@ -83,6 +83,14 @@ M.RECONNECT_BACKOFF = 1.5
 M.MAX_RECONNECT_ATTEMPTS = 50
 M.KEEP_ALIVE_INTERVAL = 4.0
 M.ZOMBIE_TIMEOUT = 13.0
+-- Max time (seconds) the app can sit backgrounded before a resume forces a
+-- fresh reconnect instead of trusting the existing socket — matches
+-- matatu-gdt's MAX_BACKGROUND_TIME_BEFORE_RESET. Mobile OSes routinely
+-- suspend sockets (and Defold's own timers) while backgrounded, so a
+-- connection that looked fine when the app was minimized can be silently
+-- dead by the time it's foregrounded again; the zombie watchdog alone would
+-- only notice on its next tick, which doesn't run while paused.
+M.MAX_BACKGROUND_TIME_BEFORE_RESET = 15.0
 M.TURN_SECONDS = 30
 
 -- The server's own per-turn window: PLAY_TIMEOUT_DURATION in be_matatu's
