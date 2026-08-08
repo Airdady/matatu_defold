@@ -701,12 +701,37 @@ function init(self)
         msg.post("#" .. s, "disable")
     end
 
+    -- FORCE UPDATE, AT COLD START.
+    --
+    -- Was called here and again on every foreground regain (see below) until
+    -- a comment-wording cleanup pass ("improve the code") deleted both call
+    -- sites along with the comments explaining them — gameservices.
+    -- check_update() genuinely stopped running anywhere in the app from that
+    -- point on, which is why the Play In-App Update flow went quiet: the
+    -- native side (gameservices.cpp/InAppUpdateDefold.java) was untouched and
+    -- still fully wired, nothing was ever asking it to check.
+    if gameservices then gameservices.check_update() end
+
     -- Re-check whenever the app comes back to the foreground, not just at
-    -- cold start. Coming back to the foreground is the single best moment
-    -- to retry a failed sign-in: the player has usually just fixed the reason
-    -- it failed (turned wifi on, updated Play Services, added an account, or
-    -- simply moved somewhere with signal). Without this the retry sits on
-    -- its backoff timer, which by then can be a full minute out.
+    -- cold start. Two reasons, both of which used to produce "the update
+    -- didn't show for me":
+    --
+    --   1. getAppUpdateInfo() answers from the Play Store app's cached
+    --      metadata, which refreshes on Play's own schedule. A player who
+    --      opened the app before that refresh got "no update available" and,
+    --      with a single check at cold start, would never be asked again for
+    --      as long as the app stayed resident.
+    --   2. Google requires an onResume check to resume an IMMEDIATE update
+    --      that was interrupted (app killed or backgrounded mid-flow) —
+    --      checkForUpdate() on the Java side routes that case to
+    --      resumeUpdate().
+    --
+    -- Coming back to the foreground is ALSO the single best moment to retry a
+    -- failed sign-in: the player has usually just fixed the reason it failed
+    -- (turned wifi on, updated Play Services, added an account, or simply
+    -- moved somewhere with signal). Without that retry it sits on its backoff
+    -- timer, which by then can be a full minute out. Both belong on this same
+    -- edge and neither replaces the other.
     window.set_listener(function(_, event)
         -- TELL THE SERVER WHETHER THE APP IS ON SCREEN.
         --
@@ -733,6 +758,8 @@ function init(self)
         end
 
         if event ~= window.WINDOW_EVENT_FOCUS_GAINED then return end
+
+        if gameservices then pcall(gameservices.check_update) end
 
         -- COMING BACK WITH A SESSION ALREADY IN HAND.
         --
