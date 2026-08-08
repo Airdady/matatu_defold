@@ -322,6 +322,30 @@ function M.update_tournament(tournament_id, payload, cb)
     request("PUT", "/tournaments/" .. tournament_id, payload, cb)
 end
 
+-- Join (or re-enter) a GLOBAL/multilevel tournament ladder. Charges the entry
+-- stake and marks the caller "active" server-side the moment they press
+-- "Join" — independent of whether an opponent is ever actually found — and
+-- is idempotent: a returning player who is already `status:'active'` gets
+-- `alreadyJoined = true` back with no second charge. See
+-- main/tournaments.gui_script's execute_join_and_play, which gates the
+-- websocket opponent search behind a successful response from this call.
+--
+-- result.data shape on success: { success, alreadyJoined, balance,
+-- tournamentProgress = { tournamentId, status, currentLevel, levels } }.
+-- On failure (e.g. insufficient balance, or this isn't a global tournament):
+-- { success = false, message }, surfaced as result.message by parse_response.
+function M.join_tournament(tournament_id, cb)
+    if not tournament_id or tournament_id == "" then
+        return cb({
+            success     = false,
+            status_code = 0,
+            data        = {},
+            message     = "Tournament ID required"
+        })
+    end
+    request("POST", "/tournaments/" .. tournament_id .. "/join", nil, cb)
+end
+
 -- Team Tournaments — player-created, owner-funded multi-level brackets.
 -- payload = { userId, name?, grandPrizeCoins, maxPlayers, gamesPerLevel,
 --             invitationCode?, inviteUsernames? }

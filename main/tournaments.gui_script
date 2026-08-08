@@ -6,6 +6,8 @@ local app_state     = require("modules.app_state")
 local ws            = require("modules.websocket_manager")
 local screen        = require("modules.screen")
 local dialog_search = require("modules.dialog_search")
+local api           = require("modules.api_service")
+local toast         = require("modules.toast")
 
 -- Palette shared with the search dialog (mirrors online.gui_script's C table).
 local DLG_COLORS = {
@@ -899,8 +901,12 @@ function on_message(self, message_id, message, sender)
             pcall(msg.post, "#snd_found", "play_sound")
             rebuild(self)
 
-            -- Only now, with an opponent actually found, animate the stake
-            -- leaving the balance.
+            -- Legacy path: pending_stake_deduction is no longer set anywhere
+            -- (the level-0 "Join" charge + its deduction animation now fire
+            -- right off a successful api.join_tournament response, in
+            -- execute_join_and_play, instead of waiting all the way until an
+            -- opponent is found here). Left in place, harmless, in case some
+            -- future caller wants a match-found-gated deduction again.
             if self.pending_stake_deduction then
                 local d_cost = self.pending_stake_deduction
                 self.pending_stake_deduction = nil
@@ -918,12 +924,28 @@ function on_message(self, message_id, message, sender)
     end
 end
 
+-- Fires the actual websocket opponent-search request. Split out of
+-- proceed_with_play (below) so callers can send this the INSTANT "Play" is
+-- tapped — in parallel with the cosmetic jump animation — instead of only
+-- after the animation's completion callback (see execute_jump_and_play /
+-- execute_join_and_play, and B6 in the accompanying plan). msg.post is async
+-- either way, so firing it earlier costs nothing and shaves the fixed ~0.6s
+-- animation delay off when the backend actually starts looking.
+local function fire_search_request(self, d)
+    msg.post("#controller", "tournament_play", {
+        tournament_id   = d.id,
+        tournament_name = d.name,
+        stake           = d.stake,
+    })
+end
+
 proceed_with_play = function(self, d)
     self._msg = nil
 
-    -- The pin has finished hopping to the next level. ONLY NOW do we open the
-    -- shared random-opponent request dialog. Release the jump / coin-deduction
-    -- lock so the overlay renders on top of a settled map.
+    -- The pin has finished hopping to the next level (or needed no hop at
+    -- all). ONLY NOW do we open the shared random-opponent request dialog —
+    -- purely the visual reveal. The actual network request was already sent
+    -- by the caller (fire_search_request), not here.
     self.search = {
         active   = true,
         t        = 0,
@@ -952,44 +974,114 @@ proceed_with_play = function(self, d)
         if self.search == sr then fail_search(self, "No opponents available right now") end
     end)
 
-    -- Send the request to the controller FIRST. msg.post is async (the backend
-    -- only sees it next frame), so the dialog still "opens" this same frame — but
-    -- the post can never be stranded behind a dialog rebuild that throws. Posting
-    -- it after rebuild was the regression that stopped the backend request.
-    msg.post("#controller", "tournament_play", {
-        tournament_id   = d.id,
-        tournament_name = d.name,
-        stake           = d.stake,
-    })
-
-    -- …then open the shared random-opponent request dialog.
     rebuild(self)
 end
 
+-- Level > 0 (already active, per-server currentLevel): no HTTP join needed —
+-- joining is idempotent server-side anyway (A2), but this skips that round
+-- trip client-side too. The search request fires immediately, in parallel
+-- with the jump animation when one plays; the animation's completion
+-- callback only handles the visual reveal.
 local function execute_jump_and_play(self, d)
     if is_level_complete(self, self.current_level_index) then
         self.is_moving = true
         self.animating_from = self.current_level_index
         local next_idx = self.current_level_index + 1
-        
+
         -- Dynamically calculate exact pathing points for *any* level
         local ox = CX - (MAP_W * self.scale_factor) / 2
         local oy = CY - (MAP_H * self.scale_factor) / 2
         local s = self.scale_factor
-        
+
         local start_coord = (self.current_level_index == 0) and LANDING or MAP_COORDS[self.current_level_index]
         local end_coord = MAP_COORDS[next_idx] or MAP_COORDS[self.final_index]
-        
+
         local start_pos = vmath.vector3(ox + start_coord.x * s, oy + (MAP_H - start_coord.y) * s, 0)
         local end_pos = vmath.vector3(ox + end_coord.x * s, oy + (MAP_H - end_coord.y) * s, 0)
-        
+
+        fire_search_request(self, d)
+
         animate_jump(self, start_pos, end_pos, function()
             self.current_level_index = next_idx
             proceed_with_play(self, d)
         end)
     else
+        fire_search_request(self, d)
         proceed_with_play(self, d)
     end
+end
+
+-- Level 0 ("Join"): charging + registering "joined" happens through an
+-- explicit HTTP call (api.join_tournament) rather than the websocket search
+-- directly — the search must only start once that join has actually
+-- succeeded server-side (a real charge, or a no-op if the player is already
+-- active). Per B6: the jump animation still starts immediately and plays
+-- regardless of the join outcome (screen responsiveness), but the search
+-- request itself, and the dialog reveal, only fire once BOTH the animation
+-- has finished AND the join has resolved successfully.
+local function execute_join_and_play(self, d)
+    self.is_moving = true
+    self.animating_from = self.current_level_index -- 0
+    local next_idx = self.current_level_index + 1
+
+    local ox = CX - (MAP_W * self.scale_factor) / 2
+    local oy = CY - (MAP_H * self.scale_factor) / 2
+    local s = self.scale_factor
+    local start_coord = LANDING
+    local end_coord = MAP_COORDS[next_idx] or MAP_COORDS[self.final_index]
+    local start_pos = vmath.vector3(ox + start_coord.x * s, oy + (MAP_H - start_coord.y) * s, 0)
+    local end_pos = vmath.vector3(ox + end_coord.x * s, oy + (MAP_H - end_coord.y) * s, 0)
+
+    local jump_done = false
+    local join_ok = nil   -- nil = still pending; true/false once api.join_tournament resolves
+    local join_msg = nil
+
+    local function settle()
+        if not jump_done or join_ok == nil then return end
+        if join_ok then
+            self.current_level_index = next_idx
+            proceed_with_play(self, d)
+        else
+            -- Join failed (e.g. insufficient balance, or the backend rejected
+            -- it): nothing was charged, no level was actually entered. Snap
+            -- back to the pre-tap state and let the player retry instead of
+            -- silently pretending they searched for an opponent.
+            self.is_moving = false
+            self.play_disabled = false
+            self.animating_from = nil
+            toast.error(join_msg or "Could not join the tournament")
+            if self._active then rebuild(self) end
+        end
+    end
+
+    animate_jump(self, start_pos, end_pos, function()
+        jump_done = true
+        settle()
+    end)
+
+    api.join_tournament(d.id, function(result)
+        if result and result.success then
+            local data = result.data or {}
+            local bal = tonumber(data.balance)
+            if bal and ws.current_user_data then
+                ws.current_user_data.balance = bal
+                if self.top_left_balance_lbl then gui.set_text(self.top_left_balance_lbl, commas(bal)) end
+            end
+            -- Fire the actual opponent search only now that the join is
+            -- confirmed — don't wait for the jump animation to finish too.
+            fire_search_request(self, d)
+            -- A returning already-active player (alreadyJoined) wasn't
+            -- charged again server-side, so no coin-deduction animation.
+            if not (data.alreadyJoined == true) then
+                play_deduction_animation(self)
+            end
+            join_ok = true
+        else
+            join_ok = false
+            join_msg = result and result.message
+        end
+        settle()
+    end)
 end
 
 local function handle(self, b)
@@ -1012,14 +1104,16 @@ local function handle(self, b)
                 return
             end
 
-            -- Defer the visual coin deduction until an opponent is actually
-            -- found (ws_match_found) instead of playing it up front — a failed
-            -- search shouldn't have already animated coins leaving the balance.
-            self.pending_stake_deduction = cost
+            -- Charging (if any) and registering "joined" now happens via an
+            -- explicit HTTP call (api.join_tournament, see
+            -- execute_join_and_play) that fires the instant this is tapped —
+            -- not the old pending_stake_deduction dance deferred all the way
+            -- to a later ws_match_found. A failed join shows a toast and
+            -- re-enables the button without ever reaching the search step.
             self.play_disabled = true
             self.is_moving = true -- Lock UI inputs
 
-            execute_jump_and_play(self, d)
+            execute_join_and_play(self, d)
         else
             execute_jump_and_play(self, d)
         end
