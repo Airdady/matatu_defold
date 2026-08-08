@@ -1,7 +1,8 @@
-local ws        = require("modules.websocket_manager")
-local api       = require("modules.api_service")
-local app_state = require("modules.app_state")
-local fbauth    = require("modules.firebase_auth")
+local ws           = require("modules.websocket_manager")
+local api          = require("modules.api_service")
+local app_state    = require("modules.app_state")
+local fbauth       = require("modules.firebase_auth")
+local gameservices = require("modules.gameservices")
 
 local SCREENS = { "lobby", "auth", "profile", "online", "themes", "payments", "tournaments", "team_tournament", "standings", "game" }
 
@@ -657,6 +658,13 @@ function init(self)
     -- a match — set once here and never re-enabled (see game.script, which
     -- used to flip this back on leaving the game screen).
     pcall(window.set_dim_mode, window.DIMMING_OFF)
+
+    -- Google Play in-app update check, as early as possible (this is the
+    -- app's actual bootstrap script — the sole game object in main.collection,
+    -- see game.project's [bootstrap] section). No-ops off Android. Called
+    -- again from lobby.gui_script's init as a belt-and-suspenders second
+    -- attempt in case Play Services isn't ready yet at this very first call.
+    gameservices.check_update()
 
     for _, s in ipairs(SCREENS) do
         msg.post("#" .. s, "disable")
