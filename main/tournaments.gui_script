@@ -1075,6 +1075,25 @@ local function handle(self, b)
         self.play_disabled = true
         self.is_moving = true
 
+        -- INSTANT FEEDBACK. The join round trip can take a genuinely
+        -- noticeable moment on a slow connection, and until now nothing on
+        -- screen changed between the tap landing and the response coming
+        -- back — no press, no dimming, nothing — which read as "the button
+        -- doesn't respond" and invited a second (or third) tap. This fires
+        -- the instant the tap registers; only the ACKNOWLEDGEMENT is
+        -- instant, not the charge — the real coin-deduction animation below
+        -- still waits for the server's confirmed `charged` amount, exactly
+        -- as before.
+        if self.play_btn_node then
+            pcall(gui.cancel_animation, self.play_btn_node, "scale")
+            gui.set_scale(self.play_btn_node, vmath.vector3(0.93, 0.93, 1))
+            gui.animate(self.play_btn_node, "scale", vmath.vector3(1, 1, 1), gui.EASING_OUTSINE, 0.15)
+            pcall(gui.play_flipbook, self.play_btn_node, "default_btn")
+        end
+        if self.play_lock_node then gui.set_enabled(self.play_lock_node, false) end
+        if self.play_coin_node then gui.set_enabled(self.play_coin_node, false) end
+        if self.play_txt_node then gui.set_text(self.play_txt_node, "...") end
+
         api.join_championship(tournament_id, user_id, function(result)
             -- Not moving into the jump/search flow yet either way — that
             -- only starts once we know what actually happened.
@@ -1091,6 +1110,11 @@ local function handle(self, b)
                 -- processing") just re-enables the button — the next
                 -- rebuild (or the player's own retry) sorts it out; there is
                 -- nothing this screen can locally correct itself.
+                -- Restores the button from the instant-feedback "..." press
+                -- state above back to its real, current state (stake/lock,
+                -- PLAY, whatever the data actually says) — left alone it
+                -- would sit on "..." forever after a failed join.
+                if self._active then rebuild(self) end
                 return
             end
 
