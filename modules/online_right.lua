@@ -24,7 +24,12 @@ local BATTLE_TIERS_BY_GAME = {
     },
     WHOT = {
         { amount = 250,   formats = { { games = 3, charge = 40,  points = 9 } } },
-        { amount = 500,   formats = { { games = 3, charge = 40,  points = 9 }, { games = 5, charge = 65,  points = 15 } } },
+        -- 500 unlocks the full best-of 3/5/7/9 ladder, same as 1000 — the
+        -- charge/points progression at each format is identical between the
+        -- two tiers already (3 and 5 matched before this change), so 7/9
+        -- reuse the 1000 tier's values rather than inventing a new scale.
+        { amount = 500,   formats = { { games = 3, charge = 40,  points = 9 }, { games = 5, charge = 65,  points = 15 },
+                                      { games = 7, charge = 90,  points = 21 }, { games = 9, charge = 115, points = 27 } } },
         { amount = 1000,  formats = { { games = 3, charge = 40,  points = 9 }, { games = 5, charge = 65,  points = 15 },
                                       { games = 7, charge = 90,  points = 21 }, { games = 9, charge = 115, points = 27 } } },
     },
