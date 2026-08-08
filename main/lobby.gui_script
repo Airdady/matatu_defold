@@ -186,7 +186,16 @@ local function rebuild(self)
     set_pivot(n_m, gui.PIVOT_W)
     pcall(gui.set_scale, n_m, vmath.vector3(1.1, 1.1, 1))
 
-    local n_ocg = track(self, ui.text(vmath.vector3(grid_l + 16, h_y - 32, 0), "ONLINE CARD GAME", "small", C_MUTED))
+    -- Version, inline with the brand's own subtitle rather than a new node at
+    -- a guessed x position next to the title itself — "MATATU" is set-piece
+    -- width and this file has no glyph-metrics API to place something flush
+    -- after it without risking an overlap on a font/scale that changes later.
+    -- config.APP_VERSION is the same value the support-email diagnostic block
+    -- already sends (see the contact_open handler below), so this is a
+    -- second place to SEE it, not a second source of truth for it.
+    local config = require("modules.config")
+    local n_ocg = track(self, ui.text(vmath.vector3(grid_l + 16, h_y - 32, 0),
+        "ONLINE CARD GAME  ·  v" .. tostring(config.APP_VERSION), "small", C_MUTED))
     set_pivot(n_ocg, gui.PIVOT_W)
 
     -- Right Guest Status. Explicit ~= "" check (not just truthiness): a

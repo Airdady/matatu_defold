@@ -35,7 +35,8 @@ default_texture_mag_filter = linear
 [android]
 package = com.matatu.champ
 input_method = INPUT_METHOD_HIDDEN
-minimum_sdk_version = 23
+minimum_sdk_version = 21
+target_sdk_version = 36
 version_code = 232
 
 [firebase]
