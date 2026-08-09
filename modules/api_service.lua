@@ -184,35 +184,7 @@ local function request(method, endpoint, payload, cb)
     end, headers, body, options)
 end
 
--- Firebase sign-in. The way in.
---
--- One call with one already-finished credential, where gpgs_login below sends a
--- serverAuthCode the backend then has to redeem across four more network calls.
--- That redemption is what produced the invalid_grant failures: an auth code is
--- SINGLE USE, so any retry with a cached code failed forever. A Firebase ID
--- token is reusable until it expires, so a retry here is just a retry.
---
--- Backend answer is the same shape gpgs_login returns, deliberately — the
--- caller has one success path, not two.
-function M.firebase_login(id_token, cb)
-    local payload = {
-        idToken  = id_token,
-        deviceId = M.get_device_id(),
-    }
-
-    request("POST", "/auth/firebase", payload, function(result)
-        if result.success and result.data and result.data.token then
-            M.set_auth_token(result.data.token)
-        end
-        if cb then cb(result) end
-    end)
-end
-
--- DEPRECATED: Google Play Games serverAuthCode sign-in.
---
--- Superseded by firebase_login above. Kept only so this build can still talk to
--- a backend that has not been deployed yet; nothing calls it once Firebase is
--- initialised.
+-- Google Play Games serverAuthCode sign-in. The way in.
 function M.gpgs_login(server_auth_code, cb)
     -- Changed 'authCode' to 'serverAuthCode' to match the backend exactly
     local payload = {

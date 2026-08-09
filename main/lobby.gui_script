@@ -27,7 +27,6 @@ local D      = require("modules.lobby.draw")
 local Tiles  = require("modules.lobby.tiles")
 local Season = require("modules.lobby.season")
 local Cups   = require("modules.lobby.cups")
-local AuthCta = require("modules.lobby.auth_cta")
 
 -- Local aliases keep the rest of this file reading as it did before the split.
 local track     = D.track
@@ -200,8 +199,7 @@ local function rebuild(self)
     -- read "RANKED ACCOUNT" instead of prompting sign-in.
     local has_username = ws.current_user_data and ws.current_user_data.username and ws.current_user_data.username ~= ""
     local user_txt = has_username and ws.current_user_data.username or "GUEST"
-    -- Two ways in now, so the hint no longer names only one of them.
-    local sub_txt  = has_username and "RANKED ACCOUNT" or "SIGN IN WITH GOOGLE OR YOUR NUMBER"
+    local sub_txt  = has_username and "RANKED ACCOUNT" or "TAP 'PLAY ONLINE' TO SIGN IN"
 
     local n_guest = track(self, ui.text(vmath.vector3(grid_r, h_y, 0), user_txt, "title", C_CREAM))
     set_pivot(n_guest, gui.PIVOT_E)
@@ -228,20 +226,6 @@ local function rebuild(self)
         sub_text = app_state.auth_error ~= "" and tostring(app_state.auth_error):upper() or "CONNECTION FAILED"
     end
 
-    -- Phone number as an auth method in its own right, standing beside Play
-    -- Games rather than behind it. It used to be reachable only after Google
-    -- had failed three times or the connect deadline had expired, which meant
-    -- the players it exists for — no Play Services, no Google account, a
-    -- consent grant that silent sign-in can never create — had to sit through
-    -- a failure they could not interpret before being offered the thing that
-    -- would have worked immediately.
-    --
-    -- WHEN it is offered: any time the player is not actually online. The rule
-    -- lives in modules/lobby/auth_cta.lua, with the reasoning and a test —
-    -- the previous version of it was `not has_username`, which hid the backup
-    -- from exactly the players who needed it.
-    local show_phone_signin = AuthCta.should_offer_phone_login(ws.current_user_data, ws.is_identified)
-
     mode_tile(self, {
         x = play_cx, y = row_a_cy, w = play_w, h = row_a_h,
         accent      = C_RED,
@@ -254,8 +238,6 @@ local function rebuild(self)
         season_deadline  = self.season_deadline_text,
         cta_label   = cta_text,
         btn_id      = "play_online",
-        alt_cta_label = show_phone_signin and "LOGIN WITH PHONE" or nil,
-        alt_cta_id    = show_phone_signin and "phone_signin" or nil,
     })
 
     -- -----------------------------------------------------------------------
@@ -263,15 +245,10 @@ local function rebuild(self)
     -- and above the offline modes. CREATE and JOIN are their own buttons
     -- directly on the tile so both are reachable in a single tap, instead
     -- of tapping the tile to open a separate CREATE/JOIN BY CODE picker
-    -- first. CREATE now opens the dedicated team-tournament screen rather
-    -- than an in-lobby dialog.
-    --
-    -- OPEN, for a player already in somebody else's cup, goes to that cup's
-    -- bracket. It used to open the CREATE / JOIN BY CODE picker, which was the
-    -- one menu that could not apply: the comment here even said "there is
-    -- nothing to create or join once you are already in one" while routing to
-    -- exactly that. Reported as "it tells me I'm in one, then OPEN offers me
-    -- create and join again".
+    -- first (STATE_TEAM_MENU / draw_team_menu are still used for the
+    -- has_team_tournament case below, since there is nothing to create or
+    -- join once you are already in one). CREATE now opens the dedicated
+    -- team-tournament screen rather than an in-lobby dialog.
     -- -----------------------------------------------------------------------
     local has_team_tournament = ws.current_user_data and ws.current_user_data.myTeamTournamentId
         and tostring(ws.current_user_data.myTeamTournamentId) ~= ""
@@ -549,13 +526,6 @@ local function handle(self, b)
 
     if b.id == "play_online" then
         go_online(self)
-
-    elseif b.id == "phone_signin" then
-        -- Straight to the keypad. Deliberately NOT routed through go_online:
-        -- that blocks while auth_state is sending/verifying, which is exactly
-        -- when a player who has given up on Play Games wants this button to
-        -- work.
-        msg.post("#controller", "goto_phone_login")
 
     elseif b.id == "quick_play" then
         app_state.mode = "offline"
@@ -888,7 +858,7 @@ function on_message(self, message_id, message, sender)
         
     elseif message_id == hash("disable") then
         clear(self)
-        
+
     elseif message_id == hash("cups_changed") then
         -- Only while the lobby is the screen on show. app_state.current_screen
         -- rather than a new _active flag: controller.show() already maintains

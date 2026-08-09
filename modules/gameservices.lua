@@ -1,8 +1,8 @@
 -- gameservices.lua
 -- Thin Lua-side guard around the `gameservices` native extension
 -- (gameservices/src/gameservices.cpp — Google Play Core in-app update +
--- OneSignal), mirroring modules/firebase_auth.lua's pattern: the extension
--- only registers itself on Android, so `_G.gameservices` is nil in the
+-- OneSignal): the extension only registers itself on Android, so
+-- `_G.gameservices` is nil in the
 -- editor and on every other platform. Every function here degrades to a
 -- silent no-op there instead of the rest of the app having to know whether
 -- the native module exists before touching it.
