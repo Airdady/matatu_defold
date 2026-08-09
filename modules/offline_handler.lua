@@ -1,4 +1,5 @@
 local AI       = require "modules.ai_player"
+local RQ = require "modules.reshuffle_queue"
 local Defs     = require "modules.card_defs"
 local Rules    = require "modules.card_rules"
 local app      = require "modules.app_state"
@@ -297,7 +298,16 @@ function M.next_turn(self)
     end
 
     local hand = (self.current_turn == "player") and self.player_hand or self.ai_hand
-    local can_draw = #self.deck > 0 or #self.played_cards > 1
+    -- What the deck can still yield, counting the pile it would recycle — and
+    -- counting a reshuffle that is running right now.
+    --
+    -- This used to read `#self.deck > 0 or #self.played_cards > 1` directly,
+    -- which is false for the ~1.3s a reshuffle spends animating: it empties the
+    -- pile on its first line and refills the deck at the end. Landing in that
+    -- window with no playable card counted as "no move", and twice in a row
+    -- ended the match outright — "Stalemate, lowest score wins" — while the
+    -- cards were mid-air on their way back to the deck.
+    local can_draw = RQ.is_running(self) or RQ.available(self.deck, self.played_cards) > 0
     local can_act = self.has_playable(hand) or can_draw
 
     if not can_act then

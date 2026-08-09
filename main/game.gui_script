@@ -171,20 +171,31 @@ function on_message(self, message_id, message)
         -- EXTRACT H2H DATA TO ALWAYS SHOW IT
         local h2h = (type(message.h2h) == "table") and message.h2h or nil
         if not h2h and state and type(state) == "table" and type(state.headToHead) == "table" then
-            h2h = state.headToHead
+            local my_id = tostring(self.my_id or ws.get_current_user_id() or "")
+            local raw_form = (type(state.headToHead.form) == "table") and state.headToHead.form or {}
+            local my_form = raw_form[my_id]
+            if type(my_form) ~= "table" and type(raw_form[1]) == "string" then
+                my_form = raw_form
+            end
+            h2h = {
+                p = 0,
+                o = 0,
+                total = state.headToHead.totalGames or 0,
+                form = (type(my_form) == "table") and my_form or {},
+            }
         end
 
         -- While the score-cap chamber table is up (knockout), the giant battle 
         -- scoreboard flippers must NEVER show. BUT we must always display the H2H strip!
         if self.t4_chamber or is_knockout then
             scoreboard.set_active(self, false)
-            scoreboard.set_h2h_strip(self, h2h, true)
+            scoreboard.set_h2h_strip(self, h2h, false)
             return
         end
         
         if message.show == false then
             scoreboard.set_active(self, false)
-            scoreboard.set_h2h_strip(self, nil, false)
+            scoreboard.set_h2h_strip(self, h2h, false)
             return
         end
 

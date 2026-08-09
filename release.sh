@@ -244,6 +244,35 @@ if ! grep -q "^M.APP_BUILD   = ${VERSION_CODE}$" modules/config.lua; then
     exit 1
 fi
 
+# AND THE REPO'S game.project, which is what every OTHER build reports.
+#
+# The --settings override below only reaches the BUILT game.project, so it is
+# true for releases and for nothing else. build.sh passes no settings at all,
+# so it builds straight from the file in the repo — and config.lua PREFERS
+# what the engine was bundled with over its own stamped constant. The version
+# in this file had been left at 18.5.9 while config.lua was stamped 20.9.2, so
+# every build.sh build told the server it was 18.5.9, fell under the
+# force-update floor, and could not come online at all.
+#
+# Stamping it here means the repo file is always the last released version,
+# which is the right answer for a build that overrides nothing.
+print_status "Stamping version $VERSION_NAME ($VERSION_CODE) into game.project..."
+
+sed -i.bak -E \
+    -e "s/^(version[[:space:]]*=[[:space:]]*).*/\1${VERSION_NAME}/" \
+    -e "s/^(version_code[[:space:]]*=[[:space:]]*).*/\1${VERSION_CODE}/" \
+    game.project
+rm -f game.project.bak
+
+if ! grep -q "^version = ${VERSION_NAME}$" game.project; then
+    print_error "Failed to stamp version in game.project"
+    exit 1
+fi
+if ! grep -q "^version_code = ${VERSION_CODE}$" game.project; then
+    print_error "Failed to stamp version_code in game.project"
+    exit 1
+fi
+
 print_success "modules/config.lua -> APP_VERSION=${VERSION_NAME} APP_BUILD=${VERSION_CODE}"
 
 # ═══════════════════════════════════════════════════════════
@@ -269,6 +298,33 @@ else
         print_error "Icon generation failed (see error above) — refusing to release with a stale/wrong icon. Install deps with: pip install pillow cairosvg"
         exit 1
     fi
+fi
+
+# ── the notification icon, which is SHARED across every game mode ───────────
+#
+# The launcher icon above is per-target artwork, regenerated from that target's
+# SVG. The status-bar icon is not: the same white mark appears in the shade for
+# whot, matatu, matatu_nap and kadi, so it is one committed PNG
+# (tools/icons/icon_notification.png) that the generator INSTALLS at each
+# density rather than draws.
+#
+# Verified after generation because its absence is silent and ugly:
+# MatatuFirebaseMessagingService falls back through app_logo, ic_launcher and
+# icon, and finally to Android's own ic_dialog_info — a grey (i) in the status
+# bar on every push, with nothing in any log to say why.
+#
+# A warning and not an exit: shipping without it is ugly, not broken, and the
+# launcher icon stands in until the asset lands.
+NOTIF_INSTALLED=$(ls bundle/android/res/drawable*/icon_notification.png 2>/dev/null | wc -l | tr -d ' ')
+if [ "$NOTIF_INSTALLED" = "0" ]; then
+    print_warning "No icon_notification.png was installed into bundle/android/res/drawable*/."
+    print_warning "Source expected at tools/icons/icon_notification.png."
+    print_warning "Pushes will fall back to the launcher icon, or to Android's default."
+    print_warning "The asset must be a SILHOUETTE ON A TRANSPARENT BACKGROUND: from Android"
+    print_warning "5.0 the status-bar icon is drawn as an ALPHA MASK, so a full-colour PNG"
+    print_warning "renders as a solid white square."
+else
+    print_success "notification icon installed at ${NOTIF_INSTALLED} densities (shared by all game modes)."
 fi
 
 print_status "Regenerating bg_logo watermark for $GAME_UPPER..."

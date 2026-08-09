@@ -176,6 +176,27 @@ local function make_ctx()
 end
 
 -- ── Banner System ─────────────────────────────────────────────────────────────
+-- Size the stashed countdown bar to whatever time_left is RIGHT NOW.
+--
+-- Called from draw_banner (so a fresh rebuild starts at the right width) and
+-- from update() every frame (so it slides instead of stepping). One node, one
+-- set_size, one set_color — cheap enough to run at frame rate, which a full
+-- rebuild is not.
+--
+-- pcall'd because the handle dies with the next clear(): draw_banner re-stashes
+-- on every rebuild so it is normally fresh, but a frame landing between the
+-- two would otherwise throw out of update().
+local function apply_banner_bar(b)
+    local bar = b and b._bar
+    if not bar or not bar.node then return end
+    local frac = math.max(0, math.min(1, (b.time_left or 0) / (b.max_time or 10)))
+    pcall(function()
+        gui.set_size(bar.node, vmath.vector3(bar.w * frac, 3, 0))
+        local col = (frac < 0.3) and COL_RED or COL_GREEN
+        gui.set_color(bar.node, vmath.vector4(col.x, col.y, col.z, (bar.alpha or 1)))
+    end)
+end
+
 local function draw_banner(self)
     for idx, b in ipairs(self.banners or {}) do
         local bw, slide = VISIBLE_W, (b.y_off or 0) * 132
@@ -193,9 +214,28 @@ local function draw_banner(self)
         self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(EDGE_R - 225, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.12, 0.19, 0.27, 0.85 * alpha))), id = "banner_decline", data = b.request_id }
         track(self, ui.text(vmath.vector3(EDGE_R - 225, cy, 0), "DECLINE", "btn_md", vmath.vector4(0.82,0.86,0.91,alpha)))
         if b.h2h then draw_h2h_row(self, EDGE_R - 430, cy, h2h_view(b.h2h), alpha) end
-        local barw = bw * math.max(0, math.min(1, (b.time_left or 10) / (b.max_time or 10)))
+        -- THE COUNTDOWN BAR IS ANIMATED, NOT REBUILT.
+        --
+        -- It used to be drawn at whatever width the last REBUILD happened to
+        -- catch, and update() only asked for a rebuild when the whole SECOND
+        -- changed. So over a ten-second invite the bar moved in ten steps of
+        -- 10% instead of sliding — reported as the progress not moving
+        -- smoothly.
+        --
+        -- Rebuilding every frame is not the answer: rebuild() deletes and
+        -- recreates every node on the screen, which is why the throttle was
+        -- there. The bar is ONE node, so it is stashed here and resized in
+        -- place by update() at frame rate. Nothing else on the banner changes
+        -- between rebuilds — there is no seconds text — so the per-second
+        -- rebuild the bar used to depend on now buys nothing and is gone.
         track(self, ui.box(vmath.vector3(CX, cy - 44, 0), vmath.vector3(bw, 3, 0), vmath.vector4(0.12, 0.19, 0.27, alpha)))
-        if barw > 1 then track(self, ui.box(vmath.vector3(CX - bw/2 + barw/2, cy - 44, 0), vmath.vector3(barw, 3, 0), barw/bw < 0.3 and COL_RED or COL_GREEN)) end
+        local fill = track(self, ui.box(vmath.vector3(CX - bw/2, cy - 44, 0), vmath.vector3(bw, 3, 0), COL_GREEN))
+        -- Anchored WEST so a width change grows and shrinks from the left edge
+        -- on its own. Repositioning it every frame alongside the resize is the
+        -- same result with twice the work and a chance of the two disagreeing.
+        gui.set_pivot(fill, gui.PIVOT_W)
+        b._bar = { node = fill, w = bw, alpha = alpha }
+        apply_banner_bar(b)
     end
 end
 
@@ -303,14 +343,14 @@ end
 
 -- ── Dialog / Banner Lifecycle ─────────────────────────────────────────────────
 local function open_dialog(self, kind, name, stake, request_id, avatar, opponent_id, h2h)
-    self.dialog, self.dlg_alpha = { kind = kind, name = name, stake = stake or {}, request_id = request_id, avatar = tonumber(avatar) or 1, time_left = 10, max_time = 10, opponent_id = opponent_id and tostring(opponent_id) or nil, h2h = h2h }, 0
+    self.dialog, self.dlg_alpha = { kind = kind, name = name, stake = stake or {}, request_id = request_id, avatar = tonumber(avatar) or 1, time_left = 10, max_time = 10, opponent_id = opponent_id and tostring(opponent_id) or nil, h2h = h2h }, 1
     -- Audible cue when an opponent's challenge arrives.
     if kind == "incoming" then play_snd("snd_notify") end
     if self._active then rebuild(self) end
 end
 local function open_banner(self, raw)
     local sender_av = (type(raw.sender) == "table" and tonumber(raw.sender.avatar)) or 1
-    local b = { title = ((raw.gameType or "TOURNAMENT") == "BATTLE" and "BATTLE  -  " or "TOURNAMENT  -  ") .. ((type(raw.sender) == "table" and raw.sender.username) or "Opponent"):upper(), desc = "Best of " .. (tonumber((type(raw.tournament) == "table" and raw.tournament.matchFormat) or 3) or 3) .. "   -   " .. (((tonumber(((type(raw.tournament) == "table" and raw.tournament.stake) or raw.stake or {}).amount) or 0) > 0) and commas(tonumber(((type(raw.tournament) == "table" and raw.tournament.stake) or raw.stake or {}).amount) or 0).." Coins" or "Practice Mode"), request_id = raw.requestId or "", avatar = sender_av, time_left = 10, max_time = 10, alpha = 0, y_off = 1, h2h = raw.headToHead }
+    local b = { title = ((raw.gameType or "TOURNAMENT") == "BATTLE" and "BATTLE  -  " or "TOURNAMENT  -  ") .. ((type(raw.sender) == "table" and raw.sender.username) or "Opponent"):upper(), desc = "Best of " .. (tonumber((type(raw.tournament) == "table" and raw.tournament.matchFormat) or 3) or 3) .. "   -   " .. (((tonumber(((type(raw.tournament) == "table" and raw.tournament.stake) or raw.stake or {}).amount) or 0) > 0) and commas(tonumber(((type(raw.tournament) == "table" and raw.tournament.stake) or raw.stake or {}).amount) or 0).." Coins" or "Practice Mode"), request_id = raw.requestId or "", avatar = sender_av, time_left = 10, max_time = 10, alpha = 1, y_off = 0, h2h = raw.headToHead }
     if h2h_view(raw.headToHead) and h2h_view(raw.headToHead).opp_winrate then b.desc = b.desc .. "   -   WR " .. math.floor(h2h_view(raw.headToHead).opp_winrate + 0.5) .. "%" end
     self.banners = self.banners or {}; for _, ex in ipairs(self.banners) do if b.request_id ~= "" and ex.request_id == b.request_id then return end end
     table.insert(self.banners, b)
@@ -347,35 +387,50 @@ end
 function update(self, dt)
     if not self._active then return end
 
-    -- All overlay animations (banners, the lottery search reel, and the
-    -- request dialog) advance in ONE pass and trigger AT MOST one rebuild per
-    -- frame. The previous version early-returned after rebuilding for banners,
-    -- which starved (and visually restarted) any dialog/search animating
-    -- underneath them — the "banner on top breaks other dialogs" bug.
     local need_rebuild = false
 
     -- ── Banners (inline tournament/battle invites) ────────────────────────
     if self.banners and #self.banners > 0 then
         local expired = {}
         for _, b in ipairs(self.banners) do
-            b.alpha, b.y_off, b.time_left = math.min(1, (b.alpha or 0) + dt * 5), math.max(0, (b.y_off or 0) - dt * 4), (b.time_left or 10) - dt
+            b.time_left = (b.time_left or 10) - dt
+            -- Every frame, and WITHOUT a rebuild. This used to set
+            -- need_rebuild whenever the whole second changed, which is the
+            -- only reason the bar ever moved — so it advanced in ten visible
+            -- steps over a ten-second invite instead of sliding. Nothing else
+            -- on the banner changes between rebuilds (there is no seconds
+            -- text), so that rebuild bought exactly this and did it badly.
+            apply_banner_bar(b)
+
             if b.time_left <= 0 then table.insert(expired, b) end
         end
         for _, b in ipairs(expired) do
             if b.request_id and b.request_id ~= "" then ws.decline_game_request(b.request_id) end
             for i = #self.banners, 1, -1 do if self.banners[i].request_id == b.request_id then table.remove(self.banners, i) end end
             if #self.banners == 0 then self.banners = nil end
+            need_rebuild = true
         end
-        need_rebuild = true
     end
 
-    -- ── First-time "Tap a player..." typing hint (see init()) ─────────────
+    -- ── First-time "Tap a player..." typing hint (direct node update, zero rebuild) ─
     if self._tap_hint_active then
         self._tap_hint_t = (self._tap_hint_t or 0) + dt
-        need_rebuild = true
+        local n = math.floor(self._tap_hint_t / 0.035)
+        local HINT_TEXT = "Tap a player to request a game. If they decline, try another!"
+        if n >= #HINT_TEXT then
+            self._tap_hint_active = false
+            if self.tap_hint_node then pcall(gui.set_text, self.tap_hint_node, HINT_TEXT) end
+        else
+            if self.tap_hint_node then pcall(gui.set_text, self.tap_hint_node, string.sub(HINT_TEXT, 1, n) .. "_") end
+        end
     end
 
     -- ── Savings modal typing effect (see draw_savings_info in online_right.lua) ──
+    --
+    -- Restored: this tick was dropped and the drawing code went on dividing by
+    -- the clock it fed, so every line of the dialog's copy came out empty.
+    -- online_right.lua now shows the text in full when nothing is ticking, so
+    -- losing this again costs the animation and not the words.
     if self.savings_info_open and not self._savings_type_done then
         self._savings_type_t = (self._savings_type_t or 0) + dt
         need_rebuild = true
@@ -390,24 +445,33 @@ function update(self, dt)
 
     -- ── Request dialog (incoming / outgoing) ──────────────────────────────
     if self.dialog then
-        self.dlg_alpha, self.dialog.time_left = math.min(1, (self.dlg_alpha or 0) + dt * 4), (self.dialog.time_left or 10) - dt
+        self.dialog.time_left = (self.dialog.time_left or 10) - dt
+        local cur_sec = math.floor(math.max(0, self.dialog.time_left))
+        if cur_sec ~= self.dialog._last_sec then
+            self.dialog._last_sec = cur_sec
+            need_rebuild = true
+        end
+
         if self.dialog.time_left <= 0 then
             if self.dialog.kind == "incoming" and self.dialog.request_id then ws.decline_game_request(self.dialog.request_id) end
             self.dialog, self.list_scroll = nil, 0
+            need_rebuild = true
         end
-        need_rebuild = true
+    end
+
+    -- ── Debounced Rebuild Coalescing for rapid socket bursts ──────────────
+    if self._rebuild_pending then
+        self._rebuild_pending_t = (self._rebuild_pending_t or 0) + dt
+        if self._rebuild_pending_t >= 0.08 then
+            self._rebuild_pending = false
+            self._rebuild_pending_t = 0
+            need_rebuild = true
+        end
     end
 
     if need_rebuild then rebuild(self); return end
 
-    self._tick = self._tick + dt
-    if self._tick >= 1 then self._tick = 0; update_season(self); rebuild(self) end
-
-    -- Periodic fallback so the standings panel doesn't go stale even when no
-    -- online-users change happens to fire (e.g. someone already online
-    -- earns points from a game elsewhere without a fresh join/leave event) —
-    -- the ws_online_users-triggered request above covers the common case
-    -- faster than this on its own.
+    -- Periodic fallback so the standings panel doesn't go stale (request rank quietly every 20s)
     self._rank_tick = (self._rank_tick or 0) + dt
     if self._rank_tick >= 20 then
         self._rank_tick = 0
@@ -417,7 +481,7 @@ end
 
 function on_message(self, message_id, message, sender)
     if message_id == hash("screen_enter") then
-        msg.post(".", "acquire_input_focus"); self._active, self.dialog, self.banners, self.list_scroll, self.battle_modal, self.invite_search, app_state.searching_invite, self.savings_info_open, self.savings_add_open, self.savings_plans_open = true, nil, nil, 0, nil, nil, false, nil, nil, nil
+        msg.post(".", "acquire_input_focus"); self._active, self.dialog, self.banners, self.list_scroll, self.battle_modal, self.invite_search, app_state.searching_invite, self.savings_info_open, self.savings_add_open, self.savings_plans_open, self.savings_stats_open = true, nil, nil, 0, nil, nil, false, nil, nil, nil, nil
         -- Auto-open the Savings explainer (modules/online_right.lua's
         -- draw_savings_info, normally only reached via a small "i" icon a
         -- first-time player would likely never notice) exactly once EVER —
@@ -428,6 +492,15 @@ function on_message(self, message_id, message, sender)
         local u = ws.current_user_data or {}
         if u.savingsPromoSeen ~= true then
             self.savings_info_open = true
+            -- Claimed so the bonus dialogs wait. They fire at this exact
+            -- moment on a fresh account and would otherwise open on top,
+            -- and this explainer is shown once per player, ever.
+            app_state.savings_promo_active = true
+            -- Start the clock WITH the dialog. Left nil, the first frame sees
+            -- nothing ticking and draws the copy in full (which is the right
+            -- fallback), and the tick below then starts typing it from
+            -- nothing — full text, then empty, then typed back in.
+            self._savings_type_t, self._savings_type_done = 0, false
         end
         refresh_wh(); rebuild(self)
         -- Actively ask for a fresh online-players list every time this
@@ -449,31 +522,28 @@ function on_message(self, message_id, message, sender)
         -- reel, then close the overlay (fail_invite_search handles the timing).
         right_panel.fail_invite_search(self, app_state, function() rebuild(self) end, message and message.reason)
     elseif message_id == hash("enable") then refresh_wh(); self._active = true
-    elseif message_id == hash("disable") then self._active = false; clear(self)
+    elseif message_id == hash("disable") then
+        self._active = false
+        -- Released with the screen. The dialog's nodes go with clear() below,
+        -- so leaving while it is open would otherwise leave the claim standing
+        -- with nothing on screen holding it — and every bonus dialog waiting
+        -- on a dialog the player can no longer see or dismiss.
+        self.savings_info_open, self.savings_plans_open = false, false
+        app_state.savings_promo_active = false
+        clear(self)
     elseif message_id == hash("ws_identify") then
-        -- The screen_enter request is gated on ws.is_identified already being
-        -- true at that exact moment — if IDENTIFY was still in flight (or the
-        -- socket reconnected) when this screen was entered, that request was
-        -- silently skipped and nothing ever retried it, leaving the online
-        -- users list permanently empty even once identify actually completed.
-        -- controller.script already forwards identify_success here as
-        -- ws_identify; this was previously unhandled.
         if self._active then
             pcall(ws.request_online_users)
             pcall(ws.request_rank)
-            rebuild(self)
+            self._rebuild_pending = true
         end
     elseif message_id == hash("layout_changed") or message_id == hash("user_data_updated") or message_id == hash("ws_online_users") or message_id == hash("ws_connected") or message_id == hash("ws_disconnected") then
-        if self._active then rebuild(self) end
-        -- A change in who's online (someone joining/leaving, e.g. a brand-new
-        -- user who just got their signup bonus) is exactly when this client's
-        -- own "player above/below me" standings snapshot is most likely to be
-        -- stale — ask for a fresh one instead of waiting on the periodic tick.
+        if self._active then self._rebuild_pending = true end
         if message_id == hash("ws_online_users") and self._active and ws.is_identified then
             pcall(ws.request_rank)
         end
     elseif message_id == hash("ws_rank_update") then
-        if self._active then rebuild(self) end
+        if self._active then self._rebuild_pending = true end
     elseif message_id == hash("ws_game_request") then
         -- Plain incoming requests are rendered by the GLOBAL overlay
         -- (main/incoming.gui_script). The inline tournament/battle banner is only
@@ -611,10 +681,16 @@ function on_input(self, action_id, action)
                 elseif id == "nav_tournaments" then msg.post("#controller", "goto_tournaments")
                 elseif id == "nav_support" then msg.post("#controller", "goto_support")
                 elseif id == "nav_account" then msg.post("#controller", "goto_profile")
-                elseif id == "savings_info" then self.savings_info_open = true; rebuild(self)
+                elseif id == "savings_info" then
+                    self.savings_info_open = true
+                    app_state.savings_promo_active = true
+                    self._savings_type_t = self._savings_type_t or 0
+                    rebuild(self)
                 elseif id == "savings_info_close" or id == "savings_info_block" then
                     mark_savings_promo_seen()
-                    self.savings_info_open = false; rebuild(self)
+                    self.savings_info_open = false
+                    app_state.savings_promo_active = false
+                    rebuild(self)
                 elseif id == "savings_try_it" then
                     -- Continue the same story into the "how" instead of just
                     -- closing the explainer — see draw_savings_plans.
@@ -623,9 +699,15 @@ function on_input(self, action_id, action)
                     self.savings_plans_open = true
                     rebuild(self)
                 elseif id == "savings_plans_close" or id == "savings_plans_block" then
-                    self.savings_plans_open = false; rebuild(self)
+                    self.savings_plans_open = false
+                    -- TRY IT hands the explainer straight to this dialog, so
+                    -- the claim is only released here — a bonus popping up
+                    -- between the two is the same interruption one step later.
+                    app_state.savings_promo_active = false
+                    rebuild(self)
                 elseif id == "savings_plans_start" then
                     self.savings_plans_open = false
+                    app_state.savings_promo_active = false
                     -- Hand off to the real controls already built on the
                     -- payments SAVE COINS tab (screen_enter there consumes
                     -- this once) instead of duplicating them in the promo.
@@ -646,6 +728,33 @@ function on_input(self, action_id, action)
                     end
                     self.savings_add_open = true; rebuild(self)
                 elseif id == "savings_add_close" or id == "savings_add_block" then self.savings_add_open = false; rebuild(self)
+                elseif id == "savings_stats" then
+                    -- Opens on whatever SAVINGS_STATUS already carried — a
+                    -- fortnight — and asks for the longer series in the
+                    -- background. The headline totals are computed over the
+                    -- whole history server-side, so they are already right;
+                    -- only the list gets longer when the reply lands.
+                    self.savings_stats_open = true
+                    right_panel.savings_stats_state(self).page = 0
+                    ws.request_savings_history(90)
+                    rebuild(self)
+                elseif id == "savings_stats_close" or id == "savings_stats_block" then
+                    self.savings_stats_open = false; rebuild(self)
+                elseif id == "savings_stats_tab_DAYS" or id == "savings_stats_tab_WEEKS" or id == "savings_stats_tab_MONTHS" then
+                    local st = right_panel.savings_stats_state(self)
+                    st.tab = id:gsub("^savings_stats_tab_", "")
+                    -- Page 3 of the days list means nothing in the months
+                    -- list, and leaving it there shows an empty page.
+                    st.page = 0
+                    rebuild(self)
+                elseif id == "savings_stats_prev" then
+                    local st = right_panel.savings_stats_state(self)
+                    st.page = math.max(0, st.page - 1); rebuild(self)
+                elseif id == "savings_stats_next" then
+                    local st = right_panel.savings_stats_state(self)
+                    -- Clamped against the real row count when it is drawn, so
+                    -- this only has to not go backwards.
+                    st.page = st.page + 1; rebuild(self)
                 elseif id == "savings_exchange_minus" or id == "savings_exchange_plus" then
                     local sa = self.savings_add
                     if sa and not sa.exchanging then
@@ -758,10 +867,6 @@ function on_input(self, action_id, action)
                     end
                 elseif id == "bm_submit" then right_panel.bm_submit(self, function() rebuild(self) end)
 
-                elseif id == "nav_team_bracket" then right_panel.open_team_bracket(self, function() rebuild(self) end)
-                elseif id == "tbr_close" then self.team_bracket_modal = nil; rebuild(self)
-                elseif id == "tbr_advance" then right_panel.tbr_advance(self, b.data, function() rebuild(self) end)
-                elseif id == "tbr_drop" then right_panel.tbr_drop(self, b.data, function() rebuild(self) end)
                 end
                 return true
             end

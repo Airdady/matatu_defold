@@ -203,6 +203,13 @@ _G.sys = {
   get_save_file = function() return "/tmp/sim_save" end,
   save = function() return false end,
   load = function() return {} end,
+  -- config.lua reads this at require time to decide the HTML5 branch, so
+  -- anything that pulls in config (websocket_manager, api_service, most of
+  -- the modules) could not be loaded here at all without it.
+  get_sys_info = function() return { system_name = "Linux" } end,
+  get_engine_info = function() return { version = "0.0.0" } end,
+  get_config_int = function(_, default) return default or 0 end,
+  get_config_string = function(_, default) return default or "" end,
 }
 
 ----------------------------------------------------------------------

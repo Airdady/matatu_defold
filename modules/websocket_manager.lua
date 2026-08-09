@@ -5,6 +5,7 @@
 --        and derives the sender id from currentTurn so opponent moves animate.
 
 local config = require("modules.config")
+local conn_plan = require("modules.connection_plan")
 local json_util = require("modules.json_util")
 local util = require("modules.util")
 local aes = require("modules.aes")
@@ -19,6 +20,41 @@ M.is_identified = false
 -- 4426 close). Latching, deliberately: nothing short of updating the app can
 -- clear it, so it also suppresses the reconnect loop.
 M.update_required = false
+
+-- Set once the server refuses this ACCOUNT. Suppresses reconnecting for the
+-- same reason update_required does: the answer will be the same every time, so
+-- retrying burns battery and radio to be told no again.
+--
+-- Restored from disk at boot (see api_service's offline flag), so a launch
+-- after this costs no request at all — the app comes up offline knowing why,
+-- rather than discovering it again.
+--
+-- NOT PERMANENT, and that is the difference from update_required. A build the
+-- server has outgrown cannot become acceptable without a new binary. A block
+-- can be lifted server-side with nothing happening on the phone — so an app
+-- that latches this and never asks again can never come back, however long the
+-- player waits or how often they reopen it. See APP_OFFLINE_RECHECK_SECONDS.
+M.app_offline = false
+
+-- When the latch went up, so the recheck window can be measured from it.
+-- Seeded at boot from the timestamp in the cached flag, so the wait is counted
+-- from the refusal itself rather than restarting at every launch — reopening
+-- the app ten times in a minute costs no more requests than opening it once.
+local app_offline_at = 0
+
+-- How long the app stays quiet before spending ONE request to ask again.
+--
+-- Fifteen minutes, which is nothing next to how long a block lasts, and far
+-- enough apart that it is not a reconnect loop by any reading: four requests
+-- an hour against a server that answers each one in a few bytes. Set against
+-- the alternative — never asking — where a player whose block was lifted an
+-- hour ago is still staring at App Offline with nothing they can do about it.
+local APP_OFFLINE_RECHECK_SECONDS = 15 * 60
+
+-- The three accessors that read app_offline_at live further down, below
+-- now_s(): a `local` introduced after a function body is not in scope inside
+-- it, so written here they would resolve to a nil global and raise on the
+-- first call. Same trap as SIGN_IN_CONNECT_GRACE further down.
 M.online_users = {}
 M.current_user_data = {}
 M.current_user_id = ""
@@ -36,9 +72,21 @@ M.current_season_status = nil
 M.last_daily_bonus_status = nil
 M.last_daily_bonus_claim = nil
 M.current_savings_status = nil
+-- The longer day-by-day history, once the player has actually opened the
+-- stats view. Deliberately NOT part of current_savings_status: that one is
+-- pushed to every client on IDENTIFY and carries only a fortnight, and most
+-- players never open the panel at all.
+M.current_savings_history = nil
+M.savings_history_pending = false
 
 local connection = nil
 local is_connecting = false
+-- Wall-clock of the moment `is_connecting` went true, and of the last IDENTIFY
+-- put on the wire. The reconciler judges both by elapsed time rather than by
+-- an event, because the bug it exists for is precisely an event that never
+-- arrives.
+local connecting_since = 0
+local last_identify_sent = 0
 local is_manual_disconnect = false
 local reconnect_attempts = 0
 local current_reconnect_delay = config.INITIAL_RECONNECT_DELAY
@@ -54,7 +102,76 @@ local function now_s()
 end
 local last_rx_time = now_s()
 
+--- Is the quiet period over? Exactly one attempt is allowed when it is.
+function M.app_offline_recheck_due()
+  if not M.app_offline then return false end
+  return (now_s() - (app_offline_at or 0)) >= APP_OFFLINE_RECHECK_SECONDS
+end
+
+--- Raise the latch. `since` is when the refusal happened (an os.time()
+--- stamp), so a flag restored from disk goes on counting from the refusal
+--- itself instead of restarting the wait at every launch.
+function M.set_app_offline(since)
+  M.app_offline = true
+  -- os.time() and now_s() can be different clocks, so an absolute stamp is
+  -- turned into "how long ago" before being stored against the monotonic one.
+  local ago = 0
+  if type(since) == "number" and since > 0 then
+    local elapsed = os.time() - since
+    if elapsed > 0 then ago = elapsed end
+  end
+  app_offline_at = now_s() - ago
+end
+
+--- Open the recheck window NOW, without clearing the latch.
+---
+--- The wait exists so a blocked app is not a reconnect loop, and fifteen
+--- minutes is right for a background retry. It is wrong for somebody standing
+--- in front of the phone pressing RETRY: they are owed an attempt, and one
+--- attempt is not a loop. The latch itself stays up — only the server
+--- accepting an identify takes it down.
+function M.recheck_app_offline_now()
+  if not M.app_offline then return end
+  app_offline_at = now_s() - APP_OFFLINE_RECHECK_SECONDS
+end
+
+--- Drop it. The server accepting an identify is the one event that proves the
+--- refusal no longer applies.
+function M.clear_app_offline()
+  M.app_offline = false
+  app_offline_at = 0
+end
+
 local KEY_BYTES = util.hex_to_bytes(config.GAME_STATE_SECRET)
+
+-- Close a socket attempt we are abandoning.
+--
+-- Declaring an attempt hung and opening a fresh one leaves the old one live:
+-- `connection` is overwritten, but the socket underneath is not closed and the
+-- extension goes on driving its callback. On a link slower than the stall
+-- window that is not hypothetical — the abandoned handshake completes a moment
+-- later, on_connected fires for it, and the app ends up with two sockets and
+-- the server with two registrations for one player.
+--
+-- Best-effort by construction: the whole reason we are here is that this
+-- socket is not behaving.
+local function close_orphan_socket()
+  if connection and websocket and websocket.disconnect then
+    pcall(websocket.disconnect, connection)
+  end
+  connection = nil
+end
+
+-- FORWARD DECLARATIONS.
+--
+-- A `local` introduced after a function body is not in scope inside it: the
+-- reference compiles to a GLOBAL lookup and is nil at run time. This file has
+-- been bitten by that twice already (see the notes on now_s and
+-- SIGN_IN_CONNECT_GRACE), and both of these are called from functions defined
+-- well above where they are assigned — on_disconnected from send_message,
+-- publish_status from on_connected.
+local on_disconnected
+local publish_status
 
 -- ── pub/sub ─────────────────────────────────────────────────────────────────
 local listeners = {} -- event -> { id -> fn }
@@ -126,14 +243,91 @@ local function derive_sender(gs)
 end
 
 -- ── sending ─────────────────────────────────────────────────────────────────
+-- NOTHING LEAVES THIS APP IN SILENCE, AND NOTHING IS REPORTED AS SENT THAT
+-- WAS NOT.
+--
+-- Reported: while the connection badge is up the app sends nothing to the
+-- backend — and pressing RETRY produces no event there either.
+--
+-- This function was two lines:
+--
+--     if not M.socket_connected or not connection then return false end
+--     websocket.send(connection, json_util.encode(payload))
+--
+-- and both of them are a way to lose a message with no trace:
+--
+--   1. THE GUARD DROPS IN SILENCE. Every message sent while the socket is
+--      down vanishes — no log, no queue, no feedback. send_move does not even
+--      read the return value. So "the app sent nothing" was true, and there
+--      was nothing anywhere saying so, on either side.
+--
+--   2. THE SEND CLAIMS SUCCESS IT CANNOT KNOW. M.socket_connected is a flag
+--      set by on_connected and cleared by on_disconnected, so a socket that
+--      dies without reporting it — the OS reclaiming it, a network handover,
+--      the app being backgrounded — leaves it true. Every send then went to a
+--      dead socket and returned `true`, and the caller believed it. That is
+--      exactly "nothing arrives at the backend" with a client that thinks
+--      everything is fine. The zombie watchdog notices after ZOMBIE_TIMEOUT,
+--      and everything sent in that window is already lost.
+--
+-- Deliberately NOT a replay queue. A MOVE that arrives thirty seconds late
+-- belongs to a turn the server has already timed out and handed to the AI, and
+-- a GAME_REQUEST that arrives late invites somebody into a game they stopped
+-- waiting for. The right answer is to know it failed, say so, and let the
+-- caller decide — game.script's unanswered-move watchdog already recovers a
+-- board on exactly that signal.
+local function report_dropped(msg_type, why)
+  print(string.format("[WS] %s NOT SENT (%s)", tostring(msg_type), tostring(why)))
+  emit("message_dropped", tostring(msg_type), tostring(why))
+end
+
 function M.send_message(msg_type, data)
-  if not M.socket_connected or not connection then return false end
+  if not M.socket_connected or not connection then
+    report_dropped(msg_type, M.connection_status and M.connection_status() or "no socket")
+    return false
+  end
   local payload = { type = msg_type, data = data or {}, timestamp = os.time() }
-  websocket.send(connection, json_util.encode(payload))
+  -- pcall, because a send on a socket the OS has already closed RAISES. Left
+  -- unwrapped it propagates into whatever called this — on_input, a timer
+  -- callback — and takes that whole frame's script down with it.
+  local ok, err = pcall(websocket.send, connection, json_util.encode(payload))
+  if not ok then
+    report_dropped(msg_type, err)
+    -- A send that raises IS a dead socket, whatever the flag says. Reporting
+    -- it here is what turns a silent hole into a reconnect: on_disconnected
+    -- clears the flags and schedules the retry that the flag being stuck true
+    -- was preventing.
+    on_disconnected("send failed")
+    return false
+  end
   return true
 end
 
 function M.send_move(game_id, from_id, to_id, actions, new_suit, active_penalty_count)
+  -- NO MOVE SURVIVES THE END OF ITS GAME.
+  --
+  -- Every move leaves the client through here, which makes this the one place
+  -- the rule can actually be enforced. Up to now it was enforced at the input
+  -- layer instead — on_input refuses taps once game_over is set — and that
+  -- only covers moves the player starts by tapping. A move already staged when
+  -- the result arrived, an AFK auto-play, a queued action draining after the
+  -- fact and a retry all reach this function without going near on_input.
+  --
+  -- active_game_id is the authority: it is set from the game state the server
+  -- pushes and cleared the moment GAME_OVER lands, so an empty one means there
+  -- is no game to move in. A move naming a DIFFERENT game is refused too —
+  -- that is a move from the round that just finished arriving after the next
+  -- one has already started, which would otherwise be applied to the new game.
+  if M.active_game_id == "" then
+    print("[WS] MOVE dropped: the game is over")
+    return false
+  end
+  if game_id and tostring(game_id) ~= "" and tostring(game_id) ~= tostring(M.active_game_id) then
+    print(string.format("[WS] MOVE dropped: for game %s, but the live game is %s",
+      tostring(game_id), tostring(M.active_game_id)))
+    return false
+  end
+
   local move_data = { gameId = game_id, from = from_id, to = to_id, cards = actions }
   if new_suit and new_suit ~= "" then
     move_data.newSuit = new_suit
@@ -151,53 +345,221 @@ end
 -- the UI sat on CONNECTING forever with no way out. Resend a couple of
 -- times, then surface it as an identify failure so the auth layer can
 -- recover instead of hanging.
-local IDENTIFY_TIMEOUT   = 6
+local IDENTIFY_TIMEOUT   = 2.5
 local IDENTIFY_MAX_TRIES = 3
 local identify_timer     = nil
 local identify_tries     = 0
+
+-- How old a connect attempt already in flight at SIGN-IN time must be before
+-- the sign-in abandons it in favour of a fresh one.
+--
+-- Shorter than conn_plan.CONNECT_STALL_SECONDS, and deliberately so: that one
+-- is the passive backstop for an app nobody is watching, while this fires on
+-- an explicit, user-visible event carrying fresh proof that the network is up
+-- (the HTTP sign-in that just returned against the same host). It fires once
+-- per sign-in, never in a loop.
+--
+-- But NOT shorter than a real handshake. Below that it stops being a rescue
+-- and becomes the starvation bug in miniature: a sign-in that lands during a
+-- slow-but-working connect tears down the attempt that was about to succeed
+-- and pays for a second one. Five seconds is the slow handshake that
+-- test_first_login_timing.lua models; the pairing is asserted there.
+--
+-- So an attempt YOUNGER than this rides — it is still plausibly working, and
+-- the 10s backstop has it either way. Only one that predates the sign-in by
+-- more than a whole handshake is treated as dead, which is the ordinary shape
+-- of a first login: boot opens a socket, then the player spends far longer
+-- than this typing a number and waiting for a code.
+--
+-- Declared HERE, with the other identify timings, rather than beside the code
+-- that reads it: M.identify() is defined earlier in this file, and a `local`
+-- introduced after a function body is not in scope inside it — the read would
+-- silently resolve to a nil global and raise on the comparison.
+local SIGN_IN_CONNECT_GRACE = 5
 
 local function cancel_identify_watchdog()
     if identify_timer then pcall(timer.cancel, identify_timer); identify_timer = nil end
 end
 M.cancel_identify_watchdog = cancel_identify_watchdog
 
+-- The ONE place IDENTIFY goes on the wire, so last_identify_sent cannot drift
+-- from reality. Three separate call sites used to send it, and the reconciler's
+-- "have I sent one recently" question has to be answerable for all of them.
+local function send_identify(why)
+    if not pending_identity or not M.socket_connected then return false end
+    last_identify_sent = now_s()
+    print("[WS-DEBUG] sending IDENTIFY (" .. tostring(why) .. ")")
+    return M.send_message("IDENTIFY", pending_identity)
+end
+
 local function arm_identify_watchdog()
     cancel_identify_watchdog()
-    if not pending_identity then return end
+    if not pending_identity or not M.socket_connected then return end
     identify_timer = timer.delay(IDENTIFY_TIMEOUT, false, function()
         identify_timer = nil
         if M.is_identified or not pending_identity then return end
+        if not M.socket_connected then
+            -- Socket was disconnected or is currently reconnecting;
+            -- do not burn identify attempts while disconnected.
+            return
+        end
         if identify_tries < IDENTIFY_MAX_TRIES then
             identify_tries = identify_tries + 1
-            print(string.format("[WS-DEBUG] IDENTIFY unanswered after %ds, resending (%d/%d)",
+            -- %.1f, not %d. IDENTIFY_TIMEOUT is a fraction of a second now,
+            -- and "%d" with a non-integer raises on Lua 5.3+ — inside the
+            -- watchdog's own timer callback, which is the one thing that must
+            -- not be able to die.
+            print(string.format("[WS-DEBUG] IDENTIFY unanswered after %.1fs, resending (%d/%d)",
                 IDENTIFY_TIMEOUT, identify_tries, IDENTIFY_MAX_TRIES))
-            if M.socket_connected then M.send_message("IDENTIFY", pending_identity) end
+            send_identify("watchdog")
             arm_identify_watchdog()
         else
-            print("[WS-DEBUG] IDENTIFY never answered — reporting identify_error")
+            -- A SOCKET THAT IGNORES IDENTIFY IS NOT A SOCKET TO KEEP TRYING ON.
+            --
+            -- From a reported log: connected at 20:54:05, four IDENTIFYs sent,
+            -- none answered, identify_error(timeout) — and the recovery
+            -- (controller's `reidentify` plan) called identify_and_connect,
+            -- which sent a FIFTH IDENTIFY down the same socket and then hit
+            --
+            --   [WS-DEBUG] connect() no-op: is_connecting=false socket_connected=true
+            --
+            -- because connect() no-ops while we believe we are connected. So
+            -- the recovery re-ran the identical action on the identical socket,
+            -- five cycles, ~25 IDENTIFYs, and then gave up. Nothing in that
+            -- loop could ever produce a different outcome.
+            --
+            -- Note what the same log rules out: the zombie watchdog never fired
+            -- across those thirty seconds, and it fires after 13s without a
+            -- single inbound frame. So frames WERE arriving — the server was
+            -- answering CLIENT_PING and not IDENTIFY. Whatever is wrong is at
+            -- the other end; what is wrong HERE is that we kept asking the same
+            -- socket. Dropping it costs one handshake and gives the next
+            -- IDENTIFY a genuinely fresh connection, on the normal backoff.
+            print(string.format(
+                "[WS-DEBUG] IDENTIFY unanswered %d times on this socket — dropping it and reconnecting",
+                IDENTIFY_MAX_TRIES))
             identify_tries = 0
-            emit("identify_error", "Could not sign you in. Retrying...")
+            -- Torn down BEFORE the event goes out: the listener's recovery
+            -- calls identify() again, and while socket_connected is still true
+            -- that just sends another one down the socket we are abandoning.
+            close_orphan_socket()
+            on_disconnected("identify unanswered")
+            -- "timeout", and the distinction is the whole point. Nobody
+            -- rejected this identity — the socket dropped, the server was slow,
+            -- or it handled the reconnect down a branch that forgot to reply.
+            -- The cached session is UNTESTED, not refused, and throwing it away
+            -- here is what turned a network blip into a full re-authentication.
+            emit("identify_error", "Could not sign you in. Retrying...", "timeout")
         end
     end)
 end
 M.arm_identify_watchdog = arm_identify_watchdog
 
+-- The device id, which the app always has. Read lazily through pcall for the
+-- same reason the FCM token is: api_service requires config, and requiring it
+-- from here at load time is a cycle waiting to happen.
+local function device_id()
+  local id = ""
+  pcall(function()
+    local api = require("modules.api_service")
+    if api and api.get_device_id then id = tostring(api.get_device_id() or "") end
+  end)
+  return id
+end
+
+-- A device id short enough to collide is not one. Some builds have returned
+-- "" or "unknown" when theirs was unavailable, and sending THAT would ask the
+-- server to match on a value every such device shares.
+local function usable_device_id()
+  local id = device_id()
+  return #id >= 8 and id or ""
+end
+M.usable_device_id = usable_device_id
+
+-- Latched when the server says it knows nothing about this device. Stops the
+-- reconciler re-asking the same unanswerable question every few seconds; a
+-- sign-in clears it by calling identify() with a real user id.
+M.device_identity_refused = false
+
 function M.identify(id, username, stake, country)
+  id = tostring(id or "")
   M.current_user_id = id
+  local fcm_token = ""
+  pcall(function()
+    local fbpush = require("modules.firebase_push")
+    if fbpush and fbpush.get_fcm_token then
+      fcm_token = fbpush.get_fcm_token()
+    end
+  end)
+
+  -- A real user id clears the refusal: whatever the server did not recognise
+  -- before, it is being given something different now.
+  if id ~= "" then M.device_identity_refused = false end
+
   pending_identity = {
     _id = id,
+    -- ALWAYS sent, even alongside a user id. It is what lets the server resume
+    -- a returning player who has no cached session, and it keeps the stored
+    -- deviceId fresh for the ones who do.
+    deviceId = usable_device_id(),
     username = username,
     stake = stake or { amount = 0, charge = 0 },
     country = country or "",
     appVersion = config.APP_VERSION,
+    fcmToken = (fcm_token and fcm_token ~= "") and fcm_token or nil,
   }
   print(string.format("[WS-DEBUG] identify() called: id=%s socket_connected=%s (%s)",
     tostring(id), tostring(M.socket_connected), M.socket_connected and "sending IDENTIFY now" or "queued for on_connected"))
   identify_tries = 0
+  reconnect_attempts = 0
+  M.reconnect_exhausted = false
+
   if M.socket_connected then
-    M.send_message("IDENTIFY", pending_identity)
+    send_identify("identify() called")
+    arm_identify_watchdog()
+  else
+    -- A SIGN-IN IS EVIDENCE THE NETWORK WORKS.
+    --
+    -- Boot opens a socket before anybody has an identity, so by the time a
+    -- sign-in completes there is usually an attempt already in flight. If that
+    -- attempt has hung — no connect, no error, nothing — the sign-in used to
+    -- inherit it and wait out the full CONNECT_STALL_SECONDS before anything
+    -- else was tried. Ten seconds of nothing, after a login that had already
+    -- succeeded. That is the "sometimes it works and sometimes it doesn't":
+    -- whether login felt instant depended on whether the boot socket happened
+    -- to connect.
+    --
+    -- We know more here than the reconciler does. The HTTP round trip that
+    -- produced this user id just succeeded against the same host, seconds ago.
+    -- An older socket attempt that still has not connected is not more
+    -- trustworthy than that evidence, so it is abandoned and restarted.
+    --
+    -- A much shorter grace than the reconciler's, and it fires at most ONCE
+    -- per sign-in rather than in a loop — so a genuinely slow handshake costs
+    -- one restart here and is then governed by the 10s rule, instead of being
+    -- torn down repeatedly.
+    local in_flight_for = now_s() - (connecting_since or 0)
+    local stale = is_connecting and in_flight_for >= SIGN_IN_CONNECT_GRACE
+    if stale then
+      print(string.format(
+        "[WS] sign-in: abandoning a %.1fs connect that has reported nothing", in_flight_for))
+      is_connecting = false
+      close_orphan_socket()
+    end
+    if not is_connecting then
+      M.connect()
+    end
   end
-  arm_identify_watchdog()
+  M.start_reconciler()
+end
+
+-- Clear the queued identity without disconnecting. Used when a session is
+-- being torn down so the next auto-reconnect does NOT replay an old user id.
+function M.reset_identity()
+  cancel_identify_watchdog()
+  pending_identity = nil
+  identify_tries = 0
+  M.current_user_id = ""
 end
 
 -- FIXED: extra_data logic appends payload keys matching the Godot structure (e.g. tournamentId)
@@ -243,6 +605,21 @@ end
 -- when `enabled` is true.
 function M.set_savings_auto_charge(enabled, amount)
   M.send_message("SET_SAVINGS_AUTO_CHARGE", { enabled = enabled, amount = amount })
+end
+
+-- Player opened the savings stats view and wants more than the fortnight that
+-- rode along with SAVINGS_STATUS.
+--
+-- `savings_history_pending` is set here and cleared when SAVINGS_HISTORY
+-- arrives, so the view can show "loading" rather than an empty list that looks
+-- like an answer. It is set even if the send fails: the reply handler clears
+-- it either way, and a stuck flag showing a spinner is recoverable by
+-- reopening the panel, whereas a cleared flag over no data reads as "you have
+-- never saved anything", which is a lie.
+function M.request_savings_history(days)
+  M.current_savings_history = nil
+  M.savings_history_pending = true
+  M.send_message("GET_SAVINGS_HISTORY", { days = days or 90 })
 end
 
 function M.send_emoji(name, sound, to)
@@ -347,8 +724,59 @@ local function parse_message(json_string)
       if d._id then user_payload._id = d._id end
       if d.username then user_payload.username = d.username end
     end
-    for k, v in pairs(user_payload) do M.current_user_data[k] = v end
-    if M.current_user_data._id then M.current_user_id = M.current_user_data._id end
+    if type(M.current_user_data) ~= "table" then M.current_user_data = {} end
+    if type(user_payload) == "table" then
+      for k, v in pairs(user_payload) do M.current_user_data[k] = v end
+    end
+    if M.current_user_data._id then M.current_user_id = tostring(M.current_user_data._id) end
+
+
+    -- BLOCKED. The server has been sending isBlocked on this payload all along
+    -- and nothing read it, so a suspended account signed in and played exactly
+    -- as before — the block only bit when it next hit an HTTP route guarded by
+    -- checkBlockStatus.
+    --
+    -- Answered here and nowhere else: this is the first moment the app is told,
+    -- and everything below (user_updated, identify_success, the game state
+    -- restore) would otherwise put a blocked player back into the app before
+    -- anyone could act on it.
+    if M.current_user_data.isBlocked == true then
+      local reason = tostring(M.current_user_data.blockReason or "")
+      print("[WS] identify returned a refused account - going offline")
+      M.is_identified = false
+      local was_offline = M.app_offline
+      -- Latched BEFORE the listeners run: one of them disconnects, and a
+      -- disconnect schedules a reconnect unless this is already set.
+      M.set_app_offline(os.time())
+      -- The socket is refused, so it goes — here, not only via a listener that
+      -- may not run. Left open it is a live connection carrying an identity
+      -- the server will not accept, and the planner reads exactly that state
+      -- as "re-send IDENTIFY", which is the refusal answered and re-asked for
+      -- as long as the app is open.
+      pcall(M.disconnect)
+      -- Announced ONCE per latch. This path is re-entered every recheck
+      -- window, and each emit clears the session, toasts and bounces the
+      -- player back to the lobby — fine the first time, and a screen that
+      -- resets itself out of nowhere every quarter of an hour after that.
+      if not was_offline then
+        emit("account_blocked", { reason = reason })
+      end
+      return
+    end
+
+    -- Identified WITHOUT having sent a user id: the server resolved us from
+    -- the device id. The user it sent back is now the identity, and
+    -- pending_identity has to carry it, or the next reconnect goes out
+    -- device-only again and re-resolves something already known.
+    if pending_identity and (pending_identity._id or "") == ""
+       and (M.current_user_id or "") ~= "" then
+      pending_identity._id = M.current_user_id
+      pending_identity.username = M.current_user_data.username or pending_identity.username
+      M.device_identity_refused = false
+      print("[WS] device identify resolved to user " .. tostring(M.current_user_id))
+      emit("identity_resolved_by_device", M.current_user_data)
+    end
+
     emit("user_updated", M.current_user_data)
 
     local gs = M.extract_game_state(d)
@@ -362,7 +790,22 @@ local function parse_message(json_string)
   elseif t == "ONLINE_USERS" then
     handle_online_users(d)
   elseif t == "PUBLIC_ANNOUNCEMENTS" then
-    emit("announcements", d)
+    -- One WS message, two possible item shapes: `type == "banner"` is a
+    -- static image+CTA banner (main/promo_banner.gui_script), anything else
+    -- (including a missing type, from a caller that predates this field —
+    -- see getTopPlayersWithPrizes.ts) is the original scrolling marquee
+    -- (main/announcement.gui_script). Split here, once, so neither listener
+    -- has to know the other type exists or filter the list itself.
+    local marquee, banners = {}, {}
+    for _, item in ipairs(d or {}) do
+      if item.type == "banner" then
+        banners[#banners + 1] = item
+      else
+        marquee[#marquee + 1] = item
+      end
+    end
+    if #marquee > 0 then emit("announcements", marquee) end
+    if #banners > 0 then emit("banners", banners) end
   elseif t == "GAME_REQUEST" then
     M.last_game_request = { user = d.user or {}, stake = d.stake or {}, requestId = d.requestId or "", raw = d }
     emit("game_request", d.user or {}, d.stake or {}, d.requestId or "", d)
@@ -412,7 +855,9 @@ local function parse_message(json_string)
     emit("player_disconnected", {
       reason = d.reason or "Unknown",
       grace = tonumber(d.gracePeriod) or 30,
-      player_id = tostring(d._id or d.playerId or d.userId or ""),
+      -- Backend sends the id as data.disconnectedPlayer (matatu-api's field
+      -- name); the other keys are kept as fallbacks.
+      player_id = tostring(d.disconnectedPlayer or d._id or d.playerId or d.userId or ""),
     })
   elseif t == "PLAYER_RECONNECTED" then
     local gs = M.extract_game_state(d)
@@ -557,6 +1002,13 @@ local function parse_message(json_string)
       end
       if M.current_savings_status then M.current_savings_status.savingCoins = d.newSavingCoins end
     end
+  elseif t == "SAVINGS_HISTORY" then
+    -- The longer series, asked for by request_savings_history(). Cleared the
+    -- pending flag whether or not the server could produce it — a spinner that
+    -- never stops is worse than an empty state that says so.
+    M.savings_history_pending = false
+    M.current_savings_history = d
+    emit("savings_history", d)
   elseif t == "SAVINGS_SETTINGS_UPDATED" then
     -- Server's reply to a SET_SAVINGS_AUTO_CHARGE attempt.
     M.last_savings_settings = d
@@ -564,15 +1016,46 @@ local function parse_message(json_string)
     if d.success and M.current_savings_status then
       M.current_savings_status.autoCharge = { enabled = d.enabled, amount = d.amount }
     end
+  elseif t == "TEAM_CUP_EVENT" then
+    -- Somebody joined the cup, or the owner started it. News about a cup this
+    -- player is already IN, carrying no decision — so it surfaces as a toast
+    -- and never as a banner. Not parked on M: a toast that has been shown is
+    -- finished, and keeping the last one around only invites a screen to
+    -- replay it on its next rebuild.
+    emit("cup_event", d or {})
+  elseif t == "TEAM_CUP_INVITE" then
+    -- An invitation IS a decision, so this one gets the top banner. Arrives
+    -- live when the invite is sent, and again for every un-acted-on invitation
+    -- right after IDENTIFY (d.pending marks the replayed ones) — a push can be
+    -- silenced or swiped away, so the replay is what actually guarantees the
+    -- player sees it when they open the app.
+    emit("cup_invite", d or {})
   elseif t == "TRANSACTION_COMPLETED" then
     emit("transaction_completed", d)
   elseif t == "TRANSACTION_FAILED" then
     emit("transaction_failed", d.reason or "Failed")
+  elseif t == "IDENTIFY_UNKNOWN" then
+    -- The server knows nothing about this device and we offered no user id.
+    -- NOT a failure and NOT a rejection: there is no session to rebuild, this
+    -- device has simply never signed in. Latched so the reconciler stops
+    -- asking a question whose answer cannot change until somebody does.
+    print("[WS] server does not recognise this device - a sign-in is needed")
+    cancel_identify_watchdog()
+    M.device_identity_refused = true
+    -- The queued identity has to go as well as the flag. Left in place, the
+    -- reconciler still sees an identity it has not registered and goes on
+    -- re-sending it every few seconds — the latch only guards the branch that
+    -- CREATES a device identity, not one already sitting there.
+    M.reset_identity()
+    emit("identify_unknown_device", d.message or "No account on this device yet")
+
   elseif t == "IDENTIFY_ERROR" then
     print("[WS-DEBUG] IDENTIFY_ERROR received: " .. tostring(d.message))
     cancel_identify_watchdog()
     M.is_identified = false
-    emit("identify_error", d.message or "Authentication Failed")
+    -- "rejected": the server looked at this identity and refused it. This is
+    -- the one that genuinely has to be rebuilt.
+    emit("identify_error", d.message or "Authentication Failed", "rejected")
   elseif t == "ERROR" then
     -- handleIdentify answers an unknown/stale user id with a generic ERROR
     -- ("User not found"), not IDENTIFY_ERROR. Treated as a plain error it
@@ -583,7 +1066,9 @@ local function parse_message(json_string)
     if not M.is_identified and pending_identity then
       print("[WS-DEBUG] ERROR while un-identified, treating as identify failure: " .. tostring(d.message))
       cancel_identify_watchdog()
-      emit("identify_error", d.message or "Could not sign you in.")
+      -- Also a rejection: the server answered, and what it said was that this
+      -- id is not one it knows.
+      emit("identify_error", d.message or "Could not sign you in.", "rejected")
     else
       emit("error", d.message or "Error")
     end
@@ -599,7 +1084,6 @@ local function stop_keep_alive()
   if keep_alive_handle then timer.cancel(keep_alive_handle); keep_alive_handle = nil end
 end
 
-local on_disconnected -- forward decl
 
 -- A socket reported as "connected" but with no inbound traffic for ZOMBIE_TIMEOUT
 -- seconds is a dead-but-open (zombie) link. Tear it down and let the normal
@@ -625,23 +1109,97 @@ local function start_keep_alive()
       return
     end
     M._ping_sent_at = now_s()
-    websocket.send(connection, json_util.encode({ type = "CLIENT_PING", timestamp = os.time() }))
+    -- THROUGH send_message, NOT AROUND IT.
+    --
+    -- This was a bare websocket.send. A send on a socket the OS has already
+    -- closed RAISES, and this one runs inside a repeating timer callback —
+    -- so the error killed the keep-alive itself. No more CLIENT_PING, and no
+    -- more zombie checks either, because the check above lives in the same
+    -- callback. The socket then sat "connected" for ever with nothing going
+    -- out and nothing coming back, and connect() no-ops while
+    -- M.socket_connected is true, so nothing reopened it.
+    --
+    -- That is "the backend looks healthy but the app is reconnecting and
+    -- sending nothing", from the one line that was outside the guard rail.
+    -- send_message pcalls the send and reports a raise as a disconnect, which
+    -- is what starts the retry.
+    M.send_message("CLIENT_PING")
   end)
 end
+
+-- The longest gap between reconnect attempts while a player is waiting to be
+-- identified. config.MAX_RECONNECT_DELAY (30s) still applies once nobody is.
+local WAITING_RECONNECT_MAX = 1.5
+
+-- ...BUT NOT FOREVER.
+--
+-- A flat 1.5s ceiling is right for the case it was written for: a player
+-- looking at CONNECTING while the server blips. It is wrong once it is clear
+-- the server is not coming back in a moment, because it never escalates — it
+-- retries every 1.5s for as long as the outage lasts, and every retry is a
+-- fresh TLS handshake.
+--
+-- On the reported log that is exactly what happened: attempt after attempt at
+-- 1.5s, each one answered with
+--
+--   SSLSocket mbedtls_ssl_handshake: -29312
+--
+-- which is MBEDTLS_ERR_SSL_CONN_EOF — the peer hung up DURING the handshake,
+-- not a certificate or protocol fault. That is what a tunnel or proxy does
+-- when it is shedding connections, so the retry rate was feeding the thing it
+-- was retrying against.
+--
+-- So the ceiling escalates in three steps rather than staying flat, and the
+-- steps are sized by what the player is actually experiencing:
+--
+--   1-6    1.5s   the blip the fast path exists for. A player who has just
+--                 tapped is owed a retry NOW, and six of these is nine
+--                 seconds — still well inside the promise that a handful of
+--                 failed connects never costs them half a minute, which
+--                 tools/test_first_login_timing.lua pins as arithmetic.
+--
+--   7-20   2.5s   the network is genuinely bad rather than briefly busy. Still
+--                 seconds, still responsive, and already fewer handshakes.
+--
+--   21+    8s     nobody is being kept responsive any more — by here they have
+--                 been waiting the best part of a minute and the fast retries
+--                 have plainly not helped. This is where the reported log was
+--                 (attempt 26), and it is the only band where the retry rate
+--                 is doing harm rather than good. Five times fewer handshakes.
+--
+-- Note the ceilings only ever CAP the exponential backoff; they never hold a
+-- retry back that the curve would have issued sooner.
+local WAITING_FAST_ATTEMPTS  = 6
+local WAITING_LATE_ATTEMPTS  = 20
+local WAITING_RECONNECT_MID_MAX  = 2.5
+local WAITING_RECONNECT_SLOW_MAX = 8
+
+-- Spread the retries out.
+--
+-- Every client that drops off a restarting server comes back on the same
+-- schedule, so they arrive together, and a server that just fell over gets its
+-- whole population in one spike. A little noise per client turns that spike
+-- into an arrival rate.
+--
+-- Deliberately small: it exists to break the lockstep, not to reshape the
+-- timings above, which are held to real limits by the first-login test.
+local RECONNECT_JITTER = 0.10
 
 local schedule_reconnect -- forward decl
 
 local function on_connected()
   print("[WS] connected")
   M.socket_connected = true
+  M.reconnect_exhausted = false
   is_connecting = false
   reconnect_attempts = 0
   current_reconnect_delay = config.INITIAL_RECONNECT_DELAY
   start_keep_alive()
   emit("connected")
+  publish_status()
   print(string.format("[WS-DEBUG] on_connected: pending_identity=%s", tostring(pending_identity ~= nil)))
   if pending_identity then
-    M.send_message("IDENTIFY", pending_identity)
+    send_identify("socket opened")
     arm_identify_watchdog()
   end
 end
@@ -654,6 +1212,11 @@ on_disconnected = function(reason)
   stop_keep_alive()
   connection = nil
   emit("disconnected", reason)
+  -- BEFORE the three early returns below, and again after schedule_reconnect,
+  -- because those returns are exactly the cases the badge used to get wrong:
+  -- a manual teardown, a refused build and a blocked account all leave this
+  -- function without scheduling anything at all.
+  publish_status()
   if is_manual_disconnect then
     is_manual_disconnect = false
     return
@@ -666,7 +1229,12 @@ on_disconnected = function(reason)
     print("[WS] not reconnecting: update required")
     return
   end
+  if M.app_offline then
+    print("[WS] not reconnecting: app offline")
+    return
+  end
   schedule_reconnect()
+  publish_status()
 end
 
 schedule_reconnect = function()
@@ -674,10 +1242,43 @@ schedule_reconnect = function()
   reconnect_attempts = reconnect_attempts + 1
   if reconnect_attempts > config.MAX_RECONNECT_ATTEMPTS then
     print("[WS] max reconnect attempts reached")
+    M.reconnect_exhausted = true
     emit("reconnect_failed")
     return
   end
-  current_reconnect_delay = math.min(config.INITIAL_RECONNECT_DELAY * (config.RECONNECT_BACKOFF ^ (reconnect_attempts - 1)), config.MAX_RECONNECT_DELAY)
+  -- THE CAP DEPENDS ON WHETHER ANYBODY IS WAITING.
+  --
+  -- The 30s ceiling is right for an idle app whose socket dropped: nothing is
+  -- on screen, and hammering a server that is already struggling helps nobody.
+  --
+  -- It is quite wrong for a player who has just signed in and is looking at
+  -- CONNECTING. The backoff runs 1, 1.5, 2.25, 3.4, 5, 7.6, 11.4, 17, 25.6 and
+  -- then 30 a time, so nine losing attempts put the next one over a minute
+  -- out with the identity queued the whole while - which is exactly the
+  -- "identify takes more than a minute" report, as arithmetic.
+  --
+  -- So while there is an identity waiting to be registered, the ceiling drops
+  -- to a few seconds. It rises again the moment they are identified.
+  local waiting = pending_identity ~= nil and not M.is_identified
+  local ceiling
+  if waiting then
+    -- Fast while the outage still looks like a blip, then escalating. Without
+    -- these steps it stayed at 1.5s for as long as the server was down.
+    if reconnect_attempts <= WAITING_FAST_ATTEMPTS then
+      ceiling = WAITING_RECONNECT_MAX
+    elseif reconnect_attempts <= WAITING_LATE_ATTEMPTS then
+      ceiling = WAITING_RECONNECT_MID_MAX
+    else
+      ceiling = WAITING_RECONNECT_SLOW_MAX
+    end
+  else
+    ceiling = config.MAX_RECONNECT_DELAY
+  end
+  current_reconnect_delay = math.min(config.INITIAL_RECONNECT_DELAY * (config.RECONNECT_BACKOFF ^ (reconnect_attempts - 1)), ceiling)
+  -- Jitter LAST, so it spreads the ceiling too — applied before the clamp it
+  -- would be flattened away by it at exactly the point every client is pinned
+  -- to the same value and the spread matters most.
+  current_reconnect_delay = current_reconnect_delay * (1 + (math.random() * 2 - 1) * RECONNECT_JITTER)
   print(string.format("[WS] reconnecting in %.1fs (attempt %d)", current_reconnect_delay, reconnect_attempts))
   reconnect_handle = timer.delay(current_reconnect_delay, false, function()
     reconnect_handle = nil
@@ -709,6 +1310,28 @@ function M.connect()
     print("[WS] connect() refused: update required")
     return
   end
+  -- Every route to a socket goes through connect(), so refusing here stops
+  -- the reconnect timer, the lobby's auto-identify and the PLAY ONLINE tap
+  -- alike, rather than each of them needing its own guard.
+  --
+  -- Except when the recheck window is open, which is the ONE attempt that
+  -- lets an account whose block has been lifted find that out. The window is
+  -- closed again here rather than on the answer: whether it succeeds or
+  -- fails, this attempt has been spent, and leaving it open would turn the
+  -- one probe into the loop this is here to prevent.
+  if M.app_offline then
+    if not M.app_offline_recheck_due() then
+      print("[WS] connect() refused: app offline")
+      return
+    end
+    print("[WS] app offline, but the recheck window is open - trying once")
+    app_offline_at = now_s()
+  end
+  if is_connecting and (now_s() - (connecting_since or 0)) >= conn_plan.CONNECT_STALL_SECONDS then
+    print("[WS] clearing stale is_connecting")
+    is_connecting = false
+    close_orphan_socket()
+  end
   if is_connecting or M.socket_connected then
     print(string.format("[WS-DEBUG] connect() no-op: is_connecting=%s socket_connected=%s",
       tostring(is_connecting), tostring(M.socket_connected)))
@@ -732,19 +1355,316 @@ function M.connect()
       .. "&b=" .. tostring(config.APP_BUILD or 0)
   print("[WS] connecting to " .. url)
   is_connecting = true
+  connecting_since = now_s()
   is_manual_disconnect = false
 
   local params = { timeout = 8000 }
   connection = websocket.connect(url, params, ws_callback)
 end
 
+-- A DELIBERATE retry, after the automatic ones have given up.
+--
+-- schedule_reconnect stops at MAX_RECONNECT_ATTEMPTS and sets
+-- reconnect_exhausted, which is right: retrying forever behind a lobby that
+-- says CONNECTING drains the battery and tells the player nothing. The lobby
+-- then greys the online tiles and offers RETRY.
+--
+-- That button needs this. M.connect() on its own gets exactly ONE attempt —
+-- reconnect_attempts is still over the maximum, so the first failure lands
+-- straight back in the exhausted state — which makes a deliberate retry
+-- weaker than the automatic ones it is standing in for. Somebody who has just
+-- walked back into signal deserves the full budget, so the counter and the
+-- backoff are reset first.
+--
+-- Safe to call at any time: connect() already no-ops while connecting or
+-- connected, and refuses outright when an update is required.
+function M.retry_connection()
+  print("[WS] manual retry requested")
+  reconnect_attempts = 0
+  current_reconnect_delay = config.INITIAL_RECONNECT_DELAY
+  M.reconnect_exhausted = false
+  -- A pending timer would fire mid-attempt and be refused by connect()'s
+  -- is_connecting guard, silently costing the player one of their retries.
+  if reconnect_handle then
+    pcall(timer.cancel, reconnect_handle)
+    reconnect_handle = nil
+  end
+  -- A DELIBERATE TAP OUTRANKS WHATEVER WE THINK WE HAVE.
+  --
+  -- Reported: pressing RETRY produces no event at the backend at all.
+  --
+  -- connect() no-ops on `is_connecting or M.socket_connected`, and this only
+  -- cleared the first of those, and only once it was ten seconds stale. So
+  -- RETRY did nothing whenever:
+  --
+  --   * an attempt was in flight and younger than the stall window, or
+  --   * M.socket_connected was stuck true over a socket that had died without
+  --     reporting it — which is the state somebody is pressing RETRY IN.
+  --
+  -- Either way the tap was swallowed, silently, and the player pressed it
+  -- again. Being asked to retry is itself the evidence that what we are
+  -- holding does not work, so it is torn down rather than protected.
+  if is_connecting or M.socket_connected then
+    print("[WS] manual retry: discarding the current socket "
+      .. string.format("(connecting=%s connected=%s)",
+        tostring(is_connecting), tostring(M.socket_connected)))
+  end
+  is_connecting = false
+  M.socket_connected = false
+  M.is_identified = false
+  stop_keep_alive()
+  -- Closed, not just forgotten: an abandoned socket left open goes on
+  -- delivering events for a connection nobody is reading any more, and its
+  -- eventual DISCONNECTED would tear down the replacement.
+  close_orphan_socket()
+  M.connect()
+  M.start_reconciler()
+end
+
 function M.disconnect()
   is_manual_disconnect = true
+  -- Cleared here too. A disconnect requested WHILE an attempt is in flight
+  -- otherwise leaves is_connecting true with no event coming to clear it, and
+  -- the next connect() is a no-op until the reconciler's stall timer notices.
+  is_connecting = false
   stop_keep_alive()
+  cancel_identify_watchdog()
+  pending_identity = nil      -- never replay a stale identity on the next connect
+  identify_tries = 0
   if connection and websocket then websocket.disconnect(connection) end
   connection = nil
   M.socket_connected = false
   M.is_identified = false
+end
+
+-- ── THE RECONCILER ──────────────────────────────────────────────────────────
+--
+-- One loop whose whole job is to make the world match "we want to be signed in
+-- as X". It replaces a sequence that five separate components had to perform
+-- in the right order, each assuming the one before it had happened, with
+-- nobody responsible for noticing when an assumption broke.
+--
+-- The failure that shipped: M.connect() no-ops while `is_connecting` is true,
+-- and that flag is cleared ONLY by on_connected and on_disconnected. A socket
+-- attempt that neither connects nor reports a failure — a hung TLS handshake,
+-- an OEM dropping it silently, the app suspending mid-connect — leaves it true
+-- for the rest of the process. connect() is then permanently a no-op,
+-- schedule_reconnect never runs (it only fires from on_disconnected), and the
+-- queued IDENTIFY sits there for ever. The identify watchdog cannot help: its
+-- resend is itself guarded on socket_connected.
+--
+-- That is "Firebase returns 200, every field is populated, and IDENTIFY never
+-- gets executed". Most likely on a FIRST login, because that is when a fresh
+-- socket is opened straight after a token fetch and an HTTPS round trip.
+--
+-- This cannot deadlock the same way: it re-derives what to do from observable
+-- state on every tick, so nothing depends on an event arriving.
+local RECONCILE_INTERVAL = 1
+local reconcile_handle = nil
+
+-- Where a cached session comes from. Supplied by controller.script at boot so
+-- this module does not have to require api_service (which requires config,
+-- which is a cycle waiting to happen).
+--
+-- This is what makes "the app is open and there is a cached user" enough, on
+-- its own, to get signed in. The identity used to exist only if some
+-- controller path had remembered to call identify(), so whether IDENTIFY ever
+-- fired depended on which route the app took through boot, resume, a failed
+-- sign-in or a cleared flag. Now it is a property of the state.
+local identity_provider = nil
+
+function M.set_identity_provider(fn)
+  identity_provider = fn
+  M.start_reconciler()
+end
+
+local function adopt_cached_identity()
+  if not identity_provider then return false end
+  local ok, cached = pcall(identity_provider)
+  if not ok or type(cached) ~= "table" then return false end
+  local id = tostring(cached._id or cached.localId or "")
+  if id == "" then return false end
+
+  print("[WS] adopting cached session for " .. id .. " - identifying without a sign-in")
+  if type(M.current_user_data) ~= "table" or (M.current_user_data._id or "") == "" then
+    M.current_user_data = cached
+  end
+  M.identify(id, cached.username or "Player",
+    { amount = tonumber(cached.balance) or 0, charge = 0 }, "UG")
+  return true
+end
+
+local function has_cached_identity()
+  if not identity_provider then return false end
+  local ok, cached = pcall(identity_provider)
+  return ok and type(cached) == "table" and tostring(cached._id or cached.localId or "") ~= ""
+end
+
+-- WHAT THE CONNECTION IS DOING, AS ONE ANSWER.
+--
+-- Reported: a "RECONNECTING…" badge appears and the app sends nothing to the
+-- backend for a minute or more. Both halves were true at once, because the
+-- badge was driven by the raw `disconnected` event — which on_disconnected
+-- emits BEFORE deciding whether to reconnect at all. In three cases it then
+-- decided not to: a manual disconnect, update_required, and app_offline. The
+-- last of those stays quiet for APP_OFFLINE_RECHECK_SECONDS, fifteen minutes,
+-- with a spinner on screen the whole time promising otherwise.
+--
+-- Derived from the same state the reconciler plans from, so the spinner and
+-- the loop cannot disagree about whether anything is in flight.
+local last_published_status = nil
+
+local function connection_state()
+  return {
+    identity            = pending_identity,
+    update_required     = M.update_required,
+    app_offline         = M.app_offline,
+    socket_connected    = M.socket_connected,
+    is_connecting       = is_connecting,
+    is_identified       = M.is_identified,
+    reconnect_scheduled = reconnect_handle ~= nil,
+    reconnect_exhausted = M.reconnect_exhausted,
+    has_cached_identity = has_cached_identity(),
+    has_device_identity = usable_device_id() ~= "",
+    device_identity_refused = M.device_identity_refused,
+  }
+end
+
+--- The current status, computed fresh. Safe to call at any time.
+function M.connection_status()
+  return conn_plan.status(connection_state())
+end
+
+--- Emit `connection_status` when — and only when — it has actually changed.
+--- Called from every place that can change it, plus the reconciler tick as a
+--- backstop, so nothing has to remember to announce anything.
+publish_status = function()
+  local status = M.connection_status()
+  if status == last_published_status then return end
+  last_published_status = status
+  print("[WS] connection status: " .. tostring(status))
+  emit("connection_status", status)
+end
+M.publish_status = publish_status
+
+local function reconcile_step()
+  local action = conn_plan.next_action({
+    identity            = pending_identity,
+    update_required     = M.update_required,
+    -- WITHOUT THESE TWO THE PLANNER DRIVES A LOOP connect() ONLY REFUSES.
+    --
+    -- The latch was read at connect() and nowhere else, so every tick the
+    -- planner still decided "adopt_device" and then "connect" — and
+    -- adopt_device calls identify(), which restarts this loop on the spot
+    -- rather than waiting for the next tick. It spun for as long as the app
+    -- was open, refused one call deeper each time.
+    app_offline         = M.app_offline,
+    app_offline_recheck = M.app_offline_recheck_due(),
+    socket_connected    = M.socket_connected,
+    is_connecting       = is_connecting,
+    is_identified       = M.is_identified,
+    connecting_for      = now_s() - (connecting_since or 0),
+    since_identify      = now_s() - (last_identify_sent or 0),
+    has_cached_identity = has_cached_identity(),
+    reconnect_scheduled = reconnect_handle ~= nil,
+    has_device_identity = usable_device_id() ~= "",
+    device_identity_refused = M.device_identity_refused,
+  })
+
+  if action == "adopt" then
+    -- identify() sets pending_identity and kicks this loop again, so the next
+    -- tick proceeds straight to connect/identify.
+    adopt_cached_identity()
+
+  elseif action == "adopt_device" then
+    -- No user id anywhere, but the app knows its own device. Identify with
+    -- that alone and let the server resolve who it belongs to; the reply
+    -- carries the user back and the client caches it from there.
+    print("[WS] no cached session - identifying by device id")
+    M.identify("", "Player", { amount = 0, charge = 0 }, "UG")
+
+  elseif action == "identify" then
+    -- A socket with no identity on it. This is the state that used to be able
+    -- to last for ever; re-sending costs one small frame.
+    send_identify("reconciler")
+
+  elseif action == "connect" then
+    M.connect()
+
+  elseif action == "unstick" then
+    -- The attempt has hung past anything the extension's own 8s timeout could
+    -- explain, and no event is coming to clear it. Force the flag down and let
+    -- the next tick open a fresh one.
+    print(string.format("[WS] connect attempt hung for %.0fs with no event - retrying",
+      now_s() - (connecting_since or 0)))
+    is_connecting = false
+    close_orphan_socket()
+    M.connect()
+  end
+
+  return action
+end
+
+-- RUN THE WHOLE WAY TO A STABLE STATE, NOW.
+--
+-- One action per tick meant a returning player with a session already on disk
+-- waited two ticks before the socket was even opened: tick one adopted the
+-- identity, tick two connected. Four seconds of CONNECTING for somebody the
+-- app already knew everything about.
+--
+-- Each action changes the state the next decision reads, so a short loop walks
+-- adopt -> connect (or adopt -> identify) in one pass and stops the moment
+-- nothing more can usefully be done. Bounded because a planner bug must cost a
+-- few wasted iterations, never a frozen app.
+local function reconcile()
+  local result = "wait"
+  for _ = 1, 4 do
+    local action = reconcile_step()
+    if action == "wait" or action == "idle" then result = action; break end
+  end
+  -- The backstop. Every caller that changes the connection publishes for
+  -- itself, but a status can also change with no event at all — a scheduled
+  -- retry firing, the exhaustion counter tipping over — and this tick is the
+  -- one thing guaranteed to notice.
+  publish_status()
+  return result
+end
+
+-- Idempotent. Started the first time an identity is set and left running: the
+-- ticks are almost all no-ops ("idle" or "wait"), and a loop that stops itself
+-- is a loop that has to be restarted correctly by everything that might need
+-- it — which is the class of bug this exists to remove.
+function M.start_reconciler()
+  -- When reconciling / resuming, if we are not connected and not identified,
+  -- cancel any pending backoff delay so we attempt reconnection immediately.
+  if not M.socket_connected and not M.is_identified then
+    if reconnect_handle then
+      pcall(timer.cancel, reconnect_handle)
+      reconnect_handle = nil
+    end
+    reconnect_attempts = 0
+  end
+
+  if not reconcile_handle then
+    reconcile_handle = timer.delay(RECONCILE_INTERVAL, true, function()
+      local ok, err = pcall(reconcile)
+      if not ok then print("[WS] reconciler error: " .. tostring(err)) end
+    end)
+  end
+  -- And reconcile RIGHT NOW, every time, even when the timer was already
+  -- running. This is what makes the common paths immediate rather than
+  -- eventual: registering the identity provider at boot, and identify() being
+  -- called after a sign-in, both land here and both should act on this frame
+  -- instead of waiting up to RECONCILE_INTERVAL for a tick that will decide
+  -- exactly the same thing.
+  local ok, err = pcall(reconcile)
+  if not ok then print("[WS] reconciler error: " .. tostring(err)) end
+end
+
+-- Test seam, and used by disconnect(): a repeating timer keeps the process
+-- alive and would go on reconnecting a session that was deliberately ended.
+function M.stop_reconciler()
+  if reconcile_handle then pcall(timer.cancel, reconcile_handle); reconcile_handle = nil end
 end
 
 function M.get_active_game() return M.active_game_state end

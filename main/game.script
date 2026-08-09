@@ -12,8 +12,13 @@ local util  = require "modules.game_util"
 local BL    = require "modules.board_layout"
 local CV    = require "modules.card_view"
 local RE    = require "modules.rules_eval"
+-- Every lock that can refuse a tap, as plain testable functions. See the
+-- module: four of the five had a watchdog and the fifth did not, which is
+-- what made the draw pile go dead after an opponent's penalty.
+local TL             = require "modules.turn_locks"
 local GS    = require "modules.game_state"
 local GF    = require "modules.game_flow"
+local RQ    = require "modules.reshuffle_queue"
 
 local OnlineHandler = require "modules.online_handler"
 local OfflineHandler = require "modules.offline_handler"
@@ -60,6 +65,41 @@ local function play_sound(_, name)
     if sound and sound.enabled == false then return end
     local comp = SND[name] or name
     pcall(msg.post, "#" .. comp, "play_sound")
+end
+
+----------------------------------------------------------------------
+-- Recovery: put the board back to what the server last told us
+----------------------------------------------------------------------
+-- Used by every "this should have finished by now" path. The server's state is
+-- the only thing that can be trusted after one of those, and re-applying it is
+-- cheap: finalize_state_sync syncs to target COUNTS rather than applying
+-- deltas, so running it over a partial or stale board is safe and idempotent.
+local function rebuild_from_server(self)
+    if not self.online_mode then return false end
+    -- NEVER during a round transition. ws_game_over sets round_transition_busy
+    -- the instant GAME_OVER arrives and holds it until the round-summary story
+    -- and flip/count animation chain both finish — start_new_online_game parks
+    -- an incoming next-round state behind that same flag for exactly this
+    -- reason (main/game.script's ws_new_game_start handler). But
+    -- ws.active_game_state is a SINGLE shared cache that parse_message
+    -- overwrites the moment GAME_REQUEST_ACCEPTED for the next round is
+    -- parsed — synchronously, before that gate even runs — and the server
+    -- pushes that message right after GAME_OVER, with no delay. A stall/
+    -- overdue-move watchdog (or a stray ws_server_error) firing anywhere in
+    -- that window used to read the ALREADY-NEXT-ROUND state through this
+    -- function and hand it straight to finalize_state_sync, which does
+    -- touch self.ai_hand/self.deck — dealing the next round's opponent
+    -- cards onto a board still showing the round that just ended, before
+    -- the actual deal was ever meant to run. Skipping here is safe: the
+    -- round-transition machinery (round_story_done/round_transition_finished)
+    -- reconciles the real next round once it genuinely completes.
+    if self.round_transition_busy then return false end
+    local latest = ws.active_game_state
+    if type(latest) ~= "table" or next(latest) == nil then return false end
+    OnlineHandler.finalize_state_sync(self, latest, function()
+        RE.pre_validate_hand(self)
+    end)
+    return true
 end
 
 ----------------------------------------------------------------------
@@ -118,6 +158,23 @@ function init(self)
     -- Without this, board/hand cards stayed tappable for that whole window
     -- (most noticeable when the OPPONENT won, since the board sits idle).
     self.input_locked_for_game_over = false
+    -- THE WHOLE ROUND TRANSITION, AS ONE FLAG.
+    --
+    -- Set the instant the server says the round ended and cleared only when
+    -- the transition has finished playing (GF.finish_round_transition). While
+    -- it is set, an incoming next-round state is PARKED rather than built.
+    --
+    -- No existing flag covers the span. pending_game_over_data is cleared by
+    -- the watchdog BEFORE process_game_over_queue runs, which leaves a hole of
+    -- its own 0.5s beat with nothing set; is_transitioning_round only starts at
+    -- end_game; round_story_active only at final_resolution, i.e. AFTER the
+    -- flip and the counting. So a next-round state arriving during the reveal
+    -- passed straight through and rebuilt the board underneath it — and on the
+    -- way past it also cleared pending_game_over_data, so for that round the
+    -- flip and count never ran at all. That is the "it initializes the new game
+    -- then does the flipping and counting" ordering.
+    self.round_transition_busy = false
+    self._pending_next_deadline = nil
     app.unlock_board()
 
     -- ---- self.* dispatch table -------------------------------------------
@@ -198,15 +255,30 @@ function init(self)
         RE.pre_validate_hand(self)
     end
 
+    -- CALLED SIX TO EIGHT TIMES A FRAME, so it must not allocate.
+    --
+    -- It used to run tostring() on both ids on every call. Those are string
+    -- allocations, and at 60fps that is several hundred a second thrown away
+    -- for a comparison whose inputs almost never change — GC pressure produced
+    -- by the watchdogs that only exist to notice when nothing is happening.
+    --
+    -- The conversions are memoised on the raw values instead, so a string is
+    -- built only when an id actually changes. The identity fast path above it
+    -- covers the common case (both already strings and equal) without touching
+    -- the memo at all.
+    local ct_raw, ct_str, me_raw, me_str
     self.is_player_turn = function()
-        if self.online_mode then
-            if self.game_state and self.game_state.currentTurn then
-                return tostring(self.game_state.currentTurn) == tostring(self.my_player_id)
-            end
-            return false
-        else
+        if not self.online_mode then
             return self.current_turn == "player"
         end
+        local gs = self.game_state
+        local ct = gs and gs.currentTurn
+        if ct == nil then return false end
+        local me = self.my_player_id
+        if ct == me then return true end
+        if ct ~= ct_raw then ct_raw, ct_str = ct, tostring(ct) end
+        if me ~= me_raw then me_raw, me_str = me, tostring(me) end
+        return ct_str == me_str
     end
     -- ----------------------------------------------------------------------
 
@@ -249,19 +321,32 @@ local function process_game_over_queue(self, results)
         self._final_state_locked = false
     end
     
-    -- Step 2: Brief beat for the scoreboard flip to visibly start BEFORE
-    -- flipping cards / round transitions (was 1.2s — trimmed so game over
-    -- reads as instant; the card-reveal flip is the only intentional wait).
+    -- Step 2: flip, straight away.
+    --
+    -- There was another half-second here, to let the scoreboard flip "visibly
+    -- start" before the cards. Stacked on flip_ai_hand's own +0.5s lead-in and
+    -- the watchdog's settle, the reveal did not begin for about a second after
+    -- the round was decided — which is a long time to sit on a dead board, and
+    -- long enough for the next round to arrive first. The scoreboard flip
+    -- above animates on its own; it does not need the cards held back for it.
     local is_cut = results.isCut or (results.reason == "CUTTING_CARD")
 
-    timer.delay(0.5, false, function()
-        -- Start Step 3: Flip cards and display round transitions cleanly
-        self.end_game((results.winner == self.my_player_id), is_cut, results)
-        
-        -- Release lock
-        self._is_processing_game_over = false
-    end)
+    self.end_game((results.winner == self.my_player_id), is_cut, results)
+    self._is_processing_game_over = false
 end
+
+-- Forward declaration. start_new_online_game is defined a few hundred lines
+-- below, and the watchdogs in update() call it.
+--
+-- Without this they did not call it at all: `local function` at the definition
+-- site meant the name was not in scope up here, so those calls compiled to a
+-- GLOBAL lookup that is forever nil (luac -l shows `GETTABUP _ENV
+-- "start_new_online_game"`). The round-story watchdog — the net that is
+-- supposed to rescue a stuck round transition after 8.5s — therefore threw
+-- "attempt to call a nil value" instead of rescuing anything, every time it
+-- fired. It only fires when a transition is already stuck, which is why it
+-- could sit broken: the failure looked like the stall it was meant to fix.
+local start_new_online_game
 
 ----------------------------------------------------------------------
 -- Watchdogs (online only): release stale locks the moment it's our turn
@@ -270,8 +355,14 @@ function update(self, dt)
     -- Tutorial: while a "play this card" step is active, follow the scripted
     -- card's live position and feed its rect to the spotlight overlay. World and
     -- GUI both use the 1280x720 logical space, so the card position maps directly.
+    -- The is_active() check is OUTSIDE the pcall, and that is the whole point.
+    -- `pcall(function() ... end)` allocates a fresh closure every time it is
+    -- reached, so with the check inside, every frame of every game built and
+    -- threw away a closure for a tutorial that is not running — 60 allocations
+    -- a second of pure garbage, feeding exactly the collector pauses that show
+    -- up as an intermittent hitch mid-animation.
+    if Tut.is_active() then
     pcall(function()
-        if not Tut.is_active() then return end
         local hl = Tut.current()
         if not (hl and hl.screen == "game" and hl.target == "card" and hl.v) then return end
         for _, c in ipairs(self.player_hand or {}) do
@@ -282,6 +373,7 @@ function update(self, dt)
             end
         end
     end)
+    end
 
     -- BUG FIX: Round story watchdog shouldn't default to 0 for deadline
     if self.round_story_active then
@@ -300,6 +392,25 @@ function update(self, dt)
         end
     else
         self.round_story_deadline = nil
+    end
+
+    -- Parked-round watchdog. Holding the next round back is only safe if
+    -- something is guaranteed to let it go: this is the last of those, for the
+    -- case where no path ever reports the transition finishing (hud gui gone,
+    -- screen torn down mid-reveal, a game-over that never reaches end_game).
+    -- Deliberately longer than the whole sequence plus the round-story
+    -- watchdog, so it never pre-empts the normal route.
+    if self._pending_next_state and self._pending_next_deadline
+        and socket.gettime() > self._pending_next_deadline then
+        print("[ROUND-TRANSITION] watchdog released a parked next round")
+        self.round_transition_busy = false
+        self.round_story_active = false
+        self.round_story_deadline = nil
+        self._pending_next_deadline = nil
+        local pending = self._pending_next_state
+        self._pending_next_state = nil
+        GF.finish_round_transition(self, true)
+        start_new_online_game(self, pending, false)
     end
 
     if self.online_mode then
@@ -332,23 +443,147 @@ function update(self, dt)
             end
         end
 
-        if #self.move_queue == 0 then
-            if self.is_processing_move then
-                self.stuck_count = (self.stuck_count or 0) + dt
-                if self.stuck_count > 3.5 then
-                    print("[DEBUG] Watchdog resetting is_processing_move lock!")
-                    self.is_processing_move = false
-                    self.stuck_count = 0
-                end
-            else
-                self.stuck_count = 0
-            end
+        -- IS THE INCOMING MOVE STUCK, OR JUST SLOW?
+        --
+        -- Reported: on a slow connection the opponent's cards take a while to
+        -- come in, and DURING that delay the player can tap their own cards
+        -- and the taps go out as a move.
+        --
+        -- is_processing_move is what refuses those taps. This used to be:
+        --
+        --     if #self.move_queue == 0 then
+        --         if self.is_processing_move then
+        --             self.stuck_count = self.stuck_count + dt
+        --             if self.stuck_count > 3.5 then ... = false
+        --
+        -- and BOTH of its conditions hold throughout a perfectly healthy move.
+        -- pump_move_queue takes the item OFF the queue before processing it, so
+        -- the queue is empty for the whole apply; and the apply really does take
+        -- seconds — 0.24s between combo plays, 0.42s to settle, a five-card
+        -- penalty batch, and finalize_state_sync's 1.3s reshuffle on top. It was
+        -- not detecting a stuck pipeline. It was timing a slow one.
+        --
+        -- And clearing the flag mid-apply does not only open the tap gate: by
+        -- then finalize_state_sync has assigned self.game_state (so
+        -- is_player_turn() is true) and cleared is_waiting_for_server_response,
+        -- so reconcile_input_locks releases `waiting` and
+        -- is_local_action_locked as well. The tap is then judged by
+        -- evaluate_play against a pile still being built, and sent.
+        --
+        -- A stopwatch cannot tell slow from stuck. PROGRESS can: an apply that
+        -- is running changes the board every fraction of a second, and one that
+        -- has died changes nothing. So the clock is reset by any change and only
+        -- silence counts. The absolute ceiling stays, because the freeze this
+        -- watchdog was written for is real.
+        self._stall = self._stall or TL.new_stall_tracker()
+        local stalled = TL.track_processing(self._stall, {
+            is_processing = self.is_processing_move,
+            signature = TL.board_signature({
+                player_hand = #self.player_hand,
+                ai_hand = #self.ai_hand,
+                played = #self.played_cards,
+                deck = #self.deck,
+                anim_locks = self._gs_anim_locks,
+                queue = #self.move_queue,
+            }),
+        }, dt)
+        if stalled then
+            -- Named, with the number, because "it was stuck" with nothing
+            -- attached is how the old one passed for working.
+            print("[DEBUG] Incoming move abandoned (" .. stalled .. ") — resyncing the board")
+            self.is_processing_move = false
+            self._stall = TL.new_stall_tracker()
+            -- The apply died PART WAY THROUGH, so the board is not the server's
+            -- board. Re-apply the last state we were sent before input reopens,
+            -- rather than handing the player a half-built pile to play onto.
+            -- finalize_state_sync syncs to target COUNTS rather than applying
+            -- deltas, so running it again over a partial apply is safe.
+            rebuild_from_server(self)
+        end
+
+        -- AND THE ONE FLAG THAT COULD FREEZE THE BOARD FOR GOOD.
+        --
+        -- Reported: the opponent played 8 of clubs and 3 of clubs, and after
+        -- that no card could be picked at all until the app was restarted.
+        --
+        -- is_waiting_for_server_response is set the moment a move is sent and
+        -- cleared in exactly ONE place — finalize_state_sync, i.e. when the
+        -- server answers. It had no watchdog, and it is a term in every OTHER
+        -- watchdog here: reconcile_input_locks counts it as server_busy, and
+        -- the `waiting`, stale-draw and lock watchdogs are all gated on
+        -- `not self.is_waiting_for_server_response`. One stuck flag disables
+        -- every recovery path at once.
+        --
+        -- The `now_my_turn` edge below cannot save it either: the server never
+        -- moved the turn, so is_player_turn() never went false and there is no
+        -- edge to observe. Nothing was left but restarting the app.
+        --
+        -- The server can leave it stuck without anything going wrong on the
+        -- wire — handleMove answers a draw it cannot satisfy with a bare ERROR
+        -- and returns, sending no state and never changing the turn. A
+        -- three-card penalty draw, which is exactly what 8C then 3C leaves you
+        -- owing, is the likeliest move to hit that path.
+        self._answer = self._answer or TL.new_answer_tracker()
+        local overdue = TL.track_server_answer(self._answer, {
+            awaiting = self.is_waiting_for_server_response,
+        }, dt)
+        if overdue then
+            print("[DEBUG] Server never answered our move (" .. overdue .. ") — rebuilding from its state")
+            -- The half-built action list belongs to a move the server may
+            -- never have accepted. Sending it again on the next end_turn would
+            -- replay cards we have already played.
+            self.current_turn_actions = {}
+            self.is_waiting_for_server_response = false
+            self.player_has_drawn = false
+            self.is_local_action_locked = false
+            self.waiting = false
+            rebuild_from_server(self)
         end
 
         if self.is_player_turn() and not self.is_processing_move and #self.move_queue == 0 and not self.is_waiting_for_server_response then
             if self.waiting then
                 print("[DEBUG] Watchdog releasing self.waiting lock! (Turn activated by state)")
                 self.waiting = false
+                RE.pre_validate_hand(self)
+            end
+
+            -- AND THE ONE PER-TURN LOCK THAT HAD NO WATCHDOG AT ALL.
+            --
+            -- Reported: after the opponent plays a penalty the draw pile stops
+            -- responding — taps do nothing, and nothing on screen says why.
+            --
+            -- player_has_drawn means "this player has already drawn during THIS
+            -- turn". Every other lock on this board — waiting, is_animating,
+            -- is_local_action_locked — has a watchdog above or below this one.
+            -- This did not, and its only per-turn reset was the false->true
+            -- edge of `now_my_turn` further down update(). An edge is sampled
+            -- once a frame, and two state updates can land in the same frame:
+            -- the opponent's play and the turn coming back. When that happens
+            -- the intermediate "not my turn" is never observed, the edge never
+            -- fires, and the flag survives from the previous turn.
+            --
+            -- Ordinarily that costs nothing — the player can still play a card.
+            -- With a PENALTY pending, drawing is the only legal move there is,
+            -- so a stale flag is a dead turn. That is exactly the shape of the
+            -- report, including its "at times": it needs two updates in one
+            -- frame, which is timing.
+            --
+            -- Safe to clear here because of what this block already requires:
+            -- it is our turn, no move is being processed, the queue is empty
+            -- and nothing is awaited from the server. A draw in flight fails
+            -- all of those, so a flag still set in this state describes a draw
+            -- that has already finished — i.e. a previous turn's.
+            if TL.stale_draw_flag({
+                is_player_turn = true,          -- guaranteed by this block
+                player_has_drawn = self.player_has_drawn,
+                is_processing_move = self.is_processing_move,
+                move_queue_len = #self.move_queue,
+                is_waiting_for_server_response = self.is_waiting_for_server_response,
+                is_animating = self.is_animating,
+                is_local_action_locked = self.is_local_action_locked,
+            }) then
+                print("[DEBUG] Watchdog clearing stale player_has_drawn (previous turn's draw)")
+                self.player_has_drawn = false
                 RE.pre_validate_hand(self)
             end
         end
@@ -444,7 +679,21 @@ local HALF_H = BL.TARGET_H / 2
 
 local function hit(card, x, y)
     if not card or not card.id then return false end
-    local p = go.get_position(card.id)
+    -- pcall'd: called on EVERY card in self.player_hand for EVERY touch, in a
+    -- loop that on_input runs BEFORE it ever reaches the deck-tap block below
+    -- it. An unguarded go.get_position raising "Instance (null) not found"
+    -- on one stale hand card — a card whose game object was deleted out from
+    -- under it, the same class of race the reshuffle merge filter and the
+    -- deck-tap hit test were already hardened against — used to abort the
+    -- WHOLE on_input call right there: not just that one card refusing to
+    -- respond, but every tap anywhere on the board (hand cards after it in
+    -- the loop, and the deck past the loop) doing nothing at all for as long
+    -- as that one dead card sat in the hand. That is "even the cards freeze
+    -- at times after reshuffle" — the deck-side fixes closed the one path
+    -- that put a dead card at the top of self.deck; this closes the same
+    -- failure mode wherever it reaches a HAND card instead.
+    local ok, p = pcall(go.get_position, card.id)
+    if not ok then return false end
     return math.abs(x - p.x) <= (HALF_W * 1.5) and math.abs(y - p.y) <= (HALF_H * 1.5)
 end
 
@@ -493,18 +742,39 @@ end
 
 local function safe_shake_card(self, card)
     if not card or not card.id then return end
-    
+
     go.cancel_animations(card.id, "position.x")
-    
-    local idx = 1
+
+    local idx = nil
     for i, c in ipairs(self.player_hand) do
         if c.id == card.id then idx = i; break end
     end
-    
-    local spacing = self.calc_spacing(#self.player_hand)
-    local start_x = self.CENTER.x - ((#self.player_hand - 1) * spacing) / 2.0
-    local true_x = start_x + (idx - 1) * spacing
-    
+
+    local true_x
+    if idx then
+        -- A HAND card: snap it back to its correct slot before shaking, so a
+        -- card that had drifted (e.g. mid pinch-spread release) settles at
+        -- the right spot instead of shaking in place at the wrong one.
+        local spacing = self.calc_spacing(#self.player_hand)
+        local start_x = self.CENTER.x - ((#self.player_hand - 1) * spacing) / 2.0
+        true_x = start_x + (idx - 1) * spacing
+    else
+        -- NOT a hand card — this is the deck's top card refusing a tap, the
+        -- only other caller (see the deck-tap block below). idx used to
+        -- default to 1 here, so this card was SNAPPED to hand slot 1's x —
+        -- moving the deck's actual top card object over towards the hand
+        -- (reported as landing "close to the left coins pot") and leaving it
+        -- there, since nothing else repositions it until the next card is
+        -- played onto the pile or a reshuffle restacks the deck. Every later
+        -- interaction reads THIS object's position — the tap hitbox above,
+        -- and the fly-to-hand animation when it is actually drawn — so the
+        -- corruption was sticky: the player had to tap where the card had
+        -- drifted to, and a draw (the player's own or the opponent's) visibly
+        -- started from that same wrong spot. Shake around wherever the card
+        -- already is instead of snapping it anywhere.
+        true_x = go.get_position(card.id).x
+    end
+
     local p = go.get_position(card.id)
     p.x = true_x
     go.set_position(p, card.id)
@@ -666,11 +936,62 @@ function on_input(self, action_id, action)
         return true
     end
 
-    if #self.deck > 0 then
-        local deck_top = self.deck[#self.deck]
-        local p = go.get_position(deck_top.id)
+    -- WHAT THE DECK PILE WILL RESPOND TO.
+    --
+    -- This used to be `#self.deck > 0`, which is exactly false for the ~1.3s
+    -- a reshuffle spends animating — reshuffle_queue.lua empties self.deck on
+    -- its very first line and only refills it once the recycled cards land
+    -- back at the end. A tap that lands in that window fell through this
+    -- whole block with NOTHING happening: no shake, no log, not even the
+    -- refusal message below, because the block never runs when the deck is
+    -- (momentarily) empty. That is "the deck does not work" with even less
+    -- to go on than the refusal case already had. See offline_handler.lua's
+    -- identical stalemate-detection fix for the same root cause on a
+    -- different symptom.
+    local deck_top = self.deck[#self.deck]
+    local reshuffling = RQ.is_running(self)
+    if deck_top or reshuffling or RQ.can_recycle(self.played_cards) then
+        -- No physical top card to anchor on while genuinely mid-reshuffle —
+        -- the pile's own fixed board slot is exactly as good a hit target as
+        -- the card that will shortly be sitting on it again.
+        --
+        -- pcall'd: deck_top can be a RECORD whose game object has already
+        -- been deleted — a dead card that slipped into self.deck instead of
+        -- being filtered out (see M.reshuffle_deck's merge in game_flow.lua)
+        -- — and go.get_position on a deleted id raises "Instance (null) not
+        -- found". That used to hit every single tap on the deck after such a
+        -- card reached the top: reported as an error spamming the log on
+        -- every attempt to draw, persisting until the app was restarted.
+        -- Falls back to the deck's own fixed slot, same as the no-physical-
+        -- card case just above.
+        local p = self.DECK_POS
+        if deck_top then
+            local ok, got = pcall(go.get_position, deck_top.id)
+            if ok then p = got end
+        end
         if math.abs(x - p.x) <= 120 and math.abs(y - p.y) <= 150 then
-            if not self.is_player_turn() or self.waiting or self.is_local_action_locked or self.is_suit_selection_active then
+            if not deck_top or not self.is_player_turn() or self.waiting or self.is_local_action_locked or self.is_suit_selection_active then
+                -- A REFUSAL THAT SAYS NOTHING LOOKS LIKE A BROKEN BOARD.
+                --
+                -- The card branch above shakes the card when it refuses a tap.
+                -- This swallowed the tap in silence, so every one of the
+                -- reasons below — and any stuck lock — presented to the player
+                -- as "the deck does not work", with nothing to report but that.
+                -- Logged with the actual reason, so the next time somebody says
+                -- the pile is dead the log says which flag was holding it.
+                local flags = {
+                    is_player_turn = self.is_player_turn(),
+                    waiting = self.waiting,
+                    is_local_action_locked = self.is_local_action_locked,
+                    is_suit_selection_active = self.is_suit_selection_active,
+                    is_animating = self.is_animating,
+                    player_has_drawn = self.player_has_drawn,
+                    penalty = RE.get_active_penalty(self),
+                    reshuffling = (not deck_top) and reshuffling or nil,
+                }
+                print("[DECK] tap refused (" .. tostring(TL.deck_tap_refusal(flags))
+                    .. ") -> " .. TL.describe(flags))
+                if deck_top then safe_shake_card(self, deck_top) end
                 return true
             end
 
@@ -700,7 +1021,29 @@ function on_input(self, action_id, action)
             local penalty = RE.get_active_penalty(self)
 
             if penalty > 0 then
-                if self.player_has_drawn then return true end
+                -- THE DOUBLE-TAP GUARD IS is_local_action_locked, NOT THIS FLAG.
+                --
+                -- This read `if self.player_has_drawn then return true end`,
+                -- which is the right intent — one draw per turn — and the wrong
+                -- variable to enforce it with. The line below sets
+                -- is_local_action_locked, and the outer gate at the top of this
+                -- block already refuses every tap while that is set, so the
+                -- second tap was covered twice over. The difference between the
+                -- two is recovery: is_local_action_locked has a watchdog and
+                -- player_has_drawn had none, so when the flag went stale (see
+                -- the watchdog in update()) this line killed the turn outright
+                -- with nothing on screen to explain it.
+                --
+                -- Kept as a guard, but only for a draw that is genuinely
+                -- underway — which is what is_animating means, and what the
+                -- flag was standing in for.
+                if TL.penalty_draw_blocked({
+                    player_has_drawn = self.player_has_drawn,
+                    is_animating = self.is_animating,
+                    is_local_action_locked = self.is_local_action_locked,
+                }) then
+                    return true
+                end
                 self.player_has_drawn = true
                 self.is_local_action_locked = true
                 t4_cancel_afk_timer(self)
@@ -750,7 +1093,9 @@ local function replay_failed(self, reason)
     msg.post("#controller", "goto_online")
 end
 
-local function start_new_online_game(self, state, is_explicit_start_event)
+-- Assigns to the forward-declared local above — NOT `local function`, which
+-- would shadow it and leave the watchdogs calling a nil global again.
+function start_new_online_game(self, state, is_explicit_start_event)
     print("[DEBUG] start_new_online_game triggered! explicit_start=" .. tostring(is_explicit_start_event))
     if type(state) ~= "table" or next(state) == nil then
         print("[DEBUG] Aborting start_new_online_game: Invalid state.")
@@ -760,10 +1105,21 @@ local function start_new_online_game(self, state, is_explicit_start_event)
     -- accept we were waiting on clearly succeeded, so any later stray
     -- GAME_REQUEST_DECLINED can't be about this transition anymore.
     self._awaiting_round_continuation = false
-    if self.round_story_active then
-        print("[DEBUG] start_new_online_game deferred due to round_story_active")
+    -- Park the next round until the current one has finished ENDING: the flip,
+    -- the counting, and the round-complete banner. round_story_active alone is
+    -- not that window — it only begins after the flip and the count are
+    -- already done, so a state arriving during the reveal was built straight
+    -- over the top of it.
+    --
+    -- The server now sets the next round up the moment the last one is decided
+    -- and pushes it immediately, so this arriving early is the normal case,
+    -- not the exception. Parking is what keeps that from being visible.
+    if self.round_story_active or self.round_transition_busy then
+        print("[DEBUG] start_new_online_game deferred: round transition in progress")
         ws.active_game_state = state
         self._pending_next_state = state
+        -- Backstop for a transition that never reports finishing (see update).
+        self._pending_next_deadline = socket.gettime() + 12.0
         return
     end
     
@@ -865,13 +1221,31 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("round_story_done") then
         self.round_story_active = false
         self.round_story_deadline = nil
-        
+
         GF.finish_round_transition(self)
-        
+
+        self.round_transition_busy = false
+        self._pending_next_deadline = nil
         local pending = self._pending_next_state
         self._pending_next_state = nil
         if pending then
             start_new_online_game(self, pending, false)
+        end
+
+    elseif message_id == hash("round_transition_finished") then
+        -- finish_round_transition says the round is released. Build the next
+        -- one only if the banner has also finished — the two do not always land
+        -- together, and for knockout the forced release deliberately fires
+        -- while the banner is still leaving. Whichever is last does the build;
+        -- if the banner is still up, round_story_done above will.
+        if not self.round_story_active then
+            self._pending_next_deadline = nil
+            local pending = self._pending_next_state
+            self._pending_next_state = nil
+            if pending then
+                print("[DEBUG] Round transition complete - building parked next round")
+                start_new_online_game(self, pending, false)
+            end
         end
 
     elseif message_id == hash("ws_round_complete") then
@@ -892,7 +1266,12 @@ function on_message(self, message_id, message, sender)
         self.round_story_active = false
         self.round_story_deadline = nil
         self._pending_next_state = nil
-        
+        -- Leaving the screen ends any transition in progress along with it;
+        -- left set, this would park the first round of the NEXT game the
+        -- player starts.
+        self.round_transition_busy = false
+        self._pending_next_deadline = nil
+
         self.pending_game_over_data = nil
         self._game_over_settle_time = 0
         self._game_over_absolute_timeout = 0
@@ -913,12 +1292,39 @@ function on_message(self, message_id, message, sender)
         self._h2h = nil
         GS.destroy_all(self)
 
+        -- BACK TO THE PLAYER'S OWN THEME.
+        --
+        -- OnlineHandler.start_game overrides app_state.theme with the
+        -- MATCH's theme (the higher-priced of the two players', shared so
+        -- both see the same one — see the comment there) for as long as this
+        -- screen is showing that game. Leaving it screen-scoped: re-derive
+        -- from the player's own account data the same way sign-in does,
+        -- rather than trying to remember and restore whatever it was before
+        -- the match started, which would drift the moment sync_theme_from_
+        -- user or next_theme ran for any other reason while a game was open.
+        app.sync_theme_from_user(ws.current_user_data)
+
     elseif message_id == hash("layout_changed") then
         BL.update_layout(self)
 
     elseif message_id == hash("play_sound") then
         local snd_name = message.sound or message[hash("sound")]
         if snd_name then self.play_sound(snd_name) end
+
+    elseif message_id == hash("suit_select_closed") then
+        -- The picker is off screen, so nothing is waiting on a suit choice.
+        -- Reported as: after the opponent plays a penalty the player can
+        -- neither play a card nor draw one. A Matatu Joker is both a penalty
+        -- and a wildcard, and every opponent PLAY posts a close to this
+        -- overlay — so a close landing while the player's own picker was up
+        -- left is_suit_selection_active set forever, with on_input swallowing
+        -- every tap on both the hand and the deck and the stuck-lock watchdog
+        -- skipping itself because a suit selection was "active".
+        if self.is_suit_selection_active then
+            print("[DEBUG] Suit picker closed without a selection - releasing input")
+            self.is_suit_selection_active = false
+            RE.pre_validate_hand(self)
+        end
 
     elseif message_id == hash("suit_selected") then
         self.chosen_suit = message.suit
@@ -952,6 +1358,24 @@ function on_message(self, message_id, message, sender)
 
     elseif message_id == hash("ws_timer_update") then
         if self.online_mode then OnlineHandler.sync_timers(self, message.data) end
+
+    elseif message_id == hash("ws_server_error") then
+        -- The server refused something. If we were waiting on a move, this IS
+        -- the answer: it is not coming, and every lock on this board is gated
+        -- on that wait. Released here rather than ten seconds later by the
+        -- watchdog in update().
+        if self.online_mode and not self.game_over then
+            print("[ONLINE] server error: " .. tostring(message.message))
+            if self.is_waiting_for_server_response then
+                self.current_turn_actions = {}
+                self.is_waiting_for_server_response = false
+                self.player_has_drawn = false
+                self.is_local_action_locked = false
+                self.waiting = false
+                self._answer = TL.new_answer_tracker()
+                rebuild_from_server(self)
+            end
+        end
 
     elseif message_id == hash("timer_expired") then
         if self.online_mode then return end
@@ -1121,6 +1545,10 @@ function on_message(self, message_id, message, sender)
             -- this, board/hand cards stayed tappable the whole time the
             -- "opponent won" result was already known but not yet shown.
             self.input_locked_for_game_over = true
+            -- The transition starts HERE, not when end_game eventually runs.
+            -- Everything between this point and the banner finishing is the
+            -- round ending, and the next round must not be built during it.
+            self.round_transition_busy = true
             app.lock_board()
         end
 
@@ -1143,19 +1571,38 @@ function on_message(self, message_id, message, sender)
         end
 
     elseif message_id == hash("ws_player_rc") then
-        notify_gui(self.gui_hud, "conn_overlay", { show = false })
-        -- Opponent reconnected: refresh the turn rings so the active player shows.
-        -- self.game_state is whatever we last had BEFORE the disconnect, so its
-        -- turnExpiresAt is already in the past — sync_timers would clamp the
-        -- remaining time to 0 and the pie would come back enabled but empty
-        -- (invisible) instead of showing whose turn it actually is. Prefer the
-        -- fresh state PLAYER_RECONNECTED carried, falling back to whatever
-        -- ws.active_game_state was last updated to (IDENTIFY/GAME_STATE_SYNC).
+        -- Opponent reconnected. Prefer the fresh state PLAYER_RECONNECTED
+        -- carried, falling back to whatever ws.active_game_state was last
+        -- updated to (IDENTIFY/GAME_STATE_SYNC) — self.game_state is
+        -- whatever we last had BEFORE the disconnect.
+        --
+        -- FULL resync, not just the turn timer. This used to call only
+        -- OnlineHandler.sync_timers, which touches nothing but
+        -- currentTurn/turnExpiresAt/activePenaltyCount/chosenSuit/
+        -- pendingMarketDraw on self.game_state — never the actual card
+        -- objects. Whatever happened while the opponent (or this client
+        -- itself, before they reconnected — a move can settle server-side
+        -- with the confirmation lost to the same drop) was offline —
+        -- a play never confirmed locally, a penalty draw whose count moved,
+        -- a reshuffle — left self.player_hand/self.played_cards/self.deck
+        -- stale, with nothing to catch them up until some LATER move
+        -- happened to trigger a real resync. Reported as a played card
+        -- missing from both hand and the played pile, only to reappear
+        -- (visually drawn from the deck) once the next move finally forced
+        -- a full sync. full_resync runs the same catch-up an ordinary move
+        -- already gets (finalize_state_sync + sync_my_hand), and the banner
+        -- closes only once it completes — not before, and not synchronously
+        -- assumed-instant, since a reshuffle/hand catch-up inside it can
+        -- take over a second.
         if self.online_mode and not self.game_over then
             local fresh = (type(message.state) == "table" and next(message.state) ~= nil and message.state)
                 or (type(ws.active_game_state) == "table" and next(ws.active_game_state) ~= nil and ws.active_game_state)
             if fresh then self.game_state = fresh end
-            OnlineHandler.sync_timers(self, self.game_state or {})
+            OnlineHandler.full_resync(self, self.game_state or {}, function()
+                notify_gui(self.gui_hud, "conn_overlay", { show = false })
+            end)
+        else
+            notify_gui(self.gui_hud, "conn_overlay", { show = false })
         end
 
     elseif message_id == hash("ws_ai_played") then
@@ -1192,18 +1639,31 @@ function on_message(self, message_id, message, sender)
         -- global network dialog handles the visual
 
     elseif message_id == hash("ws_net_up") then
-        notify_gui(self.gui_hud, "conn_overlay", { show = false })
-        -- Reconnected: re-assert the turn timer from the freshest known state so
-        -- the active player's pie ring reappears. self.game_state is whatever
-        -- we had BEFORE this client dropped offline, so its turnExpiresAt is
-        -- already in the past — sync_timers would clamp remaining time to 0
-        -- and the pie would come back enabled but empty (invisible) on both
-        -- avatars instead of showing whose turn it is. IDENTIFY (which every
+        -- THIS client's own socket reconnected. self.game_state is whatever
+        -- we had BEFORE this client dropped offline; IDENTIFY (which every
         -- reconnect runs) keeps ws.active_game_state current, so prefer that.
+        --
+        -- Same full resync as ws_player_rc above, for the same reason: our
+        -- OWN last play might have gone through server-side with the
+        -- confirmation lost to the drop, the opponent might have moved
+        -- several times while we were gone, a penalty draw we were mid-way
+        -- through never reached the server (see M.play_card — a card is
+        -- removed from hand and animated to the pile OPTIMISTICALLY, before
+        -- the network round trip, and multi-action turns like a suit choice
+        -- or a multi-card penalty draw are only sent as ONE bundled move
+        -- once the whole turn resolves — so anything still in progress
+        -- locally when the drop happened was never sent at all). sync_timers
+        -- alone left the deck/hand/pile stale until the next move forced a
+        -- real resync — the banner closes only once this one actually
+        -- finishes, not before.
         if self.online_mode and not self.game_over then
             local fresh = type(ws.active_game_state) == "table" and next(ws.active_game_state) ~= nil and ws.active_game_state
             if fresh then self.game_state = fresh end
-            OnlineHandler.sync_timers(self, self.game_state or {})
+            OnlineHandler.full_resync(self, self.game_state or {}, function()
+                notify_gui(self.gui_hud, "conn_overlay", { show = false })
+            end)
+        else
+            notify_gui(self.gui_hud, "conn_overlay", { show = false })
         end
 
     elseif message_id == hash("ws_net_failed") then

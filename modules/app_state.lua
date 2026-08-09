@@ -27,7 +27,7 @@ M.selected_stake = { amount = 0, charge = 0, points = 0 }
 -- Active theme name (matches THEMES table keys).
 M.theme = "default"
 
--- Auth state for the GPGS (Google Play Game Services) flow.
+-- Auth state for the Firebase authentication flow.
 -- "idle" | "sending" | "verifying" | "done" | "error"
 M.auth_state = "idle"
 M.auth_error = ""
@@ -44,6 +44,20 @@ M.username_suggestions = {}
 -- is open. Other global modals (e.g. the daily bonus dialog) check this before
 -- auto-opening themselves so they never fight the season modal for screen space.
 M.season_modal_active = false
+
+-- True while the Savings explainer is open (draw_savings_info in
+-- online_right.lua, the one with I UNDERSTAND on it).
+--
+-- Every player is shown that dialog exactly once, ever, and it is shown at the
+-- same moment the bonus modals fire: the first entry into the online screen on
+-- a fresh account. Those are separate .gui components with their own node
+-- trees, so they do not stack with it — they land ON it, and the explainer is
+-- read, dismissed and marked seen without ever having been visible.
+--
+-- Same shape as season_modal_active above: the bonus dialogs already carry a
+-- `pending` flag and open on the first tick their gate is clear, so waiting is
+-- one more condition rather than a queue.
+M.savings_promo_active = false
 
 -- Themes table – each entry defines the visual style applied across lobby + game.
 -- bg_image  : animation name in the ui atlas
@@ -65,6 +79,31 @@ M.THEMES = {
 
 -- Ordered list so cycling is deterministic.
 M.THEME_ORDER = { "default", "blue_basic", "black_basic", "red_drago", "blue_drago", "batman" }
+
+-- THE PRICE THE BACKEND WILL ACTUALLY CHARGE.
+--
+-- Mirrors DEFAULT_THEMES_DATA in be_matatu's models/Theme.ts. It is a MIRROR,
+-- not a second opinion: the server is the only side that can be right about a
+-- price, because it is the side that deducts it.
+--
+-- It exists at all because the shop has to be able to draw something when the
+-- payload has not arrived — an app opened offline, or a build talking to a
+-- backend whose catalogue has not been seeded. What it drew before was a flat
+-- 2000 for everything, which matched none of these and meant a player could be
+-- shown one number and charged another.
+--
+-- `label` above and `name` here serve the same purpose and are now the same
+-- strings on both sides, so whichever list wins, the player reads the same
+-- word. See the comment on DEFAULT_THEMES_DATA for why the server's names were
+-- changed to match these rather than the other way round.
+M.THEME_PRICES = {
+  default     = 0,
+  blue_basic  = 0,
+  black_basic = 0,
+  blue_drago  = 1000,
+  red_drago   = 2000,
+  batman      = 5000,
+}
 
 function M.get_theme()
   return M.THEMES[M.theme] or M.THEMES["default"]
@@ -90,12 +129,28 @@ function M.username_complete(name)
   return true
 end
 
--- A phone number is only REQUIRED for Matatu (Uganda) accounts — the
--- old-account migration/identity-verification path (be_matatu's
--- POST /auth/link-phone, driven from profile.gui_script's "phone" step) is
--- Uganda-only (mobile-money name-enquiry, +256 MSISDN format); Whot/Kadi
--- accounts never had a phone-based predecessor and have no equivalent
--- verification service, so they're never blocked on this.
+-- THE PHONE NUMBER IS NO LONGER A GATE.
+--
+-- It used to be mandatory for Matatu accounts, re-evaluated on every login and
+-- reconnect, and a missing one sent the player to the phone screen. That made
+-- sense when the phone number was the migration path off pre-Google accounts.
+--
+-- It does not now. Sign-in is the device id, so a player whose handset is
+-- recognised is signed in, full stop — and putting a number-entry screen in
+-- front of them at that moment asks for something the app did not need to let
+-- them in and cannot explain the reason for. The reported version of this was
+-- the phone screen turning up after a perfectly successful launch.
+--
+-- The phone number still MATTERS, and this is the one thing worth being clear
+-- about: it is the identity that survives a new handset. Without it, changing
+-- phones loses the account. So it stays offered on the profile screen, and it
+-- is still the entire answer to DEVICE_UNKNOWN — a handset we do not recognise
+-- has nothing else to go on. What it no longer does is interrupt somebody the
+-- device already identified.
+--
+-- phone_complete is kept, and still answers honestly, because the profile
+-- screen uses it to decide whether to show the prompt. It simply no longer
+-- feeds profile_complete.
 function M.phone_required()
   local ok, GameMode = pcall(require, "modules.game_mode")
   return ok and GameMode.is_matatu()
@@ -104,31 +159,61 @@ end
 function M.phone_complete(user)
   if not M.phone_required() then return true end
   if type(user) ~= "table" then return false end
-  -- The phone step exists ONLY to catch pre-Google, phone-only accounts
-  -- that need migrating onto a Google identity (see auth.routes.ts's
-  -- /google handler). A user this login actually matched by their real
-  -- Google identity (googleId/gpgsPlayerId, not the deviceId/email
-  -- fallback, and not a brand-new signup) has nothing left to migrate, so
-  -- there's no reason to make them provide a phone number just to get past
-  -- this screen — set on login in controller.script, persisted with the
-  -- session in api_service.lua so a cold restart doesn't lose it.
-  if user.matchedByGoogleId then return true end
   local p = user.phoneNumber or user.phone or ""
   return type(p) == "string" and p ~= ""
 end
 
--- Account is "complete" when an avatar is chosen, the username is valid,
--- AND (Matatu only) a phone number is on file. This is re-evaluated every
--- time route_after_auth runs — a mandatory step, not a one-shot prompt —
--- so it reliably reappears on every login/reconnect (including a cold app
--- restart from a cached session) until actually satisfied, and can't be
--- silently bypassed by another modal grabbing focus first.
+-- Is the phone step MANDATORY? No. Never, for anybody.
+--
+-- Kept as a named predicate rather than deleted, because this decision has
+-- been wrong three times and each time it was re-derived at the call site.
+-- One place to read the answer, and one place to change it.
+--
+-- HOW IT GOT HERE. The condition was "phone_required and not phone_complete",
+-- which forced the number pad on two completely different players:
+--
+--   an account already  the device id identified them; they are signed in and
+--                       have simply not picked a name and avatar yet. Asking
+--                       here stopped them at a screen they could not pass.
+--
+--   no account at all   the handset was not recognised. This one READ as
+--                       correct — the number does look like the only way in —
+--                       and it is not. /auth/device/profile creates an account
+--                       from a username, an avatar and the device id, with no
+--                       number involved. So the screen was demanding a
+--                       credential that the very next screen did not need,
+--                       and a player without a mobile-money number to give
+--                       could not start at all.
+--
+-- WHAT IS GIVEN UP, STATED RATHER THAN DISCOVERED. An account created without
+-- a number is reachable only by its device id, and that does not survive a
+-- reinstall or a new handset. That was already true of every account made
+-- this way; what changes is that more of them will be. Two things answer it,
+-- and both are deliberate:
+--
+--   * the profile screen offers "I ALREADY HAVE AN ACCOUNT" whenever there is
+--     no account yet, which is the returning player whose id rerolled — the
+--     one case where the number really is the only way back
+--   * VERIFY YOUR PHONE stays on the profile screen afterwards
+--
+-- Offered, both of them. Not forced. A number a player chooses to give is
+-- worth more than one extracted at a gate they cannot get past, which is what
+-- the last three reports have all been about.
+function M.phone_step_required(_user)
+  return false
+end
+
+-- Account is "complete" when an avatar is chosen and the username is valid.
+--
+-- Deliberately NOT phone_complete — see above. This is re-evaluated every time
+-- route_after_auth runs, so anything in here reappears on every login and every
+-- reconnect until satisfied, which is the right shape for "you have not chosen
+-- a name yet" and the wrong one for a credential the player was not asked for.
 function M.profile_complete(user)
   if type(user) ~= "table" then return false end
   local avatar = tonumber(user.avatar) or 0
   if avatar <= 0 then return false end
-  if not M.username_complete(user.username) then return false end
-  return M.phone_complete(user)
+  return M.username_complete(user.username)
 end
 
 function M.next_theme()

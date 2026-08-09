@@ -4,6 +4,8 @@ local CV = require "modules.card_view"
 local GameMode = require "modules.game_mode"
 local BL = require "modules.board_layout"
 local config = require "modules.config"
+local RQ = require "modules.reshuffle_queue"
+local app_state = require "modules.app_state"
 
 local GUI_HUD   = "#game"
 local GUI_SUIT  = "#suit_select"
@@ -67,6 +69,14 @@ end
 
 function M.end_turn(self)
     if not self.online_mode then return end
+    -- The round is decided; there is no turn left to end. ws.send_move refuses
+    -- this too, but stopping here also keeps the local turn bookkeeping below
+    -- (waiting, last_local_play, the cleared action list) from running on a
+    -- game that has finished.
+    if self.game_over then
+        print("[ONLINE] end_turn ignored: the game is over")
+        return
+    end
 
     local actions_to_send = {}
     local last_card = nil
@@ -101,14 +111,25 @@ function M.sync_deck_size(self, target_size)
         local diff = target_size - #self.deck
         for i = 1, diff do
             local idx = #self.deck + 1
-            local c = self.spawn_card(10, "H", vmath.vector3(self.DECK_POS.x + idx * 0.5, self.DECK_POS.y - idx * 0.5, idx * 0.001))
+            -- take_card reuses a hidden card from the pool this same
+            -- function's shrink branch below returns cards to, instead of
+            -- always spawning a fresh one. See card_view.lua.
+            local c = CV.take_card(self, 10, "H", vmath.vector3(self.DECK_POS.x + idx * 0.5, self.DECK_POS.y - idx * 0.5, idx * 0.001))
             table.insert(self.deck, c)
         end
     elseif #self.deck > target_size then
         local diff = #self.deck - target_size
         for i = 1, diff do
             local c = table.remove(self.deck, 1)
-            pcall(go.delete, c.id)
+            -- Hidden and pooled for reuse, NOT deleted — this was the root
+            -- of every "Instance (null) not found" traced in this codebase's
+            -- recent history: a reshuffle or a draw already under way can be
+            -- holding a reference to exactly the card this shrink is about
+            -- to touch, and a go.delete'd instance raises the moment
+            -- anything reads its position afterward. A hidden one is still
+            -- a perfectly valid object to read a stale position from — it
+            -- just isn't drawn. See card_view.lua's release_card/take_card.
+            CV.release_card(self, c)
         end
     end
 end
@@ -292,6 +313,29 @@ function M.process_scoreboard(self, state)
         return mine, theirs
     end
 
+    if type(state.headToHead) == "table" then self._h2h = state.headToHead end
+    local h2h_msg = nil
+    if type(self._h2h) == "table" then
+        local hp, ho = read_scores(self._h2h.scores)
+        local form = nil
+        if type(self._h2h.form) == "table" then
+            form = self._h2h.form[tostring(self.my_player_id)]
+        end
+        h2h_msg = {
+            p = hp or 0,
+            o = ho or 0,
+            total = self._h2h.totalGames or 0,
+            form = (type(form) == "table") and form or {},
+        }
+    end
+
+    -- Knockout games render the score-cap chamber table, so the battle
+    -- scoreboard flippers stay hidden. BUT pass h2h_msg so the last 5 games form strip displays!
+    if is_knockout_state(state) or self._is_knockout then
+        msg.post(GUI_HUD, "update_scoreboard", { show = false, h2h = h2h_msg })
+        return
+    end
+
     local ts = (type(state.tournamentScore) == "table") and state.tournamentScore or nil
     local fmt, stage, p_score, o_score
 
@@ -334,22 +378,6 @@ function M.process_scoreboard(self, state)
     -- Only fallback to user data if not locked
     if p_score == nil and not self._final_state_locked then 
         p_score, o_score = read_scores(scores_from_user_data(t_id)) 
-    end
-
-    if type(state.headToHead) == "table" then self._h2h = state.headToHead end
-    local h2h_msg = nil
-    if type(self._h2h) == "table" then
-        local hp, ho = read_scores(self._h2h.scores)
-        local form = nil
-        if type(self._h2h.form) == "table" then
-            form = self._h2h.form[tostring(self.my_player_id)]
-        end
-        h2h_msg = {
-            p = hp or 0,
-            o = ho or 0,
-            total = self._h2h.totalGames or 0,
-            form = (type(form) == "table") and form or {},
-        }
     end
 
     -- ✅ FIXED: If final state is locked, force `is_series` to true so the HUD stays active
@@ -405,6 +433,21 @@ function M.setup_ws_listeners(self)
     end))
     table.insert(self.ws_listeners, ws.on("timer_update", function(d)
         msg.post(board, "ws_timer_update", { data = d })
+    end))
+    -- NOBODY WAS LISTENING TO THIS, AND IT IS THE SERVER SAYING "NO".
+    --
+    -- websocket_manager emits `error` for every ERROR frame, and not one
+    -- subscriber existed anywhere in the client — so a refused move was
+    -- emitted into nothing. handleMove refuses a draw it cannot satisfy with
+    -- exactly that and returns, sending no state and never changing the turn,
+    -- which leaves is_waiting_for_server_response set with nothing to clear
+    -- it. The board then froze until the app was restarted.
+    --
+    -- An ERROR arriving while we are waiting IS the answer to our move. The
+    -- watchdog in update() would catch it ten seconds later regardless; this
+    -- makes it immediate, which is the difference between a hitch and a hang.
+    table.insert(self.ws_listeners, ws.on("error", function(message)
+        msg.post(board, "ws_server_error", { message = tostring(message or "") })
     end))
     table.insert(self.ws_listeners, ws.on("game_over", function(results)
         ws.last_game_over = results or {}
@@ -632,7 +675,12 @@ function M.finalize_state_sync(self, state, on_complete)
         else
             while #self.ai_hand > target do
                 local c = table.remove(self.ai_hand)
-                pcall(go.delete, c.id)
+                -- Same reasoning as sync_deck_size's shrink branch above: an
+                -- opponent card is just as anonymous/face-down as a deck
+                -- card until it is actually played, so it is just as safe to
+                -- hide and reuse instead of deleting out from under whatever
+                -- else might still be holding a reference to it.
+                CV.release_card(self, c)
             end
             self.position_hands(true)
             settle()
@@ -652,6 +700,19 @@ function M.finalize_state_sync(self, state, on_complete)
             self._online_reshuffling = false
             do_sync()
         end)
+    elseif RQ.is_running(self) then
+        -- A DIFFERENT sync's reshuffle is still animating (self.deck holds
+        -- its own snapshot of the pre-reshuffle deck the whole time — see
+        -- M.reshuffle_deck). This state sync didn't trigger should_reshuffle
+        -- itself, but running do_sync() right now would still call
+        -- sync_deck_size on self.deck WHILE that snapshot is in flight —
+        -- including go.delete'ing a card the reshuffle still holds a
+        -- reference to, which used to raise inside its own delayed
+        -- go.set/go.animate calls and abort it partway, leaving the board
+        -- locked and the recycled cards stranded mid-sweep. Queue behind the
+        -- reshuffle instead of racing it; RQ answers every waiter once it
+        -- finishes, abandoned or not.
+        RQ.wait(self, do_sync)
     else
         do_sync()
     end
@@ -735,10 +796,19 @@ function M.process_my_actions(self, actions, done)
     end
 end
 
-local function sync_my_hand(self, state)
+-- `done` IS NOT OPTIONAL BOOKKEEPING — IT IS THE END OF THE APPLY.
+--
+-- handle_single_move called this and then released is_processing_move on the
+-- very next line. When the reconciliation below has cards to add, it LAUNCHES
+-- draw_to_hand and returns immediately, so the lock came off while the
+-- player's own new cards were still flying into their hand — which is exactly
+-- the window in the report: the opponent's move has landed, the board is still
+-- moving, and a tap goes straight out as a move.
+local function sync_my_hand(self, state, done)
+    local finish = function() if done then done() end end
     local me = (state.players or {})[self.my_player_id] or {}
     local real = (type(me.hand) == "table") and me.hand or nil
-    if not real then return end
+    if not real then finish(); return end
 
     -- Reconcile by card identity (value+suit) as a multiset, not by array
     -- position. The local and server hand arrays aren't guaranteed to stay
@@ -764,7 +834,14 @@ local function sync_my_hand(self, state)
             table.remove(bucket) -- consume one matching server card
             kept[#kept + 1] = c
         else
-            pcall(go.delete, c.id)
+            -- Released, not deleted — same reasoning as sync_deck_size's and
+            -- the AI-hand shrink's own release_card calls: this card being
+            -- reconciled away here could still be mid-animation (a play
+            -- that hasn't finished flying to the pile yet) even with the
+            -- self.game_state freshness fix above, and a hidden-but-alive
+            -- object degrades that race into nothing instead of "Instance
+            -- (null) not found".
+            CV.release_card(self, c)
         end
     end
     for i = #self.player_hand, 1, -1 do self.player_hand[i] = nil end
@@ -790,11 +867,127 @@ local function sync_my_hand(self, state)
                 end
             end
             self.pre_validate_hand()
+            finish()
         end)
     else
         self.position_hands(true)
         self.pre_validate_hand()
+        finish()
     end
+end
+
+-- FULL BOARD RESYNC — deck, opponent hand, played pile/timers, AND our own
+-- hand, all reconciled against server truth. Exactly the sequence
+-- handle_single_move already runs after every ordinary move (finalize_state_
+-- sync then sync_my_hand); exposed here so a live in-app reconnect
+-- (ws_player_rc/ws_net_up in game.script) can run the SAME full catch-up
+-- instead of only sync_timers's narrow turn/timer bookkeeping.
+--
+-- That narrower sync was the actual bug behind two reports that looked
+-- unrelated: a card played right before a disconnect (or one that arrived
+-- from the opponent, or a partial penalty draw) never showing up anywhere —
+-- not in hand, not on the played pile — until some LATER move finally
+-- triggered a real resync via handle_single_move and the board visibly
+-- lurched to catch up all at once. sync_timers alone was never going to fix
+-- that: it only ever touched currentTurn/turnExpiresAt/activePenaltyCount/
+-- chosenSuit/pendingMarketDraw on self.game_state, never the actual card
+-- objects in self.player_hand, self.played_cards or self.deck. A reconnect
+-- has exactly as much to catch up on as an ordinary move does — it needs
+-- the same machinery, not a smaller one.
+-- A RECONNECT MUST NEVER RACE A MOVE THAT IS ALREADY BEING APPLIED.
+--
+-- handle_single_move's own finalize_state_sync/sync_my_hand run serialized —
+-- pump_move_queue holds self.is_processing_move true for the whole apply, so
+-- only ever one is in flight. full_resync did not check that flag at all: a
+-- reconnect landing WHILE a healthy (not stuck — the stall watchdog is a
+-- separate, already-safe path that explicitly clears the flag before taking
+-- over, see rebuild_from_server in game.script) move was still animating
+-- would start a SECOND, concurrent finalize_state_sync racing the first —
+-- both independently deciding self.ai_hand needs N more cards, from a count
+-- neither had finished writing yet, and both drawing them. Reported as extra
+-- cards on the opponent's side that were never real and never went away,
+-- even once the game ended, because destroy_all deletes whatever ends up IN
+-- self.ai_hand — it just never asked whether some of it was a duplicate.
+--
+-- Polled rather than queued through pump_move_queue itself: this can fire
+-- from a screen the queue is not currently draining (round transition,
+-- suit-selection wait), and the ordinary move it is waiting on will finish
+-- and flip the flag on its own regardless of who else is watching for that.
+-- Capped, not indefinite — the flag WILL eventually go false (the move
+-- finishes, or the stall watchdog forces it), but a coordinated wait must
+-- still not be a way for a Lua state to leak polling forever if the game
+-- object is torn down while this is pending.
+local RESYNC_WAIT_POLL_S = 0.1
+local RESYNC_WAIT_CAP_S  = 5.0
+
+-- A RECONNECT MUST NEVER RACE ANOTHER RESYNC EITHER, NOT JUST A MOVE.
+--
+-- ws_net_up (this client's own socket reconnecting) and ws_player_rc (the
+-- PLAYER_RECONNECTED message the server sends the SAME reconnecting client
+-- about ITSELF — see heartbeatCleanup.ts's handleReconnection, which fires
+-- it straight at the reconnecting player's own socket, not their opponent's)
+-- both call full_resync for the SAME reconnect episode, moments apart: the
+-- socket layer's "connected" event fires the instant the handshake
+-- completes, and PLAYER_RECONNECTED lands right after, once IDENTIFY
+-- resolves server-side. Nothing serialized the two.
+--
+-- Each ran its own finalize_state_sync/sync_my_hand independently, both
+-- deciding self.player_hand/self.ai_hand were short the same N cards —
+-- neither had finished writing what the other was about to add — and both
+-- drew them. Reported as the exact same card appearing twice at the same
+-- hand slot after a reconnect (e.g. two 4-of-diamonds stacked on top of
+-- each other), and, when the two calls' clear-then-refill windows inside
+-- sync_my_hand interleaved instead of just both adding, as fewer cards than
+-- the player actually held.
+--
+-- Coalesced to the LATEST state, not queued: a second resync request
+-- arriving mid-run means the first run's target is already stale, so there
+-- is nothing to gain from letting it finish and then replaying a second one
+-- back to back. It replaces whatever was already pending, and the coalesced
+-- run happens exactly once, right after the in-flight one completes.
+function M.full_resync(self, state, done)
+    if self._resyncing then
+        self._pending_resync = { state = state, done = done }
+        return
+    end
+    self._resyncing = true
+
+    local function finish()
+        self._resyncing = false
+        local pending = self._pending_resync
+        self._pending_resync = nil
+        if done then done() end
+        if pending then
+            M.full_resync(self, pending.state, pending.done)
+        end
+    end
+
+    local function run()
+        M.finalize_state_sync(self, state, function()
+            -- self.game_state, not the `state` argument — finalize_state_sync's
+            -- own do_sync can be deferred behind a reshuffle for over a second,
+            -- and a newer state can land and overwrite self.game_state while
+            -- that's in flight. Same reasoning as handle_single_move's two call
+            -- sites for sync_my_hand.
+            sync_my_hand(self, self.game_state or state or {}, finish)
+        end)
+    end
+
+    if not self.is_processing_move then
+        run()
+        return
+    end
+
+    local waited = 0
+    local function poll()
+        if self.game_over or not self.is_processing_move or waited >= RESYNC_WAIT_CAP_S then
+            run()
+            return
+        end
+        waited = waited + RESYNC_WAIT_POLL_S
+        timer.delay(RESYNC_WAIT_POLL_S, false, poll)
+    end
+    timer.delay(RESYNC_WAIT_POLL_S, false, poll)
 end
 
 function M.handle_single_move(self, move_data, new_state, done)
@@ -819,8 +1012,19 @@ function M.handle_single_move(self, move_data, new_state, done)
             -- drifts from the server's authoritative hand and stays wrong
             -- until some later, unrelated resync happens to catch it.
             M.finalize_state_sync(self, new_state, function()
-                sync_my_hand(self, new_state or {})
-                done()
+                -- self.game_state, NOT the closure-captured new_state — same
+                -- reasoning as settle() above. process_opponent_actions runs
+                -- staggered per-card animations before this callback fires,
+                -- and finalize_state_sync's own do_sync can be deferred
+                -- behind a reshuffle for ~1.3s+ on top of that. A newer move
+                -- (the player's OWN just-played card getting confirmed, or
+                -- another opponent action) can land and overwrite
+                -- self.game_state while this chain is still unwinding —
+                -- reconciling against the stale new_state then means
+                -- sync_my_hand sees a hand that still includes a card the
+                -- player has since played, and adds it right back. Reported
+                -- as "I played a card and it reappeared in my hand".
+                sync_my_hand(self, self.game_state or new_state or {}, done)
             end)
         end)
     elseif ai_for_me and has_actions then
@@ -832,23 +1036,26 @@ function M.handle_single_move(self, move_data, new_state, done)
         self.is_local_action_locked = false
         M.process_my_actions(self, actions, function()
             M.finalize_state_sync(self, new_state, function()
-                sync_my_hand(self, new_state or {})
-                done()
+                -- self.game_state, NOT new_state — see the identical fix and
+                -- reasoning just above in the opponent-move branch.
+                sync_my_hand(self, self.game_state or new_state or {}, done)
             end)
         end)
     else
-        -- Covers isReshuffling-for-sender (no hand change, sync_my_hand is a
-        -- cheap no-op there) AND drawMismatched-for-sender: the backend's
-        -- quiet correction for a stale draw identity (see be_matatu's
-        -- drawDesync fix) arrives here as a MOVE with `from` == us, so
-        -- `is_my_move` is true and this branch — not the opponent branch
-        -- above — is the one that actually runs for it. Without this call
-        -- the correction landed on the wire but never touched
-        -- self.player_hand, so the mover kept whatever card they'd drawn
-        -- locally instead of the one the server actually gave them.
+        -- Our own ordinary move, with no actions to replay (a plain
+        -- TIMER_UPDATE never reaches here at all — see ws_game_move; this is
+        -- specifically the quiet full-state MOVE the backend sends when OUR
+        -- own draw picked a card the server's deck no longer had at that
+        -- position — same count, different identity, so not a rule
+        -- violation and never worth the disruptive RESYNC/"SYNCING BOARD"
+        -- path). We already animated locally with whatever card we guessed;
+        -- reconcile player_hand against server truth now so a stale guess
+        -- doesn't sit there being unplayable (server never finds it in hand)
+        -- until some later, unrelated resync happens to catch it. Safe to
+        -- call unconditionally — sync_my_hand is a no-op multiset diff when
+        -- the two hands already agree, which is the common case.
         M.finalize_state_sync(self, new_state, function()
-            sync_my_hand(self, new_state or {})
-            done()
+            sync_my_hand(self, self.game_state or new_state or {}, done)
         end)
     end
 end
@@ -869,8 +1076,12 @@ end
 -- goes through, including the fix for Whot's 5 duplicate wildcards.
 function M.reconcile_after_resync(self, state, on_complete)
     M.finalize_state_sync(self, state, function()
-        sync_my_hand(self, state or {})
-        if on_complete then on_complete() end
+        -- self.game_state, not the closure-captured `state` — same race as
+        -- handle_single_move's own branches above: reconciling against a
+        -- state that's gone stale while finalize_state_sync's do_sync was
+        -- deferred (behind a reshuffle animation) would put back a card the
+        -- player has since played.
+        sync_my_hand(self, self.game_state or state or {}, on_complete)
     end)
 end
 
@@ -911,6 +1122,29 @@ function M.start_game(self, state)
     self.is_waiting_for_server_response = false
     self._online_reshuffling = false
     self._await_start = false
+    -- A resync from the PREVIOUS round/game must never carry into this one
+    -- and coalesce a fresh full_resync call away — see full_resync's own
+    -- comment for what these two guard against.
+    self._resyncing = false
+    self._pending_resync = nil
+
+    -- THE MATCH'S THEME, NOT EITHER PLAYER'S OWN.
+    --
+    -- The server already resolved which of the two players' active themes is
+    -- worth showing off (cardUtils.ts's selectWinningTheme — higher price
+    -- wins) and put the plain id on state.theme; both clients apply the SAME
+    -- one here rather than each rendering their own local pick, so the
+    -- winner's theme is what both people actually see for this game. Runs on
+    -- every call, not just the first — a new round of the same series is a
+    -- new state.theme too (see the backend comment on why), and the ONLY two
+    -- render call sites (card_defs.lua's back_frame, card.script's card_set)
+    -- both call app_state.get_theme() fresh rather than caching it, so
+    -- overriding the single shared app_state.theme here is enough to cover
+    -- both without either needing its own change. Restored to the player's
+    -- OWN theme when they leave the game screen — see game.script's
+    -- "disable" handler.
+    local match_theme = state and state.theme
+    app_state.theme = (type(match_theme) == "string" and match_theme ~= "") and match_theme or "default"
 
     M.setup_ws_listeners(self)
 

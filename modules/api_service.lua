@@ -41,6 +41,22 @@ function M.set_auth_token(token)
     _auth_token = token or ""
 end
 
+-- Is there a bearer to send?
+--
+-- Asked before anything routes to an endpoint behind verifyToken. Those are
+-- the ONLY calls that need one — /auth/link-phone, /users/details/me,
+-- /sms/track-conversion, /payments/balance — and every one of them answers
+-- 401 without it, whatever else is true about the session.
+--
+-- Which is not the same question as "am I signed in". An account id is what
+-- proves a sign-in (see modules/auth_result.lua); a token is separate, and
+-- the server deliberately issues none when JWT_SECRET is not configured. A
+-- caller that confuses the two sends a request that cannot succeed and then
+-- has to interpret the 401, instead of taking the route that works.
+function M.has_auth_token()
+    return _auth_token ~= nil and _auth_token ~= ""
+end
+
 -- STREAMING_CHUNK: Defining session persistence...
 local SESSION_FILE = sys.get_save_file("matatu_gdt", "session.json")
 
@@ -80,6 +96,52 @@ function M.clear_session()
     sys.save(SESSION_FILE, {})
 end
 
+-- ── the offline latch, on disk ──────────────────────────────────────────────
+--
+-- An account the server refuses stays refused. Keeping that only in memory
+-- means every launch rediscovers it: a device sign-in, a 403, and a socket
+-- attempt, all to be told the same thing again — on every cold start, forever.
+--
+-- Written to its OWN file rather than into the session, because the session is
+-- cleared when the app goes offline and this has to outlive that. Reading it
+-- costs one file read at boot and saves every request that would otherwise be
+-- made to learn something already known.
+local OFFLINE_FILE = sys.get_save_file("matatu_gdt", "offline.json")
+
+--- Remember that this install is offline, and why.
+function M.set_app_offline(reason)
+    pcall(sys.save, OFFLINE_FILE, {
+        offline = true,
+        reason  = tostring(reason or ""),
+        at      = os.time(),
+    })
+end
+
+--- Forget it. Called when the server accepts an identify — the one event that
+--- proves the refusal no longer applies.
+function M.clear_app_offline()
+    pcall(sys.save, OFFLINE_FILE, {})
+end
+
+--- Is this install offline? Answers from disk, asking nobody.
+function M.is_app_offline()
+    local ok, d = pcall(sys.load, OFFLINE_FILE)
+    if not ok or type(d) ~= "table" then return false end
+    return d.offline == true
+end
+
+--- WHEN the refusal happened, as an os.time() stamp, or 0 if unknown.
+---
+--- The recheck window is measured from this rather than from launch, so
+--- reopening the app does not restart the wait: ten launches in a minute cost
+--- the same one request as one launch, and a player coming back the next day
+--- gets their attempt immediately instead of waiting out the window again.
+function M.app_offline_since()
+    local ok, d = pcall(sys.load, OFFLINE_FILE)
+    if not ok or type(d) ~= "table" then return 0 end
+    return tonumber(d.at) or 0
+end
+
 -- STREAMING_CHUNK: Building request parsers...
 local function build_headers()
     local h = {
@@ -91,6 +153,14 @@ local function build_headers()
         -- rather than the display name: it is a monotonic integer, so there is
         -- nothing to parse and no way for "18.5.9" vs "18.5.10" to sort wrong.
         ["X-App-Build"]   = tostring(config.APP_BUILD or 0),
+        -- ngrok's free tier puts an HTML interstitial in front of a tunnel for
+        -- anything it takes for a browser, and this header is how it is waived.
+        -- Without it a request can come back 200 with a page of markup where
+        -- the JSON should be, which json_util decodes to nothing and every
+        -- caller then reads as an empty answer rather than a wrong one.
+        --
+        -- Harmless everywhere else: a header no other host looks at.
+        ["ngrok-skip-browser-warning"] = "true",
     }
     if _auth_token ~= "" then
         h["Authorization"] = "Bearer " .. _auth_token
@@ -168,70 +238,149 @@ local function parse_response(response)
     }
 end
 
-local function request(method, endpoint, payload, cb)
+-- RETRYING A REQUEST THAT NEVER LANDED.
+--
+-- parse_response maps "no response at all" to status_code 0. That is not a
+-- server answer — it is the request failing below HTTP: a refused TLS
+-- handshake, a dropped connection, a name that would not resolve. The observed
+-- case is a tunnel closing connections at its edge, where the handshake dies
+-- about a second and a half in and the backend never sees anything:
+--
+--   SSLSocket mbedtls_ssl_handshake: -29312          (CONN_EOF: peer hung up)
+--   HTTP request to '.../auth/link-phone' failed
+--     (http result: -1  socket result: -1000)
+--
+-- One retry turns most of those into a success, because they are sporadic
+-- rather than sustained.
+--
+-- OPT-IN, AND DEFAULTING TO ZERO, WHICH IS THE IMPORTANT PART.
+--
+-- status_code 0 means "no answer came back", NOT "the server did not act". A
+-- response lost on the way home looks identical to a request that never
+-- arrived, so retrying a withdrawal, a theme purchase or a cup creation could
+-- charge a player twice for one action. Those endpoints must never opt in, and
+-- with the default at zero they cannot do so by accident — only a call that
+-- deliberately asks for retries gets them, and only the safe-to-repeat ones do.
+local RETRY_BACKOFF = 0.6
+
+local function request(method, endpoint, payload, cb, opts)
+    opts = opts or {}
+    local retries_left = opts.retries or 0
     local url = config.BASE_URL .. endpoint
-    local headers = build_headers()
     local body = payload and json_util.encode(payload) or nil
     -- ignore_cache: every endpoint here returns live state. Defold's HTTP cache
     -- would otherwise replay a stored response, or revalidate it and hand us a
     -- bodyless 304 that parse_response can only read as "no data".
     local options = { timeout = 20, ignore_cache = true }
-    print("[API] " .. method .. " " .. url)
-    http.request(url, method, function(_, _, response)
-        if cb then
-            cb(parse_response(response))
-        end
-    end, headers, body, options)
+    local attempt = 0
+
+    local fire
+    fire = function()
+        attempt = attempt + 1
+        -- Rebuilt per attempt so a token that arrived between tries is used.
+        local headers = build_headers()
+        print("[API] " .. method .. " " .. url
+            .. (attempt > 1 and (" (retry " .. (attempt - 1) .. ")") or ""))
+        http.request(url, method, function(_, _, response)
+            local res = parse_response(response)
+            if res.status_code == 0 and retries_left > 0 then
+                retries_left = retries_left - 1
+                print("[API] no answer - retrying in "
+                    .. string.format("%.1fs", RETRY_BACKOFF * attempt))
+                timer.delay(RETRY_BACKOFF * attempt, false, fire)
+                return
+            end
+            if cb then cb(res) end
+        end, headers, body, options)
+    end
+
+    fire()
 end
 
--- STREAMING_CHUNK: Implementing GPGS auth endpoint...
-function M.gpgs_login(server_auth_code, cb)
-    -- Changed 'authCode' to 'serverAuthCode' to match the backend exactly
+-- DEVICE SIGN-IN. The way in.
+--
+-- No provider, no consent screen, no token exchange, no Play Services. The
+-- device id is generated on first run and already sits on the User document,
+-- so for anybody who has opened the app before this is the whole of signing in
+-- — one request, and it is the first thing a launch makes.
+--
+-- The 404 is NOT an error. It means "we do not know this handset yet", which is
+-- the ordinary state on a first run and the expected state on a new phone.
+-- Both are answered by the phone number, which is the identity that survives
+-- changing handsets — see phone_login below. The caller distinguishes the two
+-- by result.data.code == "DEVICE_UNKNOWN" rather than by the status alone, so
+-- a network failure (status 0) is never mistaken for "no account here".
+function M.device_login(cb)
+    local fcm_token = ""
+    pcall(function()
+        local fbpush = require("modules.firebase_push")
+        if fbpush and fbpush.get_fcm_token then
+            fcm_token = fbpush.get_fcm_token()
+        end
+    end)
+
     local payload = {
-        serverAuthCode = server_auth_code,
-        deviceId       = M.get_device_id()
+        deviceId = M.get_device_id(),
+        fcmToken = (fcm_token and fcm_token ~= "") and fcm_token or nil,
     }
 
-    -- Directs to the standard GPGS login endpoint on your backend
-    request("POST", "/auth/google", payload, function(result)
-        -- Changed 'idToken' to 'token' to match backend's generated JWT
+    -- Retried: a pure lookup, so repeating it cannot change anything, and it
+    -- is the FIRST request a launch makes — losing it to a dropped handshake
+    -- means the app cannot get in at all.
+    request("POST", "/auth/device", payload, function(result)
         if result.success and result.data and result.data.token then
             M.set_auth_token(result.data.token)
         end
-        if cb then
-            cb(result)
-        end
-    end)
+        if cb then cb(result) end
+    end, { retries = 2 })
 end
 
--- Old-account migration: link a phone number to the just-authenticated
--- Google account. Requires the Bearer token already set via set_auth_token
--- (build_headers attaches it automatically). Backend response shape:
--- { success, merged, user, token? } — `token` is only present when `merged`
--- is true (the account identity changed to the old, now-linked account).
--- Phone sign-in — the way in when Google Play Games cannot work at all (Play
--- Services missing/disabled/out of date, no Google account, an OAuth client
--- not registered for the build).
---
--- No SMS code anywhere in this flow. payload = { phoneNumber, deviceId },
--- and there are only two answers:
---   { success, isNewUser = true,  token, user }  account created, signed in
---   { success, isNewUser = false, token, user }  known account, signed in
--- A valid number is the whole credential, on any device. See the route for
--- what that costs.
+--- Does this answer mean "this handset is not on any account"?
+---
+--- A named predicate rather than `status_code == 404` at the call site: the
+--- difference between "no account here" and "the request did not arrive" is
+--- the difference between showing the phone screen and retrying quietly, and
+--- getting it wrong in either direction is a player stuck on the wrong screen.
+function M.is_device_unknown(result)
+    if not result or result.success then return false end
+    local code = result.data and result.data.code
+    return code == "DEVICE_UNKNOWN" or code == "DEVICE_ID_INVALID"
+end
+
 function M.phone_login(payload, cb)
     payload = payload or {}
     payload.deviceId = payload.deviceId or M.get_device_id()
+    if not payload.fcmToken then
+        pcall(function()
+            local fbpush = require("modules.firebase_push")
+            if fbpush and fbpush.get_fcm_token then
+                local tok = fbpush.get_fcm_token()
+                if tok and tok ~= "" then payload.fcmToken = tok end
+            end
+        end)
+    end
+    -- Retried: find-or-create, so a repeat after a lost response finds the
+    -- account the lost one made rather than making a second.
     request("POST", "/auth/phone", payload, function(result)
         if result.success and result.data and result.data.token then
             M.set_auth_token(result.data.token)
         end
         if cb then cb(result) end
-    end)
+    end, { retries = 2 })
 end
 
+-- Retried, with one caveat stated rather than glossed.
+--
+-- The merge path deletes the duplicate account once the merge is safely
+-- persisted, so if a response is lost AFTER that happened, the retry carries a
+-- token for an account that no longer exists and comes back 401. The player's
+-- data is correct and merged; the screen wrongly says it failed.
+--
+-- Worth it anyway: that needs the response to be lost on the way home, whereas
+-- the failure this fixes is the request never arriving at all, which is the one
+-- actually being hit. No money moves either way.
 function M.link_phone(payload, cb)
-    request("POST", "/auth/link-phone", payload, cb)
+    request("POST", "/auth/link-phone", payload, cb, { retries = 2 })
 end
 
 function M.get_user(user_id, cb)
@@ -246,14 +395,25 @@ function M.get_user(user_id, cb)
     request("GET", "/users/" .. user_id, nil, cb)
 end
 
+-- Save the username and avatar, whether or not there is an account yet.
+--
+-- THE "USER ID REQUIRED" A NEW PLAYER HIT. This used to refuse here, on the
+-- handset, without ever asking the server — and for a player who skipped phone
+-- linking there IS no id, because nothing on that path creates an account:
+-- /auth/device deliberately only resumes one, and the account-creating route
+-- is the phone step they just skipped. So the very first thing a new player
+-- does was answered with an error about an id they could not have.
+--
+-- With no id, this goes to the create-or-update route instead, which makes the
+-- account against this device and applies the same username rules. The device
+-- id rides along either way: on create it is what the new account is addressed
+-- by, and on update it backfills accounts stored before device ids were kept.
 function M.update_profile(user_id, payload, cb)
+    payload = payload or {}
+    payload.deviceId = payload.deviceId or M.get_device_id()
+
     if not user_id or user_id == "" then
-        return cb({
-            success     = false,
-            status_code = 0,
-            data        = {},
-            message     = "User ID required"
-        })
+        return request("POST", "/auth/device/profile", payload, cb)
     end
     request("PUT", "/users/" .. user_id, payload, cb)
 end
@@ -294,6 +454,24 @@ function M.update_tournament(tournament_id, payload, cb)
     request("PUT", "/tournaments/" .. tournament_id, payload, cb)
 end
 
+-- THE GLOBAL CHAMPIONSHIP JOIN — CONFIRMED, ONCE.
+--
+-- Was folded silently into the WS matchmaking request, so the client had no
+-- way to know whether a PLAY tap actually charged anything and fell back to
+-- a local guess — which drifted from the server's own idempotent join the
+-- moment a player tapped PLAY more than once at the same level. See
+-- main/tournaments.gui_script's PLAY handler for the client side of the fix:
+-- call this FIRST, animate a coin deduction only when result.data.charged is
+-- nonzero, then send the ordinary matchmaking request.
+--
+-- Retried like phone_login/link_phone above, for the same reason: this is
+-- find-or-charge-once, not charge-every-call — a response lost on the way
+-- home and retried finds the join the lost one already made (charged: 0,
+-- alreadyJoined: true) rather than charging a second time.
+function M.join_championship(tournament_id, user_id, cb)
+    request("POST", "/tournaments/" .. tournament_id .. "/join", { userId = user_id }, cb, { retries = 2 })
+end
+
 -- Team Tournaments — player-created, owner-funded multi-level brackets.
 -- payload = { userId, name?, grandPrizeCoins, maxPlayers, gamesPerLevel,
 --             invitationCode?, inviteUsernames? }
@@ -313,14 +491,6 @@ function M.search_usernames(q, exclude, cb)
     request("GET", ep, nil, cb)
 end
 
--- Open team tournaments for the lobby list. `user_id` marks the ones the
--- caller already joined/owns so the card can render JOINED instead of JOIN.
-function M.list_active_team_tournaments(user_id, cb)
-    local ep = "/tournaments/team/active"
-    if user_id and user_id ~= "" then ep = ep .. "?userId=" .. urlencode(user_id) end
-    request("GET", ep, nil, cb)
-end
-
 function M.create_team_tournament(payload, cb)
     request("POST", "/tournaments/team", payload, cb)
 end
@@ -337,6 +507,10 @@ end
 
 -- Cups this player was invited to but has not joined. No code needed to
 -- accept one — being on the cup's allowedUsers IS the credential.
+-- DEPRECATED. Invitations arrive on the user object now (ws.current_user_data
+-- .teamInvitations), attached by the server to both the sign-in response and
+-- the IDENTIFY reply — see modules/lobby/cups.lua. Nothing in the app calls
+-- this any more; it is kept only so a rollback does not have to restore it.
 function M.list_team_invitations(user_id, cb)
     request("GET", "/tournaments/team/invitations?userId=" .. urlencode(user_id), nil, cb)
 end
@@ -378,6 +552,12 @@ function M.get_team_tournament_bracket(tournament_id, cb)
 end
 
 -- Owner-only admin overrides. payload = { userId, playerId }
+--
+-- No caller since the online lobby's VIEW BRACKET modal was removed — team
+-- cups are managed from the main lobby, and the standings screen reaches the
+-- drop endpoint through drop_team_player instead. Kept, like
+-- list_team_invitations above, because the endpoints are still there and a
+-- rollback should not have to restore the bindings.
 function M.advance_team_tournament_player(tournament_id, payload, cb)
     request("POST", "/tournaments/team/" .. tournament_id .. "/advance", payload, cb)
 end
