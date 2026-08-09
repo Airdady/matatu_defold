@@ -144,9 +144,21 @@ function init(self)
     -- to THIS component through a URL captured here, in our own context.
     -- During ONLINE play we drive the full-screen dialog; on the lobby and in
     -- OFFLINE games we only update the small top-right badge.
+    --
+    -- Gated on app_state.current_screen, NOT app_state.mode. mode is set
+    -- "online" the instant a game_start/game_request_accepted event lands —
+    -- which, when a match is found while still searching (see controller.
+    -- script's intercept_for_search, a ~1.8s window on the "tournaments"/
+    -- "online" screen before the actual show(self, "game") fires), is BEFORE
+    -- the game screen is actually on. A disconnect landing in that gap put
+    -- the full "CONNECTION LOST / your game is safe" dialog up over whatever
+    -- screen the player was still looking at — reported as game content
+    -- bleeding onto the lobby. current_screen is set by show() itself, in
+    -- the same call that actually switches screens, so it can never disagree
+    -- with what is on screen the way the separately-set mode flag could.
     local ME = msg.url("#")
     local function notify(mode)
-        if app_state.mode == "online" then
+        if app_state.current_screen == "game" then
             msg.post(ME, "net_show", { mode = mode })
         else
             msg.post(ME, "net_badge", { mode = mode })
@@ -222,8 +234,10 @@ function on_message(self, message_id, message)
         gui.set_enabled(self.scrim, false)
     elseif message_id == hash("net_badge") then
         local mode = (message and message.mode) or "reconnecting"
-        -- When online the dialog owns the UI; keep the badge hidden.
-        if app_state.mode == "online" then
+        -- When on the game screen the dialog owns the UI; keep the badge
+        -- hidden. Same current_screen check as notify() above, for the same
+        -- reason — see the comment there.
+        if app_state.current_screen == "game" then
             self._badge_hide_t = nil
             self._badge_mode = nil
             gui.set_enabled(self.badge, false)
