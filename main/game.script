@@ -1481,11 +1481,24 @@ function on_message(self, message_id, message, sender)
             -- redeal a second time before the first's deferred go.delete()s
             -- had actually run, leaving a duplicate card with a duplicate
             -- key on the board. Reconcile in place instead, the same way
-            -- every ordinary MOVE already does.
+            -- every ordinary MOVE already does — through full_resync, not a
+            -- narrower one-off reconcile: full_resync is what already
+            -- coalesces this against ws_net_up/ws_player_rc firing for the
+            -- same reconnect episode and waits out an in-flight ordinary
+            -- move, both guards this RESYNC path needs just as much (a
+            -- RESYNC and a reconnect notification can land moments apart
+            -- for the same drop) and would otherwise be racing.
+            -- A RESYNC is a definitive answer too — just a "no" instead of a
+            -- "yes" — so it clears last_sent_turn_actions exactly like a
+            -- successful TIMER_UPDATE/MOVE would. Without this, a reconnect
+            -- later would find that slot still held and blindly resend a
+            -- move the server already rejected once.
+            OnlineHandler.confirm_move(self, ws.last_resync_move_id)
+
             local fresh = ws.active_game_state
             if type(fresh) == "table" and next(fresh) ~= nil then
                 log("RESYNC requested: reconciling in place")
-                OnlineHandler.reconcile_after_resync(self, fresh)
+                OnlineHandler.full_resync(self, fresh)
             else
                 -- No state to reconcile against — fall back to a full
                 -- rebuild rather than silently doing nothing.
@@ -1600,6 +1613,13 @@ function on_message(self, message_id, message, sender)
             if fresh then self.game_state = fresh end
             OnlineHandler.full_resync(self, self.game_state or {}, function()
                 notify_gui(self.gui_hud, "conn_overlay", { show = false })
+                -- PLAYER_RECONNECTED is broadcast to the whole game — this
+                -- client's own reconnect fires it too (see be_matatu's
+                -- handleReconnection), so this is exactly the moment to
+                -- retry a move that never got an answer before the drop, now
+                -- that full_resync above has the fresh currentTurn to gate
+                -- it on.
+                OnlineHandler.retry_unconfirmed_move(self)
             end)
         else
             notify_gui(self.gui_hud, "conn_overlay", { show = false })
@@ -1661,6 +1681,17 @@ function on_message(self, message_id, message, sender)
             if fresh then self.game_state = fresh end
             OnlineHandler.full_resync(self, self.game_state or {}, function()
                 notify_gui(self.gui_hud, "conn_overlay", { show = false })
+                -- Now that full_resync above has the fresh currentTurn:
+                -- resend a move that was sent right as the drop happened and
+                -- never got an answer either way. Anything still staged
+                -- locally and never sent at all (a suit pick not yet made, a
+                -- skip-chain not yet ended) is untouched by any of this —
+                -- current_turn_actions was never cleared for it, and
+                -- finalize_state_sync's own suit_select guard now leaves an
+                -- active local picker alone — so it is simply still sitting
+                -- there, waiting for the player to finish it, exactly as if
+                -- nothing had happened.
+                OnlineHandler.retry_unconfirmed_move(self)
             end)
         else
             notify_gui(self.gui_hud, "conn_overlay", { show = false })

@@ -303,7 +303,22 @@ function M.send_message(msg_type, data)
   return true
 end
 
-function M.send_move(game_id, from_id, to_id, actions, new_suit, active_penalty_count)
+-- Monotonic, not a UUID: this client only ever has ONE move in flight at a
+-- time (turn-based — end_turn won't fire again until is_waiting_for_server_
+-- response clears), so it only has to be unique across THIS session, not
+-- globally. Purely a correlation id for confirm_move — never used to decide
+-- whether a move is valid, that is still entirely the server's card/turn
+-- checks, unaffected whether this id round-trips or not.
+local next_move_id = 0
+
+-- move_id: pass one to RESEND the exact same attempt after a reconnect
+-- (online_handler.lua's retry_unconfirmed_move) — the backend and the
+-- eventual confirm_move both key off it, so a retry must reuse it rather
+-- than mint a new one. Omit it for a normal, first-time send and one is
+-- generated. Returns the id used on success, or false if the move was
+-- dropped without being sent (so callers can tell "sent, now wait" from
+-- "never left the client").
+function M.send_move(game_id, from_id, to_id, actions, new_suit, active_penalty_count, move_id)
   -- NO MOVE SURVIVES THE END OF ITS GAME.
   --
   -- Every move leaves the client through here, which makes this the one place
@@ -328,7 +343,12 @@ function M.send_move(game_id, from_id, to_id, actions, new_suit, active_penalty_
     return false
   end
 
-  local move_data = { gameId = game_id, from = from_id, to = to_id, cards = actions }
+  if move_id == nil then
+    next_move_id = next_move_id + 1
+    move_id = tostring(os.time()) .. "-" .. tostring(next_move_id)
+  end
+
+  local move_data = { gameId = game_id, from = from_id, to = to_id, cards = actions, moveId = move_id }
   if new_suit and new_suit ~= "" then
     move_data.newSuit = new_suit
   end
@@ -336,6 +356,7 @@ function M.send_move(game_id, from_id, to_id, actions, new_suit, active_penalty_
     move_data.activePenaltyCount = active_penalty_count
   end
   M.send_message("MOVE", move_data)
+  return move_id
 end
 
 -- IDENTIFY watchdog. The client used to send IDENTIFY and then simply wait:
@@ -842,7 +863,12 @@ local function parse_message(json_string)
       print(string.format("[PIPE-1] decoded from=%s actions=%d turn=%s suit=%s",
         tostring(from_id), #actions, tostring(gs.currentTurn), tostring(gs.chosenSuit)))
       pprint("[PIPE-1] gs.actions:", actions)
-      local processed = { _id = from_id, from = from_id, actions = actions, chosenSuit = gs.chosenSuit or "", gameState = gs, aiOnBehalf = (d.aiOnBehalf == true) }
+      -- moveId: whatever we sent on data.moveId, echoed straight back by the
+      -- backend on every response to the sender (see be_matatu's
+      -- moves/index.ts) — the client's own hand-drift-recovery hooks on this
+      -- to tell "the server answered my move" apart from "the server has not
+      -- gotten to it yet", see online_handler.lua's confirm_move.
+      local processed = { _id = from_id, from = from_id, actions = actions, chosenSuit = gs.chosenSuit or "", gameState = gs, aiOnBehalf = (d.aiOnBehalf == true), moveId = d.moveId }
       emit("game_move", processed, gs)
     else
       print("[PIPE-1] DROPPED — gs decoded empty")
@@ -887,6 +913,15 @@ local function parse_message(json_string)
     local gs = M.extract_game_state(d)
     if next(gs) ~= nil then
       M.active_game_state = gs
+      -- Side channel, same reasoning as active_game_state: game.script's
+      -- ws_resync handler is wired through controller.script's dataless
+      -- `forward`, so nothing reaches it via the event args either. This is
+      -- what tells confirm_move which of our sent moves this RESYNC is
+      -- actually answering — a definitive "no" is still an answer, and must
+      -- clear last_sent_turn_actions exactly like a success would, or a
+      -- later reconnect would blindly resend a move the server already
+      -- rejected.
+      M.last_resync_move_id = d.moveId
       emit("resync", { reason = tostring(d.reason or "") })
     end
   elseif t == "ROUND_COMPLETE" then
