@@ -883,10 +883,6 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("disable") then
         self.active = false
         app.game_active = false
-        -- Match-scoped shared theme (see app_state.lua) never outlives the
-        -- match it belonged to — clear it here so a later offline game, or
-        -- the lobby/menu screens, never render with an opponent's theme.
-        app.match_theme = nil
         -- Screen-awake stays on app-wide (see controller.script init) — do
         -- not re-enable dimming just because the player left the game screen.
         self._knockout_scores = nil
@@ -916,6 +912,13 @@ function on_message(self, message_id, message, sender)
         self._final_state_locked = false
         self._h2h = nil
         GS.destroy_all(self)
+        -- The match's shared theme (online_handler.lua's start_game
+        -- overrides the single shared app_state.theme for the duration of
+        -- the match) never outlives it — re-derive the player's OWN theme
+        -- from their cached account now that the board is torn down, so a
+        -- later offline game or the lobby/menu screens never render with an
+        -- opponent's theme.
+        app.sync_theme_from_user(ws.current_user_data)
 
     elseif message_id == hash("layout_changed") then
         BL.update_layout(self)

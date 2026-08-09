@@ -71,7 +71,7 @@ end
 
 -- This step serves two jobs, both of them "type digits on a keypad":
 --   "link"  attach a number to an already-signed-in account (the original)
---   "login" sign IN by number, when Google Play Games cannot work at all
+--   "login" sign IN by number, when Google sign-in cannot work at all
 --
 -- There is no longer a third "code" mode: sign-in issues no SMS code, so a
 -- valid number is the whole of the input and CONTINUE goes straight through
@@ -157,6 +157,33 @@ local function rebuild_phone_step(self, d_y)
     track(self, ui.text(vmath.vector3(EDGE_R - 110, EDGE_T - 40, 0), self._phone_saving and "VERIFYING..." or "CONTINUE", "subtitle2",
         (ok and not self._phone_saving) and P_DARK_TXT or P_MUTED))
     self.buttons[#self.buttons+1] = { node = cont_btn, id = "phone_link" }
+
+    -- A way out. ALWAYS, now — neither mode is mandatory any more.
+    --
+    -- The note below is kept because it explains the shape, but its premise
+    -- has gone: "link" was the account-completion step every Matatu player
+    -- had to pass, and it is not one. Both modes are entered deliberately, so
+    -- both need a way back, and a screen you can enter but not leave is a
+    -- trap whichever door you came through.
+    --
+    -- Where BACK goes depends on the same thing: with an account behind it
+    -- there is a profile step to return to, and without one the lobby is the
+    -- only honest destination.
+    do
+        framed(self, EDGE_L + 90, EDGE_T - 40, 140, 44, P_BORDER, 1, P_PANEL)
+        local back_btn = track(self, ui.box(vmath.vector3(EDGE_L + 90, EDGE_T - 40, 0), vmath.vector3(140, 44, 0), vmath.vector4(0,0,0,0.001)))
+        track(self, ui.text(vmath.vector3(EDGE_L + 90, EDGE_T - 40, 0), "< BACK", "subtitle2", P_CREAM_DIM))
+        self.buttons[#self.buttons+1] = { node = back_btn, id = "phone_cancel" }
+    end
+
+    -- The original note, on which of the two modes was mandatory:
+    --
+    -- The distinction is which of the two modes is mandatory. "link" is the
+    -- account-completion step every Matatu player must pass, and it has never
+    -- had a back button because there is nowhere to go back TO. "login" is now
+    -- something a player can choose from the lobby, and a screen you can enter
+    -- deliberately but not leave is a trap — they would be stuck on a keypad
+    -- with no number they wanted to type and no route to the offline modes.
 
     -- ── Content card: explanation + input + keypad share one bordered
     -- panel (mirrors gold_avatar_frame's layered-border elevation) instead
@@ -334,6 +361,32 @@ local function rebuild(self)
         (ok and not self._saving) and P_DARK_TXT or P_MUTED))
     self.buttons[#self.buttons+1] = { node = save_btn, id = "save" }
 
+    -- "I ALREADY HAVE AN ACCOUNT" — the one case the number really is the
+    -- only way back.
+    --
+    -- The phone step is no longer forced on anybody (see
+    -- app_state.phone_step_required), and the player this could have cost is
+    -- specific: somebody returning on a new handset, or after a reinstall,
+    -- whose device id has rerolled. Nothing on this screen identifies them,
+    -- so picking a name here would mint a SECOND account and leave the one
+    -- with their balance in it unreachable — with nothing on screen to say
+    -- so, which is the failure mode /auth/device's own comment warns about.
+    --
+    -- So the route stays, one tap away, and says plainly what it is for.
+    -- Shown only while there is no account yet: afterwards the same journey
+    -- is VERIFY YOUR PHONE, which is a different sentence for a different
+    -- situation ("secure this account" rather than "find my old one").
+    local u_now = ws.current_user_data or {}
+    local has_account = type(u_now._id) == "string" and u_now._id ~= ""
+    if not has_account and app_state.phone_required() then
+        local rec_y = EDGE_B + 26
+        local rec = track(self, ui.text(vmath.vector3(CX, rec_y, 0),
+            "Already have an account?  SIGN IN WITH YOUR NUMBER", "body", P_GOLD_LIGHT))
+        gui.set_scale(rec, vmath.vector3(0.58, 0.58, 1))
+        local rec_hit = track(self, ui.box(vmath.vector3(CX, rec_y, 0), vmath.vector3(460, 40, 0), vmath.vector4(0, 0, 0, 0.001)))
+        self.buttons[#self.buttons+1] = { node = rec_hit, id = "phone_login_open" }
+    end
+
     -- Save feedback now surfaces as a bottom-left toast (see the
     -- profile_saved handler below) instead of inline text here.
 
@@ -491,29 +544,20 @@ local function load_profile_fields(self)
     if self.avatar < 1 then self.avatar = 1 end
 end
 
--- Mandatory, state-driven: which step to show is derived from the actual
--- account data every time, never a one-shot session flag — a flag can be
--- lost (app restart) or raced by another screen, silently letting the
--- phone requirement slip through. Reading it fresh off ws.current_user_data
--- means it reliably reappears on every login/reconnect until satisfied.
+-- WHICH STEP THIS SCREEN OPENS ON.
+--
+-- Derived from the account data every time rather than from a one-shot
+-- session flag: a flag can be lost on restart or raced by another screen.
+--
+-- The phone step is no longer a gate anybody has to pass — see
+-- app_state.phone_step_required for the whole argument. It is reached
+-- deliberately: by a returning player tapping "I ALREADY HAVE AN ACCOUNT",
+-- or by anybody tapping VERIFY YOUR PHONE afterwards. Both set phone_mode
+-- themselves; this only decides where the screen STARTS.
 local function decide_step(self)
     local u = ws.current_user_data or {}
-    -- No account at all: this screen is the WAY IN, not a profile step. It is
-    -- reached when Google Play Games could not sign the player in — Play
-    -- Services missing or disabled, no Google account, an OAuth client not
-    -- registered for the build — so the number is the only credential
-    -- available.
-    if (u._id or "") == "" then
-        self.step = "phone"
-        self.phone_mode = "login"
-        return
-    end
     self.phone_mode = "link"
-    if app_state.phone_required() and not app_state.phone_complete(u) then
-        self.step = "phone"
-    else
-        self.step = "profile"
-    end
+    self.step = app_state.phone_step_required(u) and "phone" or "profile"
 end
 
 function on_message(self, message_id, message, sender)
@@ -540,20 +584,7 @@ function on_message(self, message_id, message, sender)
         if self._active then rebuild(self) end
     elseif message_id == hash("user_data_updated") then
         if self._active then rebuild(self) end
-    elseif message_id == hash("phone_login_required") then
-        -- The controller gave up on Google sign-in (retry budget spent, or the
-        -- connect deadline expired) and routed here for a number.
-        --
-        -- decide_step() cannot work this out on its own: it reads "login" mode
-        -- off an EMPTY _id, and the stall this exists for happens with a
-        -- cached user that has a perfectly good _id and a session that simply
-        -- does not work. So the mode is stated rather than inferred.
-        self.step = "phone"
-        self.phone_mode = "login"
-        self.phone = ""
-        self._phone_saving = false
-        self._phone_error = nil
-        if self._active then rebuild(self) end
+
     elseif message_id == hash("phone_link_result") then
         self._phone_saving = false
         if message.ok then
@@ -589,18 +620,10 @@ local function handle(self, b)
         if ok and not self._phone_saving then
             self._phone_saving = true
             self._phone_error = nil
-            if phone_mode(self) == "login" then
-                -- One request, one answer: a valid number signs the player
-                -- straight in, finding the account or creating it.
-                self._login_phone = "0" .. self.phone
-                msg.post("#controller", "phone_login", { phoneNumber = self._login_phone })
-            else
-                -- self.phone is the 9 local digits only (no leading "0") — the
-                -- backend's own storage format is 07XXXXXXXX (be_matatu's
-                -- normalizeUgPhone), so prepend it here rather than relying on
-                -- the server to guess/normalize an ambiguous wire format.
-                msg.post("#controller", "link_phone", { phoneNumber = "0" .. self.phone })
-            end
+            -- self.phone is the 9 local digits only (no leading "0") — the
+            -- backend's own storage format is 07XXXXXXXX (be_matatu's
+            -- normalizeUgPhone), so prepend it here.
+            msg.post("#controller", "link_phone", { phoneNumber = "0" .. self.phone })
             rebuild(self)
         end
     elseif b.id:sub(1,2) == "p_" then
@@ -626,6 +649,35 @@ local function handle(self, b)
         end
     elseif b.id == "back" then
         if validate(self.username) then msg.post("#controller", "goto_online") end
+    elseif b.id == "phone_login_open" then
+        -- The returning player, saying so. Opens the same keypad in LOGIN
+        -- mode — which titles it "SIGN IN WITH YOUR NUMBER" and, via
+        -- controller.script's link_phone split, signs in rather than trying
+        -- to link a number to an account that does not exist yet.
+        self.phone = ""
+        self._phone_error = nil
+        self.phone_mode = "login"
+        self.step = "phone"
+        rebuild(self)
+    elseif b.id == "phone_cancel" then
+        -- BACK GOES WHERE THERE IS SOMETHING TO GO BACK TO.
+        --
+        -- This always went to the lobby, on the reasoning that there is no
+        -- session behind this screen so the online lobby has nothing to show.
+        -- True of the session — but the PROFILE step is behind it now: the
+        -- keypad is reached from there by choice, and dropping somebody all
+        -- the way out to the lobby loses the name and avatar they had already
+        -- picked. So return to it, and keep the lobby for the case where the
+        -- screen really did open on the keypad.
+        self.phone = ""
+        self._phone_error = nil
+        if self.step == "phone" and self.phone_mode == "login" then
+            self.phone_mode = "link"
+            self.step = "profile"
+            rebuild(self)
+        else
+            msg.post("#controller", "goto_lobby")
+        end
     elseif b.id == "avatar" then
         self.avatar = b.data
         rebuild(self)

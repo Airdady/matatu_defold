@@ -771,7 +771,7 @@ function init(self)
     -- Belt-and-suspenders repeat of the bootstrap-time Play in-app update
     -- check (main/controller.script's init) — in case Play Services wasn't
     -- ready yet at engine bootstrap. No-ops off Android; safe to call again.
-    gameservices.check_update()
+    if gameservices then pcall(gameservices.check_update) end
 
     refresh_wh()
     update_lobby_season(self)

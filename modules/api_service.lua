@@ -41,6 +41,10 @@ function M.set_auth_token(token)
     _auth_token = token or ""
 end
 
+function M.has_auth_token()
+    return _auth_token ~= nil and _auth_token ~= ""
+end
+
 -- STREAMING_CHUNK: Defining session persistence...
 local SESSION_FILE = sys.get_save_file("matatu_gdt", "session.json")
 
@@ -168,50 +172,117 @@ local function parse_response(response)
     }
 end
 
-local function request(method, endpoint, payload, cb)
+-- RETRYING A REQUEST THAT NEVER LANDED.
+--
+-- parse_response maps "no response at all" to status_code 0. That is not a
+-- server answer — it is the request failing below HTTP: a refused TLS
+-- handshake, a dropped connection, a name that would not resolve. The observed
+-- case is a tunnel closing connections at its edge, where the handshake dies
+-- about a second and a half in and the backend never sees anything:
+--
+--   SSLSocket mbedtls_ssl_handshake: -29312          (CONN_EOF: peer hung up)
+--   HTTP request to '.../auth/link-phone' failed
+--     (http result: -1  socket result: -1000)
+--
+-- One retry turns most of those into a success, because they are sporadic
+-- rather than sustained.
+--
+-- OPT-IN, AND DEFAULTING TO ZERO, WHICH IS THE IMPORTANT PART.
+--
+-- status_code 0 means "no answer came back", NOT "the server did not act". A
+-- response lost on the way home looks identical to a request that never
+-- arrived, so retrying a withdrawal, a theme purchase or a cup creation could
+-- charge a player twice for one action. Those endpoints must never opt in, and
+-- with the default at zero they cannot do so by accident — only a call that
+-- deliberately asks for retries gets them, and only the safe-to-repeat ones do.
+local RETRY_BACKOFF = 0.6
+
+local function request(method, endpoint, payload, cb, opts)
+    opts = opts or {}
+    local retries_left = opts.retries or 0
     local url = config.BASE_URL .. endpoint
-    local headers = build_headers()
     local body = payload and json_util.encode(payload) or nil
     -- ignore_cache: every endpoint here returns live state. Defold's HTTP cache
     -- would otherwise replay a stored response, or revalidate it and hand us a
     -- bodyless 304 that parse_response can only read as "no data".
     local options = { timeout = 20, ignore_cache = true }
-    print("[API] " .. method .. " " .. url)
-    http.request(url, method, function(_, _, response)
-        if cb then
-            cb(parse_response(response))
-        end
-    end, headers, body, options)
+    local attempt = 0
+
+    local fire
+    fire = function()
+        attempt = attempt + 1
+        -- Rebuilt per attempt so a token that arrived between tries is used.
+        local headers = build_headers()
+        print("[API] " .. method .. " " .. url
+            .. (attempt > 1 and (" (retry " .. (attempt - 1) .. ")") or ""))
+        http.request(url, method, function(_, _, response)
+            local res = parse_response(response)
+            if res.status_code == 0 and retries_left > 0 then
+                retries_left = retries_left - 1
+                print("[API] no answer - retrying in "
+                    .. string.format("%.1fs", RETRY_BACKOFF * attempt))
+                timer.delay(RETRY_BACKOFF * attempt, false, fire)
+                return
+            end
+            if cb then cb(res) end
+        end, headers, body, options)
+    end
+
+    fire()
 end
 
--- Google Play Games serverAuthCode sign-in. The way in.
-function M.gpgs_login(server_auth_code, cb)
-    -- Changed 'authCode' to 'serverAuthCode' to match the backend exactly
+-- DEVICE SIGN-IN. The way in.
+--
+-- No provider, no consent screen, no token exchange, no Play Services. The
+-- device id is generated on first run and already sits on the User document,
+-- so for anybody who has opened the app before this is the whole of signing in
+-- — one request, and it is the first thing a launch makes.
+--
+-- The 404 is NOT an error. It means "we do not know this handset yet", which is
+-- the ordinary state on a first run and the expected state on a new phone.
+-- Both are answered by the phone number, which is the identity that survives
+-- changing handsets — see phone_login below. The caller distinguishes the two
+-- by result.data.code == "DEVICE_UNKNOWN" rather than by the status alone, so
+-- a network failure (status 0) is never mistaken for "no account here".
+function M.device_login(cb)
+    local fcm_token = ""
+    pcall(function()
+        local fbpush = require("modules.firebase_push")
+        if fbpush and fbpush.get_fcm_token then
+            fcm_token = fbpush.get_fcm_token()
+        end
+    end)
+
     local payload = {
-        serverAuthCode = server_auth_code,
-        deviceId       = M.get_device_id()
+        deviceId = M.get_device_id(),
+        fcmToken = (fcm_token and fcm_token ~= "") and fcm_token or nil,
     }
 
-    -- Directs to the standard GPGS login endpoint on your backend
-    request("POST", "/auth/google", payload, function(result)
-        -- Changed 'idToken' to 'token' to match backend's generated JWT
+    -- Retried: a pure lookup, so repeating it cannot change anything, and it
+    -- is the FIRST request a launch makes — losing it to a dropped handshake
+    -- means the app cannot get in at all.
+    request("POST", "/auth/device", payload, function(result)
         if result.success and result.data and result.data.token then
             M.set_auth_token(result.data.token)
         end
-        if cb then
-            cb(result)
-        end
-    end)
+        if cb then cb(result) end
+    end, { retries = 2 })
 end
 
--- Old-account migration: link a phone number to the just-authenticated
--- Google account. Requires the Bearer token already set via set_auth_token
--- (build_headers attaches it automatically). Backend response shape:
--- { success, merged, user, token? } — `token` is only present when `merged`
--- is true (the account identity changed to the old, now-linked account).
--- Phone sign-in — the way in when Google Play Games cannot work at all (Play
--- Services missing/disabled/out of date, no Google account, an OAuth client
--- not registered for the build).
+--- Does this answer mean "this handset is not on any account"?
+---
+--- A named predicate rather than `status_code == 404` at the call site: the
+--- difference between "no account here" and "the request did not arrive" is
+--- the difference between showing the phone screen and retrying quietly, and
+--- getting it wrong in either direction is a player stuck on the wrong screen.
+function M.is_device_unknown(result)
+    if not result or result.success then return false end
+    local code = result.data and result.data.code
+    return code == "DEVICE_UNKNOWN" or code == "DEVICE_ID_INVALID"
+end
+
+-- Phone sign-in — the way in when the device id is not (or no longer) on any
+-- account: a new phone, a factory reset, a cleared app.
 --
 -- No SMS code anywhere in this flow. payload = { phoneNumber, deviceId },
 -- and there are only two answers:
@@ -222,16 +293,37 @@ end
 function M.phone_login(payload, cb)
     payload = payload or {}
     payload.deviceId = payload.deviceId or M.get_device_id()
+    if not payload.fcmToken then
+        pcall(function()
+            local fbpush = require("modules.firebase_push")
+            if fbpush and fbpush.get_fcm_token then
+                local tok = fbpush.get_fcm_token()
+                if tok and tok ~= "" then payload.fcmToken = tok end
+            end
+        end)
+    end
+    -- Retried: find-or-create, so a repeat after a lost response finds the
+    -- account the lost one made rather than making a second.
     request("POST", "/auth/phone", payload, function(result)
         if result.success and result.data and result.data.token then
             M.set_auth_token(result.data.token)
         end
         if cb then cb(result) end
-    end)
+    end, { retries = 2 })
 end
 
+-- Retried, with one caveat stated rather than glossed.
+--
+-- The merge path deletes the duplicate account once the merge is safely
+-- persisted, so if a response is lost AFTER that happened, the retry carries a
+-- token for an account that no longer exists and comes back 401. The player's
+-- data is correct and merged; the screen wrongly says it failed.
+--
+-- Worth it anyway: that needs the response to be lost on the way home, whereas
+-- the failure this fixes is the request never arriving at all, which is the one
+-- actually being hit. No money moves either way.
 function M.link_phone(payload, cb)
-    request("POST", "/auth/link-phone", payload, cb)
+    request("POST", "/auth/link-phone", payload, cb, { retries = 2 })
 end
 
 function M.get_user(user_id, cb)
