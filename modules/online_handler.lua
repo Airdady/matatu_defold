@@ -837,8 +837,41 @@ function M.handle_single_move(self, move_data, new_state, done)
             end)
         end)
     else
-        M.finalize_state_sync(self, new_state, function() done() end)
+        -- Covers isReshuffling-for-sender (no hand change, sync_my_hand is a
+        -- cheap no-op there) AND drawMismatched-for-sender: the backend's
+        -- quiet correction for a stale draw identity (see be_matatu's
+        -- drawDesync fix) arrives here as a MOVE with `from` == us, so
+        -- `is_my_move` is true and this branch — not the opponent branch
+        -- above — is the one that actually runs for it. Without this call
+        -- the correction landed on the wire but never touched
+        -- self.player_hand, so the mover kept whatever card they'd drawn
+        -- locally instead of the one the server actually gave them.
+        M.finalize_state_sync(self, new_state, function()
+            sync_my_hand(self, new_state or {})
+            done()
+        end)
     end
+end
+
+-- Quiet reconciliation for a RESYNC. A RESYNC always targets the game we're
+-- already in — the backend only ever sends it to correct a drifted PLAY/DRAW
+-- (see be_matatu's moves/index.ts), never to hand over a different game — so
+-- there is no reason to tear the board down and re-deal every card the way
+-- game.script's ws_resync handler used to. That full destroy_all()+redeal:
+--   1. was the exact disruption described in be_matatu's own drawDesync fix
+--      notes (a "SYNCING BOARD" overlay for something that could be silent), and
+--   2. raced itself: go.delete() is deferred, so a second resync landing
+--      before the first teardown's deletes actually ran spawned a fresh card
+--      with the same value+suit while the old one was still alive — visible
+--      as a duplicate card with a duplicate key, breaking its animation.
+-- Reusing finalize_state_sync + sync_my_hand instead is the same
+-- non-destructive, identity-multiset-based path every ordinary MOVE already
+-- goes through, including the fix for Whot's 5 duplicate wildcards.
+function M.reconcile_after_resync(self, state, on_complete)
+    M.finalize_state_sync(self, state, function()
+        sync_my_hand(self, state or {})
+        if on_complete then on_complete() end
+    end)
 end
 
 function M.pump_move_queue(self)
