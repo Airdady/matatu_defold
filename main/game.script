@@ -72,8 +72,31 @@ end
 ----------------------------------------------------------------------
 -- Used by every "this should have finished by now" path. The server's state is
 -- the only thing that can be trusted after one of those, and re-applying it is
--- cheap: finalize_state_sync syncs to target COUNTS rather than applying
--- deltas, so running it over a partial or stale board is safe and idempotent.
+-- cheap: it syncs to target COUNTS rather than applying deltas, so running it
+-- over a partial or stale board is safe and idempotent.
+--
+-- OUR OWN HAND IS PART OF "THE BOARD". IT DID NOT USED TO BE.
+--
+-- This called finalize_state_sync, which reconciles the deck, the opponent's
+-- hand and the timers — and never touches self.player_hand. Only sync_my_hand
+-- does that, and the sole callers of it were handle_single_move (an OPPONENT's
+-- move) and full_resync (a reconnect).
+--
+-- So there was no path at all by which a drift in the player's OWN hand got
+-- corrected on a move the server refused. And a refused move is exactly when
+-- that hand is wrong: draw_to_hand has already popped a card off the local deck
+-- and animated it in by the time the move is sent, so a rejection (typically
+-- "Sync Error: Deck mismatch", after a local reshuffle produced a different
+-- order than the server's) leaves a card in hand that the server has never
+-- heard of. Worse, that card is a REAL one — recycled off the discard pile —
+-- and the server still has its copy in the deck for the opponent to draw. That
+-- is the reported "we both had the 3 of Diamonds": one card, two hands, and
+-- nothing in the client that would ever have taken it back.
+--
+-- full_resync is finalize_state_sync followed by sync_my_hand, plus the
+-- coalescing/in-flight-move guards this path wants anyway. Reconciling our own
+-- hand here is a no-op multiset diff in the common case and the fix in the
+-- broken one.
 local function rebuild_from_server(self)
     if not self.online_mode then return false end
     -- NEVER during a round transition. ws_game_over sets round_transition_busy
@@ -96,7 +119,7 @@ local function rebuild_from_server(self)
     if self.round_transition_busy then return false end
     local latest = ws.active_game_state
     if type(latest) ~= "table" or next(latest) == nil then return false end
-    OnlineHandler.finalize_state_sync(self, latest, function()
+    OnlineHandler.full_resync(self, latest, function()
         RE.pre_validate_hand(self)
     end)
     return true
