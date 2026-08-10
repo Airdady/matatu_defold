@@ -1624,13 +1624,19 @@ function on_message(self, message_id, message, sender)
         -- to the whole game, so it also fires for THIS client coming back —
         -- and if the opponent is still away, closing the banner then would
         -- hide a disconnect that is still true, with nothing left to raise it
-        -- again. The state the message carries is the authority: the server
-        -- builds it with getAccurateGameState, which re-checks every seat
-        -- against its actual socket before sending. Fall back to the id, and
-        -- then to dismissing, so a message with neither still behaves the way
-        -- it did before any of this.
+        -- again. The state is the authority: the server builds it with
+        -- getAccurateGameState, which re-checks every seat against its
+        -- actual socket before sending. Read from ws.active_game_state, NOT
+        -- message.state — controller.script's player_reconnected listener
+        -- deliberately no longer puts the state on the message at all (a
+        -- full game state blows past msg.post's small fixed buffer; see the
+        -- comment there), and websocket_manager.lua's parse_message already
+        -- set ws.active_game_state to this exact same state before emitting
+        -- the event that reached this handler. Fall back to the id, and
+        -- then to dismissing, so a message with neither still behaves the
+        -- way it did before any of this.
         local rc_who = tostring((message and message.player_id) or "")
-        local rc_state = (type(message.state) == "table" and message.state) or nil
+        local rc_state = (type(ws.active_game_state) == "table" and ws.active_game_state) or nil
         local opp_seat = rc_state and rc_state.players and self.opponent_id
             and rc_state.players[self.opponent_id] or nil
         local opp_status = opp_seat and tostring(opp_seat.status or "") or ""
@@ -1669,13 +1675,12 @@ function on_message(self, message_id, message, sender)
         -- visibly get "drawn back" from the deck, and a spurious reshuffle
         -- animation fire, right after reconnecting — both reported, and
         -- neither present in the reference client's simpler approach.
-        -- Prefer the fresh state PLAYER_RECONNECTED carried, falling back
-        -- to whatever ws.active_game_state was last updated to (IDENTIFY/
-        -- GAME_STATE_SYNC) — self.game_state is whatever we last had
-        -- BEFORE the disconnect.
+        -- ws.active_game_state is the fresh state PLAYER_RECONNECTED
+        -- carried (see the note above — it lands there, not on this
+        -- message) — self.game_state is whatever we last had BEFORE the
+        -- disconnect.
         if self.online_mode and not self.game_over then
-            local fresh = (type(message.state) == "table" and next(message.state) ~= nil and message.state)
-                or (type(ws.active_game_state) == "table" and next(ws.active_game_state) ~= nil and ws.active_game_state)
+            local fresh = type(ws.active_game_state) == "table" and next(ws.active_game_state) ~= nil and ws.active_game_state
             if fresh then self.game_state = fresh end
             OnlineHandler.sync_timers(self, self.game_state or {})
             -- Now that sync_timers above has the fresh currentTurn: retry a

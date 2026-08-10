@@ -243,11 +243,14 @@ check("finish() clears the flag and replays exactly the LATEST pending state, no
 --   * ws_player_rc firing for our own id, while the opponent is still away,
 --     would close a banner that is still true — and nothing raises it again
 --
--- So the banner is driven off the game state the message carries. The server
--- builds that with getAccurateGameState, which re-checks every seat against
--- its real socket before sending, making it the authority on who is actually
--- present. The id is the fallback, and dismissing is the fallback to that, so
--- a message carrying neither behaves exactly as it did before.
+-- So the banner is driven off the fresh game state. The server builds it
+-- with getAccurateGameState, which re-checks every seat against its real
+-- socket before sending, making it the authority on who is actually
+-- present. The id is the fallback, and dismissing is the fallback to that,
+-- so a message carrying neither behaves exactly as it did before. (Where
+-- that state actually comes from on the client is its own bug, fixed
+-- separately below — it is read from ws.active_game_state, never from
+-- message.state.)
 print("")
 print("THE BANNER FOLLOWS THE OPPONENT, NOT WHOEVER THE MESSAGE IS ABOUT")
 
@@ -281,6 +284,57 @@ check("ws_player_dc does NOT raise the banner for this client's own id",
 check("and an empty id still raises it, as before",
     dc_branch ~= nil and dc_branch:find('dc_who ~= "" and dc_who == tostring%(self%.my_player_id%)') ~= nil,
     "is_me must require a NON-empty id, or a message without one suppresses the banner entirely")
+
+-- ---------------------------------------------------------------------------
+-- THE ACTUAL ROOT CAUSE OF "THE BACKEND SENT IT, THE BANNER STAYED UP".
+--
+-- Confirmed from a device log: the backend's PLAYER_RECONNECTED broadcast
+-- arrived (parse_message logged it), but game.script's ws_player_rc never
+-- ran at all —
+--
+--   [WS] listener error on 'player_reconnected': main/controller.script:
+--   1351: buffer (194 bytes) too small for table, exceeded at key for
+--   element #6
+--
+-- controller.script's player_reconnected listener used to forward the
+-- WHOLE accurateGameState (the deck, both hands, the played pile) as the
+-- msg.post payload. msg.post has a small, FIXED message buffer — nothing
+-- close to what a full game state needs — so the post threw. emit()
+-- (websocket_manager.lua) wraps every listener in pcall, so the throw was
+-- swallowed and just logged: the msg.post silently never reached
+-- game.script, and nothing about the banner ever changed.
+--
+-- Every OTHER message that carries a full game state already avoids this:
+-- resync/game_move/game_over/round_complete (the forward() calls above the
+-- player_reconnected listener) post with NO payload at all and let the
+-- handler read ws.active_game_state, which parse_message sets before
+-- emit() ever runs. player_reconnected now does the same.
+print("")
+print("THE STATE NEVER GOES THROUGH msg.post — IT'S TOO BIG FOR THE BUFFER")
+
+local ctrl_src = slurp("main/controller.script")
+local ctrl_code = ctrl_src:gsub("%-%-[^\n]*", "")
+
+local prc_start = ctrl_code:find('ws%.on%("player_reconnected"')
+local prc_end = ctrl_code:find("\n%s*end%)%)", prc_start)
+local prc_body = prc_start and ctrl_code:sub(prc_start, prc_end)
+
+check("the player_reconnected listener exists", prc_start ~= nil)
+check("its msg.post no longer includes the game state",
+    prc_body ~= nil and prc_body:find("state%s*=%s*info%.state") == nil,
+    "a full accurateGameState blows past msg.post's small fixed buffer — this is what threw")
+check("it still forwards the player id",
+    prc_body ~= nil and prc_body:find('msg%.post%("#game_logic", "ws_player_rc"') ~= nil
+        and prc_body:find("player_id%s*=%s*info%.player_id") ~= nil)
+
+check("ws_player_rc reads the dismiss-decision state from ws.active_game_state",
+    rc_branch ~= nil and rc_branch:find("local rc_state = %(type%(ws%.active_game_state%)") ~= nil,
+    "message.state is never populated any more — reading it here would make opp_status always empty")
+check("and NOT from message.state",
+    rc_branch ~= nil and rc_branch:find("message%.state") == nil)
+
+check("the bookkeeping-refresh's fresh-state lookup also reads ws.active_game_state, not message.state",
+    rc_branch ~= nil and rc_branch:find("local fresh = type%(ws%.active_game_state%)") ~= nil)
 
 -- ---------------------------------------------------------------------------
 print("")
