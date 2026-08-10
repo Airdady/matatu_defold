@@ -1,5 +1,4 @@
 local M = {}
-local akira = require("modules.akira")
 local app_state = require("modules.app_state")
 
 local C_WHITE       = vmath.vector4(1.0, 1.0, 1.0, 1.0)
@@ -11,8 +10,6 @@ local C_T_RED       = vmath.vector4(0.94, 0.27, 0.27, 0.6)
 
 local AI_C_PANEL  = vmath.vector4(0.086, 0.098, 0.118, 1.0)
 local AI_C_ACCENT = vmath.vector4(0.949, 0.702, 0.020, 1.0)
-local AI_C_BODY   = vmath.vector4(0.788, 0.812, 0.839, 1.0)
-local AI_C_DARK   = vmath.vector4(0.082, 0.094, 0.110, 1.0)
 
 local EXIT_BTN_SIZE, EXIT_BTN_MARGIN_TOP, EXIT_BTN_MARGIN_RIGHT = 140, 20, 20
 local EXIT_POPOVER_WIDTH, EXIT_POPOVER_HEIGHT, EXIT_POPOVER_OFFSET_Y = 200, 120, 0
@@ -131,36 +128,13 @@ function M.build(self, logical_w, logical_h)
     gui.set_parent(self.conn_count, self.conn_panel)
     gui.set_enabled(self.conn_scrim, false)
 
-    -- AI Modals
-    self.ai_scrim = box(vmath.vector3(logical_w/2, logical_h/2, 0), vmath.vector3(5000, 5000, 0), vmath.vector4(0, 0, 0, 0.78), gui.PIVOT_CENTER)
-    gui.set_adjust_mode(self.ai_scrim, gui.ADJUST_STRETCH)
-    grad_bg(self.ai_scrim)
-    local pw, ph = 560, 280
-    self.ai_panel = box(vmath.vector3(0, 0, 0), vmath.vector3(pw, ph, 0), AI_C_PANEL, gui.PIVOT_CENTER)
-    gui.set_parent(self.ai_panel, self.ai_scrim)
-    local strip = box(vmath.vector3(0, ph/2 - 3, 0), vmath.vector3(pw, 6, 0), AI_C_ACCENT, gui.PIVOT_CENTER)
-    gui.set_parent(strip, self.ai_panel)
-    local av_frame = box(vmath.vector3(-pw/2 + 64, 64, 0), vmath.vector3(76, 76, 0), AI_C_ACCENT, gui.PIVOT_CENTER)
-    gui.set_parent(av_frame, self.ai_panel)
-    local av_well = box(vmath.vector3(0, 0, 0), vmath.vector3(72, 72, 0), AI_C_DARK, gui.PIVOT_CENTER)
-    gui.set_parent(av_well, av_frame)
-    local av = box(vmath.vector3(0, 0, 0), vmath.vector3(66, 66, 0), C_WHITE, gui.PIVOT_CENTER)
-    gui.set_parent(av, av_frame)
-    pcall(function() gui.set_texture(av, "avatars"); gui.play_flipbook(av, hash("avatar_" .. akira.avatar())) end)
-
-    local title = poppins(vmath.vector3(38, 84, 0), "AKIRA HAD YOUR BACK", 28, C_WHITE, true)
-    local body1 = poppins(vmath.vector3(38, 46, 0), "Akira AI has been playing for you", 21, AI_C_BODY, false)
-    local body2 = poppins(vmath.vector3(38, 18, 0), "to avoid losing your token.", 21, AI_C_BODY, false)
-    local body3 = poppins(vmath.vector3(0, -32, 0), "You are back in control.", 18, vmath.vector4(0.55, 0.59, 0.64, 1), false)
-    gui.set_parent(title, self.ai_panel); gui.set_parent(body1, self.ai_panel); gui.set_parent(body2, self.ai_panel); gui.set_parent(body3, self.ai_panel)
-
-    self.ai_ok_btn = box(vmath.vector3(0, -92, 0), vmath.vector3(200, 56, 0), AI_C_ACCENT, gui.PIVOT_CENTER)
-    gui.set_parent(self.ai_ok_btn, self.ai_panel)
-    local ok_lbl = label(vmath.vector3(0, -2, 0), "GOT IT", 22, AI_C_DARK, gui.PIVOT_CENTER, "btn_md")
-    gui.set_parent(ok_lbl, self.ai_ok_btn)
-    gui.set_enabled(self.ai_scrim, false)
-
-    -- AI Banner
+    -- AI Banner: the ONLY AI notice left. Persistent AI takeover of a
+    -- disconnected player's seat has been removed (a player who doesn't
+    -- reconnect within the grace period is forfeited instead), so the
+    -- "AKIRA HAD YOUR BACK... you are back in control" full-screen modal
+    -- that used to announce a takeover ending has nothing left to announce
+    -- — the backend never sends mode="TAKEOVER" any more, only the one-shot
+    -- SINGLE_MOVE assist this banner covers.
     local bw, bh = 660, 56
     self.ai_banner = box(vmath.vector3(logical_w/2, logical_h - 52, 0), vmath.vector3(bw, bh, 0), AI_C_PANEL, gui.PIVOT_CENTER)
     gui.set_yanchor(self.ai_banner, gui.ANCHOR_TOP)
@@ -276,36 +250,34 @@ function M.set_conn_overlay(self, opts)
     end
 end
 
+-- The one-shot notice for a turn-timeout assist: the player was online the
+-- whole time, just AFK for this one turn. Persistent takeover of a
+-- disconnected player's seat is gone — see the "AI Banner" comment above.
 function M.show_ai_notice(self, opts)
     opts = opts or {}
-    if opts.mode == "TAKEOVER" then
-        if self.ai_scrim then gui.set_enabled(self.ai_scrim, true) end
-    else
-        if not self.ai_banner then return end
-        local used = tonumber(opts.moves) or 0
-        local max = tonumber(opts.max) or 3
-        if self.ai_banner_lbl then
-            if used > 0 then
-                local txt = string.format("Time ran out — Akira played for you (%d of %d).", used, max)
-                if used >= max then txt = string.format("Akira played for you (%d of %d) — next timeout forfeits!", used, max) end
-                gui.set_text(self.ai_banner_lbl, txt)
-            else
-                gui.set_text(self.ai_banner_lbl, "Time ran out — Akira played this move to protect your token.")
-            end
+    if not self.ai_banner then return end
+    local used = tonumber(opts.moves) or 0
+    local max = tonumber(opts.max) or 3
+    if self.ai_banner_lbl then
+        if used > 0 then
+            local txt = string.format("Time ran out — Akira played for you (%d of %d).", used, max)
+            if used >= max then txt = string.format("Akira played for you (%d of %d) — next timeout forfeits!", used, max) end
+            gui.set_text(self.ai_banner_lbl, txt)
+        else
+            gui.set_text(self.ai_banner_lbl, "Time ran out — Akira played this move to protect your token.")
         end
-        gui.set_enabled(self.ai_banner, true)
-        self._ai_banner_seq = (self._ai_banner_seq or 0) + 1
-        local seq = self._ai_banner_seq
-        timer.delay(4.0, false, function()
-            if seq == self._ai_banner_seq and self.ai_banner then
-                gui.set_enabled(self.ai_banner, false)
-            end
-        end)
     end
+    gui.set_enabled(self.ai_banner, true)
+    self._ai_banner_seq = (self._ai_banner_seq or 0) + 1
+    local seq = self._ai_banner_seq
+    timer.delay(4.0, false, function()
+        if seq == self._ai_banner_seq and self.ai_banner then
+            gui.set_enabled(self.ai_banner, false)
+        end
+    end)
 end
 
 function M.hide_ai_notices(self)
-    if self.ai_scrim then gui.set_enabled(self.ai_scrim, false) end
     if self.ai_banner then gui.set_enabled(self.ai_banner, false) end
     self._ai_banner_seq = (self._ai_banner_seq or 0) + 1
 end
@@ -347,14 +319,6 @@ function M.on_input(self, action)
     -- checks below to the unconditional `return false` at the bottom, all
     -- the way to game.script's own card-play input underneath.
     if self.conn_scrim and gui.is_enabled(self.conn_scrim) then
-        return true
-    end
-
-    if self.ai_scrim and gui.is_enabled(self.ai_scrim) then
-        if hit(self.ai_ok_btn, action) then
-            gui.set_enabled(self.ai_scrim, false)
-            msg.post("/controller#game_logic", "ai_notice_ack")
-        end
         return true
     end
 

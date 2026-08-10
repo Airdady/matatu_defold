@@ -906,9 +906,12 @@ local function parse_message(json_string)
   elseif t == "EMOJI_MESSAGE" then
     emit("emoji", d._id or d.from or "", d.emoji or d.name or "", d.sound or "")
   elseif t == "AI_PLAYED_ON_YOUR_BEHALF" then
-    -- The backend AI covered this player's seat: either a one-shot move after
-    -- a turn timeout (mode=SINGLE_MOVE, capped per game) or a full takeover
-    -- while they were offline (mode=TAKEOVER, delivered on reconnect).
+    -- The backend AI played a single move on this player's behalf after a
+    -- turn timeout — capped per game (see MAX_ASSIST_MOVES, backend
+    -- state.ts). The player was still connected the whole time; this is
+    -- not disconnect handling. Persistent AI takeover of a disconnected
+    -- player's seat has been removed — a player who doesn't reconnect
+    -- within the grace period is forfeited instead.
     emit("ai_played_for_you", {
       mode = tostring(d.mode or "SINGLE_MOVE"),
       moves = tonumber(d.aiMovesUsed or d.aiMovesPlayed) or 0,

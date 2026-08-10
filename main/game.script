@@ -1189,10 +1189,6 @@ function start_new_online_game(self, state, is_explicit_start_event)
             notify_gui(self.gui_hud, "update_standings", { ranks = ws.current_user_data.rank })
         end
     end
-    
-    if self._ai_notice then
-        notify_gui(self.gui_hud, "ai_takeover_notice", self._ai_notice)
-    end
 end
 
 ----------------------------------------------------------------------
@@ -1221,10 +1217,6 @@ function on_message(self, message_id, message, sender)
             if ws.current_user_data.rank then
                 notify_gui(self.gui_hud, "update_standings", { ranks = ws.current_user_data.rank })
             end
-        end
-
-        if self._ai_notice then
-            notify_gui(self.gui_hud, "ai_takeover_notice", self._ai_notice)
         end
 
     elseif message_id == hash("ws_new_game_start") then
@@ -1693,18 +1685,15 @@ function on_message(self, message_id, message, sender)
         end
 
     elseif message_id == hash("ws_ai_played") then
-        local mode = (message and message.mode) or "SINGLE_MOVE"
-        if mode == "TAKEOVER" then
-            self._ai_notice = { mode = "TAKEOVER", moves = (message and message.moves) or 0 }
-        end
+        -- A one-shot move played on this player's behalf after a turn
+        -- timeout — they were online the whole time, just AFK for this one
+        -- turn. Persistent AI takeover of a disconnected player's seat has
+        -- been removed, so there is nothing here to persist across a
+        -- resume/screen_enter the way a takeover notice used to need to be.
         notify_gui(self.gui_hud, "ai_takeover_notice", {
-            mode = mode,
             moves = (message and message.moves) or 0,
             max = (message and message.max) or 3,
         })
-
-    elseif message_id == hash("ai_notice_ack") then
-        self._ai_notice = nil
 
     elseif message_id == hash("send_emoji") then
         if self.online_mode and message and message.emoji then
