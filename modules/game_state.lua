@@ -42,12 +42,6 @@ function M.fresh_state(self)
 
     self.move_queue = {}
     self.is_processing_move = false
-    -- Not a card object destroy_all needs to purge — just the tracking id
-    -- for board_layout.lua's deck-pulse loop. destroy_all() below deletes
-    -- whatever card it was running on regardless; left set, the next game's
-    -- first pre_validate_hand call would try to go.cancel_animations/go.set
-    -- an id that no longer exists (harmless, pcall'd, but stale).
-    self._deck_pulse_id = nil
 
     -- Pile scatter: offline games roll a fresh seed; online games overwrite
     -- it with a game-id-derived seed so resumes reproduce the exact pile.

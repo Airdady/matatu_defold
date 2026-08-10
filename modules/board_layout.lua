@@ -164,35 +164,6 @@ function M.restack_deck(self)
     end
 end
 
--- A gentle breathing scale loop on the top deck card, prompting a draw when
--- the player owes an active penalty and has nothing in hand that answers it
--- — reported as easy to miss on reconnect specifically, where nothing else
--- on screen calls out that the deck is the only legal move.
---
--- Keyed to the top card's OWN go id, not just an on/off flag: the top card
--- is a different game object every time one is actually drawn, and an
--- animation left running on a card that has since left the deck (now
--- released/pooled — see card_view.lua's release_card) throws on every
--- subsequent go.animate call once the engine reuses that instance for
--- something else entirely.
-function M.set_deck_pulse(self, active)
-    local top = self.deck and self.deck[#self.deck]
-    local current_id = self._deck_pulse_id
-
-    if current_id and (not top or top.id ~= current_id or not active) then
-        pcall(go.cancel_animations, current_id, "scale")
-        pcall(go.set, current_id, "scale", M.CARD_SCALE)
-        self._deck_pulse_id = nil
-    end
-
-    if not active or not top then return end
-    if self._deck_pulse_id == top.id then return end
-
-    self._deck_pulse_id = top.id
-    local peak = vmath.vector3(M.CARD_SCALE_F * 1.12, M.CARD_SCALE_F * 1.12, 1.0)
-    pcall(go.animate, top.id, "scale", go.PLAYBACK_LOOP_PINGPONG, peak, go.EASING_INSINE, 0.55)
-end
-
 ----------------------------------------------------------------------
 -- Hand layout
 ----------------------------------------------------------------------
