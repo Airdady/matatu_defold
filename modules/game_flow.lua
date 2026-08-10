@@ -1386,7 +1386,26 @@ function M.start_game(self)
     local leaving_offline_t4 = (self.t4 ~= nil) and (app.mode ~= "tournament4" and app.mode ~= "chamber4")
     if leaving_offline_t4 then self.t4 = nil end
 
-    notify_gui(self.gui_hud, "reset_hud", { keep_scoreboard = not leaving_offline_t4 })
+    -- SAME BUG, THE ONLINE SIDE OF IT: an online knockout ending and being
+    -- followed by an ordinary Battle (or any non-knockout game) inherited
+    -- the previous match's score-cap chamber, because keep_scoreboard was
+    -- computed only from the OFFLINE flag above — the online path was
+    -- unconditionally "keep". self._is_knockout (online_handler.lua) still
+    -- holds the JUST-ENDED game's knockout status right here: OnlineHandler.
+    -- start_game below is what overwrites it for the INCOMING game, and it
+    -- has not run yet. Read the incoming game's own matchType the same way
+    -- online_handler.lua's is_knockout_state does, so the chamber is kept
+    -- only when the next game is genuinely another knockout round — never
+    -- for a battle, tournament, or anything else that follows one.
+    local was_online_knockout = self._is_knockout == true
+    local incoming_state = (app.mode == "online") and ws.get_active_game() or nil
+    local incoming_match_type = incoming_state and tostring(incoming_state.matchType or ""):upper() or ""
+    local incoming_is_knockout = incoming_match_type == "KNOCKOUT" or incoming_match_type == "ELIMINATION"
+    local leaving_online_knockout = was_online_knockout and not incoming_is_knockout
+
+    notify_gui(self.gui_hud, "reset_hud", {
+        keep_scoreboard = not leaving_offline_t4 and not leaving_online_knockout,
+    })
     notify_gui(self.gui_suit, "reset_hud")
     notify_gui(self.gui_over, "reset_hud")
 
@@ -1397,7 +1416,7 @@ function M.start_game(self)
     tut("start_game", false)
 
     if app.mode == "online" then
-        local state = ws.get_active_game()
+        local state = incoming_state
         if state and next(state) ~= nil then
             -- The scripted "rigged first match" tutorial has been removed —
             -- every online game (including a brand-new player's first) now
