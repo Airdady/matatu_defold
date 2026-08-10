@@ -1624,20 +1624,11 @@ function on_message(self, message_id, message, sender)
 
     elseif message_id == hash("ws_player_rc") then
         -- Opponent reconnected. Dismiss the "OPPONENT DISCONNECTED" banner
-        -- RIGHT HERE, synchronously — not from full_resync's completion
-        -- callback below. It used to wait there, tying "the dialog closes"
-        -- to "the whole board reconciliation finished": a resync that got
-        -- coalesced behind another one already in flight (see full_resync's
-        -- _resyncing/_pending_resync guard) or simply ran long (a
-        -- reshuffle/hand catch-up inside it can take over a second) left the
-        -- banner up indefinitely while ordinary MOVE messages kept landing
-        -- and visibly updating the board underneath it — reported as "the
-        -- move happens in the background but the dialog never closes".
-        -- Dismissing the banner touches no game state at all; only
-        -- retry_unconfirmed_move below genuinely needs the fresh
-        -- currentTurn full_resync produces, so only that stays gated on it.
+        -- RIGHT HERE, synchronously — not gated behind any board
+        -- reconciliation below. Dismissing the banner touches no game state
+        -- at all.
         --
-        -- WHOSE reconnect this is now matters. PLAYER_RECONNECTED is broadcast
+        -- WHOSE reconnect this is matters. PLAYER_RECONNECTED is broadcast
         -- to the whole game, so it also fires for THIS client coming back —
         -- and if the opponent is still away, closing the banner then would
         -- hide a disconnect that is still true, with nothing left to raise it
@@ -1668,39 +1659,37 @@ function on_message(self, message_id, message, sender)
             notify_gui(self.gui_hud, "conn_overlay", { show = false })
         end
 
-        -- Prefer the fresh state PLAYER_RECONNECTED carried, falling back to
-        -- whatever ws.active_game_state was last updated to (IDENTIFY/
-        -- GAME_STATE_SYNC) — self.game_state is whatever we last had BEFORE
-        -- the disconnect.
+        -- WARM RECONNECT: refresh bookkeeping only — never reconcile the
+        -- cards themselves.
         --
-        -- FULL resync, not just the turn timer. This used to call only
-        -- OnlineHandler.sync_timers, which touches nothing but
-        -- currentTurn/turnExpiresAt/activePenaltyCount/chosenSuit/
-        -- pendingMarketDraw on self.game_state — never the actual card
-        -- objects. Whatever happened while the opponent (or this client
-        -- itself, before they reconnected — a move can settle server-side
-        -- with the confirmation lost to the same drop) was offline —
-        -- a play never confirmed locally, a penalty draw whose count moved,
-        -- a reshuffle — left self.player_hand/self.played_cards/self.deck
-        -- stale, with nothing to catch them up until some LATER move
-        -- happened to trigger a real resync. Reported as a played card
-        -- missing from both hand and the played pile, only to reappear
-        -- (visually drawn from the deck) once the next move finally forced
-        -- a full sync. full_resync runs the same catch-up an ordinary move
-        -- already gets (finalize_state_sync + sync_my_hand).
+        -- This used to run OnlineHandler.full_resync here — the same deep
+        -- reconciliation an ordinary move gets (finalize_state_sync +
+        -- sync_my_hand + deck stamping + reshuffle detection) — on the
+        -- theory that whatever happened while offline needed catching up.
+        -- That is exactly what the reference client does NOT do on a warm
+        -- reconnect (matatu-gdt's CardManager.gd, _on_game_start_received):
+        -- when the SAME game is already on screen with cards still in
+        -- hand, it only refreshes game_state and the turn timer, leaves
+        -- the hand/deck/pile untouched, and lets the game continue
+        -- naturally from there — no diffing, no reshuffle heuristic, no
+        -- resend beyond one bounded retry. Doing the deep reconciliation
+        -- here instead is what let cards from an already-completed combo
+        -- visibly get "drawn back" from the deck, and a spurious reshuffle
+        -- animation fire, right after reconnecting — both reported, and
+        -- neither present in the reference client's simpler approach.
+        -- Prefer the fresh state PLAYER_RECONNECTED carried, falling back
+        -- to whatever ws.active_game_state was last updated to (IDENTIFY/
+        -- GAME_STATE_SYNC) — self.game_state is whatever we last had
+        -- BEFORE the disconnect.
         if self.online_mode and not self.game_over then
             local fresh = (type(message.state) == "table" and next(message.state) ~= nil and message.state)
                 or (type(ws.active_game_state) == "table" and next(ws.active_game_state) ~= nil and ws.active_game_state)
             if fresh then self.game_state = fresh end
-            OnlineHandler.full_resync(self, self.game_state or {}, function()
-                -- PLAYER_RECONNECTED is broadcast to the whole game — this
-                -- client's own reconnect fires it too (see be_matatu's
-                -- handleReconnection), so this is exactly the moment to
-                -- retry a move that never got an answer before the drop, now
-                -- that full_resync above has the fresh currentTurn to gate
-                -- it on.
-                OnlineHandler.retry_unconfirmed_move(self)
-            end)
+            OnlineHandler.sync_timers(self, self.game_state or {})
+            -- Now that sync_timers above has the fresh currentTurn: retry a
+            -- move that was sent right as the drop happened and never got
+            -- an answer either way.
+            OnlineHandler.retry_unconfirmed_move(self)
         end
 
     elseif message_id == hash("ws_ai_played") then
@@ -1740,39 +1729,25 @@ function on_message(self, message_id, message, sender)
         -- THIS client's own socket reconnected. self.game_state is whatever
         -- we had BEFORE this client dropped offline; IDENTIFY (which every
         -- reconnect runs) keeps ws.active_game_state current, so prefer that.
-        --
-        -- Same full resync as ws_player_rc above, for the same reason: our
-        -- OWN last play might have gone through server-side with the
-        -- confirmation lost to the drop, the opponent might have moved
-        -- several times while we were gone, a penalty draw we were mid-way
-        -- through never reached the server (see M.play_card — a card is
-        -- removed from hand and animated to the pile OPTIMISTICALLY, before
-        -- the network round trip, and multi-action turns like a suit choice
-        -- or a multi-card penalty draw are only sent as ONE bundled move
-        -- once the whole turn resolves — so anything still in progress
-        -- locally when the drop happened was never sent at all). sync_timers
-        -- alone left the deck/hand/pile stale until the next move forced a
-        -- real resync — the banner closes only once this one actually
-        -- finishes, not before.
+        notify_gui(self.gui_hud, "conn_overlay", { show = false })
+
+        -- WARM RECONNECT: same as ws_player_rc above — refresh bookkeeping
+        -- only (sync_timers) and leave the hand/deck/pile untouched,
+        -- matching the reference client's behavior for a reconnect into a
+        -- game still on screen (see the longer note in ws_player_rc). A
+        -- move sent right as the drop happened and never answered is
+        -- handled below by retry_unconfirmed_move, not by reconciling the
+        -- whole board against the server. Anything still staged locally
+        -- and never sent at all (a suit pick not yet made, a skip-chain not
+        -- yet ended) is untouched either way — current_turn_actions was
+        -- never cleared for it, so it is simply still sitting there,
+        -- waiting for the player to finish it, exactly as if nothing had
+        -- happened.
         if self.online_mode and not self.game_over then
             local fresh = type(ws.active_game_state) == "table" and next(ws.active_game_state) ~= nil and ws.active_game_state
             if fresh then self.game_state = fresh end
-            OnlineHandler.full_resync(self, self.game_state or {}, function()
-                notify_gui(self.gui_hud, "conn_overlay", { show = false })
-                -- Now that full_resync above has the fresh currentTurn:
-                -- resend a move that was sent right as the drop happened and
-                -- never got an answer either way. Anything still staged
-                -- locally and never sent at all (a suit pick not yet made, a
-                -- skip-chain not yet ended) is untouched by any of this —
-                -- current_turn_actions was never cleared for it, and
-                -- finalize_state_sync's own suit_select guard now leaves an
-                -- active local picker alone — so it is simply still sitting
-                -- there, waiting for the player to finish it, exactly as if
-                -- nothing had happened.
-                OnlineHandler.retry_unconfirmed_move(self)
-            end)
-        else
-            notify_gui(self.gui_hud, "conn_overlay", { show = false })
+            OnlineHandler.sync_timers(self, self.game_state or {})
+            OnlineHandler.retry_unconfirmed_move(self)
         end
 
     elseif message_id == hash("ws_net_failed") then

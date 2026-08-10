@@ -537,6 +537,30 @@ function M.reshuffle_deck(self, done)
     local top = table.remove(self.played_cards)
     local recycled = self.played_cards
     self.played_cards = { top }
+
+    -- THESE ARE ANONYMOUS DECK CARDS AGAIN NOW, NOT THE CARDS THEY WERE PLAYED AS.
+    --
+    -- recycled still carries each card's REAL, previously-played identity
+    -- (nothing above touches .v/.s) until the next server sync's stamp_deck
+    -- (online_handler.lua) overwrites every slot in self.deck with the
+    -- actual reshuffled order. That correction only lands once this whole
+    -- animation finishes and, for a draw-triggered reshuffle (deck ran out
+    -- locally), sometimes not even then. In between, draw_to_hand only waits
+    -- out an in-flight reshuffle when self.deck is EMPTY — once these
+    -- recycled cards are back in self.deck it reads whatever is at the top
+    -- immediately, including a card the player genuinely played moments ago
+    -- (most easily reached by a multi-card penalty draw firing several pops
+    -- in the ~0.13s-apart burst that follows). That guessed identity is what
+    -- gets sent to the server as the draw action, and the mismatch is
+    -- logged there as "[DRAW] client deck is stale ... client asked for
+    -- <the card the player already played>" — self-healing (the server
+    -- always wins and corrects via the next broadcast) but alarming to see,
+    -- and needless: the client has no idea what these cards really are now
+    -- regardless. Reset to the same neutral placeholder sync_deck_size uses
+    -- for a newly grown, not-yet-revealed deck slot (CV.take_card(self, 10,
+    -- "H", ...) below and in online_handler.lua) — harmless visually, since
+    -- every one of these stays face-down for this entire sweep animation.
+    for _, c in ipairs(recycled) do c.v, c.s = 10, "H" end
     -- Bump BEFORE the z reset below, so a same-frame-or-later animate_to_pile
     -- completion for this exact card (still mid-flight when reshuffle fired)
     -- sees a stale generation and skips re-asserting its old, high z.
