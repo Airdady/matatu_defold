@@ -722,8 +722,22 @@ function M.finalize_state_sync(self, state, on_complete)
     M.process_scoreboard(self, state)
     if is_knockout_state(state) then knockout_update_chamber(self, state) end
 
+    -- Same reasoning as sync_my_hand's current_turn_actions adjustment: a
+    -- DRAW already taken as part of an in-progress, not-yet-sent turn has
+    -- already come off self.deck locally, but the server's deckCount does
+    -- not know that yet (nothing was sent). Left uncorrected, sync_deck_size
+    -- below reads #self.deck as short and hands a card straight back onto
+    -- the pile/deck boundary — the "deck re-renders and a card comes back"
+    -- symptom, distinct from but caused by the exact same gap as the hand
+    -- one: a reconnect mid-turn comparing local state against a server that
+    -- has not heard about this turn at all yet.
+    local pending_draws = 0
+    for _, act in ipairs(self.current_turn_actions or {}) do
+        if act.type == "DRAW" then pending_draws = pending_draws + 1 end
+    end
+
     local function do_sync()
-        local deck_target = state.deckCount or (state.deck and #state.deck) or #self.deck
+        local deck_target = math.max(0, (state.deckCount or (state.deck and #state.deck) or #self.deck) - pending_draws)
         M.sync_deck_size(self, deck_target)
         stamp_deck(self, state.deck)
 
@@ -771,7 +785,7 @@ function M.finalize_state_sync(self, state, on_complete)
         end
     end
 
-    local deck_target     = state.deckCount or (state.deck and #state.deck) or #self.deck
+    local deck_target     = math.max(0, (state.deckCount or (state.deck and #state.deck) or #self.deck) - pending_draws)
     local incoming_played = (type(state.playedCards) == "table") and #state.playedCards or nil
     local pile_was_reset  = incoming_played ~= nil and incoming_played <= 1
     local deck_jumped     = deck_target >= (#self.deck + 6)
@@ -908,6 +922,45 @@ local function sync_my_hand(self, state, done)
         local key = tostring(rc.v) .. "|" .. tostring(rc.s)
         pool[key] = pool[key] or {}
         table.insert(pool[key], rc)
+    end
+
+    -- ACCOUNT FOR AN IN-PROGRESS, NOT-YET-SENT TURN.
+    --
+    -- current_turn_actions holds PLAY/DRAW entries for a skip-chain (or a
+    -- suit pick, or a mid-penalty draw) the player has already committed to
+    -- locally but not yet sent — M.end_turn only sends the whole bundle once
+    -- the turn resolves. The server knows nothing about any of it yet, so
+    -- `real` and self.player_hand are SUPPOSED to disagree about these exact
+    -- cards, in both directions:
+    --
+    --   PLAY: already spliced out of player_hand and animated onto our own
+    --   pile, but `real` still lists it (the server never got the move) —
+    --   left alone, the loop below reads that as "server has a card we
+    --   don't" and calls draw_to_hand, visibly re-dealing a card the player
+    --   just watched leave their hand back INTO it, while the original is
+    --   still sitting on the pile — two separate game objects for one
+    --   logical card. Reported directly: reconnect mid-skip-chain, before
+    --   ever pressing the button to end the turn, and the played card comes
+    --   right back.
+    --
+    --   DRAW: already added to player_hand, but `real` doesn't list it yet
+    --   for the same reason — left alone, the loop below reads that as "we
+    --   have a card the server doesn't recognize" and releases it right back
+    --   out of the hand the player just drew it into.
+    --
+    -- Consuming/injecting them here first makes `pool` describe the hand we
+    -- SHOULD end up with — server truth plus our own not-yet-acknowledged
+    -- turn — instead of server truth alone, so the diff below only ever
+    -- touches cards that are an actual desync.
+    for _, act in ipairs(self.current_turn_actions or {}) do
+        local key = tostring(act.v) .. "|" .. tostring(act.s)
+        if act.type == "PLAY" then
+            local bucket = pool[key]
+            if bucket and #bucket > 0 then table.remove(bucket) end
+        elseif act.type == "DRAW" then
+            pool[key] = pool[key] or {}
+            table.insert(pool[key], { v = act.v, s = act.s })
+        end
     end
 
     local kept = {}
