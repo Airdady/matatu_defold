@@ -115,7 +115,14 @@ local function check_reconnect_branch(name, opts)
         "resyncing on a message that arrives after the round ended would touch a dead board")
 
     if opts.close_immediately then
-        check("closes the banner UNCONDITIONALLY — not itself gated on online_mode/game_over",
+        -- The wording here used to be "UNCONDITIONALLY", which stopped being
+        -- true when the close was put behind `if dismiss then` — and the
+        -- assertion did not notice, because it only ever compared this close
+        -- against the online_mode gate. It still asserts the thing that
+        -- matters (the close does not sit inside the resync's own gate) but it
+        -- no longer claims something the code does not do; whose reconnect
+        -- this is gets its own section at the bottom of this file.
+        check("the close is not itself gated on online_mode/game_over",
             close_pos ~= nil and online_gate_pos ~= nil and close_pos < online_gate_pos,
             "a close that only ran inside the same online_mode/game_over gate as the resync could be left stuck open by exactly the condition that was supposed to make it a no-op")
     else
@@ -224,11 +231,107 @@ check("finish() clears the flag and replays exactly the LATEST pending state, no
     fr_full:find("M%.full_resync%(self, pending%.state, pending%.done%)") ~= nil,
     "coalesced to latest rather than queued — a second call mid-run means the first run's target is already stale")
 
+-- ---------------------------------------------------------------------------
+-- AND THEN: A BANNER ABOUT THE WRONG PLAYER, RAISED BY THE PLAYER THEMSELVES.
+--
+-- Reported after the close-immediately fix above: the opponent disconnects,
+-- comes back, and the dialog stays up anyway. Two separate causes, one on
+-- each side of the socket.
+--
+-- CLIENT: websocket_manager's PLAYER_RECONNECTED branch read the id out of
+-- d._id / d.playerId / d.userId. The backend sends none of those — it sends
+-- data.reconnectedPlayer (heartbeatCleanup.ts). So player_id was the empty
+-- string on every single reconnect. The DISCONNECTED branch right above it
+-- had already been corrected for the matching d.disconnectedPlayer; this one
+-- was simply missed, and nothing noticed because game.script did not consult
+-- the field.
+--
+-- Which mattered the moment it did consult it, because both of these messages
+-- are broadcast to the WHOLE game, this client included:
+--
+--   * ws_player_dc firing for our OWN id shows us "OPPONENT DISCONNECTED"
+--     about ourselves, and no PLAYER_RECONNECTED will ever contradict it
+--   * ws_player_rc firing for our own id, while the opponent is still away,
+--     would close a banner that is still true — and nothing raises it again
+--
+-- So the banner is driven off the game state the message carries. The server
+-- builds that with getAccurateGameState, which re-checks every seat against
+-- its real socket before sending, making it the authority on who is actually
+-- present. The id is the fallback, and dismissing is the fallback to that, so
+-- a message carrying neither behaves exactly as it did before.
 print("")
-if failures == 0 then
-    print("ALL PASS")
-    os.exit(0)
-else
-    print(failures .. " FAILURE(S)")
-    os.exit(1)
-end
+print("THE BANNER FOLLOWS THE OPPONENT, NOT WHOEVER THE MESSAGE IS ABOUT")
+
+local rc_branch = branch_of(game_code, "ws_player_rc")
+check("ws_player_rc reads the reconnecting player's id", 
+    rc_branch ~= nil and rc_branch:find("local rc_who") ~= nil)
+check("and prefers the opponent's status from the state the message carried",
+    rc_branch ~= nil and rc_branch:find('opp_status ~= ""') ~= nil
+        and rc_branch:find('dismiss = %(opp_status ~= "DISCONNECTED"%)') ~= nil,
+    "getAccurateGameState re-verifies every seat server-side, so it beats guessing from the id")
+check("falling back to the id when the state carries no seat for the opponent",
+    rc_branch ~= nil and rc_branch:find("dismiss = %(rc_who ~= tostring%(self%.my_player_id%)%)") ~= nil)
+check("and falling back to dismissing when it has neither",
+    rc_branch ~= nil and rc_branch:find("else%s*\n%s*dismiss = true") ~= nil,
+    "a message with no id and no state must not become a NEW way for the banner to stick")
+check("the close is gated on that decision",
+    rc_branch ~= nil and rc_branch:find("if dismiss then") ~= nil
+        and rc_branch:find("if dismiss then") < rc_branch:find('notify_gui%(self%.gui_hud, "conn_overlay", { show = false }%)'))
+check("and _opp_dc_grace_active is cleared with it, not separately",
+    rc_branch ~= nil and (function()
+        local gate = rc_branch:find("if dismiss then")
+        local flag = rc_branch:find("self%._opp_dc_grace_active = false")
+        return gate ~= nil and flag ~= nil and flag > gate
+    end)(),
+    "leaving the flag set while the overlay is gone re-locks input from update()'s watchdog")
+
+check("ws_player_dc does NOT raise the banner for this client's own id",
+    dc_branch ~= nil and dc_branch:find("dc_is_me") ~= nil
+        and dc_branch:find("not dc_is_me") ~= nil,
+    "PLAYER_DISCONNECTED is broadcast to the whole game — including the player it names")
+check("and an empty id still raises it, as before",
+    dc_branch ~= nil and dc_branch:find('dc_who ~= "" and dc_who == tostring%(self%.my_player_id%)') ~= nil,
+    "is_me must require a NON-empty id, or a message without one suppresses the banner entirely")
+
+-- ---------------------------------------------------------------------------
+print("")
+print("THE FIELD THE BACKEND ACTUALLY SENDS")
+
+local wsm_src = slurp("modules/websocket_manager.lua")
+local wsm_code = wsm_src:gsub("%-%-[^\n]*", "")
+
+local rc_msg = wsm_code:match('elseif t == "PLAYER_RECONNECTED" then(.-)elseif t ==')
+check("PLAYER_RECONNECTED reads d.reconnectedPlayer", 
+    rc_msg ~= nil and rc_msg:find("d%.reconnectedPlayer") ~= nil,
+    "this is the field heartbeatCleanup.ts sends; without it player_id is always the empty string")
+check("and reads it FIRST, ahead of the names that are not on this message",
+    rc_msg ~= nil and (function()
+        local a = rc_msg:find("d%.reconnectedPlayer")
+        local b = rc_msg:find("d%._id")
+        return a ~= nil and (b == nil or a < b)
+    end)())
+
+local dc_msg = wsm_code:match('elseif t == "PLAYER_DISCONNECTED" then(.-)elseif t ==')
+check("PLAYER_DISCONNECTED still reads d.disconnectedPlayer first",
+    dc_msg ~= nil and dc_msg:find("d%.disconnectedPlayer") ~= nil)
+
+-- ---------------------------------------------------------------------------
+-- The logs are the point of the exercise, not decoration: the whole reason
+-- this took two rounds to find is that nothing said which of these messages
+-- arrived, for whom, or what was decided about the banner.
+print("")
+print("AND IT SAYS WHAT IT DECIDED, SO THE NEXT REPORT IS ONE LOG AWAY")
+
+check("PLAYER_RECONNECTED logs the id it resolved",
+    rc_msg ~= nil and rc_msg:find("%[RECONNECT%]") ~= nil)
+check("PLAYER_DISCONNECTED logs the id it resolved",
+    dc_msg ~= nil and dc_msg:find("%[RECONNECT%]") ~= nil)
+check("ws_player_rc logs whose reconnect it was and what it did with the banner",
+    rc_branch ~= nil and rc_branch:find("%[RECONNECT%]") ~= nil
+        and rc_branch:find("DISMISS banner") ~= nil and rc_branch:find("keep banner") ~= nil)
+check("ws_player_dc logs whose disconnect it was",
+    dc_branch ~= nil and dc_branch:find("%[RECONNECT%]") ~= nil)
+
+print("")
+if failures == 0 then print("ALL PASS") else print(failures .. " FAILURE(S)") end
+os.exit(failures == 0 and 0 or 1)

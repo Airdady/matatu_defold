@@ -878,18 +878,29 @@ local function parse_message(json_string)
   elseif t == "PLAYER_READY" then
     emit("player_ready", d._id or "")
   elseif t == "PLAYER_DISCONNECTED" then
+    -- Backend sends the id as data.disconnectedPlayer (matatu-api's field
+    -- name); the other keys are kept as fallbacks.
+    local who = tostring(d.disconnectedPlayer or d._id or d.playerId or d.userId or "")
+    print("[RECONNECT] PLAYER_DISCONNECTED received for '" .. who .. "'")
     emit("player_disconnected", {
       reason = d.reason or "Unknown",
       grace = tonumber(d.gracePeriod) or 30,
-      -- Backend sends the id as data.disconnectedPlayer (matatu-api's field
-      -- name); the other keys are kept as fallbacks.
-      player_id = tostring(d.disconnectedPlayer or d._id or d.playerId or d.userId or ""),
+      player_id = who,
     })
   elseif t == "PLAYER_RECONNECTED" then
     local gs = M.extract_game_state(d)
     if next(gs) ~= nil then M.active_game_state = gs end
+    -- d.reconnectedPlayer FIRST, because that is the field the backend
+    -- actually sends (heartbeatCleanup.ts's broadcast) — none of the three
+    -- names that used to be listed here exist on this message, so player_id
+    -- was the empty string on EVERY reconnect. The disconnect branch above
+    -- had already been corrected the same way for d.disconnectedPlayer; this
+    -- one was missed. The other names stay as fallbacks.
+    local who = tostring(d.reconnectedPlayer or d._id or d.playerId or d.userId or "")
+    print("[RECONNECT] PLAYER_RECONNECTED received for '" .. who .. "' (state " ..
+      (next(gs) ~= nil and "carried" or "empty") .. ")")
     emit("player_reconnected", {
-      player_id = tostring(d._id or d.playerId or d.userId or ""),
+      player_id = who,
       state = gs,
     })
   elseif t == "EMOJI_MESSAGE" then

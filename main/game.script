@@ -1586,7 +1586,18 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("ws_player_dc") then
         -- Surface the disconnect to the player with the grace countdown instead
         -- of silently letting their turn time out while nothing visibly happens.
-        if self.online_mode and not self.game_over then
+        local dc_who = tostring((message and message.player_id) or "")
+        local dc_is_me = (dc_who ~= "" and dc_who == tostring(self.my_player_id))
+        print(string.format("[RECONNECT] ws_player_dc who='%s' me='%s' is_me=%s online=%s over=%s",
+            dc_who, tostring(self.my_player_id), tostring(dc_is_me),
+            tostring(self.online_mode), tostring(self.game_over)))
+        -- PLAYER_DISCONNECTED is broadcast to the WHOLE game, this client
+        -- included. Raising "OPPONENT DISCONNECTED" on the strength of our own
+        -- id shows the player a banner about themselves — and nothing would
+        -- ever take it down, because the matching PLAYER_RECONNECTED is the
+        -- one message that says the opposite. An empty id keeps the old
+        -- behaviour: with nothing to compare, assume it is the opponent.
+        if self.online_mode and not self.game_over and not dc_is_me then
             local grace = tonumber((message and message.grace)) or 30
             -- Tracked so update()'s watchdog below can release the input
             -- block the moment it becomes this player's turn, even if the
@@ -1625,8 +1636,37 @@ function on_message(self, message_id, message, sender)
         -- Dismissing the banner touches no game state at all; only
         -- retry_unconfirmed_move below genuinely needs the fresh
         -- currentTurn full_resync produces, so only that stays gated on it.
-        self._opp_dc_grace_active = false
-        notify_gui(self.gui_hud, "conn_overlay", { show = false })
+        --
+        -- WHOSE reconnect this is now matters. PLAYER_RECONNECTED is broadcast
+        -- to the whole game, so it also fires for THIS client coming back —
+        -- and if the opponent is still away, closing the banner then would
+        -- hide a disconnect that is still true, with nothing left to raise it
+        -- again. The state the message carries is the authority: the server
+        -- builds it with getAccurateGameState, which re-checks every seat
+        -- against its actual socket before sending. Fall back to the id, and
+        -- then to dismissing, so a message with neither still behaves the way
+        -- it did before any of this.
+        local rc_who = tostring((message and message.player_id) or "")
+        local rc_state = (type(message.state) == "table" and message.state) or nil
+        local opp_seat = rc_state and rc_state.players and self.opponent_id
+            and rc_state.players[self.opponent_id] or nil
+        local opp_status = opp_seat and tostring(opp_seat.status or "") or ""
+        local dismiss
+        if opp_status ~= "" then
+            dismiss = (opp_status ~= "DISCONNECTED")
+        elseif rc_who ~= "" then
+            dismiss = (rc_who ~= tostring(self.my_player_id))
+        else
+            dismiss = true
+        end
+        print(string.format(
+            "[RECONNECT] ws_player_rc who='%s' me='%s' opp='%s' opp_status='%s' -> %s",
+            rc_who, tostring(self.my_player_id), tostring(self.opponent_id),
+            opp_status, dismiss and "DISMISS banner" or "keep banner"))
+        if dismiss then
+            self._opp_dc_grace_active = false
+            notify_gui(self.gui_hud, "conn_overlay", { show = false })
+        end
 
         -- Prefer the fresh state PLAYER_RECONNECTED carried, falling back to
         -- whatever ws.active_game_state was last updated to (IDENTIFY/
