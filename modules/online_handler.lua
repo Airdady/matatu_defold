@@ -1415,7 +1415,20 @@ function M.start_game(self, state)
         end
 
         self.position_hands(false)
-        msg.post(GUI_SUIT, "suit_badge", { suit = self.chosen_suit })
+        -- suit_badge is never actually handled anywhere in the client — this
+        -- was the ONLY thing telling the GUI about self.chosen_suit on a
+        -- resume, so it did nothing. suit_select with mode="preview" is what
+        -- every other reconciliation path (process_opponent_actions,
+        -- finalize_state_sync) actually uses to show/keep the active-suit
+        -- indicator up. Missing it here is exactly the reported bug: close
+        -- the app while the opponent's chosen suit is showing, reopen into
+        -- the same ongoing game, and the indicator comes back blank even
+        -- though the suit is still very much in force server-side.
+        if self.chosen_suit ~= "" and p_count > 0 and a_count > 0 then
+            msg.post(GUI_SUIT, "suit_select", { mode = "preview", suit = self.chosen_suit })
+        else
+            msg.post(GUI_SUIT, "suit_select", { mode = "close" })
+        end
         self.is_animating = false
         M.sync_timers(self, state)
         return
@@ -1538,7 +1551,18 @@ function M.start_game(self, state)
                 end)
             end
 
-            msg.post(GUI_SUIT, "suit_badge", { suit = self.chosen_suit })
+            -- suit_badge is never handled anywhere in the client (see the
+            -- identical fix in the is_resume fast-path above) — suit_select
+            -- with mode="preview" is what actually drives the indicator.
+            -- Chosen suit is rare on a brand-new deal, but not impossible
+            -- (a mid-series knockout/tournament continuation can arrive with
+            -- one already in force), so this stays consistent with every
+            -- other reconciliation path rather than assuming it never happens.
+            if self.chosen_suit ~= "" and p_count > 0 and a_count > 0 then
+                msg.post(GUI_SUIT, "suit_select", { mode = "preview", suit = self.chosen_suit })
+            else
+                msg.post(GUI_SUIT, "suit_select", { mode = "close" })
+            end
 
             self.is_animating = false
             -- Settle both hands into their arched / fanned layout so the curve is
