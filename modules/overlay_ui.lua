@@ -237,6 +237,11 @@ function M.set_conn_overlay(self, opts)
             self.conn_count_active = true
             gui.set_enabled(self.conn_count, true)
             gui.set_text(self.conn_count, string.format("%ds", math.ceil(grace)))
+            -- Countdown itself carries the urgency, not just the title: white
+            -- until the last 10s, then red — same treatment as matatu-gdt's
+            -- PlayerDisconnectedModal, which reads clearly as "running out"
+            -- rather than a plain number nobody's watching.
+            gui.set_color(self.conn_count, grace <= 10 and C_T_RED or vmath.vector4(1, 1, 1, 1))
         else
             self.conn_count_active = false
             gui.set_enabled(self.conn_count, false)
@@ -247,7 +252,23 @@ function M.set_conn_overlay(self, opts)
         -- same mechanism game over/incoming-request dialogs use. Without this
         -- the scrim was purely visual: a player could still touch cards while
         -- the opponent (or they themselves) showed as disconnected.
-        app_state.modal_open("network")
+        --
+        -- NOT when it's this player's OWN turn, though (opts.block_input ==
+        -- false — see game.script's ws_player_dc): the OPPONENT disconnecting
+        -- has no bearing on whether this player can legally act right now,
+        -- and the server processes their move exactly the same either way.
+        -- Reported: the opponent drops mid-game while it's my turn, and my
+        -- own cards go dead until they either reconnect or the grace period
+        -- times out — my own valid turn held hostage by their connection.
+        --
+        -- Skipping the claim, not force-closing it: "network" is a single
+        -- shared slot (see app_state.lua's M.modals) main/network.gui_script
+        -- also claims for THIS device's own connectivity — an unrelated,
+        -- more serious concern that must never get silently unblocked just
+        -- because the opponent's connection happened to also be in flux.
+        if opts.block_input ~= false then
+            app_state.modal_open("network")
+        end
     else
         gui.set_enabled(self.conn_scrim, false)
         self.conn_count_active = false
@@ -302,7 +323,13 @@ function M.update(self, dt)
     if self.conn_count_active then
         local left = (self.conn_deadline or 0) - socket.gettime()
         if left < 0 then left = 0 end
-        gui.set_text(self.conn_count, string.format("%ds", math.ceil(left)))
+        local secs = math.ceil(left)
+        gui.set_text(self.conn_count, string.format("%ds", secs))
+        -- Flip to red once the countdown itself is inside the last 10s, not
+        -- just at the moment it was first shown — set_conn_overlay's own
+        -- coloring only ever ran once, at the start, so a grace period that
+        -- began above 10s stayed white the whole way down to zero.
+        gui.set_color(self.conn_count, secs <= 10 and C_T_RED or vmath.vector4(1, 1, 1, 1))
         if left <= 0 then self.conn_count_active = false end
     end
 end

@@ -653,6 +653,19 @@ function update(self, dt)
             -- removes the prose, not the information.
         end
         self._was_my_turn = now_my_turn
+
+        -- The "OPPONENT DISCONNECTED" overlay's block on this player's own
+        -- input is only ever a snapshot taken the moment it went up (see
+        -- ws_player_dc) — correct then, but an AI takeover of the opponent's
+        -- timed-out turn can hand play straight to this player while they're
+        -- still showing as disconnected, and nothing re-evaluates that
+        -- snapshot afterward. One-shot: is_player_turn()'s own separate gate
+        -- on card taps (on_input, further down) covers the rest, so there is
+        -- nothing to re-claim if the turn somehow later moved away again.
+        if self._opp_dc_grace_active and now_my_turn then
+            self._opp_dc_grace_active = false
+            app.modal_close("network")
+        end
     end
 
     if self.t4 and not self.online_mode and not self.game_over then
@@ -1575,11 +1588,26 @@ function on_message(self, message_id, message, sender)
         -- of silently letting their turn time out while nothing visibly happens.
         if self.online_mode and not self.game_over then
             local grace = tonumber((message and message.grace)) or 30
+            -- Tracked so update()'s watchdog below can release the input
+            -- block the moment it becomes this player's turn, even if the
+            -- overlay went up while it was still the OPPONENT's turn (an AI
+            -- takeover of their timed-out turn can hand it straight to this
+            -- player while they're still showing as disconnected).
+            self._opp_dc_grace_active = true
             notify_gui(self.gui_hud, "conn_overlay", {
                 show = true,
                 title = "OPPONENT DISCONNECTED",
                 subtitle = "Waiting for them to reconnect…",
                 grace = grace,
+                -- The opponent's connection has no bearing on whether THIS
+                -- player can legally act right now — if it's already their
+                -- turn, the server processes their move exactly the same
+                -- either way. Without this, the overlay's own scrim was
+                -- claiming the "network" input-block slot unconditionally,
+                -- so the player's own valid turn sat locked out until the
+                -- opponent reconnected or the grace period ran out — their
+                -- own cards held hostage by someone else's connection.
+                block_input = not self.is_player_turn(),
             })
         end
 
@@ -1607,6 +1635,7 @@ function on_message(self, message_id, message, sender)
         -- closes only once it completes — not before, and not synchronously
         -- assumed-instant, since a reshuffle/hand catch-up inside it can
         -- take over a second.
+        self._opp_dc_grace_active = false
         if self.online_mode and not self.game_over then
             local fresh = (type(message.state) == "table" and next(message.state) ~= nil and message.state)
                 or (type(ws.active_game_state) == "table" and next(ws.active_game_state) ~= nil and ws.active_game_state)
