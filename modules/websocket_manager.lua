@@ -303,7 +303,22 @@ function M.send_message(msg_type, data)
   return true
 end
 
-function M.send_move(game_id, from_id, to_id, actions, new_suit, active_penalty_count)
+-- Monotonic, not a UUID: this client only ever has ONE move in flight at a
+-- time (turn-based — end_turn won't fire again until is_waiting_for_server_
+-- response clears), so it only has to be unique across THIS session, not
+-- globally. Purely a correlation id for confirm_move — never used to decide
+-- whether a move is valid, that is still entirely the server's card/turn
+-- checks, unaffected whether this id round-trips or not.
+local next_move_id = 0
+
+-- move_id: pass one to RESEND the exact same attempt after a reconnect
+-- (online_handler.lua's retry_unconfirmed_move) — the backend and the
+-- eventual confirm_move both key off it, so a retry must reuse it rather
+-- than mint a new one. Omit it for a normal, first-time send and one is
+-- generated. Returns the id used on success, or false if the move was
+-- dropped without being sent (so callers can tell "sent, now wait" from
+-- "never left the client").
+function M.send_move(game_id, from_id, to_id, actions, new_suit, active_penalty_count, move_id)
   -- NO MOVE SURVIVES THE END OF ITS GAME.
   --
   -- Every move leaves the client through here, which makes this the one place
@@ -328,7 +343,12 @@ function M.send_move(game_id, from_id, to_id, actions, new_suit, active_penalty_
     return false
   end
 
-  local move_data = { gameId = game_id, from = from_id, to = to_id, cards = actions }
+  if move_id == nil then
+    next_move_id = next_move_id + 1
+    move_id = tostring(os.time()) .. "-" .. tostring(next_move_id)
+  end
+
+  local move_data = { gameId = game_id, from = from_id, to = to_id, cards = actions, moveId = move_id }
   if new_suit and new_suit ~= "" then
     move_data.newSuit = new_suit
   end
@@ -336,6 +356,7 @@ function M.send_move(game_id, from_id, to_id, actions, new_suit, active_penalty_
     move_data.activePenaltyCount = active_penalty_count
   end
   M.send_message("MOVE", move_data)
+  return move_id
 end
 
 -- IDENTIFY watchdog. The client used to send IDENTIFY and then simply wait:
@@ -842,7 +863,12 @@ local function parse_message(json_string)
       print(string.format("[PIPE-1] decoded from=%s actions=%d turn=%s suit=%s",
         tostring(from_id), #actions, tostring(gs.currentTurn), tostring(gs.chosenSuit)))
       pprint("[PIPE-1] gs.actions:", actions)
-      local processed = { _id = from_id, from = from_id, actions = actions, chosenSuit = gs.chosenSuit or "", gameState = gs, aiOnBehalf = (d.aiOnBehalf == true) }
+      -- moveId: whatever we sent on data.moveId, echoed straight back by the
+      -- backend on every response to the sender (see be_matatu's
+      -- moves/index.ts) — the client's own hand-drift-recovery hooks on this
+      -- to tell "the server answered my move" apart from "the server has not
+      -- gotten to it yet", see online_handler.lua's confirm_move.
+      local processed = { _id = from_id, from = from_id, actions = actions, chosenSuit = gs.chosenSuit or "", gameState = gs, aiOnBehalf = (d.aiOnBehalf == true), moveId = d.moveId }
       emit("game_move", processed, gs)
     else
       print("[PIPE-1] DROPPED — gs decoded empty")
@@ -852,26 +878,40 @@ local function parse_message(json_string)
   elseif t == "PLAYER_READY" then
     emit("player_ready", d._id or "")
   elseif t == "PLAYER_DISCONNECTED" then
+    -- Backend sends the id as data.disconnectedPlayer (matatu-api's field
+    -- name); the other keys are kept as fallbacks.
+    local who = tostring(d.disconnectedPlayer or d._id or d.playerId or d.userId or "")
+    print("[RECONNECT] PLAYER_DISCONNECTED received for '" .. who .. "'")
     emit("player_disconnected", {
       reason = d.reason or "Unknown",
       grace = tonumber(d.gracePeriod) or 30,
-      -- Backend sends the id as data.disconnectedPlayer (matatu-api's field
-      -- name); the other keys are kept as fallbacks.
-      player_id = tostring(d.disconnectedPlayer or d._id or d.playerId or d.userId or ""),
+      player_id = who,
     })
   elseif t == "PLAYER_RECONNECTED" then
     local gs = M.extract_game_state(d)
     if next(gs) ~= nil then M.active_game_state = gs end
+    -- d.reconnectedPlayer FIRST, because that is the field the backend
+    -- actually sends (heartbeatCleanup.ts's broadcast) — none of the three
+    -- names that used to be listed here exist on this message, so player_id
+    -- was the empty string on EVERY reconnect. The disconnect branch above
+    -- had already been corrected the same way for d.disconnectedPlayer; this
+    -- one was missed. The other names stay as fallbacks.
+    local who = tostring(d.reconnectedPlayer or d._id or d.playerId or d.userId or "")
+    print("[RECONNECT] PLAYER_RECONNECTED received for '" .. who .. "' (state " ..
+      (next(gs) ~= nil and "carried" or "empty") .. ")")
     emit("player_reconnected", {
-      player_id = tostring(d._id or d.playerId or d.userId or ""),
+      player_id = who,
       state = gs,
     })
   elseif t == "EMOJI_MESSAGE" then
     emit("emoji", d._id or d.from or "", d.emoji or d.name or "", d.sound or "")
   elseif t == "AI_PLAYED_ON_YOUR_BEHALF" then
-    -- The backend AI covered this player's seat: either a one-shot move after
-    -- a turn timeout (mode=SINGLE_MOVE, capped per game) or a full takeover
-    -- while they were offline (mode=TAKEOVER, delivered on reconnect).
+    -- The backend AI played a single move on this player's behalf after a
+    -- turn timeout — capped per game (see MAX_ASSIST_MOVES, backend
+    -- state.ts). The player was still connected the whole time; this is
+    -- not disconnect handling. Persistent AI takeover of a disconnected
+    -- player's seat has been removed — a player who doesn't reconnect
+    -- within the grace period is forfeited instead.
     emit("ai_played_for_you", {
       mode = tostring(d.mode or "SINGLE_MOVE"),
       moves = tonumber(d.aiMovesUsed or d.aiMovesPlayed) or 0,
@@ -887,6 +927,15 @@ local function parse_message(json_string)
     local gs = M.extract_game_state(d)
     if next(gs) ~= nil then
       M.active_game_state = gs
+      -- Side channel, same reasoning as active_game_state: game.script's
+      -- ws_resync handler is wired through controller.script's dataless
+      -- `forward`, so nothing reaches it via the event args either. This is
+      -- what tells confirm_move which of our sent moves this RESYNC is
+      -- actually answering — a definitive "no" is still an answer, and must
+      -- clear last_sent_turn_actions exactly like a success would, or a
+      -- later reconnect would blindly resend a move the server already
+      -- rejected.
+      M.last_resync_move_id = d.moveId
       emit("resync", { reason = tostring(d.reason or "") })
     end
   elseif t == "ROUND_COMPLETE" then

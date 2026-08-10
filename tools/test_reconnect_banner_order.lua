@@ -1,8 +1,8 @@
--- A RECONNECT DESERVES THE SAME RESYNC AN ORDINARY MOVE GETS.
+-- A WARM RECONNECT REFRESHES BOOKKEEPING ONLY — IT DOES NOT RECONCILE CARDS.
 --
 --   Run: lua tools/test_reconnect_banner_order.lua
 --
--- Reported, in two parts that turned out to be one bug:
+-- History, in three reported bugs that were each fixed in turn:
 --
 --   1. A card played right before a disconnect (or the opponent's, or a
 --      partial penalty draw) went missing from BOTH the hand and the played
@@ -12,26 +12,38 @@
 --   2. The "OPPONENT DISCONNECTED" banner closed before the board had
 --      actually caught up, so the timer/turn indicator visibly jumped a
 --      moment later with nothing on screen to explain why.
+--   3. The banner sometimes never closed at all: ordinary MOVE messages
+--      (an AI takeover playing out the disconnected opponent's turns) kept
+--      landing and visibly updating the board while the banner just sat
+--      there.
 --
--- Root cause for both: ws_player_rc and ws_net_up (main/game.script) — the
--- two live in-app reconnect paths (the opponent coming back, and THIS
--- client's own socket coming back) — only ever called OnlineHandler.
--- sync_timers, which touches nothing but currentTurn/turnExpiresAt/
--- activePenaltyCount/chosenSuit/pendingMarketDraw on self.game_state. It
--- never touched the actual card objects in self.player_hand,
--- self.played_cards or self.deck. Only handle_single_move (run for an
--- ORDINARY move) ever called the real thing: finalize_state_sync followed
--- by sync_my_hand. A reconnect has exactly as much to catch up on as a move
--- does — a play that settled server-side with the confirmation lost to the
--- drop, several opponent moves, a reshuffle, a penalty draw that was only
--- ever sent as one bundled move once complete (never mid-way) — so it needs
--- the same machinery, not a smaller one.
+-- (1) and (2) were fixed by having ws_player_rc/ws_net_up (main/game.script)
+-- call OnlineHandler.full_resync — the same finalize_state_sync + sync_my_hand
+-- sequence an ordinary move gets — instead of the narrower OnlineHandler.
+-- sync_timers (currentTurn/turnExpiresAt/activePenaltyCount/chosenSuit/
+-- pendingMarketDraw only, never the actual card objects). (3) was fixed by
+-- moving the banner close OUT of full_resync's completion callback so it can
+-- never be starved by a resync that runs long or gets coalesced.
 --
--- Fixed by exposing that same sequence as OnlineHandler.full_resync and
--- having both reconnect paths call it instead of sync_timers directly, with
--- the banner closing only in ITS completion callback — not synchronously
--- assumed-instant, since a reshuffle or a hand catch-up inside it can take
--- over a second.
+-- That full_resync-on-reconnect fix then caused a FOURTH bug: cards from an
+-- already-completed combo visibly "drawn back" from the deck, and a spurious
+-- reshuffle animation, right after reconnecting. Root cause: full_resync's
+-- own reconciliation (sync_my_hand's multiset diff, stamp_deck, the
+-- should_reshuffle heuristic) is comparing against whatever the reconnecting
+-- client's LOCAL state happens to be — and that comparison itself is what
+-- produced the visible artifacts, independent of whether the underlying data
+-- was ever actually wrong.
+--
+-- Fixed by migrating the reference client's approach (matatu-gdt's
+-- CardManager.gd, _on_game_start_received): a WARM reconnect — the same game
+-- still on screen, cards still in hand, nothing torn down — only refreshes
+-- game_state and the turn timer (OnlineHandler.sync_timers) and leaves the
+-- hand/deck/pile alone. The game continues naturally from whatever the next
+-- real MOVE brings; a move that never reached the server before the drop is
+-- covered by retry_unconfirmed_move, not by reconciling the whole board.
+-- full_resync itself is untouched and still runs for a genuine COLD load
+-- (main/game.script's ws_resync branch, and M.start_game) — this file no
+-- longer claims the reconnect branches use it.
 
 local dir = debug.getinfo(1, "S").source:match("@(.*/)") or "./"
 local function slurp(rel)
@@ -61,35 +73,47 @@ end
 
 local function check_reconnect_branch(name)
     print("")
-    print(name .. ": FULL RESYNC, BANNER CLOSES ONLY WHEN IT COMPLETES")
+    print(name .. ": BANNER CLOSES IMMEDIATELY, BOOKKEEPING-ONLY REFRESH")
 
     local branch = branch_of(game_code, name)
     check(name .. " branch exists", branch ~= nil,
         "a rename would make every assertion below vacuous")
     if not branch then return end
 
-    local resync_pos = branch:find("OnlineHandler%.full_resync%(self, self%.game_state or {}, function%(%)")
-    check("calls OnlineHandler.full_resync, not just sync_timers", resync_pos ~= nil,
-        "sync_timers alone never touches self.player_hand/self.played_cards/self.deck")
-    check("does NOT also call the narrower sync_timers directly",
-        branch:find("OnlineHandler%.sync_timers%(self, self%.game_state or {}%)") == nil,
-        "would mean the narrow sync still races ahead of the full one")
+    check("does NOT call OnlineHandler.full_resync",
+        branch:find("OnlineHandler%.full_resync") == nil,
+        "a warm reconnect must not reconcile the hand/deck/pile — see the file header for why that produced its own bugs")
+
+    local sync_pos = branch:find("OnlineHandler%.sync_timers%(self, self%.game_state or {}%)")
+    check("calls OnlineHandler.sync_timers instead", sync_pos ~= nil,
+        "the bookkeeping-only refresh (currentTurn/turnExpiresAt/activePenaltyCount/chosenSuit/pendingMarketDraw) is all a warm reconnect needs")
 
     local close_pos = branch:find('notify_gui%(self%.gui_hud, "conn_overlay", { show = false }%)')
     check("closes the banner somewhere in this branch", close_pos ~= nil)
 
-    if resync_pos and close_pos then
-        check("the close sits INSIDE full_resync's completion callback, not before the call",
-            close_pos > resync_pos,
-            string.format("resync call at %d, close at %d", resync_pos, close_pos))
+    local online_gate_pos = branch:find("if self%.online_mode and not self%.game_over then")
+    check("gated on online_mode and the game not already being over",
+        online_gate_pos ~= nil,
+        "resyncing on a message that arrives after the round ended would touch a dead board")
+
+    -- The wording here used to be "UNCONDITIONALLY", which stopped being true
+    -- once ws_player_rc's close was put behind `if dismiss then` (see the
+    -- section further down — whose reconnect this is gets its own checks
+    -- there). What both branches still guarantee is the thing that actually
+    -- matters: the close does not sit inside the SAME online_mode/game_over
+    -- gate as the bookkeeping refresh below it.
+    if close_pos and online_gate_pos then
+        check("the close sits BEFORE the online_mode/game_over gate, not inside it",
+            close_pos < online_gate_pos,
+            "a close that only ran inside the same gate as sync_timers could be left stuck open by exactly the condition that was supposed to make it a no-op")
     end
 
-    check("gated on online_mode and the game not already being over",
-        branch:find("if self%.online_mode and not self%.game_over then") ~= nil,
-        "resyncing on a message that arrives after the round ended would touch a dead board")
-    check("still closes the banner on the ELSE path (offline mode / game already over)",
-        branch:match("else%s*\n%s*notify_gui%(self%.gui_hud, \"conn_overlay\", { show = false }%)") ~= nil,
-        "a banner that only closes through full_resync's callback would never close at all outside online play")
+    if sync_pos then
+        local retry_pos = branch:find("OnlineHandler%.retry_unconfirmed_move%(self%)", sync_pos)
+        check("retry_unconfirmed_move runs AFTER sync_timers, using its fresh currentTurn",
+            retry_pos ~= nil and retry_pos > sync_pos,
+            "retry_unconfirmed_move's own guard reads self.game_state.currentTurn, which sync_timers is what refreshes")
+    end
 end
 
 check_reconnect_branch("ws_player_rc")
@@ -106,7 +130,9 @@ check("ws_player_dc still opens it with show = true",
 
 -- ---------------------------------------------------------------------------
 print("")
-print("full_resync ITSELF RUNS THE SAME SEQUENCE AN ORDINARY MOVE GETS")
+print("full_resync STILL EXISTS AND STILL RUNS THE SAME SEQUENCE AN ORDINARY MOVE GETS")
+print("(used by ws_resync and M.start_game — a genuine cold load/explicit resync,")
+print("not the warm-reconnect branches checked above)")
 
 local oh_src = slurp("modules/online_handler.lua")
 local oh_code = oh_src:gsub("%-%-[^\n]*", "")
@@ -140,6 +166,10 @@ check("handle_single_move still exists and full_resync sits right before it",
         return fr_start ~= nil and hsm_pos ~= nil and fr_start < hsm_pos
     end)())
 
+check("ws_resync (an explicit server-forced resync, not a plain reconnect) still calls full_resync",
+    game_code:find("OnlineHandler%.full_resync%(self, fresh%)") ~= nil,
+    "a server-forced resync is a different situation from a warm reconnect and still needs the deep catch-up")
+
 -- ---------------------------------------------------------------------------
 print("")
 print("full_resync NEVER RACES A MOVE THAT IS ALREADY BEING APPLIED")
@@ -151,7 +181,7 @@ local fr_full = (fr_start and hsm_pos) and oh_code:sub(fr_start, hsm_pos - 1) or
 
 check("checks self.is_processing_move before running immediately",
     fr_full:find("if not self%.is_processing_move then%s*\n%s*run%(%)") ~= nil,
-    "handle_single_move holds this flag for its whole apply (pump_move_queue) — a reconnect landing mid-apply must not start a second, concurrent finalize_state_sync racing the first over self.ai_hand/self.player_hand")
+    "handle_single_move holds this flag for its whole apply (pump_move_queue) — a resync landing mid-apply must not start a second, concurrent finalize_state_sync racing the first over self.ai_hand/self.player_hand")
 
 check("defers via timer.delay when a move IS in flight, rather than running anyway",
     fr_full:find("timer%.delay%(RESYNC_WAIT_POLL_S, false, poll%)") ~= nil)
@@ -168,16 +198,15 @@ check("the wait is CAPPED, not indefinite",
 
 -- ---------------------------------------------------------------------------
 print("")
-print("full_resync NEVER RACES ITSELF EITHER — ws_net_up and ws_player_rc both")
-print("fire for the SAME reconnect episode, moments apart")
+print("full_resync NEVER RACES ITSELF EITHER")
 
 check("a call while one is already running does not start a second, concurrent run",
     fr_full:find("if self%._resyncing then") ~= nil,
-    "ws_net_up (this client's own socket reconnecting) and ws_player_rc (PLAYER_RECONNECTED, sent to the reconnecting client about itself — see heartbeatCleanup.ts) both call full_resync for one reconnect; nothing upstream serializes them")
+    "more than one caller can still reach full_resync in the same window (ws_resync, M.start_game) — nothing upstream serializes them")
 
 check("it is stashed as PENDING, not dropped, so the newer state still lands",
     fr_full:find("self%._pending_resync = { state = state, done = done }") ~= nil,
-    "dropping the second call outright would mean a reconnect that raced could miss catching up on whatever changed between the two")
+    "dropping the second call outright would mean a resync that raced could miss catching up on whatever changed between the two")
 
 check("the guard is set to true before the wait/run path, not after",
     (function()
@@ -191,11 +220,161 @@ check("finish() clears the flag and replays exactly the LATEST pending state, no
     fr_full:find("M%.full_resync%(self, pending%.state, pending%.done%)") ~= nil,
     "coalesced to latest rather than queued — a second call mid-run means the first run's target is already stale")
 
+-- ---------------------------------------------------------------------------
+-- AND THEN: A BANNER ABOUT THE WRONG PLAYER, RAISED BY THE PLAYER THEMSELVES.
+--
+-- Reported after the close-immediately fix above: the opponent disconnects,
+-- comes back, and the dialog stays up anyway. Two separate causes, one on
+-- each side of the socket.
+--
+-- CLIENT: websocket_manager's PLAYER_RECONNECTED branch read the id out of
+-- d._id / d.playerId / d.userId. The backend sends none of those — it sends
+-- data.reconnectedPlayer (heartbeatCleanup.ts). So player_id was the empty
+-- string on every single reconnect. The DISCONNECTED branch right above it
+-- had already been corrected for the matching d.disconnectedPlayer; this one
+-- was simply missed, and nothing noticed because game.script did not consult
+-- the field.
+--
+-- Which mattered the moment it did consult it, because both of these messages
+-- are broadcast to the WHOLE game, this client included:
+--
+--   * ws_player_dc firing for our OWN id shows us "OPPONENT DISCONNECTED"
+--     about ourselves, and no PLAYER_RECONNECTED will ever contradict it
+--   * ws_player_rc firing for our own id, while the opponent is still away,
+--     would close a banner that is still true — and nothing raises it again
+--
+-- So the banner is driven off the fresh game state. The server builds it
+-- with getAccurateGameState, which re-checks every seat against its real
+-- socket before sending, making it the authority on who is actually
+-- present. The id is the fallback, and dismissing is the fallback to that,
+-- so a message carrying neither behaves exactly as it did before. (Where
+-- that state actually comes from on the client is its own bug, fixed
+-- separately below — it is read from ws.active_game_state, never from
+-- message.state.)
 print("")
-if failures == 0 then
-    print("ALL PASS")
-    os.exit(0)
-else
-    print(failures .. " FAILURE(S)")
-    os.exit(1)
-end
+print("THE BANNER FOLLOWS THE OPPONENT, NOT WHOEVER THE MESSAGE IS ABOUT")
+
+local rc_branch = branch_of(game_code, "ws_player_rc")
+check("ws_player_rc reads the reconnecting player's id", 
+    rc_branch ~= nil and rc_branch:find("local rc_who") ~= nil)
+check("and prefers the opponent's status from the state the message carried",
+    rc_branch ~= nil and rc_branch:find('opp_status ~= ""') ~= nil
+        and rc_branch:find('dismiss = %(opp_status ~= "DISCONNECTED"%)') ~= nil,
+    "getAccurateGameState re-verifies every seat server-side, so it beats guessing from the id")
+check("falling back to the id when the state carries no seat for the opponent",
+    rc_branch ~= nil and rc_branch:find("dismiss = %(rc_who ~= tostring%(self%.my_player_id%)%)") ~= nil)
+check("and falling back to dismissing when it has neither",
+    rc_branch ~= nil and rc_branch:find("else%s*\n%s*dismiss = true") ~= nil,
+    "a message with no id and no state must not become a NEW way for the banner to stick")
+check("the close is gated on that decision",
+    rc_branch ~= nil and rc_branch:find("if dismiss then") ~= nil
+        and rc_branch:find("if dismiss then") < rc_branch:find('notify_gui%(self%.gui_hud, "conn_overlay", { show = false }%)'))
+check("and _opp_dc_grace_active is cleared with it, not separately",
+    rc_branch ~= nil and (function()
+        local gate = rc_branch:find("if dismiss then")
+        local flag = rc_branch:find("self%._opp_dc_grace_active = false")
+        return gate ~= nil and flag ~= nil and flag > gate
+    end)(),
+    "leaving the flag set while the overlay is gone re-locks input from update()'s watchdog")
+
+check("ws_player_dc does NOT raise the banner for this client's own id",
+    dc_branch ~= nil and dc_branch:find("dc_is_me") ~= nil
+        and dc_branch:find("not dc_is_me") ~= nil,
+    "PLAYER_DISCONNECTED is broadcast to the whole game — including the player it names")
+check("and an empty id still raises it, as before",
+    dc_branch ~= nil and dc_branch:find('dc_who ~= "" and dc_who == tostring%(self%.my_player_id%)') ~= nil,
+    "is_me must require a NON-empty id, or a message without one suppresses the banner entirely")
+
+-- ---------------------------------------------------------------------------
+-- THE ACTUAL ROOT CAUSE OF "THE BACKEND SENT IT, THE BANNER STAYED UP".
+--
+-- Confirmed from a device log: the backend's PLAYER_RECONNECTED broadcast
+-- arrived (parse_message logged it), but game.script's ws_player_rc never
+-- ran at all —
+--
+--   [WS] listener error on 'player_reconnected': main/controller.script:
+--   1351: buffer (194 bytes) too small for table, exceeded at key for
+--   element #6
+--
+-- controller.script's player_reconnected listener used to forward the
+-- WHOLE accurateGameState (the deck, both hands, the played pile) as the
+-- msg.post payload. msg.post has a small, FIXED message buffer — nothing
+-- close to what a full game state needs — so the post threw. emit()
+-- (websocket_manager.lua) wraps every listener in pcall, so the throw was
+-- swallowed and just logged: the msg.post silently never reached
+-- game.script, and nothing about the banner ever changed.
+--
+-- Every OTHER message that carries a full game state already avoids this:
+-- resync/game_move/game_over/round_complete (the forward() calls above the
+-- player_reconnected listener) post with NO payload at all and let the
+-- handler read ws.active_game_state, which parse_message sets before
+-- emit() ever runs. player_reconnected now does the same.
+print("")
+print("THE STATE NEVER GOES THROUGH msg.post — IT'S TOO BIG FOR THE BUFFER")
+
+local ctrl_src = slurp("main/controller.script")
+local ctrl_code = ctrl_src:gsub("%-%-[^\n]*", "")
+
+local prc_start = ctrl_code:find('ws%.on%("player_reconnected"')
+local prc_end = ctrl_code:find("\n%s*end%)%)", prc_start)
+local prc_body = prc_start and ctrl_code:sub(prc_start, prc_end)
+
+check("the player_reconnected listener exists", prc_start ~= nil)
+check("its msg.post no longer includes the game state",
+    prc_body ~= nil and prc_body:find("state%s*=%s*info%.state") == nil,
+    "a full accurateGameState blows past msg.post's small fixed buffer — this is what threw")
+check("it still forwards the player id",
+    prc_body ~= nil and prc_body:find('msg%.post%("#game_logic", "ws_player_rc"') ~= nil
+        and prc_body:find("player_id%s*=%s*info%.player_id") ~= nil)
+
+check("ws_player_rc reads the dismiss-decision state from ws.active_game_state",
+    rc_branch ~= nil and rc_branch:find("local rc_state = %(type%(ws%.active_game_state%)") ~= nil,
+    "message.state is never populated any more — reading it here would make opp_status always empty")
+check("and NOT from message.state",
+    rc_branch ~= nil and rc_branch:find("message%.state") == nil)
+
+check("the bookkeeping-refresh's fresh-state lookup also reads ws.active_game_state, not message.state",
+    rc_branch ~= nil and rc_branch:find("local fresh = type%(ws%.active_game_state%)") ~= nil)
+
+-- ---------------------------------------------------------------------------
+print("")
+print("THE FIELD THE BACKEND ACTUALLY SENDS")
+
+local wsm_src = slurp("modules/websocket_manager.lua")
+local wsm_code = wsm_src:gsub("%-%-[^\n]*", "")
+
+local rc_msg = wsm_code:match('elseif t == "PLAYER_RECONNECTED" then(.-)elseif t ==')
+check("PLAYER_RECONNECTED reads d.reconnectedPlayer", 
+    rc_msg ~= nil and rc_msg:find("d%.reconnectedPlayer") ~= nil,
+    "this is the field heartbeatCleanup.ts sends; without it player_id is always the empty string")
+check("and reads it FIRST, ahead of the names that are not on this message",
+    rc_msg ~= nil and (function()
+        local a = rc_msg:find("d%.reconnectedPlayer")
+        local b = rc_msg:find("d%._id")
+        return a ~= nil and (b == nil or a < b)
+    end)())
+
+local dc_msg = wsm_code:match('elseif t == "PLAYER_DISCONNECTED" then(.-)elseif t ==')
+check("PLAYER_DISCONNECTED still reads d.disconnectedPlayer first",
+    dc_msg ~= nil and dc_msg:find("d%.disconnectedPlayer") ~= nil)
+
+-- ---------------------------------------------------------------------------
+-- The logs are the point of the exercise, not decoration: the whole reason
+-- this took two rounds to find is that nothing said which of these messages
+-- arrived, for whom, or what was decided about the banner.
+print("")
+print("AND IT SAYS WHAT IT DECIDED, SO THE NEXT REPORT IS ONE LOG AWAY")
+
+check("PLAYER_RECONNECTED logs the id it resolved",
+    rc_msg ~= nil and rc_msg:find("%[RECONNECT%]") ~= nil)
+check("PLAYER_DISCONNECTED logs the id it resolved",
+    dc_msg ~= nil and dc_msg:find("%[RECONNECT%]") ~= nil)
+check("ws_player_rc logs whose reconnect it was and what it did with the banner",
+    rc_branch ~= nil and rc_branch:find("%[RECONNECT%]") ~= nil
+        and rc_branch:find("DISMISS banner") ~= nil and rc_branch:find("keep banner") ~= nil)
+check("ws_player_dc logs whose disconnect it was",
+    dc_branch ~= nil and dc_branch:find("%[RECONNECT%]") ~= nil)
+
+print("")
+if failures == 0 then print("ALL PASS") else print(failures .. " FAILURE(S)") end
+os.exit(failures == 0 and 0 or 1)

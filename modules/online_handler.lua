@@ -21,6 +21,13 @@ function M.sync_timers(self, state)
     if self.game_over then return end
     state = state or {}
 
+    -- TIMER_UPDATE is the ordinary, unremarkable answer to a move that
+    -- landed clean — the common case by far — so this is where most sent
+    -- moves actually get confirmed. A no-op when state carries no moveId
+    -- (every OTHER caller of sync_timers: game_start's authoritative START,
+    -- etc.) or when nothing is currently held.
+    M.confirm_move(self, state.moveId)
+
     if type(self.game_state) ~= "table" then self.game_state = {} end
     if state.currentTurn        ~= nil then self.game_state.currentTurn        = state.currentTurn end
     if state.turnExpiresAt      ~= nil then self.game_state.turnExpiresAt      = state.turnExpiresAt end
@@ -92,8 +99,24 @@ function M.end_turn(self)
         self.last_local_play = { v = tonumber(last_card.v), s = last_card.s }
     end
 
-    ws.send_move(self.online_game_id, self.my_player_id, self.opponent_id,
+    local move_id = ws.send_move(self.online_game_id, self.my_player_id, self.opponent_id,
         actions_to_send, self.chosen_suit, self.active_penalty)
+
+    -- Held until confirm_move sees this exact moveId echoed back (a
+    -- TIMER_UPDATE, a MOVE, or a RESYNC all answer it — see confirm_move),
+    -- or a reconnect finds the turn still ours and resends it once via
+    -- retry_unconfirmed_move. Distinct from current_turn_actions below,
+    -- which is cleared unconditionally right after this: those cards are
+    -- already animated and folded into actions_to_send, so there is nothing
+    -- left there to hold onto. This is what SENDING it needs to survive a
+    -- drop between here and the server's answer.
+    self.last_sent_turn_actions = move_id and {
+        moveId = move_id,
+        gameId = self.online_game_id,
+        actions = actions_to_send,
+        newSuit = self.chosen_suit,
+        activePenaltyCount = self.active_penalty,
+    } or nil
 
     self.waiting = true
     self.is_waiting_for_server_response = true
@@ -103,6 +126,56 @@ function M.end_turn(self)
         expires_at = 0, grace = config.GRACE_SECONDS })
 
     self.current_turn_actions = {}
+end
+
+-- Called wherever a definitive answer for a sent move arrives — a normal
+-- TIMER_UPDATE, one of the MOVE-to-sender corrections (aiOnBehalf,
+-- isReshuffling, drawMismatched), or a RESYNC — all of which now echo back
+-- whatever moveId the move was sent with (see be_matatu's moves/index.ts).
+-- Clears last_sent_turn_actions ONLY when the id matches what's actually
+-- held: an id for an older move must never clear a newer one still in
+-- flight. A missing id (an older backend build that has not deployed the
+-- echo yet) is treated as "can't tell" and left alone — the existing hand/
+-- turn reconciliation (sync_my_hand, full_resync) is the real correctness
+-- guarantee regardless; this bookkeeping only decides whether a reconnect
+-- retries something that was already answered.
+function M.confirm_move(self, move_id)
+    if move_id == nil or move_id == "" then return end
+    local pending = self.last_sent_turn_actions
+    if pending and tostring(pending.moveId) == tostring(move_id) then
+        self.last_sent_turn_actions = nil
+    end
+end
+
+-- One-shot resend for a move that was sent but never definitively answered
+-- before the connection dropped — the exact "played a card, disconnected
+-- before the server's reply" case reported. Cleared immediately either way,
+-- so a connection that reconnects repeatedly can retry at most once per held
+-- move, never loop.
+--
+-- Gated on it still being OUR turn in the just-reconciled state:
+-- be_matatu's Matatu move handler always advances currentTurn on a
+-- successfully processed move — this ruleset has no turn-retaining special,
+-- unlike Whot — so "still my turn" right after a fresh full_resync is a
+-- reliable sign this specific send never reached/was never processed by the
+-- server. On the rare chance that's wrong (the opponent's move somehow
+-- cycled the turn back before this ran), the resend just bounces off the
+-- server's ordinary card-ownership/already-played validation and falls back
+-- to the normal RESYNC path — never a double play.
+function M.retry_unconfirmed_move(self)
+    local pending = self.last_sent_turn_actions
+    if not pending then return end
+    self.last_sent_turn_actions = nil
+
+    if self.game_over then return end
+    if tostring(pending.gameId) ~= tostring(self.online_game_id) then return end
+    if tostring((self.game_state or {}).currentTurn) ~= tostring(self.my_player_id) then return end
+
+    print("[ONLINE] resending unconfirmed move after reconnect: " .. tostring(pending.moveId))
+    ws.send_move(pending.gameId, self.my_player_id, self.opponent_id,
+        pending.actions, pending.newSuit, pending.activePenaltyCount, pending.moveId)
+    self.is_waiting_for_server_response = true
+    self.waiting = true
 end
 
 function M.sync_deck_size(self, target_size)
@@ -626,20 +699,45 @@ function M.finalize_state_sync(self, state, on_complete)
     local opp_hand_count = op_for_suit.handCount or (op_hand_for_suit and #op_hand_for_suit) or #self.ai_hand
     local game_still_active = opp_hand_count > 0 and #self.player_hand > 0
 
-    if state.chosenSuit and state.chosenSuit ~= "" and game_still_active then
-        self.chosen_suit = state.chosenSuit
-        msg.post(GUI_SUIT, "suit_select", { mode = "preview", suit = self.chosen_suit })
-    else
-        self.chosen_suit = ""
-        msg.post(GUI_SUIT, "suit_select", { mode = "close" })
+    -- Never touch the suit picker while WE have one open. state.chosenSuit is
+    -- server truth, and our own pick — played a wildcard, haven't tapped a
+    -- suit yet — is deliberately never sent until the whole turn resolves
+    -- (see M.end_turn), so server state knows nothing about it and is always
+    -- "no suit chosen" from its point of view. Every reconcile call (an
+    -- opponent move, and now full_resync on every reconnect) used to read
+    -- that as "close the picker", yanking it out from under a player mid-pick
+    -- and silently discarding a card they had already committed to playing —
+    -- exactly the disconnect-while-picking-a-suit case this must survive.
+    if not self.is_suit_selection_active then
+        if state.chosenSuit and state.chosenSuit ~= "" and game_still_active then
+            self.chosen_suit = state.chosenSuit
+            msg.post(GUI_SUIT, "suit_select", { mode = "preview", suit = self.chosen_suit })
+        else
+            self.chosen_suit = ""
+            msg.post(GUI_SUIT, "suit_select", { mode = "close" })
+        end
     end
 
     if state.rank then msg.post(GUI_HUD, "update_standings", { ranks = M.slim_ranks(state.rank) }) end
     M.process_scoreboard(self, state)
     if is_knockout_state(state) then knockout_update_chamber(self, state) end
 
+    -- Same reasoning as sync_my_hand's current_turn_actions adjustment: a
+    -- DRAW already taken as part of an in-progress, not-yet-sent turn has
+    -- already come off self.deck locally, but the server's deckCount does
+    -- not know that yet (nothing was sent). Left uncorrected, sync_deck_size
+    -- below reads #self.deck as short and hands a card straight back onto
+    -- the pile/deck boundary — the "deck re-renders and a card comes back"
+    -- symptom, distinct from but caused by the exact same gap as the hand
+    -- one: a reconnect mid-turn comparing local state against a server that
+    -- has not heard about this turn at all yet.
+    local pending_draws = 0
+    for _, act in ipairs(self.current_turn_actions or {}) do
+        if act.type == "DRAW" then pending_draws = pending_draws + 1 end
+    end
+
     local function do_sync()
-        local deck_target = state.deckCount or (state.deck and #state.deck) or #self.deck
+        local deck_target = math.max(0, (state.deckCount or (state.deck and #state.deck) or #self.deck) - pending_draws)
         M.sync_deck_size(self, deck_target)
         stamp_deck(self, state.deck)
 
@@ -687,7 +785,7 @@ function M.finalize_state_sync(self, state, on_complete)
         end
     end
 
-    local deck_target     = state.deckCount or (state.deck and #state.deck) or #self.deck
+    local deck_target     = math.max(0, (state.deckCount or (state.deck and #state.deck) or #self.deck) - pending_draws)
     local incoming_played = (type(state.playedCards) == "table") and #state.playedCards or nil
     local pile_was_reset  = incoming_played ~= nil and incoming_played <= 1
     local deck_jumped     = deck_target >= (#self.deck + 6)
@@ -824,6 +922,45 @@ local function sync_my_hand(self, state, done)
         local key = tostring(rc.v) .. "|" .. tostring(rc.s)
         pool[key] = pool[key] or {}
         table.insert(pool[key], rc)
+    end
+
+    -- ACCOUNT FOR AN IN-PROGRESS, NOT-YET-SENT TURN.
+    --
+    -- current_turn_actions holds PLAY/DRAW entries for a skip-chain (or a
+    -- suit pick, or a mid-penalty draw) the player has already committed to
+    -- locally but not yet sent — M.end_turn only sends the whole bundle once
+    -- the turn resolves. The server knows nothing about any of it yet, so
+    -- `real` and self.player_hand are SUPPOSED to disagree about these exact
+    -- cards, in both directions:
+    --
+    --   PLAY: already spliced out of player_hand and animated onto our own
+    --   pile, but `real` still lists it (the server never got the move) —
+    --   left alone, the loop below reads that as "server has a card we
+    --   don't" and calls draw_to_hand, visibly re-dealing a card the player
+    --   just watched leave their hand back INTO it, while the original is
+    --   still sitting on the pile — two separate game objects for one
+    --   logical card. Reported directly: reconnect mid-skip-chain, before
+    --   ever pressing the button to end the turn, and the played card comes
+    --   right back.
+    --
+    --   DRAW: already added to player_hand, but `real` doesn't list it yet
+    --   for the same reason — left alone, the loop below reads that as "we
+    --   have a card the server doesn't recognize" and releases it right back
+    --   out of the hand the player just drew it into.
+    --
+    -- Consuming/injecting them here first makes `pool` describe the hand we
+    -- SHOULD end up with — server truth plus our own not-yet-acknowledged
+    -- turn — instead of server truth alone, so the diff below only ever
+    -- touches cards that are an actual desync.
+    for _, act in ipairs(self.current_turn_actions or {}) do
+        local key = tostring(act.v) .. "|" .. tostring(act.s)
+        if act.type == "PLAY" then
+            local bucket = pool[key]
+            if bucket and #bucket > 0 then table.remove(bucket) end
+        elseif act.type == "DRAW" then
+            pool[key] = pool[key] or {}
+            table.insert(pool[key], { v = act.v, s = act.s })
+        end
     end
 
     local kept = {}
@@ -992,6 +1129,12 @@ end
 
 function M.handle_single_move(self, move_data, new_state, done)
     if self.game_over then done(); return end
+
+    -- A MOVE-to-sender (aiOnBehalf/isReshuffling/drawMismatched — see
+    -- be_matatu's moves/index.ts) is as much an answer to our own sent move
+    -- as a TIMER_UPDATE is. A no-op for an opponent's move, which carries no
+    -- moveId of ours to match.
+    M.confirm_move(self, move_data and move_data.moveId)
 
     local sender      = tostring((move_data and (move_data._id or move_data.from)) or "")
     local is_my_move  = (sender ~= "" and sender == tostring(self.my_player_id))
@@ -1272,7 +1415,20 @@ function M.start_game(self, state)
         end
 
         self.position_hands(false)
-        msg.post(GUI_SUIT, "suit_badge", { suit = self.chosen_suit })
+        -- suit_badge is never actually handled anywhere in the client — this
+        -- was the ONLY thing telling the GUI about self.chosen_suit on a
+        -- resume, so it did nothing. suit_select with mode="preview" is what
+        -- every other reconciliation path (process_opponent_actions,
+        -- finalize_state_sync) actually uses to show/keep the active-suit
+        -- indicator up. Missing it here is exactly the reported bug: close
+        -- the app while the opponent's chosen suit is showing, reopen into
+        -- the same ongoing game, and the indicator comes back blank even
+        -- though the suit is still very much in force server-side.
+        if self.chosen_suit ~= "" and p_count > 0 and a_count > 0 then
+            msg.post(GUI_SUIT, "suit_select", { mode = "preview", suit = self.chosen_suit })
+        else
+            msg.post(GUI_SUIT, "suit_select", { mode = "close" })
+        end
         self.is_animating = false
         M.sync_timers(self, state)
         return
@@ -1395,7 +1551,18 @@ function M.start_game(self, state)
                 end)
             end
 
-            msg.post(GUI_SUIT, "suit_badge", { suit = self.chosen_suit })
+            -- suit_badge is never handled anywhere in the client (see the
+            -- identical fix in the is_resume fast-path above) — suit_select
+            -- with mode="preview" is what actually drives the indicator.
+            -- Chosen suit is rare on a brand-new deal, but not impossible
+            -- (a mid-series knockout/tournament continuation can arrive with
+            -- one already in force), so this stays consistent with every
+            -- other reconciliation path rather than assuming it never happens.
+            if self.chosen_suit ~= "" and p_count > 0 and a_count > 0 then
+                msg.post(GUI_SUIT, "suit_select", { mode = "preview", suit = self.chosen_suit })
+            else
+                msg.post(GUI_SUIT, "suit_select", { mode = "close" })
+            end
 
             self.is_animating = false
             -- Settle both hands into their arched / fanned layout so the curve is

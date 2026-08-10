@@ -1344,11 +1344,28 @@ function init(self)
     end))
     table.insert(self.tokens, ws.on("player_reconnected", function(info)
         info = info or {}
-        -- Carry the fresh gameState PLAYER_RECONNECTED delivers along with it —
-        -- without it game.script falls back to its own stale pre-disconnect
-        -- game_state (expired turnExpiresAt), which is why the turn-timer pie
-        -- ends up stuck invisible after a reconnect (see ws_player_rc there).
-        msg.post("#game_logic", "ws_player_rc", { player_id = info.player_id or "", state = info.state })
+        -- player_id ONLY — NOT the gameState. msg.post has a small, FIXED
+        -- message buffer, and a full accurateGameState (the whole deck,
+        -- both hands, played pile) blows straight through it: reported as
+        -- "[WS] listener error on 'player_reconnected': ... buffer (194
+        -- bytes) too small for table". pcall in websocket_manager.lua's
+        -- emit() swallows the throw and just logs it, so this msg.post
+        -- SILENTLY NEVER SENT — game.script's ws_player_rc handler never
+        -- ran at all, which is why the backend could log a clean
+        -- PLAYER_RECONNECTED broadcast while the "OPPONENT DISCONNECTED"
+        -- banner stayed up forever with nothing that ever looked like an
+        -- error to the player.
+        --
+        -- Every other message that carries a full game state (resync,
+        -- game_move, game_over, round_complete — see the forward() calls
+        -- just above) already avoids this the same way: post with no
+        -- payload at all, and let the handler read ws.active_game_state,
+        -- which websocket_manager.lua's parse_message sets BEFORE emit()
+        -- ever runs — so it is already fresh by the time this listener
+        -- fires. game.script's ws_player_rc already falls back to
+        -- ws.active_game_state when message.state is absent; this just
+        -- makes that the only path instead of the one that was crashing.
+        msg.post("#game_logic", "ws_player_rc", { player_id = info.player_id or "" })
     end))
 
     table.insert(self.tokens, ws.on("disconnected",      function() msg.post("#game_logic", "ws_net_down") end))
