@@ -14,6 +14,15 @@ local AI_C_ACCENT = vmath.vector4(0.949, 0.702, 0.020, 1.0)
 local EXIT_BTN_SIZE, EXIT_BTN_MARGIN_TOP, EXIT_BTN_MARGIN_RIGHT = 140, 20, 20
 local EXIT_POPOVER_WIDTH, EXIT_POPOVER_HEIGHT, EXIT_POPOVER_OFFSET_Y = 200, 120, 0
 
+-- Reconnect countdown ring: same gui.new_pie_node/set_fill_angle mechanism
+-- hud_ui.lua's turn timer already uses, so this reuses a proven-working
+-- pattern rather than a new one.
+local CONN_RING_RADIUS = 88
+local CONN_RING_TRACK  = vmath.vector4(1, 1, 1, 0.12)
+local C_T_TEAL         = vmath.vector4(0.0, 0.722, 0.831, 1.0)
+local C_T_TEAL_RING    = vmath.vector4(0.0, 0.722, 0.831, 0.85)
+local C_T_RED_RING     = vmath.vector4(0.94, 0.27, 0.27, 0.90)
+
 local function box(pos, size, color, pivot)
     local n = gui.new_box_node(pos, size)
     gui.set_color(n, color)
@@ -118,14 +127,40 @@ function M.build(self, logical_w, logical_h)
     self.conn_scrim = box(vmath.vector3(logical_w/2, logical_h/2, 0), vmath.vector3(5000, 5000, 0), vmath.vector4(0, 0, 0, 0.6), gui.PIVOT_CENTER)
     gui.set_adjust_mode(self.conn_scrim, gui.ADJUST_STRETCH)
     grad_bg(self.conn_scrim)
-    self.conn_panel = box(vmath.vector3(0, 0, 0), vmath.vector3(460, 190, 0), vmath.vector4(0.07, 0.08, 0.11, 0.98), gui.PIVOT_CENTER)
+    self.conn_panel = box(vmath.vector3(0, 0, 0), vmath.vector3(480, 400, 0), vmath.vector4(0.07, 0.08, 0.11, 0.98), gui.PIVOT_CENTER)
     gui.set_parent(self.conn_panel, self.conn_scrim)
-    self.conn_title = label(vmath.vector3(0, 48, 0), "RECONNECTING", 24, vmath.vector4(0.0, 0.722, 0.831, 1.0), gui.PIVOT_CENTER, "subtitle2")
+    -- A thin accent strip along the top, same device the AI banner and other
+    -- in-game panels use, so this reads as part of the same UI family.
+    local conn_strip = box(vmath.vector3(0, 196, 0), vmath.vector3(480, 4, 0), C_T_TEAL, gui.PIVOT_CENTER)
+    gui.set_parent(conn_strip, self.conn_panel)
+    self.conn_strip = conn_strip
+
+    self.conn_title = label(vmath.vector3(0, 152, 0), "RECONNECTING", 26, C_T_TEAL, gui.PIVOT_CENTER, "subtitle2")
     gui.set_parent(self.conn_title, self.conn_panel)
-    self.conn_sub = label(vmath.vector3(0, 8, 0), "", 16, vmath.vector4(0.70, 0.74, 0.80, 1.0), gui.PIVOT_CENTER, "body")
-    gui.set_parent(self.conn_sub, self.conn_panel)
-    self.conn_count = label(vmath.vector3(0, -44, 0), "", 34, C_WHITE, gui.PIVOT_CENTER, "helvetica_bold")
+
+    -- The ring: a dim static track (the full circle, always visible) with a
+    -- live fill pie on top that shrinks from a full circle to nothing as the
+    -- grace period runs out — same gui.new_pie_node/set_fill_angle mechanism
+    -- as hud_ui.lua's own turn timer, rotated the same way so both start
+    -- draining from 12 o'clock.
+    local ring_y = 8
+    self.conn_ring_track = gui.new_pie_node(vmath.vector3(0, ring_y, 0), vmath.vector3(CONN_RING_RADIUS * 2, CONN_RING_RADIUS * 2, 0))
+    gui.set_rotation(self.conn_ring_track, vmath.vector3(0, 0, 90))
+    gui.set_color(self.conn_ring_track, CONN_RING_TRACK)
+    gui.set_parent(self.conn_ring_track, self.conn_panel)
+
+    self.conn_ring_fill = gui.new_pie_node(vmath.vector3(0, ring_y, 0), vmath.vector3(CONN_RING_RADIUS * 2, CONN_RING_RADIUS * 2, 0))
+    gui.set_rotation(self.conn_ring_fill, vmath.vector3(0, 0, 90))
+    gui.set_color(self.conn_ring_fill, C_T_TEAL_RING)
+    gui.set_parent(self.conn_ring_fill, self.conn_panel)
+
+    -- The countdown itself, big enough to read at a glance, sitting inside
+    -- the ring.
+    self.conn_count = label(vmath.vector3(0, ring_y, 0), "", 72, C_WHITE, gui.PIVOT_CENTER, "helvetica_bold")
     gui.set_parent(self.conn_count, self.conn_panel)
+
+    self.conn_sub = label(vmath.vector3(0, -152, 0), "", 16, vmath.vector4(0.70, 0.74, 0.80, 1.0), gui.PIVOT_CENTER, "body")
+    gui.set_parent(self.conn_sub, self.conn_panel)
     gui.set_enabled(self.conn_scrim, false)
 
     -- AI Banner: the ONLY AI notice left. Persistent AI takeover of a
@@ -203,23 +238,36 @@ function M.set_conn_overlay(self, opts)
     if opts and opts.show then
         gui.set_enabled(self.conn_scrim, true)
         gui.set_text(self.conn_title, opts.title or "RECONNECTING")
-        gui.set_color(self.conn_title, opts.danger and C_T_RED or vmath.vector4(0.0, 0.722, 0.831, 1.0))
+        gui.set_color(self.conn_title, opts.danger and C_T_RED or C_T_TEAL)
+        if self.conn_strip then gui.set_color(self.conn_strip, opts.danger and C_T_RED or C_T_TEAL) end
         gui.set_text(self.conn_sub, opts.subtitle or "")
         local grace = tonumber(opts.grace) or 0
         if grace > 0 then
             self.conn_deadline = socket.gettime() + grace
+            self.conn_grace_total = grace
             self.conn_count_active = true
             gui.set_enabled(self.conn_count, true)
             gui.set_text(self.conn_count, string.format("%ds", math.ceil(grace)))
-            -- Countdown itself carries the urgency, not just the title: white
+            -- Countdown itself carries the urgency, not just the title: teal
             -- until the last 10s, then red — same treatment as matatu-gdt's
             -- PlayerDisconnectedModal, which reads clearly as "running out"
-            -- rather than a plain number nobody's watching.
-            gui.set_color(self.conn_count, grace <= 10 and C_T_RED or vmath.vector4(1, 1, 1, 1))
+            -- rather than a plain number nobody's watching. The ring mirrors
+            -- it exactly, full circle draining to nothing as time runs out —
+            -- same gui.set_fill_angle mechanism as hud_ui.lua's turn timer.
+            local urgent = grace <= 10
+            gui.set_color(self.conn_count, urgent and C_T_RED or C_WHITE)
+            if self.conn_ring_track then gui.set_enabled(self.conn_ring_track, true) end
+            if self.conn_ring_fill then
+                gui.set_enabled(self.conn_ring_fill, true)
+                gui.set_fill_angle(self.conn_ring_fill, 360)
+                gui.set_color(self.conn_ring_fill, urgent and C_T_RED_RING or C_T_TEAL_RING)
+            end
         else
             self.conn_count_active = false
             gui.set_enabled(self.conn_count, false)
             gui.set_text(self.conn_count, "")
+            if self.conn_ring_track then gui.set_enabled(self.conn_ring_track, false) end
+            if self.conn_ring_fill then gui.set_enabled(self.conn_ring_fill, false) end
         end
         -- Claim the "network" modal slot so app.input_blocked() (checked first
         -- thing in game.script's on_input) swallows board taps for us — the
@@ -300,8 +348,16 @@ function M.update(self, dt)
         -- Flip to red once the countdown itself is inside the last 10s, not
         -- just at the moment it was first shown — set_conn_overlay's own
         -- coloring only ever ran once, at the start, so a grace period that
-        -- began above 10s stayed white the whole way down to zero.
-        gui.set_color(self.conn_count, secs <= 10 and C_T_RED or vmath.vector4(1, 1, 1, 1))
+        -- began above 10s stayed white the whole way down to zero. The ring
+        -- gets the same treatment, and drains in step with the number —
+        -- both read off the same `left`/total, so they can never disagree.
+        local urgent = secs <= 10
+        gui.set_color(self.conn_count, urgent and C_T_RED or C_WHITE)
+        local total = self.conn_grace_total or 0
+        if self.conn_ring_fill and total > 0 then
+            gui.set_fill_angle(self.conn_ring_fill, math.max(0, left / total) * 360)
+            gui.set_color(self.conn_ring_fill, urgent and C_T_RED_RING or C_T_TEAL_RING)
+        end
         if left <= 0 then self.conn_count_active = false end
     end
 end
