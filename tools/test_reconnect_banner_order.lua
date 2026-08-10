@@ -1,8 +1,9 @@
--- A RECONNECT DESERVES THE SAME RESYNC AN ORDINARY MOVE GETS.
+-- A RECONNECT DESERVES THE SAME RESYNC AN ORDINARY MOVE GETS —
+-- BUT DISMISSING THE BANNER IS NOT PART OF THAT RESYNC.
 --
 --   Run: lua tools/test_reconnect_banner_order.lua
 --
--- Reported, in two parts that turned out to be one bug:
+-- Reported, in three parts that turned out to be two bugs:
 --
 --   1. A card played right before a disconnect (or the opponent's, or a
 --      partial penalty draw) went missing from BOTH the hand and the played
@@ -12,9 +13,17 @@
 --   2. The "OPPONENT DISCONNECTED" banner closed before the board had
 --      actually caught up, so the timer/turn indicator visibly jumped a
 --      moment later with nothing on screen to explain why.
+--   3. The banner sometimes never closed at all: ordinary MOVE messages
+--      (an AI takeover playing out the disconnected opponent's turns) kept
+--      landing and visibly updating the board while the banner just sat
+--      there. Root cause: ws_player_rc only closed the banner from INSIDE
+--      full_resync's own completion callback, and a resync that got
+--      coalesced behind another one already in flight (see full_resync's
+--      _resyncing/_pending_resync guard below) or simply ran long left
+--      nothing to ever call that callback in good time.
 --
--- Root cause for both: ws_player_rc and ws_net_up (main/game.script) — the
--- two live in-app reconnect paths (the opponent coming back, and THIS
+-- Root cause for (1) and (2): ws_player_rc and ws_net_up (main/game.script)
+-- — the two live in-app reconnect paths (the opponent coming back, and THIS
 -- client's own socket coming back) — only ever called OnlineHandler.
 -- sync_timers, which touches nothing but currentTurn/turnExpiresAt/
 -- activePenaltyCount/chosenSuit/pendingMarketDraw on self.game_state. It
@@ -28,10 +37,17 @@
 -- the same machinery, not a smaller one.
 --
 -- Fixed by exposing that same sequence as OnlineHandler.full_resync and
--- having both reconnect paths call it instead of sync_timers directly, with
--- the banner closing only in ITS completion callback — not synchronously
--- assumed-instant, since a reshuffle or a hand catch-up inside it can take
--- over a second.
+-- having both reconnect paths call it instead of sync_timers directly.
+--
+-- Fixed for (3) by splitting ws_player_rc's banner close OUT of
+-- full_resync's completion callback entirely: dismissing a dialog touches
+-- no game state whatsoever, so it now fires synchronously the instant
+-- PLAYER_RECONNECTED arrives, unconditionally — not waiting on (or able to
+-- be starved by) the board reconciliation. Only retry_unconfirmed_move
+-- genuinely needs the fresh currentTurn full_resync produces, so only that
+-- stays inside the callback. ws_net_up (this client's OWN reconnect) is
+-- untouched — its banner close still waits for full_resync, exactly as
+-- before.
 
 local dir = debug.getinfo(1, "S").source:match("@(.*/)") or "./"
 local function slurp(rel)
@@ -59,9 +75,12 @@ local function branch_of(code, name, start_from)
     return code:sub(s, e and (e - 1) or nil), s
 end
 
-local function check_reconnect_branch(name)
+local function check_reconnect_branch(name, opts)
+    opts = opts or {}
     print("")
-    print(name .. ": FULL RESYNC, BANNER CLOSES ONLY WHEN IT COMPLETES")
+    print(name .. (opts.close_immediately
+        and ": BANNER CLOSES IMMEDIATELY, RESYNC RUNS SEPARATELY"
+        or ": FULL RESYNC, BANNER CLOSES ONLY WHEN IT COMPLETES"))
 
     local branch = branch_of(game_code, name)
     check(name .. " branch exists", branch ~= nil,
@@ -79,20 +98,34 @@ local function check_reconnect_branch(name)
     check("closes the banner somewhere in this branch", close_pos ~= nil)
 
     if resync_pos and close_pos then
-        check("the close sits INSIDE full_resync's completion callback, not before the call",
-            close_pos > resync_pos,
-            string.format("resync call at %d, close at %d", resync_pos, close_pos))
+        if opts.close_immediately then
+            check("the close sits BEFORE full_resync is even called, not inside its completion callback",
+                close_pos < resync_pos,
+                string.format("resync call at %d, close at %d", resync_pos, close_pos))
+        else
+            check("the close sits INSIDE full_resync's completion callback, not before the call",
+                close_pos > resync_pos,
+                string.format("resync call at %d, close at %d", resync_pos, close_pos))
+        end
     end
 
+    local online_gate_pos = branch:find("if self%.online_mode and not self%.game_over then")
     check("gated on online_mode and the game not already being over",
-        branch:find("if self%.online_mode and not self%.game_over then") ~= nil,
+        online_gate_pos ~= nil,
         "resyncing on a message that arrives after the round ended would touch a dead board")
-    check("still closes the banner on the ELSE path (offline mode / game already over)",
-        branch:match("else%s*\n%s*notify_gui%(self%.gui_hud, \"conn_overlay\", { show = false }%)") ~= nil,
-        "a banner that only closes through full_resync's callback would never close at all outside online play")
+
+    if opts.close_immediately then
+        check("closes the banner UNCONDITIONALLY — not itself gated on online_mode/game_over",
+            close_pos ~= nil and online_gate_pos ~= nil and close_pos < online_gate_pos,
+            "a close that only ran inside the same online_mode/game_over gate as the resync could be left stuck open by exactly the condition that was supposed to make it a no-op")
+    else
+        check("still closes the banner on the ELSE path (offline mode / game already over)",
+            branch:match("else%s*\n%s*notify_gui%(self%.gui_hud, \"conn_overlay\", { show = false }%)") ~= nil,
+            "a banner that only closes through full_resync's callback would never close at all outside online play")
+    end
 end
 
-check_reconnect_branch("ws_player_rc")
+check_reconnect_branch("ws_player_rc", { close_immediately = true })
 check_reconnect_branch("ws_net_up")
 
 -- The mirror image, for contrast: the OPEN call (ws_player_dc, the opponent

@@ -1612,10 +1612,26 @@ function on_message(self, message_id, message, sender)
         end
 
     elseif message_id == hash("ws_player_rc") then
-        -- Opponent reconnected. Prefer the fresh state PLAYER_RECONNECTED
-        -- carried, falling back to whatever ws.active_game_state was last
-        -- updated to (IDENTIFY/GAME_STATE_SYNC) — self.game_state is
-        -- whatever we last had BEFORE the disconnect.
+        -- Opponent reconnected. Dismiss the "OPPONENT DISCONNECTED" banner
+        -- RIGHT HERE, synchronously — not from full_resync's completion
+        -- callback below. It used to wait there, tying "the dialog closes"
+        -- to "the whole board reconciliation finished": a resync that got
+        -- coalesced behind another one already in flight (see full_resync's
+        -- _resyncing/_pending_resync guard) or simply ran long (a
+        -- reshuffle/hand catch-up inside it can take over a second) left the
+        -- banner up indefinitely while ordinary MOVE messages kept landing
+        -- and visibly updating the board underneath it — reported as "the
+        -- move happens in the background but the dialog never closes".
+        -- Dismissing the banner touches no game state at all; only
+        -- retry_unconfirmed_move below genuinely needs the fresh
+        -- currentTurn full_resync produces, so only that stays gated on it.
+        self._opp_dc_grace_active = false
+        notify_gui(self.gui_hud, "conn_overlay", { show = false })
+
+        -- Prefer the fresh state PLAYER_RECONNECTED carried, falling back to
+        -- whatever ws.active_game_state was last updated to (IDENTIFY/
+        -- GAME_STATE_SYNC) — self.game_state is whatever we last had BEFORE
+        -- the disconnect.
         --
         -- FULL resync, not just the turn timer. This used to call only
         -- OnlineHandler.sync_timers, which touches nothing but
@@ -1631,17 +1647,12 @@ function on_message(self, message_id, message, sender)
         -- missing from both hand and the played pile, only to reappear
         -- (visually drawn from the deck) once the next move finally forced
         -- a full sync. full_resync runs the same catch-up an ordinary move
-        -- already gets (finalize_state_sync + sync_my_hand), and the banner
-        -- closes only once it completes — not before, and not synchronously
-        -- assumed-instant, since a reshuffle/hand catch-up inside it can
-        -- take over a second.
-        self._opp_dc_grace_active = false
+        -- already gets (finalize_state_sync + sync_my_hand).
         if self.online_mode and not self.game_over then
             local fresh = (type(message.state) == "table" and next(message.state) ~= nil and message.state)
                 or (type(ws.active_game_state) == "table" and next(ws.active_game_state) ~= nil and ws.active_game_state)
             if fresh then self.game_state = fresh end
             OnlineHandler.full_resync(self, self.game_state or {}, function()
-                notify_gui(self.gui_hud, "conn_overlay", { show = false })
                 -- PLAYER_RECONNECTED is broadcast to the whole game — this
                 -- client's own reconnect fires it too (see be_matatu's
                 -- handleReconnection), so this is exactly the moment to
@@ -1650,8 +1661,6 @@ function on_message(self, message_id, message, sender)
                 -- it on.
                 OnlineHandler.retry_unconfirmed_move(self)
             end)
-        else
-            notify_gui(self.gui_hud, "conn_overlay", { show = false })
         end
 
     elseif message_id == hash("ws_ai_played") then
