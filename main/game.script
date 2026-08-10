@@ -188,7 +188,8 @@ function init(self)
     self.hand_score       = function(hand) return RE.hand_score(hand) end
 
     self.position_hands   = function(animate) BL.position_hands(self, animate) end
-    
+    self.set_deck_pulse   = function(active) BL.set_deck_pulse(self, active) end
+
     self.animate_to_pile = function(rec, is_player, on_done)
         self._gs_anim_locks = self._gs_anim_locks + 1
         CV.animate_to_pile(self, rec, is_player, function(...)

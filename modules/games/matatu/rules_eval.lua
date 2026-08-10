@@ -109,7 +109,27 @@ end
 
 -- Validation is internal only; no visual tinting of cards. Kept as a hook so
 -- callers (and online_handler) can fire it after any state change.
+--
+-- Also where the deck's "you have to draw" pulse lives: this already runs
+-- after every state change that could change the answer (a reconnect's
+-- full_resync, an opponent's move, a draw or play settling, a fresh turn
+-- starting) — see board_layout.lua's set_deck_pulse for the animation
+-- itself. Reported specifically on reconnect: a player back from a
+-- disconnect with an active penalty and nothing in hand that answers it had
+-- no cue at all that the deck was their only legal move — this covers that
+-- exact moment for free, since full_resync's own completion already calls
+-- through here, and keeps working for the same situation reached any other
+-- way (nothing about "must draw with no counter" is unique to reconnecting).
 function M.pre_validate_hand(self)
+    if not self.set_deck_pulse then return end
+    if not self.online_mode or self.game_over then
+        self.set_deck_pulse(false)
+        return
+    end
+    local should_pulse = self.is_player_turn()
+        and M.get_active_penalty(self) > 0
+        and not M.has_playable(self, self.player_hand)
+    self.set_deck_pulse(should_pulse)
 end
 
 function M.has_playable(self, hand)
