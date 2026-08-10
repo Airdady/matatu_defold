@@ -608,7 +608,7 @@ local function rebuild_body(self)
     -- (LEFT_TEXT_X), faded to 40% opacity so it reads as a watermark. The
     -- solid black side bar that used to back it at the extreme left edge was
     -- removed along with the old placement.
-    local vtitle = track(self, ui.text(vmath.vector3(LEFT_TEXT_X, CY, 0), (t.name or "Global Championship"):upper(), "title", vmath.vector4(1, 1, 1, 0.4)))
+    local vtitle = track(self, ui.text(vmath.vector3(LEFT_TEXT_X, CY, 0), (t.name or "Global Championship"):upper(), "title", vmath.vector4(1, 1, 1, 0.4), 0.6))
     gui.set_rotation(vtitle, vmath.quat_rotation_z(math.pi / 2))
 
     -- ── LEFT-ALIGNED TOURNAMENT INFO (Timer, Description, Progress Note) ──
