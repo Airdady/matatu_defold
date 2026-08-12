@@ -882,6 +882,43 @@ local function start_new_online_game(self, state, is_explicit_start_event)
     end
     
     local new_id = tostring(state.id or state.gameId or "")
+
+    -- A DIFFERENT GAME ID WHILE THIS ONE IS STILL BEING PLAYED MEANS THE ROUND
+    -- IS OVER AND THE SERVER HAS MOVED ON — even though GAME_OVER has not
+    -- reached us yet.
+    --
+    -- This is the ordering hole the round_transition_busy check above cannot
+    -- see. endGame arranges the continuation at endGame.ts:418 and does not
+    -- broadcast GAME_OVER until ~:980, several hundred lines of awaited work
+    -- later — so the next round's START routinely arrives FIRST. At that moment
+    -- nothing has told this client the round ended, round_transition_busy is
+    -- still false, and the build ran immediately. The reveal and the count then
+    -- arrived afterwards, onto a board that had already been re-dealt.
+    --
+    -- Worse, it reached the "clearing stale pending_game_over_data" path below,
+    -- which is how a round could end with no flip and no count at all.
+    --
+    -- Nothing else produces this shape. The server refuses a player a second
+    -- game while they are in one (isPlayerInActiveGame), so a new id arriving
+    -- mid-game is a round continuation and nothing else. Treat its arrival as
+    -- the start of the transition — that is exactly what it is — and hold it
+    -- until the ending has played out in order: reveal, count, banner, then
+    -- this.
+    --
+    -- Liveness is judged on the BOARD, not on online_game_id alone: that id is
+    -- only ever cleared by ws_resync, so it outlives a game the player has left
+    -- and would otherwise park the first round of their next one for 12s.
+    local has_live_board = #(self.player_hand or {}) > 0 or #(self.ai_hand or {}) > 0
+    if new_id ~= "" and has_live_board and not self.game_over
+        and self.online_game_id ~= "" and new_id ~= tostring(self.online_game_id) then
+        print("[DEBUG] start_new_online_game deferred: next round arrived before GAME_OVER")
+        ws.active_game_state = state
+        self._pending_next_state = state
+        self.round_transition_busy = true
+        self._pending_next_deadline = socket.gettime() + 12.0
+        return
+    end
+
     if new_id ~= "" and new_id == tostring(self.online_game_id) and not self.game_over then
         print("[DEBUG] Aborting start_new_online_game: ID matching in-progress game.")
         -- If this is the START event hitting an already-dealt board, unlock it!
