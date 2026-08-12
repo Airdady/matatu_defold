@@ -1243,12 +1243,16 @@ function on_message(self, message_id, message, sender)
         -- self.game_state is whatever we last had BEFORE the disconnect, so its
         -- turnExpiresAt is already in the past — sync_timers would clamp the
         -- remaining time to 0 and the pie would come back enabled but empty
-        -- (invisible) instead of showing whose turn it actually is. Prefer the
-        -- fresh state PLAYER_RECONNECTED carried, falling back to whatever
-        -- ws.active_game_state was last updated to (IDENTIFY/GAME_STATE_SYNC).
+        -- (invisible) instead of showing whose turn it actually is.
+        --
+        -- Read from ws.active_game_state rather than off this message.
+        -- websocket_manager parks the state there before emitting, and a
+        -- gameState cannot travel through msg.post anyway — it overflows the
+        -- serialisation buffer and throws inside the ws listener, which is what
+        -- used to stop this whole handler from ever running.
         if self.online_mode and not self.game_over then
-            local fresh = (type(message.state) == "table" and next(message.state) ~= nil and message.state)
-                or (type(ws.active_game_state) == "table" and next(ws.active_game_state) ~= nil and ws.active_game_state)
+            local fresh = (type(ws.active_game_state) == "table"
+                and next(ws.active_game_state) ~= nil and ws.active_game_state)
             if fresh then self.game_state = fresh end
             OnlineHandler.sync_timers(self, self.game_state or {})
         end
