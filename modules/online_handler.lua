@@ -4,6 +4,7 @@ local CV = require "modules.card_view"
 local GameMode = require "modules.game_mode"
 local BL = require "modules.board_layout"
 local config = require "modules.config"
+local app = require "modules.app_state"
 
 local GUI_HUD   = "#game"
 local GUI_SUIT  = "#suit_select"
@@ -972,6 +973,27 @@ function M.start_game(self, state)
     self.is_waiting_for_server_response = false
     self._online_reshuffling = false
     self._await_start = false
+
+    -- THE MATCH'S THEME, NOT EITHER PLAYER'S OWN.
+    --
+    -- The server has already decided which of the two players' active themes is
+    -- worth showing off — cardUtils.ts's selectWinningTheme, higher price wins —
+    -- and puts the answer on the state. Both clients apply that SAME one here
+    -- instead of each rendering its own local pick, so the two people are
+    -- looking at the same board. Whoever owns the better theme is the one
+    -- everybody sees.
+    --
+    -- Runs on EVERY start_game, not just the first, so a new round of a series
+    -- re-applies it rather than drifting back to the local default partway
+    -- through a best-of-three.
+    --
+    -- Overriding the single shared app_state.theme is enough to cover both
+    -- render sites (card_defs.back_frame and card.script's card_set) because
+    -- both call app_state.get_theme() fresh rather than caching it. Restored to
+    -- the player's own theme on leaving the game screen — game.script's
+    -- "disable" handler.
+    local match_theme = state and (state.theme or (type(state.activeTheme) == "table" and state.activeTheme.id))
+    app.theme = (type(match_theme) == "string" and match_theme ~= "") and match_theme or "default"
 
     M.setup_ws_listeners(self)
 
