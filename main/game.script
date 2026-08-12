@@ -1203,6 +1203,32 @@ function on_message(self, message_id, message, sender)
                 subtitle = name .. " lost connection — waiting for them to return…",
                 grace = grace,
             })
+
+            -- NEVER LET THIS DIALOG OUTLIVE THE GRACE IT IS COUNTING DOWN.
+            --
+            -- Dismissal otherwise depends entirely on a PLAYER_RECONNECTED (or
+            -- a game over) actually arriving. If one is dropped — the very
+            -- network trouble this dialog is about makes that the likeliest
+            -- moment for it — the countdown reaches zero and the scrim just
+            -- stays, swallowing every tap for the rest of the game. The
+            -- overlay's own update() stops the counter at 0 but leaves the
+            -- scrim enabled, so nothing else would ever take it down.
+            --
+            -- By the time the grace has elapsed the server has resolved this
+            -- one way or the other: the game is over on timeout, or they are
+            -- back. Either way there is nothing left to wait for, so drop it.
+            -- The small margin lets a reconnect landing right on the boundary
+            -- win normally.
+            local waiting_for = self._dc_waiting_for
+            local seq = self._seq
+            timer.delay(grace + 2.0, false, function()
+                if seq ~= self._seq then return end
+                -- Only clear the wait we started: a newer disconnect has its
+                -- own timer and its own countdown to run.
+                if self._dc_waiting_for ~= waiting_for then return end
+                self._dc_waiting_for = nil
+                notify_gui(self.gui_hud, "conn_overlay", { show = false })
+            end)
         end
 
     elseif message_id == hash("ws_player_rc") then
