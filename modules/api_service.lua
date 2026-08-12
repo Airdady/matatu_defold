@@ -103,21 +103,6 @@ local function build_headers()
     return h
 end
 
--- Called with the server's UPDATE_REQUIRED payload the first time any request
--- is refused for being out of date. Set by controller.script; parked here so
--- the check can live in parse_response, which EVERY endpoint funnels through —
--- a per-caller check would only cover the endpoints someone remembered.
-M.on_update_required = nil
-local _update_notified = false
-
-local function notify_update_required(data)
-    if _update_notified then return end   -- one screen, not one per request
-    _update_notified = true
-    if M.on_update_required then
-        pcall(M.on_update_required, type(data) == "table" and data or {})
-    end
-end
-
 local function parse_response(response)
     if not response then
         return {
@@ -131,15 +116,7 @@ local function parse_response(response)
     local data = json_util.decode(response.response or "") or {}
     local success = code >= 200 and code < 300
     local message = "Success"
-    if code == 426 then
-        -- 426 UPGRADE REQUIRED: this build is below the server's minimum and
-        -- nothing it asks for will be answered. Raise the blocking update
-        -- screen rather than letting the caller render this as an ordinary
-        -- failure — the player cannot retry their way out of it.
-        message = (type(data) == "table" and data.message)
-            or "A new version is required to keep playing."
-        notify_update_required(data)
-    elseif code == 304 then
+    if code == 304 then
         -- 304 carries NO body, so `data` is empty. Every caller reads fields
         -- off data — ownerId, players, balance — and an empty table looks
         -- exactly like a legitimate "you are not the owner" or "this bracket

@@ -18,7 +18,6 @@
 -- accepted must not cover it.
 
 local ws        = require("modules.websocket_manager")
-local api       = require("modules.api_service")
 local config    = require("modules.config")
 local F         = require("modules.fonts")
 local app_state = require("modules.app_state")
@@ -135,20 +134,18 @@ function init(self)
 
     local ME = msg.url("#")
 
-    -- Two independent ways in, because the two transports fail independently:
-    -- a player sitting in the lobby may only ever touch REST, and one mid-game
-    -- may only ever touch the socket.
+    -- The ONLY way in now: the server only ever gates the WebSocket
+    -- connection (connect-time and IDENTIFY — see be_matatu's wsHandler.ts
+    -- / handleIdentify.ts). REST requests are no longer version-gated, so
+    -- there is no longer a second, REST-triggered path into this screen —
+    -- api_service.lua's parse_response has nothing to raise it from.
     self._token = ws.on("update_required", function(d)
         msg.post(ME, "show_update", d or {})
     end)
-    api.on_update_required = function(d)
-        msg.post(ME, "show_update", d or {})
-    end
 end
 
 function final(self)
     if self._token then ws.off(self._token) end
-    api.on_update_required = nil
 end
 
 function on_message(self, message_id, message)
