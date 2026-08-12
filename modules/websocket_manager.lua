@@ -489,24 +489,24 @@ local function parse_message(json_string)
   local t = message.type or ""
   local d = message.data or {}
 
-  -- CONFIRM RECEIPT OF A MISSED-MOVE CATCH-UP.
+  -- CONFIRM RECEIPT — of a reconnect catch-up OR an ordinary LIVE move.
   --
-  -- be_matatu's handleIdentify.ts tags every message it replays after a
-  -- reconnect with `_replayId` (see moves/index.ts's missed-move queue and
-  -- handleIdentify.ts's pendingMissedMoveReplays) specifically so it can
-  -- tell "the frame was accepted by the socket" apart from "the client
-  -- actually received and processed it" — a socket that closes moments
-  -- after a successful ws.send() looks identical to a working one from the
-  -- server's side. This ack is what lets the server stop holding this
-  -- replay as in-flight and, if it never arrives, requeue it for the next
-  -- reconnect instead of treating a silently-lost delivery as done.
-  --
-  -- Checked once here rather than per message type below: `_replayId` can
-  -- ride on MOVE or AI_PLAYED_ON_YOUR_BEHALF today and possibly other
-  -- replayed types later, and every one of them needs the exact same ack —
-  -- there is nothing type-specific about confirming delivery.
-  if d._replayId and d._replayId ~= "" then
-    M.send_message("MISSED_MOVE_ACK", { replayId = d._replayId })
+  -- be_matatu tags a message `_replayId` when it's a reconnect catch-up
+  -- (handleIdentify.ts's pendingMissedMoveReplays — see the RESHUFFLING/MOVE
+  -- branch below, which skips the action-replay pipeline for these) and
+  -- `_ackId` when it's an ordinary live send the server wants confirmed
+  -- (moves/index.ts's pendingLiveMoveAcks — sent because readyState OPEN and
+  -- a successful ws.send() are not proof the other end actually got it; a
+  -- connection that went dark without an explicit close looks identical to
+  -- a healthy one until the ping/pong watchdog notices, several seconds
+  -- later). Both get the exact same ack — the server checks the id against
+  -- whichever of its two registries is holding it — the only difference is
+  -- what the CLIENT does with the rest of the message: a live move still
+  -- runs its normal animation below, a catch-up does not.
+  local ack_id = (d._replayId and d._replayId ~= "" and d._replayId)
+    or (d._ackId and d._ackId ~= "" and d._ackId)
+  if ack_id then
+    M.send_message("MISSED_MOVE_ACK", { replayId = ack_id })
   end
 
   emit("message", t, d)
