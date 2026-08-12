@@ -690,7 +690,15 @@ function on_input(self, action_id, action)
 
     if #self.deck > 0 then
         local deck_top = self.deck[#self.deck]
-        local p = go.get_position(deck_top.id)
+        -- deck_top can be a RECORD whose game object has already been
+        -- deleted (a stale card that slipped into self.deck instead of
+        -- being filtered out during a reshuffle merge) — go.get_position on
+        -- a deleted id raises "Instance (null) not found", which hit every
+        -- tap on the deck once such a card reached the top: an error
+        -- spamming the log on every draw attempt until the app was
+        -- restarted. Falls back to the deck's own fixed slot.
+        local ok, p = pcall(go.get_position, deck_top.id)
+        if not ok then p = self.DECK_POS end
         if math.abs(x - p.x) <= 120 and math.abs(y - p.y) <= 150 then
             if not self.is_player_turn() or self.waiting or self.is_local_action_locked or self.is_suit_selection_active then
                 return true
