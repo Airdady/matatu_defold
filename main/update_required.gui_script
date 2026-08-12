@@ -54,12 +54,7 @@ end
 -- and matatu_nap pointing at their own listings without a second code path.
 local function store_url(self)
     if self.store_url and self.store_url ~= "" then return self.store_url end
-    local pkg = ""
-    local ok, v = pcall(function()
-        if sys.get_config_string then return sys.get_config_string("android.package", "") end
-        return sys.get_config("android.package")
-    end)
-    if ok and v then pkg = v end
+    local pkg = config.APP_PACKAGE or ""
     if pkg == "" then return "https://play.google.com/store" end
     return "https://play.google.com/store/apps/details?id=" .. pkg
 end

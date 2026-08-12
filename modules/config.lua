@@ -60,6 +60,17 @@ do
     if v ~= "" then M.APP_VERSION = v end
     local b = tonumber(cfg("android.version_code"))
     if b and b > 0 then M.APP_BUILD = b end
+
+    -- The one signal that actually tells matatu's two shipped packages
+    -- apart (com.matatu.champ "Matatu Champion" vs com.matatu.nap "Matatu
+    -- League") — see be_matatu's appVersion.ts resolveMatatuVariant. A
+    -- version NUMBER was tried first and it broke the first time a real
+    -- build's version didn't fall on the guessed side of the boundary; the
+    -- package name is fixed at build time and cannot drift the way a
+    -- number can. Read the same way update_required.gui_script's
+    -- store_url() already reads it, so there is exactly one way this
+    -- lookup happens in the whole client.
+    M.APP_PACKAGE = cfg("android.package")
 end
 -- ---------------------------------------------------------------------------
 -- GOOGLE PLAY IN-APP UPDATE CHECK
