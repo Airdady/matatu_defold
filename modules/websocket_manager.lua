@@ -304,6 +304,12 @@ function M.identify(id, username, stake, country)
     stake = stake or { amount = 0, charge = 0 },
     country = country or "",
     appVersion = config.APP_VERSION,
+    -- Alongside appVersion so the server's version gate always has the real
+    -- Android versionCode too, not just the display name — it already gets
+    -- this at connect time via the socket URL's `b` param, but IDENTIFY is
+    -- what actually gets stored on the account (see handleIdentify.ts), and
+    -- the two are sent at different moments.
+    appBuild = config.APP_BUILD or 0,
     fcmToken = (fcm_token and fcm_token ~= "") and fcm_token or nil,
   }
   print(string.format("[WS-DEBUG] identify() called: id=%s socket_connected=%s (%s)",

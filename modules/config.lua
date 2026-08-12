@@ -62,6 +62,38 @@ do
     if b and b > 0 then M.APP_BUILD = b end
 end
 -- ---------------------------------------------------------------------------
+-- GOOGLE PLAY IN-APP UPDATE CHECK
+-- ---------------------------------------------------------------------------
+-- Asks Play whether a newer build exists (gameservices.check_update(), see
+-- gameservices/src/InAppUpdateDefold.java). The native side drives Play's own
+-- IMMEDIATE/FLEXIBLE update UI itself the moment it finds one — nothing here
+-- waits on or acts on a result. This is the "good path" that
+-- update_required.gui_script's hard block sits underneath as a floor: Play's
+-- rollout/eligibility rules mean this check can silently report nothing even
+-- on a genuinely out-of-date install, so it is a chance to update in place,
+-- not a substitute for that server-side floor.
+--
+-- Android only — the extension is compiled out everywhere else, so
+-- `gameservices` is simply absent there — and pcall'd defensively, same as
+-- everything else in this module: a boot dependency must never abort because
+-- a native extension didn't load.
+--
+-- Deduped per process: called again from a second lobby screen this same
+-- session, it must not re-fire the Play round trip (and, worse, walk the
+-- player through the update UI a second time) for a check that already ran.
+local play_update_checked = false
+function M.check_play_update()
+    if play_update_checked then return end
+    if sys.get_sys_info().system_name ~= "Android" then return end
+    play_update_checked = true
+    pcall(function()
+        if gameservices and gameservices.check_update then
+            gameservices.check_update()
+        end
+    end)
+end
+
+-- ---------------------------------------------------------------------------
 -- SUPPORT CONTACT
 -- ---------------------------------------------------------------------------
 -- WhatsApp, not email. Players here reach support on WhatsApp; a mailto: link

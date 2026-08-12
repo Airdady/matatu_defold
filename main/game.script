@@ -373,6 +373,39 @@ function update(self, dt)
                 self.waiting = false
                 RE.pre_validate_hand(self)
             end
+
+            -- THE ONE PER-TURN LOCK THAT HAD NO WATCHDOG AT ALL.
+            --
+            -- player_has_drawn means "this player has already drawn during
+            -- THIS turn". Every other lock here (waiting above, is_animating
+            -- and is_local_action_locked below) gets a frame-independent
+            -- watchdog; this one's only reset was the false->true edge of
+            -- now_my_turn further down update(). An edge is sampled once a
+            -- frame, and two state updates — the opponent's play (which can
+            -- itself trigger a reshuffle: game_flow.lua's reshuffle_deck runs
+            -- ~1.3s of settling once the deck empties) and the turn coming
+            -- back to us — can land in the SAME frame when that settle
+            -- resolves synchronously. When that happens the intermediate "not
+            -- my turn" is never observed, the edge never fires, and the flag
+            -- survives from the previous turn.
+            --
+            -- Ordinarily that costs nothing: the player can still play a
+            -- card. With a PENALTY pending — exactly what a reshuffle-forcing
+            -- draw leaves behind — drawing is the only legal move there is,
+            -- so a stale flag refuses every tap and the whole hand reads as
+            -- "disabled", right after the reshuffle that triggered it.
+            --
+            -- Safe to clear here precisely because of what this block already
+            -- guarantees: it is our turn, nothing is processing, the queue is
+            -- empty and nothing is awaited from the server. A draw actually in
+            -- flight (is_animating or is_local_action_locked) fails every one
+            -- of those, so a flag still set in this state can only describe a
+            -- draw that already finished — i.e. a previous turn's.
+            if self.player_has_drawn and not self.is_animating and not self.is_local_action_locked then
+                print("[DEBUG] Watchdog clearing stale player_has_drawn (previous turn's draw)")
+                self.player_has_drawn = false
+                RE.pre_validate_hand(self)
+            end
         end
 
         if self.is_player_turn() and not self.is_processing_move and #self.move_queue == 0 and self.is_animating then

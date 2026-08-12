@@ -13,6 +13,7 @@ local akira       = require("modules.akira")
 local GameMode    = require("modules.game_mode")
 local api         = require("modules.api_service")
 local toast       = require("modules.toast")
+local config      = require("modules.config")
 
 -- ---------------------------------------------------------------------------
 -- Shared lobby components. The look, the drawing primitives, the two tile
@@ -855,6 +856,8 @@ function init(self)
 
     msg.post(".", "acquire_input_focus")
     rebuild(self)
+
+    config.check_play_update()
 end
 
 function final(self)
