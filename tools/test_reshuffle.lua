@@ -218,6 +218,54 @@ do
 end
 
 print("")
+print("AFTER A RESHUFFLE: SURVIVORS ON TOP, RECYCLED BELOW")
+-- The server's rule, from reshufflePlayedCards in handlers/moves/reshuffle.ts:
+--   newDeck = [...shuffledPlayedCards, ...currentDeck]
+-- Top of deck is the END of the array, so the cards already in the deck stay on
+-- top and the recycled pile goes underneath. The card a player is about to draw
+-- is therefore UNCHANGED by a reshuffle — which is the only reason the server
+-- can validate a DRAW that was chosen before it reshuffled.
+do
+    local deck     = { "A", "B", "C" }        -- survivors; C is the top
+    local recycled = { "x", "y", "z", "w" }   -- pile coming back
+
+    -- game_flow builds final_deck as recycled-then-survivors. It ALREADY
+    -- contains everything in deck.
+    local final_deck = {}
+    for _, c in ipairs(recycled) do final_deck[#final_deck + 1] = c end
+    for _, c in ipairs(deck)     do final_deck[#final_deck + 1] = c end
+
+    local merged = RQ.merge_deck(final_deck, deck)
+
+    check("no card is listed twice", #merged, #deck + #recycled)
+    check("the top card is untouched by the reshuffle", merged[#merged], "C")
+    check("survivors sit on top", table.concat(merged, " "), "x y z w A B C")
+
+    local seen, dupes = {}, 0
+    for _, c in ipairs(merged) do
+        if seen[c] then dupes = dupes + 1 end
+        seen[c] = true
+    end
+    -- A card object at two indices is the real damage: stamp_deck assigns
+    -- identities BY INDEX, so the later write wins for both and the earlier
+    -- position reports a card that is really elsewhere in the deck.
+    check("and no card object sits at two indices", dupes, 0)
+
+    -- Merging the other way round was the bug, twice over: it duplicated the
+    -- survivors AND put the recycled cards on top, so the very next draw named
+    -- a card the server did not have on top.
+    local wrong = RQ.merge_deck(deck, final_deck)
+    check("the reverse order would put recycled on top", wrong[#wrong], "w")
+
+    -- A card that genuinely arrived mid-animation is still not lost.
+    local straggler = { "S" }
+    for _, c in ipairs(deck) do straggler[#straggler + 1] = c end
+    local kept = RQ.merge_deck(final_deck, straggler)
+    check("a straggler is appended, not dropped", kept[#kept], "S")
+    check("and it does not duplicate anything", #kept, #deck + #recycled + 1)
+end
+
+print("")
 print("WHO MAY TAKE A CARD OUT OF THE DECK")
 -- The second "Draw mismatch" bug. A sync draw delivers cards the SERVER has
 -- already dealt, so the server's deck already excludes them and ours has just

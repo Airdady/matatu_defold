@@ -86,20 +86,44 @@ function M.finish(state)
     end
 end
 
---- Fold recycled cards into the deck instead of replacing it.
+--- Fold stragglers into a deck order without ever listing a card twice.
 --
 -- Assignment was the second half of the vanishing act: `self.deck = final_deck`
 -- discards whatever the deck holds at that instant. Serialising reshuffles means
 -- nothing should be there — but "should" is what the original code assumed too,
 -- and the cost of being wrong is cards that exist in no collection at all.
 --
--- Appends rather than prepends: the deck is drawn from the END (table.remove
--- with no index), so newly recycled cards are drawn before any stragglers, which
--- is also what a player watching the animation expects.
+-- DEDUPED, because folding two overlapping lists together is how the SAME card
+-- ends up at two indices. That is not a cosmetic double-count:
+--
+--   * #deck is inflated, so it stops matching the server's — and the server
+--     validates every DRAW against the top of its own deck.
+--   * stamp_deck assigns identities BY INDEX. One card object sitting at two
+--     indices gets written twice, and the later write wins for both, so the
+--     earlier position now reports a card that is really somewhere else.
+--     Drawing down to it produces exactly the reported failure:
+--     "Draw mismatch at index 0: Expected 13H, Got 15C".
+--
+-- Identity is the card object itself. These are the same tables throughout a
+-- round — the deck holds references, not copies — so a repeat is a genuine
+-- repeat rather than two cards that merely look alike (and Whot's five
+-- identical 20/W wildcards make value+suit useless as a key here).
+--
+-- Order: the FIRST list wins. Callers pass the authoritative order first and
+-- whatever might still be holding a straggler second, so anything already
+-- placed keeps its position and only genuinely-unaccounted cards are appended.
 function M.merge_deck(current, incoming)
-    local out = {}
-    for _, c in ipairs(current or {}) do out[#out + 1] = c end
-    for _, c in ipairs(incoming or {}) do out[#out + 1] = c end
+    local out, seen = {}, {}
+    local function add(list)
+        for _, c in ipairs(list or {}) do
+            if c ~= nil and not seen[c] then
+                seen[c] = true
+                out[#out + 1] = c
+            end
+        end
+    end
+    add(current)
+    add(incoming)
     return out
 end
 

@@ -649,12 +649,31 @@ function M.reshuffle_deck(self, done)
                     go.animate(c.id, "euler.z", go.PLAYBACK_ONCE_FORWARD, 0, go.EASING_INOUTCUBIC, 0.45)
                 end
 
-                -- MERGED, not assigned. Assignment silently discarded anything
-                -- that reached the deck during the animation; serialising
-                -- reshuffles should mean nothing does, but that is exactly what
-                -- the original code assumed, and being wrong costs cards that
-                -- then exist in no collection at all.
-                self.deck = RQ.merge_deck(self.deck, final_deck)
+                -- final_deck FIRST — it is the authoritative order, and it
+                -- ALREADY CONTAINS every card that was in self.deck.
+                --
+                -- `existing` is a copy of self.deck taken at the top of this
+                -- function and becomes final_deck's `stub`, so merging
+                -- self.deck in ahead of it listed all of those cards twice:
+                -- with 3 survivors and 4 recycled, a 7-card deck came out 10
+                -- long with 3 card objects at two indices each. stamp_deck
+                -- then assigns identities by index, the later write wins for
+                -- both positions, and the earlier one reports a card that is
+                -- really elsewhere in the deck — which is the reported
+                -- "Draw mismatch ... Expected 13H, Got 15C" appearing right
+                -- after a reshuffle. It only ever half-showed because
+                -- sync_deck_size trims the excess from the bottom, which
+                -- happens to remove exactly the duplicated block when the
+                -- client's pile matches the server's, and not otherwise.
+                --
+                -- Ordering it this way also keeps the server's own rule:
+                -- recycled cards go to the BOTTOM, the surviving deck stays on
+                -- TOP, so the card the player is about to draw is untouched by
+                -- the reshuffle (reshufflePlayedCards in
+                -- handlers/moves/reshuffle.ts does exactly the same).
+                -- self.deck is still passed, second, so a card that genuinely
+                -- arrived mid-animation is appended instead of dropped.
+                self.deck = RQ.merge_deck(final_deck, self.deck)
 
                 timer.delay(0.55, false, function()
                     if seq ~= self._seq then release(); return end
