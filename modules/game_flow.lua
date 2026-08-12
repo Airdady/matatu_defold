@@ -363,7 +363,40 @@ function M.draw_to_hand(self, hand, is_player, count, done, opts)
         if finished then return end
         if seq ~= self._seq then finish(); return end
 
-        if #self.deck == 0 then
+        local c
+
+        if not RQ.consumes_deck(is_sync, self.online_mode) then
+            -- A SYNC DRAW MUST NOT TAKE A CARD OUT OF THE DECK.
+            --
+            -- This is the second half of the "Draw mismatch" bug, and it
+            -- survived fixing the first. The cards a sync draw delivers were
+            -- ALREADY dealt server-side — sync_my_hand reads them straight out
+            -- of state.players[me].hand, do_sync's opponent catch-up out of the
+            -- opponent's handCount. The server's deck therefore already
+            -- excludes them, and sync_deck_size has just sized self.deck to
+            -- exactly that post-deal length, with stamp_deck aligning every
+            -- identity by index.
+            --
+            -- Popping here happens AFTER all of that, so it took the deck
+            -- BELOW the server's and shifted its top by however many cards the
+            -- catch-up needed. Every later draw then reported the card that
+            -- many positions down, and the server rejected it against a top it
+            -- still held:
+            --
+            --   Draw mismatch at index 0: Expected 13H, Got 15C
+            --
+            -- Both are perfectly real cards, which is what makes this look
+            -- nothing like the fabrication bug it followed. The client was not
+            -- inventing a card; it was reading the right deck at the wrong
+            -- offset.
+            --
+            -- So materialize a carrier at the top of the deck pile instead. It
+            -- flies to the hand from the same place and looks identical, the
+            -- caller stamps the server's identity onto it on arrival, and
+            -- #self.deck keeps matching the server's exactly — which is the
+            -- invariant every DRAW action is validated against.
+            c = self.spawn_card(10, "H", BL.deck_slot_pos(self, math.max(1, #self.deck)))
+        elseif #self.deck == 0 then
             -- "Is a reshuffle already running" is asked FIRST, and it is asked
             -- of the BOARD rather than of this draw.
             --
@@ -409,16 +442,7 @@ function M.draw_to_hand(self, hand, is_player, count, done, opts)
             -- which is what drives the animation online (see
             -- online_handler.finalize_state_sync).
             if self.online_mode then
-                if not is_sync then
-                    finish(); return
-                end
-                -- A sync draw is not asking the deck what card comes next —
-                -- it already knows, from the server, and stamps it on arrival.
-                -- All it needs is something to carry it, so give it one rather
-                -- than leave the hand short of cards the server has already
-                -- dealt.
-                local carrier = self.spawn_card(10, "H", BL.deck_slot_pos(self, 1))
-                table.insert(self.deck, carrier)
+                finish(); return
             elseif not RQ.can_recycle(self.played_cards) then
                 finish(); return
             else
@@ -429,7 +453,7 @@ function M.draw_to_hand(self, hand, is_player, count, done, opts)
             end
         end
 
-        local c = table.remove(self.deck)
+        if c == nil then c = table.remove(self.deck) end
 
         -- DEFENSIVE: a card whose go instance is already gone. The known
         -- cause is online_handler.lua's sync_deck_size racing this exact

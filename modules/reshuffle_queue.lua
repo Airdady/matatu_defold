@@ -113,6 +113,31 @@ function M.can_recycle(played_cards)
     return #(played_cards or {}) > 1
 end
 
+--- May this draw take a card OUT of the deck, or must it materialize its own?
+--
+-- Online, a SYNC draw must not consume. The cards it delivers were already
+-- dealt server-side — sync_my_hand reads them out of state.players[me].hand,
+-- do_sync's opponent catch-up out of the opponent's handCount — so the server's
+-- deck already excludes them, and sync_deck_size has just sized ours to exactly
+-- that post-deal length with stamp_deck aligning identities by index.
+--
+-- Consuming after all that took the deck BELOW the server's and shifted its
+-- top. Every later draw then reported the card that many positions down, and
+-- the server rejected the move against a top it still held:
+--
+--   Draw mismatch at index 0: Expected 13H, Got 15C
+--
+-- Both real cards — which is what makes this look nothing like the separate bug
+-- where the client invented an order outright. Nothing was fabricated here; the
+-- right deck was read at the wrong offset.
+--
+-- Offline there is no server to disagree with, and no sync draws either, so the
+-- deck is always the thing drawn from.
+function M.consumes_deck(is_sync, online_mode)
+    if is_sync and online_mode then return false end
+    return true
+end
+
 --- Everything the deck could still yield: what is in it, plus what the pile
 --- could give back. The question "can this player draw at all" has to count both
 --- or a draw is refused at the exact moment a reshuffle would have supplied it.

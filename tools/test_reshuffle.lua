@@ -218,6 +218,45 @@ do
 end
 
 print("")
+print("WHO MAY TAKE A CARD OUT OF THE DECK")
+-- The second "Draw mismatch" bug. A sync draw delivers cards the SERVER has
+-- already dealt, so the server's deck already excludes them and ours has just
+-- been sized to match. Consuming from the deck on top of that pushes it below
+-- the server's and shifts its top.
+check("a real player draw consumes the deck", RQ.consumes_deck(false, true), true)
+check("a sync draw online does NOT", RQ.consumes_deck(true, true), false)
+check("offline there are no sync draws to exempt", RQ.consumes_deck(true, false), true)
+check("and an ordinary offline draw consumes", RQ.consumes_deck(false, false), true)
+
+print("")
+print("THE OFFSET, replayed")
+do
+    -- The server dealt 2 cards to our hand and its deck is now 20. do_sync
+    -- sizes ours to 20 and stamps identities index-for-index, so deck[20] is
+    -- the card the server will expect us to draw next.
+    local SERVER_DECK = 20
+    local deck = {}
+    for i = 1, SERVER_DECK do deck[i] = "card" .. i end
+
+    -- sync_my_hand then catches the hand up by 2. Those 2 are already dealt.
+    local catch_up = 2
+    for _ = 1, catch_up do
+        if RQ.consumes_deck(true, true) then table.remove(deck) end
+    end
+
+    check("the deck still matches the server's", #deck, SERVER_DECK)
+    -- The whole point: the next real draw must report the server's top.
+    check("and its top is still what the server expects", deck[#deck], "card20")
+
+    -- What the bug did instead, for contrast: consume anyway, and the top the
+    -- next draw reports is two positions down from the one the server holds.
+    local broken = {}
+    for i = 1, SERVER_DECK do broken[i] = "card" .. i end
+    for _ = 1, catch_up do table.remove(broken) end
+    check("consuming would have reported the wrong card", broken[#broken], "card18")
+end
+
+print("")
 if failures == 0 then
     print("ALL PASS")
     os.exit(0)
