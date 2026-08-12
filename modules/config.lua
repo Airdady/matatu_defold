@@ -71,6 +71,17 @@ do
     -- store_url() already reads it, so there is exactly one way this
     -- lookup happens in the whole client.
     M.APP_PACKAGE = cfg("android.package")
+
+    -- TEMP DEBUG — remove once the version-gate regression is found. Prints
+    -- once at boot, before anything connects, so what this specific running
+    -- build actually reports is known up front instead of inferred from
+    -- server-side logs after the fact. A local/editor run that was never
+    -- built through release.sh reads game.project's checked-in defaults
+    -- here (currently version 18.5.9, no version_code, package
+    -- com.matatu.champ) — NOT whatever target you meant to be testing.
+    print(string.format(
+        "[CONFIG-DEBUG] APP_VERSION=%s APP_BUILD=%s APP_PACKAGE=%s",
+        tostring(M.APP_VERSION), tostring(M.APP_BUILD), tostring(M.APP_PACKAGE)))
 end
 -- ---------------------------------------------------------------------------
 -- GOOGLE PLAY IN-APP UPDATE CHECK

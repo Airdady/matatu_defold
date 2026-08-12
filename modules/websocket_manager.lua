@@ -217,9 +217,24 @@ M.cancel_identify_watchdog = cancel_identify_watchdog
 -- from reality. Three separate call sites used to send it, and the reconciler's
 -- "have I sent one recently" question has to be answerable for all of them.
 local function send_identify(why)
-    if not pending_identity or not M.socket_connected then return false end
+    if not pending_identity or not M.socket_connected then
+        -- TEMP DEBUG — remove once the version-gate regression is found.
+        -- Confirms/denies "identify is never even attempted" as opposed to
+        -- "it's attempted but refused/lost": if this line prints, the client
+        -- never got as far as putting IDENTIFY on the wire at all.
+        print(string.format(
+            "[WS-DEBUG] send_identify(%s) SKIPPED — pending_identity=%s socket_connected=%s",
+            tostring(why), tostring(pending_identity ~= nil), tostring(M.socket_connected)))
+        return false
+    end
     last_identify_sent = now_s()
-    print("[WS-DEBUG] sending IDENTIFY (" .. tostring(why) .. ")")
+    -- TEMP DEBUG — the exact version-gate fields this IDENTIFY carries, so a
+    -- refusal is traceable to what THIS client actually sent rather than
+    -- guessed at from the server's side alone.
+    print(string.format(
+        "[WS-DEBUG] sending IDENTIFY (%s) appVersion=%s appBuild=%s appPackage=%s update_required=%s",
+        tostring(why), tostring(pending_identity.appVersion), tostring(pending_identity.appBuild),
+        tostring(pending_identity.appPackage), tostring(M.update_required)))
     return M.send_message("IDENTIFY", pending_identity)
 end
 
