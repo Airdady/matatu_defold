@@ -6,7 +6,24 @@
 # PRESERVES APP DATA/CACHE
 #
 # USAGE:
-#   ./build.sh [whot|matatu|matatu_nap|kadi]
+#   ./build.sh [whot|matatu|matatu_nap|kadi] [--version-name <x.x.x>] [--version-code <int>]
+#
+# --version-name/--version-code stamp game.project's version/version_code
+# the same way release.sh does for a real release (see that script's "0c.
+# STAMP THE VERSION INTO game.project" step) — so a debug build reports a
+# real, comparable version to the backend's version gate instead of
+# whatever was last checked in from an unrelated release. Without this, a
+# debug build of one target could silently read a stale version stamped by
+# a PREVIOUS release of a DIFFERENT target (they all share this one
+# game.project), pass or fail that target's floor for reasons that have
+# nothing to do with what's actually being tested.
+#
+# Both optional. Default is 99.99.99 / 999999 — a value obviously synthetic
+# (nobody ships that number) and, being a numeric ordering comparison, well
+# above any real floor for any target, so an ordinary debug run for
+# GAMEPLAY testing is never blocked by the version gate. Pass real-looking
+# values explicitly when you actually want to test the gate itself (a
+# refusal, an update-required screen, a floor edge case).
 #
 # The game argument (default: whot) patches modules/game_mode.lua's M.GAME so
 # every endpoint, card-art path and in-app label follows (see that file's
@@ -55,7 +72,20 @@
 set -e
 
 # ---------------- CONFIG ----------------
-TARGET="${1:-whot}"
+TARGET=""
+VERSION_NAME="99.99.99"
+VERSION_CODE="999999"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --version-name) VERSION_NAME="$2"; shift 2 ;;
+        --version-code) VERSION_CODE="$2"; shift 2 ;;
+        *)
+            if [ -z "$TARGET" ]; then TARGET="$1"; fi
+            shift ;;
+    esac
+done
+TARGET="${TARGET:-whot}"
 TARGET="$(echo "$TARGET" | tr '[:upper:]' '[:lower:]')"
 GAME="$TARGET"
 
@@ -117,6 +147,7 @@ echo "🚀 Starting Defold Android Debug Build"
 echo "🎯 Target:  $TARGET"
 echo "🎮 Game:    $GAME_UPPER"
 echo "📦 Package: $PACKAGE_NAME"
+echo "🏷  Version: $VERSION_NAME ($VERSION_CODE)"
 echo "=========================================================="
 
 # ==========================================================
@@ -154,6 +185,33 @@ awk -v t="$PROJECT_TITLE" -v p="$PACKAGE_NAME" '
 
 echo "✅ game.project -> title = $PROJECT_TITLE"
 echo "✅ game.project -> [android] package = $PACKAGE_NAME"
+
+# [project] version = ... / [android] version_code = ...
+#
+# Same stamp release.sh does for a real release (see its "0c. STAMP THE
+# VERSION INTO game.project" step) — without it, a debug build reports
+# whatever version was last checked in by an unrelated release, which is
+# what let a matatu_nap debug build silently fail League's version floor
+# while testing something that had nothing to do with versioning.
+sed -i.bak -E "s/^(version[[:space:]]*=[[:space:]]*).*/\1${VERSION_NAME}/" game.project
+if grep -q "^version_code[[:space:]]*=" game.project; then
+    sed -i.bak -E "s/^(version_code[[:space:]]*=[[:space:]]*).*/\1${VERSION_CODE}/" game.project
+else
+    sed -i.bak -E "/^\[android\]/a version_code = ${VERSION_CODE}" game.project
+fi
+rm -f game.project.bak
+
+if ! grep -q "^version = ${VERSION_NAME}$" game.project; then
+    echo "❌ Failed to stamp version in game.project"
+    exit 1
+fi
+if ! grep -q "^version_code = ${VERSION_CODE}$" game.project; then
+    echo "❌ Failed to stamp version_code in game.project"
+    exit 1
+fi
+
+echo "✅ game.project -> version = $VERSION_NAME"
+echo "✅ game.project -> version_code = $VERSION_CODE"
 
 # game.project is NOT an ini file, whatever it looks like. Bob's parser
 # (Project.loadPropertiesData) accepts exactly two line shapes — "[section]"
