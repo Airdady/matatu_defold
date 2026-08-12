@@ -98,8 +98,11 @@ local function version_line(self)
     if (config.APP_BUILD or 0) > 0 then
         mine = mine .. " (" .. tostring(config.APP_BUILD) .. ")"
     end
-    if self.latest and self.latest ~= "" then
-        return "You have " .. mine .. "  •  Latest " .. self.latest
+    if self.required and self.required ~= "" then
+        -- "Update to" rather than "Latest" — "Latest" reads as an optional
+        -- newer build, not the actual minimum this player must clear. What
+        -- they need to hear is the requirement, not a suggestion.
+        return "You have " .. mine .. "  •  Update to " .. self.required
     end
     return "You have " .. mine
 end
@@ -107,7 +110,12 @@ end
 local function show(self, d)
     d = d or {}
     if d.message and d.message ~= "" then gui.set_text(self.body, d.message) end
-    self.latest = d.latestVersionName or d.minVersionName or ""
+    -- minVersionName is the actual gate requirement (checkVersion's floor —
+    -- see be_matatu's appVersion.ts). latestVersionName is purely
+    -- informational ("the build currently live on Play") and is only a
+    -- fallback here for the rare case a floor is enforced by build number
+    -- alone, with no human-readable minimum to show.
+    self.required = d.minVersionName or d.latestVersionName or ""
     self.store_url = d.storeUrl or ""
     gui.set_text(self.versions, version_line(self))
 
