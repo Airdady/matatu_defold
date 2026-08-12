@@ -379,6 +379,26 @@ function M.draw_to_hand(self, hand, is_player, count, done)
         end
 
         local c = table.remove(self.deck)
+
+        -- DEFENSIVE: a card whose go instance is already gone. The known
+        -- cause is online_handler.lua's sync_deck_size racing this exact
+        -- draw sequence — see finalize_state_sync's _online_reshuffling
+        -- coordination fix for how that race is closed at the source — but
+        -- this checks rather than assumes, the same way the knockout
+        -- round-end sweep above already does before touching a card's go
+        -- instance. Without it, go.set below throws past place_one's own
+        -- pcall-free callers, which aborts the draw before finish() can ever
+        -- run — leaving is_animating/is_local_action_locked stuck true with
+        -- nothing left to clear them but the multi-second watchdog, and the
+        -- hand permanently short whatever cards were still queued to land.
+        -- Drop this one card and try the next instead of crashing the whole
+        -- sequence over it; #self.deck == 0 above already handles "there was
+        -- no next card".
+        if not (c and c.id and pcall(go.get_position, c.id)) then
+            place_one()
+            return
+        end
+
         -- This card may have lived in a hand before (pile -> reshuffle ->
         -- deck): wipe its remembered hand slot so layout_hand's same-slot
         -- skip can never mistake the stale target for "already there" and

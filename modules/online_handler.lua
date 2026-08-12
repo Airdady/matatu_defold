@@ -636,6 +636,34 @@ function M.finalize_state_sync(self, state, on_complete)
             self._online_reshuffling = false
             do_sync()
         end)
+    elseif self._online_reshuffling then
+        -- A reshuffle triggered by an EARLIER sync is still mid-animation and
+        -- owns self.deck — game_flow.lua's reshuffle_deck/draw_to_hand is
+        -- actively table.remove-ing and go.set/go.animate-ing its cards on a
+        -- staggered schedule that can run several seconds. do_sync() below
+        -- calls sync_deck_size(), which ALSO table.remove()s and go.delete()s
+        -- straight out of self.deck with no coordination at all — running it
+        -- here, concurrently, is exactly what let a card the in-flight
+        -- reshuffle still expected to draw get deleted out from under it:
+        -- "could not find any instance with id '/instanceN'" out of
+        -- game_flow.place_one, which then left the turn permanently stuck
+        -- (the crash aborts the draw before it can ever release the
+        -- is_animating/is_local_action_locked flags it set).
+        --
+        -- Skip the sync here and let the reshuffle already running finish —
+        -- its own completion callback calls do_sync() once reshuffle_deck no
+        -- longer owns self.deck. That sync targets the STATE THAT TRIGGERED
+        -- IT, not this newer one, so the deck/AI-hand count it converges on
+        -- can be one sync cycle stale — self-correcting on the very next
+        -- server message, which arrives within the same turn in practice,
+        -- and a strictly better outcome than a crash that needs a manual
+        -- watchdog to even unstick the turn, let alone fix the hand.
+        --
+        -- on_complete still fires immediately either way: it resolves to
+        -- handle_single_move's `done()`, which drains pump_move_queue — not
+        -- calling it here would stall every move queued up behind this one,
+        -- not just the deck visual.
+        if on_complete then on_complete() end
     else
         do_sync()
     end
