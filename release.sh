@@ -269,16 +269,25 @@ if [ ! -f game.project ] || ! grep -q "^\[project\]" game.project; then
 fi
 
 sed -i.bak -E "s/^(version[[:space:]]*=[[:space:]]*).*/\1${VERSION_NAME}/" game.project
+rm -f game.project.bak
 
 # version_code has no line to replace on a project that predates this
 # stamp — insert it right after [android] the first time; every later
 # release finds the line already there and replaces it in place instead.
 if grep -q "^version_code[[:space:]]*=" game.project; then
     sed -i.bak -E "s/^(version_code[[:space:]]*=[[:space:]]*).*/\1${VERSION_CODE}/" game.project
+    rm -f game.project.bak
 else
-    sed -i.bak -E "/^\[android\]/a version_code = ${VERSION_CODE}" game.project
+    # NOT sed's `a` command: GNU sed accepts "/pattern/a text" on one line,
+    # but BSD/macOS sed (what's actually installed on a dev's Mac, no GNU
+    # coreutils) demands the text start on its own line after "a\" — the
+    # one-line form that works fine on Linux CI fails on a Mac with
+    # "command a expects \ followed by text". awk has no such split.
+    awk -v vc="version_code = ${VERSION_CODE}" '
+        /^\[android\]/ { print; print vc; next }
+        { print }
+    ' game.project > game.project.tmp && mv game.project.tmp game.project
 fi
-rm -f game.project.bak
 
 # Verify rather than trust, same reasoning as the config.lua check above: a
 # sed that silently matched nothing must not pass as success.

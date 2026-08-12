@@ -196,10 +196,19 @@ echo "✅ game.project -> [android] package = $PACKAGE_NAME"
 sed -i.bak -E "s/^(version[[:space:]]*=[[:space:]]*).*/\1${VERSION_NAME}/" game.project
 if grep -q "^version_code[[:space:]]*=" game.project; then
     sed -i.bak -E "s/^(version_code[[:space:]]*=[[:space:]]*).*/\1${VERSION_CODE}/" game.project
+    rm -f game.project.bak
 else
-    sed -i.bak -E "/^\[android\]/a version_code = ${VERSION_CODE}" game.project
+    # Insert right after [android]. NOT sed's `a` command: GNU sed accepts
+    # "/pattern/a text" on one line, but BSD/macOS sed (what ships on every
+    # Mac, no GNU coreutils installed) demands the text start on its own
+    # line after "a\" — the one-line form that works on Linux CI fails on a
+    # dev's Mac with "command a expects \ followed by text". awk has no such
+    # split, so it works the same way on both.
+    awk -v vc="version_code = ${VERSION_CODE}" '
+        /^\[android\]/ { print; print vc; next }
+        { print }
+    ' game.project > game.project.tmp && mv game.project.tmp game.project
 fi
-rm -f game.project.bak
 
 if ! grep -q "^version = ${VERSION_NAME}$" game.project; then
     echo "❌ Failed to stamp version in game.project"
