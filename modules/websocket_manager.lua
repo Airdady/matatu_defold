@@ -489,24 +489,24 @@ local function parse_message(json_string)
   local t = message.type or ""
   local d = message.data or {}
 
-  -- CONFIRM RECEIPT OF A MISSED-MOVE CATCH-UP.
+  -- CONFIRM RECEIPT — of a reconnect catch-up OR an ordinary LIVE move.
   --
-  -- be_matatu's handleIdentify.ts tags every message it replays after a
-  -- reconnect with `_replayId` (see moves/index.ts's missed-move queue and
-  -- handleIdentify.ts's pendingMissedMoveReplays) specifically so it can
-  -- tell "the frame was accepted by the socket" apart from "the client
-  -- actually received and processed it" — a socket that closes moments
-  -- after a successful ws.send() looks identical to a working one from the
-  -- server's side. This ack is what lets the server stop holding this
-  -- replay as in-flight and, if it never arrives, requeue it for the next
-  -- reconnect instead of treating a silently-lost delivery as done.
-  --
-  -- Checked once here rather than per message type below: `_replayId` can
-  -- ride on MOVE or AI_PLAYED_ON_YOUR_BEHALF today and possibly other
-  -- replayed types later, and every one of them needs the exact same ack —
-  -- there is nothing type-specific about confirming delivery.
-  if d._replayId and d._replayId ~= "" then
-    M.send_message("MISSED_MOVE_ACK", { replayId = d._replayId })
+  -- be_matatu tags a message `_replayId` when it's a reconnect catch-up
+  -- (handleIdentify.ts's pendingMissedMoveReplays — see the RESHUFFLING/MOVE
+  -- branch below, which skips the action-replay pipeline for these) and
+  -- `_ackId` when it's an ordinary live send the server wants confirmed
+  -- (moves/index.ts's pendingLiveMoveAcks — sent because readyState OPEN and
+  -- a successful ws.send() are not proof the other end actually got it; a
+  -- connection that went dark without an explicit close looks identical to
+  -- a healthy one until the ping/pong watchdog notices, several seconds
+  -- later). Both get the exact same ack — the server checks the id against
+  -- whichever of its two registries is holding it — the only difference is
+  -- what the CLIENT does with the rest of the message: a live move still
+  -- runs its normal animation below, a catch-up does not.
+  local ack_id = (d._replayId and d._replayId ~= "" and d._replayId)
+    or (d._ackId and d._ackId ~= "" and d._ackId)
+  if ack_id then
+    M.send_message("MISSED_MOVE_ACK", { replayId = ack_id })
   end
 
   emit("message", t, d)
@@ -609,18 +609,49 @@ local function parse_message(json_string)
     print("[PIPE-1] parse_message type=" .. t .. " gs_keys=" .. tostring(next(gs) ~= nil))
     if next(gs) ~= nil then
       M.active_game_state = gs
-      local actions = gs.actions or {}
-      -- Prefer the server's explicit `from` field (sent alongside the
-      -- encrypted gameState) over the currentTurn-inequality heuristic —
-      -- the heuristic breaks for Whot's turn-retaining special cards.
-      local explicit_from = d.from
-      local from_id = (explicit_from ~= nil and tostring(explicit_from) ~= "" and tostring(explicit_from))
-        or derive_sender(gs)
-      print(string.format("[PIPE-1] decoded from=%s actions=%d turn=%s suit=%s",
-        tostring(from_id), #actions, tostring(gs.currentTurn), tostring(gs.chosenSuit)))
-      pprint("[PIPE-1] gs.actions:", actions)
-      local processed = { _id = from_id, from = from_id, actions = actions, chosenSuit = gs.chosenSuit or "", gameState = gs, aiOnBehalf = (d.aiOnBehalf == true) }
-      emit("game_move", processed, gs)
+
+      -- A RECONNECT CATCH-UP (d._replayId set — see handleIdentify.ts) MUST
+      -- NOT GO THROUGH THE NORMAL ACTION-REPLAY PIPELINE.
+      --
+      -- Reconnecting to a game already in progress rebuilds the WHOLE board
+      -- from scratch off the plain IDENTIFY response, moments before this
+      -- message arrives (game_request_accepted -> ws_new_game_start ->
+      -- GF.start_game -> a full GS.destroy_all/fresh_state teardown and
+      -- rebuild from the same authoritative gameState this MOVE carries).
+      -- By the time this lands, player_hand/ai_hand are ALREADY the correct
+      -- POST-move result.
+      --
+      -- emit("game_move", ...) below feeds process_opponent_actions /
+      -- process_my_actions, which REPLAY gs.actions by diffing them against
+      -- the CURRENT hand — remove this card, draw that many. Run against a
+      -- hand that is already the end state of those exact actions, that
+      -- diff finds nothing left to remove (the cards are already gone) and
+      -- draws cards that were already drawn, corrupting the hand it was
+      -- supposed to be catching up. A single-action move might go unnoticed;
+      -- a whole turn-retaining combo (pick, play, pick, play, pick, play —
+      -- reported directly) corrupts visibly, because every one of those
+      -- actions gets misapplied the same way.
+      --
+      -- The fix is to do nothing here: the full rebuild already IS the
+      -- catch-up. M.active_game_state above is enough to keep it current:
+      -- there is nothing left for an action replay to correctly apply.
+      if d._replayId and d._replayId ~= "" then
+        print("[PIPE-1] reconnect catch-up (_replayId=" .. tostring(d._replayId)
+          .. ") — board already rebuilt from IDENTIFY, skipping action replay")
+      else
+        local actions = gs.actions or {}
+        -- Prefer the server's explicit `from` field (sent alongside the
+        -- encrypted gameState) over the currentTurn-inequality heuristic —
+        -- the heuristic breaks for Whot's turn-retaining special cards.
+        local explicit_from = d.from
+        local from_id = (explicit_from ~= nil and tostring(explicit_from) ~= "" and tostring(explicit_from))
+          or derive_sender(gs)
+        print(string.format("[PIPE-1] decoded from=%s actions=%d turn=%s suit=%s",
+          tostring(from_id), #actions, tostring(gs.currentTurn), tostring(gs.chosenSuit)))
+        pprint("[PIPE-1] gs.actions:", actions)
+        local processed = { _id = from_id, from = from_id, actions = actions, chosenSuit = gs.chosenSuit or "", gameState = gs, aiOnBehalf = (d.aiOnBehalf == true) }
+        emit("game_move", processed, gs)
+      end
     else
       print("[PIPE-1] DROPPED — gs decoded empty")
     end
