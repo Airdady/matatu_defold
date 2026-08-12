@@ -545,9 +545,10 @@ function M.process_opponent_actions(self, actions, chosen_suit, new_game_state, 
                 count = count + (tonumber(actions[idx].count) or 1)
                 idx = idx + 1
             end
+            -- sync: replaying draws the server already dealt to the opponent.
             self.draw_to_hand(self.ai_hand, false, count, function()
                 if seq == self._seq then next_act() end
-            end)
+            end, { sync = true })
         else
             idx = idx + 1
             next_act()
@@ -595,24 +596,46 @@ function M.finalize_state_sync(self, state, on_complete)
     M.process_scoreboard(self, state)
     if is_knockout_state(state) then knockout_update_chamber(self, state) end
 
-    local function do_sync()
-        local deck_target = state.deckCount or (state.deck and #state.deck) or #self.deck
-        M.sync_deck_size(self, deck_target)
-        stamp_deck(self, state.deck)
+    -- Syncs against the LATEST state, not the one this call was handed.
+    --
+    -- A reshuffle animation defers its do_sync() by ~1.5-2.6s. Newer server
+    -- messages keep arriving during it, and every finalize_state_sync call
+    -- assigns self.game_state synchronously at the top — so by the time the
+    -- deferred sync finally runs, the state it captured is stale. Applying the
+    -- stale one used to revert currentTurn/activePenaltyCount to their
+    -- pre-reshuffle values; since every self-healing watchdog is gated on
+    -- is_player_turn(), a wrong currentTurn there locks the turn for good.
+    --
+    -- It matters twice as much for the deck. stamp_deck is the ONLY thing that
+    -- gives self.deck the server's card identities, and those identities are
+    -- what every DRAW action is validated against — stamping a stale deck is
+    -- not a cosmetic lag, it is the client disagreeing with the server about
+    -- which card is on top, which costs the next move entirely.
+    --
+    -- self.game_state is always whatever the most recent call set it to, so
+    -- reading it here is a no-op in the common case and the fix in the race.
+    local function do_sync(sync_state)
+        sync_state = sync_state or self.game_state or state
 
-        local op = op_for_suit
-        local real_hand = op_hand_for_suit
-        local target = opp_hand_count
+        local op        = (sync_state.players or {})[self.opponent_id] or {}
+        local real_hand = (type(op.hand) == "table") and op.hand or nil
+        local target    = op.handCount or (real_hand and #real_hand) or #self.ai_hand
+
+        local deck_target = sync_state.deckCount or (sync_state.deck and #sync_state.deck) or #self.deck
+        M.sync_deck_size(self, deck_target)
+        stamp_deck(self, sync_state.deck)
 
         local function settle()
             stamp_ai_hand(self, real_hand)
-            M.sync_timers(self, state)
+            M.sync_timers(self, self.game_state)
             if on_complete then on_complete() end
         end
 
         if #self.ai_hand < target then
             local diff = target - #self.ai_hand
-            self.draw_to_hand(self.ai_hand, false, diff, function() settle() end)
+            -- sync: closing the gap to the server's opponent hand count;
+            -- stamp_ai_hand in settle() gives these cards their identities.
+            self.draw_to_hand(self.ai_hand, false, diff, function() settle() end, { sync = true })
         else
             while #self.ai_hand > target do
                 local c = table.remove(self.ai_hand)
@@ -623,11 +646,29 @@ function M.finalize_state_sync(self, state, on_complete)
         end
     end
 
-    local deck_target     = state.deckCount or (state.deck and #state.deck) or #self.deck
-    local incoming_played = (type(state.playedCards) == "table") and #state.playedCards or nil
-    local pile_was_reset  = incoming_played ~= nil and incoming_played <= 1
-    local deck_jumped     = deck_target >= (#self.deck + 6)
-    local should_reshuffle = (#self.played_cards > 3) and (pile_was_reset or deck_jumped)
+    -- The server TELLS us it reshuffled. handleDeckReshuffle sets
+    -- status = "RESHUFFLING" purely as a flag for this animation, and
+    -- handleMove broadcasts the state while it is still set (it resets to
+    -- PLAYING only after the send loop). So the flag is on the MOVE payload
+    -- for both players, and reading it is exact where the guesswork below is
+    -- not: the old heuristic both missed real reshuffles and fired on moves
+    -- that were not one, and a spurious reshuffle animation takes ownership of
+    -- self.deck for seconds at a time.
+    --
+    -- The heuristic stays as a fallback for a server that did not send a
+    -- status at all, so a build mismatch degrades to the old behavior instead
+    -- of never animating.
+    local server_status    = state.status and tostring(state.status) or nil
+    local should_reshuffle
+    if server_status then
+        should_reshuffle = (server_status == "RESHUFFLING")
+    else
+        local deck_target     = state.deckCount or (state.deck and #state.deck) or #self.deck
+        local incoming_played = (type(state.playedCards) == "table") and #state.playedCards or nil
+        local pile_was_reset  = incoming_played ~= nil and incoming_played <= 1
+        local deck_jumped     = deck_target >= (#self.deck + 6)
+        should_reshuffle = (#self.played_cards > 3) and (pile_was_reset or deck_jumped)
+    end
 
     if should_reshuffle and not self._online_reshuffling then
         self._online_reshuffling = true
@@ -652,12 +693,10 @@ function M.finalize_state_sync(self, state, on_complete)
         --
         -- Skip the sync here and let the reshuffle already running finish —
         -- its own completion callback calls do_sync() once reshuffle_deck no
-        -- longer owns self.deck. That sync targets the STATE THAT TRIGGERED
-        -- IT, not this newer one, so the deck/AI-hand count it converges on
-        -- can be one sync cycle stale — self-correcting on the very next
-        -- server message, which arrives within the same turn in practice,
-        -- and a strictly better outcome than a crash that needs a manual
-        -- watchdog to even unstick the turn, let alone fix the hand.
+        -- longer owns self.deck. Nothing is lost by deferring: do_sync() reads
+        -- self.game_state, which this call has already updated to THIS state a
+        -- few lines above, so the deferred sync converges on the newest server
+        -- truth rather than the state that triggered the reshuffle.
         --
         -- on_complete still fires immediately either way: it resolves to
         -- handle_single_move's `done()`, which drains pump_move_queue — not
@@ -731,9 +770,12 @@ function M.process_my_actions(self, actions, done)
                 count = count + (tonumber(actions[idx].count) or 1)
                 idx = idx + 1
             end
+            -- sync: this is a REPLAY of a move the server already accepted and
+            -- echoed back, so it reports nothing and the identities are
+            -- reconciled by sync_my_hand right after.
             self.draw_to_hand(self.player_hand, true, count, function()
                 if seq == self._seq then next_act() end
-            end)
+            end, { sync = true })
         else
             idx = idx + 1
             next_act()
@@ -790,6 +832,11 @@ local function sync_my_hand(self, state)
     end
 
     if #to_add > 0 then
+        -- sync: this is CATCH-UP, not a draw. Every card in `to_add` was read
+        -- out of the server's own copy of this hand, so it has already been
+        -- dealt — reporting it as a DRAW action would send it back with the
+        -- next move and ask to be dealt it again, against a deck top that no
+        -- longer holds it. The loop below stamps each card's real identity.
         self.draw_to_hand(self.player_hand, true, #to_add, function()
             local n = #self.player_hand
             for i = 1, #to_add do
@@ -802,7 +849,7 @@ local function sync_my_hand(self, state)
                 end
             end
             self.pre_validate_hand()
-        end)
+        end, { sync = true })
     else
         self.position_hands(true)
         self.pre_validate_hand()

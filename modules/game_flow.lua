@@ -305,9 +305,22 @@ end
 ----------------------------------------------------------------------
 -- Drawing (with auto-reshuffle when the deck runs dry)
 ----------------------------------------------------------------------
-function M.draw_to_hand(self, hand, is_player, count, done)
+-- `opts.sync = true` marks a draw that MIRRORS a decision the server has
+-- already made — process_my_actions replaying our own accepted move,
+-- sync_my_hand and do_sync catching a hand up to the authoritative one — as
+-- opposed to a draw the player just initiated. Two things follow from that:
+--
+--   * It reports no DRAW actions. Those cards are in the server's copy of the
+--     hand already; sending them back would ask to be dealt them a second
+--     time, against a deck top that no longer holds them.
+--   * It may materialize a card when the local deck is dry, because the
+--     identity is not in question — the caller stamps the server's value and
+--     suit onto the card the moment it lands. Only the carrier is missing.
+function M.draw_to_hand(self, hand, is_player, count, done, opts)
     if not count or count <= 0 then if done then done(self) end return end
     if is_player then self.is_animating = true end
+
+    local is_sync = (opts and opts.sync == true) or false
 
     local seq         = self._seq
     local STAGGER     = 0.13
@@ -369,13 +382,51 @@ function M.draw_to_hand(self, hand, is_player, count, done)
                 end)
                 return
             end
-            if not RQ.can_recycle(self.played_cards) then
+
+            -- ONLINE: the server owns the deck, so this client is not allowed
+            -- to invent one.
+            --
+            -- reshuffle_deck below picks a fresh random order for the recycled
+            -- cards. Offline that IS the deck and the choice is ours to make.
+            -- Online it is a guess, and the very next line of place_one turns
+            -- that guess into protocol: the drawn card is reported to the
+            -- server as a DRAW action, and the server checks every DRAW
+            -- against the top of ITS deck (validateDrawActions in
+            -- handlers/moves/reshuffle.ts, matched by value, suit AND order).
+            -- A guessed card cannot match, drawCards fails, and handleMove
+            -- answers "Sync Error: Deck mismatch" and returns BEFORE it
+            -- broadcasts — so the whole move, plays included, is dropped and
+            -- the opponent never sees it. That is the reported "my move never
+            -- reaches the other player after a reshuffle".
+            --
+            -- A locally empty deck online means this client is behind, not
+            -- that the cards are gone: the server reshuffles preemptively
+            -- (while its deck still holds requiredCount + 5) so it always has
+            -- cards to hand out. Stop the draw short and let the authoritative
+            -- state land — sync_deck_size + stamp_deck refill and re-identify
+            -- the deck, and sync_my_hand adds any card this draw did not get.
+            -- The server's own reshuffle arrives as status == "RESHUFFLING",
+            -- which is what drives the animation online (see
+            -- online_handler.finalize_state_sync).
+            if self.online_mode then
+                if not is_sync then
+                    finish(); return
+                end
+                -- A sync draw is not asking the deck what card comes next —
+                -- it already knows, from the server, and stamps it on arrival.
+                -- All it needs is something to carry it, so give it one rather
+                -- than leave the hand short of cards the server has already
+                -- dealt.
+                local carrier = self.spawn_card(10, "H", BL.deck_slot_pos(self, 1))
+                table.insert(self.deck, carrier)
+            elseif not RQ.can_recycle(self.played_cards) then
                 finish(); return
+            else
+                M.reshuffle_deck(self, function()
+                    if seq == self._seq then place_one() else finish() end
+                end)
+                return
             end
-            M.reshuffle_deck(self, function()
-                if seq == self._seq then place_one() else finish() end
-            end)
-            return
         end
 
         local c = table.remove(self.deck)
@@ -406,7 +457,7 @@ function M.draw_to_hand(self, hand, is_player, count, done)
         BL.forget_hand_slot(c)
         table.insert(hand, c)
 
-        if is_player and self.online_mode and self.is_player_turn() then
+        if is_player and self.online_mode and self.is_player_turn() and not is_sync then
             table.insert(self.current_turn_actions, { type = "DRAW", v = tonumber(c.v), s = tostring(c.s) })
         end
 
@@ -504,9 +555,20 @@ function M.reshuffle_deck(self, done)
     local existing_n = #existing
     local recycled_n = #recycled
 
-    for i = recycled_n, 2, -1 do
-        local k = math.random(i)
-        recycled[i], recycled[k] = recycled[k], recycled[i]
+    -- Offline this shuffle IS the deal — there is no other authority, so the
+    -- randomness has to happen here. Online it is decided for us: the server
+    -- shuffles, and finalize_state_sync's stamp_deck rewrites every card in
+    -- self.deck from state.deck by index the moment this animation completes.
+    -- Randomizing anyway would only widen the window in which self.deck
+    -- disagrees with the server about which card is on top, and that window is
+    -- exactly what draws are validated against. What happens online is
+    -- choreography: the cards sweep in, riffle and land, and the identities
+    -- they land with came from the server.
+    if not self.online_mode then
+        for i = recycled_n, 2, -1 do
+            local k = math.random(i)
+            recycled[i], recycled[k] = recycled[k], recycled[i]
+        end
     end
 
     local stub, under = {} , {}

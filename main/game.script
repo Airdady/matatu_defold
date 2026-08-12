@@ -140,12 +140,12 @@ function init(self)
         end)
     end
 
-    self.draw_to_hand = function(hand, is_player, count, done)
+    self.draw_to_hand = function(hand, is_player, count, done, opts)
         self._gs_anim_locks = self._gs_anim_locks + 1
         GF.draw_to_hand(self, hand, is_player, count, function(...)
             self._gs_anim_locks = math.max(0, self._gs_anim_locks - 1)
             if done then done(...) end
-        end)
+        end, opts)
     end
 
     self.reshuffle_deck = function(done)
