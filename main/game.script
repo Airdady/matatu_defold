@@ -14,6 +14,7 @@ local CV    = require "modules.card_view"
 local RE    = require "modules.rules_eval"
 local GS    = require "modules.game_state"
 local GF    = require "modules.game_flow"
+local DC    = require "modules.disconnect_events"
 
 local OnlineHandler = require "modules.online_handler"
 local OfflineHandler = require "modules.offline_handler"
@@ -1109,6 +1110,7 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("ws_resync") then
         if self.online_mode then
             log("RESYNC requested: " .. tostring(message and message.reason))
+            self._dc_waiting_for = nil
             self.online_game_id = ""
             GF.start_game(self)
             notify_gui(self.gui_hud, "conn_overlay", {
@@ -1149,6 +1151,7 @@ function on_message(self, message_id, message, sender)
         end
 
     elseif message_id == hash("ws_game_over") then
+        self._dc_waiting_for = nil
         notify_gui(self.gui_hud, "conn_overlay", { show = false })
         
         print("[DEBUG] Received ws_game_over message! Deferring execution via watchdog...")
@@ -1175,17 +1178,41 @@ function on_message(self, message_id, message, sender)
         -- Surface the disconnect to the player with the grace countdown instead
         -- of silently letting their turn time out while nothing visibly happens.
         if self.online_mode and not self.game_over then
+            local who = tostring((message and message.player_id) or "")
+
+            -- Never raise the "waiting for THEM" dialog over our OWN drop; our
+            -- own connection loss is handled by ws_net_down. See
+            -- modules/disconnect_events.lua for why this is checked rather
+            -- than assumed from the server's send ordering.
+            if DC.is_self(who, self.my_player_id) then return end
+
+            -- Remember WHO we are waiting on, so a reconnect belonging to
+            -- somebody else cannot dismiss this dialog early.
+            self._dc_waiting_for = (who ~= "" and who) or tostring(self.opponent_id or "")
+
+            local name = "Your opponent"
+            if self.game_state and self.game_state.players then
+                local p = self.game_state.players[self._dc_waiting_for]
+                if p and p.username and p.username ~= "" then name = p.username end
+            end
+
             local grace = tonumber((message and message.grace)) or 30
             notify_gui(self.gui_hud, "conn_overlay", {
                 show = true,
                 title = "OPPONENT DISCONNECTED",
-                subtitle = "Waiting for them to reconnect…",
+                subtitle = name .. " lost connection — waiting for them to return…",
                 grace = grace,
             })
         end
 
     elseif message_id == hash("ws_player_rc") then
-        notify_gui(self.gui_hud, "conn_overlay", { show = false })
+        -- Only the player we are actually waiting on can dismiss this (an
+        -- unattributed reconnect counts — see disconnect_events.should_dismiss
+        -- for why that asymmetry is deliberate).
+        if DC.should_dismiss(self._dc_waiting_for, message and message.player_id) then
+            self._dc_waiting_for = nil
+            notify_gui(self.gui_hud, "conn_overlay", { show = false })
+        end
         -- Opponent reconnected: refresh the turn rings so the active player shows.
         -- self.game_state is whatever we last had BEFORE the disconnect, so its
         -- turnExpiresAt is already in the past — sync_timers would clamp the
@@ -1234,6 +1261,11 @@ function on_message(self, message_id, message, sender)
         -- global network dialog handles the visual
 
     elseif message_id == hash("ws_net_up") then
+        -- Our own socket is back. Whatever the overlay was showing — our
+        -- outage or a wait on the opponent — IDENTIFY has just resynced us,
+        -- and PLAYER_DISCONNECTED will raise the dialog again on the next
+        -- grace tick if they are genuinely still gone.
+        self._dc_waiting_for = nil
         notify_gui(self.gui_hud, "conn_overlay", { show = false })
         -- Reconnected: re-assert the turn timer from the freshest known state so
         -- the active player's pie ring reappears. self.game_state is whatever

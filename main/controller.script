@@ -1078,7 +1078,11 @@ function init(self)
 
     table.insert(self.tokens, ws.on("player_disconnected", function(info)
         info = info or {}
-        msg.post("#game_logic", "ws_player_dc", { grace = info.grace or 30, player_id = info.player_id or "" })
+        msg.post("#game_logic", "ws_player_dc", {
+            grace     = info.grace or 30,
+            player_id = info.player_id or "",
+            reason    = info.reason or "",
+        })
     end))
     table.insert(self.tokens, ws.on("player_reconnected", function(info)
         info = info or {}

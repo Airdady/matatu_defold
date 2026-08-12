@@ -9,6 +9,7 @@ local conn_plan = require("modules.connection_plan")
 local json_util = require("modules.json_util")
 local util = require("modules.util")
 local aes = require("modules.aes")
+local DC = require("modules.disconnect_events")
 
 local M = {}
 
@@ -489,25 +490,21 @@ local function parse_message(json_string)
   local t = message.type or ""
   local d = message.data or {}
 
-  -- CONFIRM RECEIPT — of a reconnect catch-up OR an ordinary LIVE move.
+  -- The missed-move replay/ack protocol this used to speak does not exist.
   --
-  -- be_matatu tags a message `_replayId` when it's a reconnect catch-up
-  -- (handleIdentify.ts's pendingMissedMoveReplays — see the RESHUFFLING/MOVE
-  -- branch below, which skips the action-replay pipeline for these) and
-  -- `_ackId` when it's an ordinary live send the server wants confirmed
-  -- (moves/index.ts's pendingLiveMoveAcks — sent because readyState OPEN and
-  -- a successful ws.send() are not proof the other end actually got it; a
-  -- connection that went dark without an explicit close looks identical to
-  -- a healthy one until the ping/pong watchdog notices, several seconds
-  -- later). Both get the exact same ack — the server checks the id against
-  -- whichever of its two registries is holding it — the only difference is
-  -- what the CLIENT does with the rest of the message: a live move still
-  -- runs its normal animation below, a catch-up does not.
-  local ack_id = (d._replayId and d._replayId ~= "" and d._replayId)
-    or (d._ackId and d._ackId ~= "" and d._ackId)
-  if ack_id then
-    M.send_message("MISSED_MOVE_ACK", { replayId = ack_id })
-  end
+  -- We acked `_replayId`/`_ackId` with a MISSED_MOVE_ACK, and skipped the
+  -- action-replay pipeline for anything tagged `_replayId`. No branch of
+  -- be_matatu has ever sent either tag or handled that ack — grep
+  -- MISSED_MOVE/_replayId/_ackId across main, deploy, pro, tournament and
+  -- diffing and there is nothing. So the ack went nowhere and the skip never
+  -- fired; the safety it looked like we had against double-applying a
+  -- reconnect catch-up was never actually armed.
+  --
+  -- Catching a reconnect up is handled where it really happens instead:
+  -- PLAYER_RECONNECTED carries the authoritative gameState, and IDENTIFY
+  -- rebuilds the board outright. Being offline is reported by
+  -- PLAYER_DISCONNECTED, which is a real server event with a real grace
+  -- window, and is what the waiting dialog is driven from.
 
   emit("message", t, d)
 
@@ -610,48 +607,18 @@ local function parse_message(json_string)
     if next(gs) ~= nil then
       M.active_game_state = gs
 
-      -- A RECONNECT CATCH-UP (d._replayId set — see handleIdentify.ts) MUST
-      -- NOT GO THROUGH THE NORMAL ACTION-REPLAY PIPELINE.
-      --
-      -- Reconnecting to a game already in progress rebuilds the WHOLE board
-      -- from scratch off the plain IDENTIFY response, moments before this
-      -- message arrives (game_request_accepted -> ws_new_game_start ->
-      -- GF.start_game -> a full GS.destroy_all/fresh_state teardown and
-      -- rebuild from the same authoritative gameState this MOVE carries).
-      -- By the time this lands, player_hand/ai_hand are ALREADY the correct
-      -- POST-move result.
-      --
-      -- emit("game_move", ...) below feeds process_opponent_actions /
-      -- process_my_actions, which REPLAY gs.actions by diffing them against
-      -- the CURRENT hand — remove this card, draw that many. Run against a
-      -- hand that is already the end state of those exact actions, that
-      -- diff finds nothing left to remove (the cards are already gone) and
-      -- draws cards that were already drawn, corrupting the hand it was
-      -- supposed to be catching up. A single-action move might go unnoticed;
-      -- a whole turn-retaining combo (pick, play, pick, play, pick, play —
-      -- reported directly) corrupts visibly, because every one of those
-      -- actions gets misapplied the same way.
-      --
-      -- The fix is to do nothing here: the full rebuild already IS the
-      -- catch-up. M.active_game_state above is enough to keep it current:
-      -- there is nothing left for an action replay to correctly apply.
-      if d._replayId and d._replayId ~= "" then
-        print("[PIPE-1] reconnect catch-up (_replayId=" .. tostring(d._replayId)
-          .. ") — board already rebuilt from IDENTIFY, skipping action replay")
-      else
-        local actions = gs.actions or {}
-        -- Prefer the server's explicit `from` field (sent alongside the
-        -- encrypted gameState) over the currentTurn-inequality heuristic —
-        -- the heuristic breaks for Whot's turn-retaining special cards.
-        local explicit_from = d.from
-        local from_id = (explicit_from ~= nil and tostring(explicit_from) ~= "" and tostring(explicit_from))
-          or derive_sender(gs)
-        print(string.format("[PIPE-1] decoded from=%s actions=%d turn=%s suit=%s",
-          tostring(from_id), #actions, tostring(gs.currentTurn), tostring(gs.chosenSuit)))
-        pprint("[PIPE-1] gs.actions:", actions)
-        local processed = { _id = from_id, from = from_id, actions = actions, chosenSuit = gs.chosenSuit or "", gameState = gs, aiOnBehalf = (d.aiOnBehalf == true) }
-        emit("game_move", processed, gs)
-      end
+      local actions = gs.actions or {}
+      -- Prefer the server's explicit `from` field (sent alongside the
+      -- encrypted gameState) over the currentTurn-inequality heuristic —
+      -- the heuristic breaks for Whot's turn-retaining special cards.
+      local explicit_from = d.from
+      local from_id = (explicit_from ~= nil and tostring(explicit_from) ~= "" and tostring(explicit_from))
+        or derive_sender(gs)
+      print(string.format("[PIPE-1] decoded from=%s actions=%d turn=%s suit=%s",
+        tostring(from_id), #actions, tostring(gs.currentTurn), tostring(gs.chosenSuit)))
+      pprint("[PIPE-1] gs.actions:", actions)
+      local processed = { _id = from_id, from = from_id, actions = actions, chosenSuit = gs.chosenSuit or "", gameState = gs, aiOnBehalf = (d.aiOnBehalf == true) }
+      emit("game_move", processed, gs)
     else
       print("[PIPE-1] DROPPED — gs decoded empty")
     end
@@ -660,18 +627,15 @@ local function parse_message(json_string)
   elseif t == "PLAYER_READY" then
     emit("player_ready", d._id or "")
   elseif t == "PLAYER_DISCONNECTED" then
-    emit("player_disconnected", {
-      reason = d.reason or "Unknown",
-      grace = tonumber(d.gracePeriod) or 30,
-      player_id = tostring(d._id or d.playerId or d.userId or ""),
-    })
+    -- Both the envelope and the payload go to DC, which reads whichever shape
+    -- the deployed server actually sent and converts the grace DEADLINE into
+    -- the seconds remaining. See modules/disconnect_events.lua.
+    emit("player_disconnected", DC.parse_disconnect(d, message, now_s()))
   elseif t == "PLAYER_RECONNECTED" then
     local gs = M.extract_game_state(d)
     if next(gs) ~= nil then M.active_game_state = gs end
-    emit("player_reconnected", {
-      player_id = tostring(d._id or d.playerId or d.userId or ""),
-      state = gs,
-    })
+    local rc = DC.parse_reconnect(d, message)
+    emit("player_reconnected", { player_id = rc.player_id, state = gs })
   elseif t == "EMOJI_MESSAGE" then
     emit("emoji", d._id or d.from or "", d.emoji or d.name or "", d.sound or "")
   elseif t == "AI_PLAYED_ON_YOUR_BEHALF" then
