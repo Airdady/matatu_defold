@@ -62,7 +62,25 @@ function M.play_card(self, rec, is_player, result)
     notify_gui(self.gui_suit, "suit_select", { mode = "close" })
 
     if is_player then
-        table.insert(self.current_turn_actions, { type = "PLAY", v = tonumber(rec.v), s = tostring(rec.s) })
+        -- "Play the card I just drew this same turn" — matched by go
+        -- instance id against this turn's own DRAW entries (below). The
+        -- server never trusts a guessed value for a just-drawn card (it's
+        -- the one thing the client can't actually know), so this gets
+        -- flagged from_draw here and online_handler.lua's end_turn strips
+        -- v/s from the wire copy, sending fromDraw=true instead. An
+        -- ordinary play from a hand the server already confirmed keeps its
+        -- real v/s — there's nothing to guess there.
+        local from_draw = false
+        if rec.id then
+            for _, act in ipairs(self.current_turn_actions) do
+                if act.type == "DRAW" and act.id == rec.id and not act.claimed then
+                    act.claimed = true
+                    from_draw = true
+                    break
+                end
+            end
+        end
+        table.insert(self.current_turn_actions, { type = "PLAY", v = tonumber(rec.v), s = tostring(rec.s), from_draw = from_draw })
         tut("on_card_played", tonumber(rec.v), tostring(rec.s))
     end
 
@@ -407,7 +425,14 @@ function M.draw_to_hand(self, hand, is_player, count, done)
         table.insert(hand, c)
 
         if is_player and self.online_mode and self.is_player_turn() then
-            table.insert(self.current_turn_actions, { type = "DRAW", v = tonumber(c.v), s = tostring(c.s) })
+            -- v/s/id are kept LOCALLY for bookkeeping (last_local_play,
+            -- and matching a same-turn "play what I drew" in M.play_card
+            -- above) but never trusted on the wire — online_handler.lua's
+            -- end_turn sends a bare {type="DRAW"} per card instead. This
+            -- client's deck is its own independent shuffle, not the
+            -- server's; only the server's deck is the real source of what
+            -- a draw actually produces.
+            table.insert(self.current_turn_actions, { type = "DRAW", v = tonumber(c.v), s = tostring(c.s), id = c.id })
         end
 
         local y = is_player and self.PLAYER_HAND_Y or self.AI_HAND_Y

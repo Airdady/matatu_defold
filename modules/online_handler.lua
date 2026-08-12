@@ -71,11 +71,26 @@ function M.end_turn(self)
     local actions_to_send = {}
     local last_card = nil
 
+    -- Strip every guessed value at the network boundary. The client's deck
+    -- is its own independent shuffle, not the server's, so it can never
+    -- correctly claim what a DRAW produces — only a count. Same for "play
+    -- the card I just drew this turn" (from_draw, set in game_flow.lua's
+    -- M.play_card): the server resolves its real value FIFO against this
+    -- turn's own DRAW results (be_matatu's moves/index.ts handleMove), so
+    -- sending a value for it would just be trusted right back to a guess.
+    -- An ordinary play from an already-confirmed hand keeps its real v/s —
+    -- there's nothing to guess there.
     for i, act in ipairs(self.current_turn_actions) do
-        if act.type == "PLAY" or act.type == "DRAW" then
-            table.insert(actions_to_send, act)
+        if act.type == "DRAW" then
+            table.insert(actions_to_send, { type = "DRAW" })
+        elseif act.type == "PLAY" then
+            if act.from_draw then
+                table.insert(actions_to_send, { type = "PLAY", fromDraw = true })
+            else
+                table.insert(actions_to_send, { type = "PLAY", v = act.v, s = act.s })
+            end
+            last_card = act
         end
-        if act.type == "PLAY" then last_card = act end
     end
 
     if last_card then
