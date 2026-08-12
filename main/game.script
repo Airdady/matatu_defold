@@ -119,6 +119,12 @@ function init(self)
     -- Without this, board/hand cards stayed tappable for that whole window
     -- (most noticeable when the OPPONENT won, since the board sits idle).
     self.input_locked_for_game_over = false
+    -- Held from the instant GAME_OVER lands until the flip, the count and the
+    -- round banner have all finished. start_new_online_game parks an incoming
+    -- next round behind it; without that the server's immediate next-round push
+    -- rebuilds the board out from under the reveal.
+    self.round_transition_busy = false
+    self._pending_next_deadline = nil
     app.unlock_board()
 
     -- ---- self.* dispatch table -------------------------------------------
@@ -316,6 +322,13 @@ function update(self, dt)
             print("[ROUND-STORY] watchdog released the next-round hold safely")
             self.round_story_active = false
             self.round_story_deadline = nil
+            -- Released here too. This watchdog exists to let the next round go,
+            -- and start_new_online_game parks on EITHER flag — so clearing only
+            -- round_story_active would have it re-park the very state this just
+            -- unparked, stalling until the 12s backstop below instead of the
+            -- 8.5s this one is for.
+            self.round_transition_busy = false
+            self._pending_next_deadline = nil
             GF.finish_round_transition(self)
             local pending = self._pending_next_state
             self._pending_next_state = nil
@@ -323,6 +336,25 @@ function update(self, dt)
         end
     else
         self.round_story_deadline = nil
+    end
+
+    -- Parked-round watchdog. Holding the next round back is only safe if
+    -- something is guaranteed to let it go, and this is the last of those: for
+    -- the case where no path ever reports the transition finishing (the hud gui
+    -- is gone, the screen was torn down mid-reveal, a game-over that never
+    -- reaches end_game). Deliberately longer than the whole sequence plus the
+    -- round-story watchdog above, so it never pre-empts the normal route.
+    if self._pending_next_state and self._pending_next_deadline
+        and socket.gettime() > self._pending_next_deadline then
+        print("[ROUND-TRANSITION] watchdog released a parked next round")
+        self.round_transition_busy = false
+        self.round_story_active = false
+        self.round_story_deadline = nil
+        self._pending_next_deadline = nil
+        local pending = self._pending_next_state
+        self._pending_next_state = nil
+        GF.finish_round_transition(self, true)
+        start_new_online_game(self, pending, false)
     end
 
     if self.online_mode then
@@ -824,10 +856,28 @@ local function start_new_online_game(self, state, is_explicit_start_event)
     -- accept we were waiting on clearly succeeded, so any later stray
     -- GAME_REQUEST_DECLINED can't be about this transition anymore.
     self._awaiting_round_continuation = false
-    if self.round_story_active then
-        print("[DEBUG] start_new_online_game deferred due to round_story_active")
+    -- Park the next round until the current one has finished ENDING: the flip,
+    -- the counting, and the round-complete banner.
+    --
+    -- round_story_active alone is not that window — it only begins AFTER the
+    -- flip and the count are already done, so a state arriving during the
+    -- reveal passed straight through and rebuilt the board underneath it. On
+    -- the way past it also cleared pending_game_over_data, so for that round
+    -- the flip and count never ran at all: the new game initializes first and
+    -- the scoring animation plays over the top of it, or not at all.
+    --
+    -- That used to be rare enough to miss. It is now the NORMAL case: the
+    -- server sets the next round up the moment the last one is decided and
+    -- pushes it immediately, so it routinely arrives mid-reveal. Parking is
+    -- what keeps that speed from being visible.
+    if self.round_story_active or self.round_transition_busy then
+        print("[DEBUG] start_new_online_game deferred: round transition in progress")
         ws.active_game_state = state
         self._pending_next_state = state
+        -- Backstop for a transition that never reports finishing (see update).
+        -- Holding the next round back is only safe while something is
+        -- guaranteed to let it go.
+        self._pending_next_deadline = socket.gettime() + 12.0
         return
     end
     
@@ -929,9 +979,13 @@ function on_message(self, message_id, message, sender)
     elseif message_id == hash("round_story_done") then
         self.round_story_active = false
         self.round_story_deadline = nil
-        
+
         GF.finish_round_transition(self)
-        
+
+        -- The round has finished ending. Release the hold and build whatever
+        -- the server pushed while it was up.
+        self.round_transition_busy = false
+        self._pending_next_deadline = nil
         local pending = self._pending_next_state
         self._pending_next_state = nil
         if pending then
@@ -956,7 +1010,12 @@ function on_message(self, message_id, message, sender)
         self.round_story_active = false
         self.round_story_deadline = nil
         self._pending_next_state = nil
-        
+        -- Leaving the screen ends any transition in progress along with it.
+        -- Left set, this would park the first round of the NEXT game the player
+        -- starts, with nothing on screen to ever release it.
+        self.round_transition_busy = false
+        self._pending_next_deadline = nil
+
         self.pending_game_over_data = nil
         self._game_over_settle_time = 0
         self._game_over_absolute_timeout = 0
@@ -1166,6 +1225,12 @@ function on_message(self, message_id, message, sender)
             -- this, board/hand cards stayed tappable the whole time the
             -- "opponent won" result was already known but not yet shown.
             self.input_locked_for_game_over = true
+            -- The transition starts HERE, not when end_game eventually runs.
+            -- Everything between this point and the banner finishing is the
+            -- round ending, and the next round must not be built during it —
+            -- which, now that the server pushes it immediately, is exactly when
+            -- it tends to arrive.
+            self.round_transition_busy = true
             app.lock_board()
         end
 
