@@ -91,6 +91,11 @@ local function build_headers()
         -- rather than the display name: it is a monotonic integer, so there is
         -- nothing to parse and no way for "18.5.9" vs "18.5.10" to sort wrong.
         ["X-App-Build"]   = tostring(config.APP_BUILD or 0),
+        -- Which of matatu's two shipped packages this is (com.matatu.champ vs
+        -- com.matatu.nap) — the version floor needs this to tell them apart,
+        -- since a version NUMBER alone doesn't reliably say which package
+        -- produced it (see appVersion.ts's resolveMatatuVariant).
+        ["X-App-Package"] = config.APP_PACKAGE or "",
     }
     if _auth_token ~= "" then
         h["Authorization"] = "Bearer " .. _auth_token

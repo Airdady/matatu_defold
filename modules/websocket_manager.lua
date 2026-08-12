@@ -310,6 +310,10 @@ function M.identify(id, username, stake, country)
     -- what actually gets stored on the account (see handleIdentify.ts), and
     -- the two are sent at different moments.
     appBuild = config.APP_BUILD or 0,
+    -- Which of matatu's two shipped packages this is — see the `pkg` param
+    -- on the connect URL above for why this has to be the package name and
+    -- not something guessed from appVersion.
+    appPackage = config.APP_PACKAGE or "",
     fcmToken = (fcm_token and fcm_token ~= "") and fcm_token or nil,
   }
   print(string.format("[WS-DEBUG] identify() called: id=%s socket_connected=%s (%s)",
@@ -966,10 +970,15 @@ function M.connect()
 
   -- `b` is the Android versionCode, alongside the display version in `v`.
   -- The server gates on b when it has one (an integer needs no parsing) and
-  -- falls back to v for builds older than the stamping change.
+  -- falls back to v for builds older than the stamping change. `pkg` is
+  -- which of matatu's two shipped packages this is (com.matatu.champ vs
+  -- com.matatu.nap) — needed because a version NUMBER alone doesn't
+  -- reliably say which package sent it (see appVersion.ts's
+  -- resolveMatatuVariant); dots are safe unescaped in a query string.
   local url = config.WS_URL .. "/?deviceId=" .. tostring(device_id)
       .. "&v=" .. config.APP_VERSION
       .. "&b=" .. tostring(config.APP_BUILD or 0)
+      .. "&pkg=" .. tostring(config.APP_PACKAGE or "")
   print("[WS] connecting to " .. url)
   is_connecting = true
   connecting_since = now_s()
