@@ -489,6 +489,26 @@ local function parse_message(json_string)
   local t = message.type or ""
   local d = message.data or {}
 
+  -- CONFIRM RECEIPT OF A MISSED-MOVE CATCH-UP.
+  --
+  -- be_matatu's handleIdentify.ts tags every message it replays after a
+  -- reconnect with `_replayId` (see moves/index.ts's missed-move queue and
+  -- handleIdentify.ts's pendingMissedMoveReplays) specifically so it can
+  -- tell "the frame was accepted by the socket" apart from "the client
+  -- actually received and processed it" — a socket that closes moments
+  -- after a successful ws.send() looks identical to a working one from the
+  -- server's side. This ack is what lets the server stop holding this
+  -- replay as in-flight and, if it never arrives, requeue it for the next
+  -- reconnect instead of treating a silently-lost delivery as done.
+  --
+  -- Checked once here rather than per message type below: `_replayId` can
+  -- ride on MOVE or AI_PLAYED_ON_YOUR_BEHALF today and possibly other
+  -- replayed types later, and every one of them needs the exact same ack —
+  -- there is nothing type-specific about confirming delivery.
+  if d._replayId and d._replayId ~= "" then
+    M.send_message("MISSED_MOVE_ACK", { replayId = d._replayId })
+  end
+
   emit("message", t, d)
 
   if t == "PING" then
