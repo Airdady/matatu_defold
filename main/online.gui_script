@@ -342,6 +342,8 @@ function init(self)
     -- first-time visitor's eye is drawn to it (see update()/online_center.lua).
     self._tap_hint_active, self._tap_hint_t = true, 0
     refresh_wh(); update_season(self)
+
+    config.check_play_update()
 end
 
 function update(self, dt)
