@@ -618,48 +618,52 @@ local function parse_message(json_string)
     if next(gs) ~= nil then
       M.active_game_state = gs
 
-      -- A RECONNECT CATCH-UP (d._replayId set — see handleIdentify.ts) MUST
-      -- NOT GO THROUGH THE NORMAL ACTION-REPLAY PIPELINE.
+      -- A RECONNECT CATCH-UP (d._replayId set — see handleIdentify.ts) IS
+      -- PLAYED, not discarded.
       --
-      -- Reconnecting to a game already in progress rebuilds the WHOLE board
-      -- from scratch off the plain IDENTIFY response, moments before this
-      -- message arrives (game_request_accepted -> ws_new_game_start ->
-      -- GF.start_game -> a full GS.destroy_all/fresh_state teardown and
-      -- rebuild from the same authoritative gameState this MOVE carries).
-      -- By the time this lands, player_hand/ai_hand are ALREADY the correct
-      -- POST-move result.
+      -- It used to be dropped here on the reasoning that IDENTIFY has already
+      -- rebuilt the board to the post-move state, so replaying the actions
+      -- would double-apply them. The board did end up correct — and the player
+      -- came back to a game that had silently changed under them, with no idea
+      -- what the opponent had done. That is the whole reason the server queues
+      -- these at all; handleIdentify.ts says so directly: the IDENTIFY resync
+      -- "does not treat that passive resync the same way it treats a live MOVE
+      -- — no card-play animation".
       --
-      -- emit("game_move", ...) below feeds process_opponent_actions /
-      -- process_my_actions, which REPLAY gs.actions by diffing them against
-      -- the CURRENT hand — remove this card, draw that many. Run against a
-      -- hand that is already the end state of those exact actions, that
-      -- diff finds nothing left to remove (the cards are already gone) and
-      -- draws cards that were already drawn, corrupting the hand it was
-      -- supposed to be catching up. A single-action move might go unnoticed;
-      -- a whole turn-retaining combo (pick, play, pick, play, pick, play —
-      -- reported directly) corrupts visibly, because every one of those
-      -- actions gets misapplied the same way.
+      -- Replaying is safe because of two properties that hold specifically for
+      -- these messages:
       --
-      -- The fix is to do nothing here: the full rebuild already IS the
-      -- catch-up. M.active_game_state above is enough to keep it current:
-      -- there is nothing left for an action replay to correctly apply.
-      if d._replayId and d._replayId ~= "" then
-        print("[PIPE-1] reconnect catch-up (_replayId=" .. tostring(d._replayId)
-          .. ") — board already rebuilt from IDENTIFY, skipping action replay")
-      else
-        local actions = gs.actions or {}
-        -- Prefer the server's explicit `from` field (sent alongside the
-        -- encrypted gameState) over the currentTurn-inequality heuristic —
-        -- the heuristic breaks for Whot's turn-retaining special cards.
-        local explicit_from = d.from
-        local from_id = (explicit_from ~= nil and tostring(explicit_from) ~= "" and tostring(explicit_from))
-          or derive_sender(gs)
-        print(string.format("[PIPE-1] decoded from=%s actions=%d turn=%s suit=%s",
-          tostring(from_id), #actions, tostring(gs.currentTurn), tostring(gs.chosenSuit)))
-        pprint("[PIPE-1] gs.actions:", actions)
-        local processed = { _id = from_id, from = from_id, actions = actions, chosenSuit = gs.chosenSuit or "", gameState = gs, aiOnBehalf = (d.aiOnBehalf == true) }
-        emit("game_move", processed, gs)
-      end
+      --   * missedMoves.set() REPLACES rather than appends, so a catch-up
+      --     carries the most recent missed move only. Its gameState is
+      --     therefore the CURRENT state, not a historical one — applying it
+      --     cannot rewind the board the way a chronological replay would.
+      --   * finalize_state_sync converges rather than deltas. sync_deck_size,
+      --     stamp_deck, stamp_ai_hand and sync_my_hand all reconcile TO the
+      --     carried state, so an action that was already applied is corrected
+      --     rather than compounded.
+      --
+      -- The one thing that does not self-correct is the discard pile, which
+      -- nothing reconciles — the animated card lands on a pile that already
+      -- has it. handle_single_move trims it for replays; see `isReplay` there.
+      local actions = gs.actions or {}
+      -- Prefer the server's explicit `from` field (sent alongside the
+      -- encrypted gameState) over the currentTurn-inequality heuristic —
+      -- the heuristic breaks for Whot's turn-retaining special cards.
+      local explicit_from = d.from
+      local from_id = (explicit_from ~= nil and tostring(explicit_from) ~= "" and tostring(explicit_from))
+        or derive_sender(gs)
+      local is_replay = (d._replayId ~= nil and d._replayId ~= "")
+      print(string.format("[PIPE-1] decoded from=%s actions=%d turn=%s suit=%s replay=%s",
+        tostring(from_id), #actions, tostring(gs.currentTurn), tostring(gs.chosenSuit),
+        tostring(is_replay)))
+      pprint("[PIPE-1] gs.actions:", actions)
+      local processed = {
+        _id = from_id, from = from_id, actions = actions,
+        chosenSuit = gs.chosenSuit or "", gameState = gs,
+        aiOnBehalf = (d.aiOnBehalf == true),
+        isReplay = is_replay,
+      }
+      emit("game_move", processed, gs)
     else
       print("[PIPE-1] DROPPED — gs decoded empty")
     end

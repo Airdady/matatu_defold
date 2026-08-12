@@ -8,6 +8,19 @@ local C_PANEL       = vmath.vector4(0.10, 0.10, 0.10, 0.95)
 local C_PANEL_BORDER= vmath.vector4(0.30, 0.30, 0.30, 1.0)
 local C_T_RED       = vmath.vector4(0.94, 0.27, 0.27, 0.6)
 
+-- Grace meter on the disconnect/reconnect overlay.
+--
+-- Three colours rather than a gradient, because the bar is answering a
+-- yes/no question — is there still time — and a continuous ramp makes every
+-- moment look slightly urgent instead of marking the one that is. Calm for
+-- most of the window, amber under a third, red under a fifth, matched to the
+-- countdown text so the two never disagree.
+local CONN_BAR_W, CONN_BAR_H = 380, 8
+local C_CONN_CALM   = vmath.vector4(0.0, 0.722, 0.831, 1.0)
+local C_CONN_WARN   = vmath.vector4(0.949, 0.702, 0.020, 1.0)
+local C_CONN_URGENT = vmath.vector4(0.94, 0.27, 0.27, 1.0)
+local CONN_WARN_AT, CONN_URGENT_AT = 0.34, 0.20
+
 local AI_C_PANEL  = vmath.vector4(0.086, 0.098, 0.118, 1.0)
 local AI_C_ACCENT = vmath.vector4(0.949, 0.702, 0.020, 1.0)
 local AI_C_BODY   = vmath.vector4(0.788, 0.812, 0.839, 1.0)
@@ -126,8 +139,23 @@ function M.build(self, logical_w, logical_h)
     gui.set_parent(self.conn_title, self.conn_panel)
     self.conn_sub = label(vmath.vector3(0, 8, 0), "", 16, vmath.vector4(0.70, 0.74, 0.80, 1.0), gui.PIVOT_CENTER, "body")
     gui.set_parent(self.conn_sub, self.conn_panel)
-    self.conn_count = label(vmath.vector3(0, -44, 0), "", 34, C_WHITE, gui.PIVOT_CENTER, "helvetica_bold")
+    self.conn_count = label(vmath.vector3(0, -30, 0), "", 34, C_WHITE, gui.PIVOT_CENTER, "helvetica_bold")
     gui.set_parent(self.conn_count, self.conn_panel)
+
+    -- Grace meter. A bare number counting down says how long is left but not how
+    -- much of the window that IS — 12 reads very differently against a 15s grace
+    -- than against a 60s one. The bar carries the proportion, the number carries
+    -- the precision, and between them a glance is enough.
+    --
+    -- Anchored WEST and scaled on x rather than resized, so the drain animates
+    -- from a fixed left edge instead of shrinking toward its own centre.
+    self.conn_bar_bg = box(vmath.vector3(0, -68, 0), vmath.vector3(CONN_BAR_W, CONN_BAR_H, 0),
+        vmath.vector4(1, 1, 1, 0.10), gui.PIVOT_CENTER)
+    gui.set_parent(self.conn_bar_bg, self.conn_panel)
+    self.conn_bar = box(vmath.vector3(-CONN_BAR_W / 2, -68, 0), vmath.vector3(CONN_BAR_W, CONN_BAR_H, 0),
+        C_CONN_CALM, gui.PIVOT_W)
+    gui.set_parent(self.conn_bar, self.conn_panel)
+
     gui.set_enabled(self.conn_scrim, false)
 
     -- AI Modals
@@ -233,18 +261,57 @@ function M.set_conn_overlay(self, opts)
         local grace = tonumber(opts.grace) or 0
         if grace > 0 then
             self.conn_deadline = socket.gettime() + grace
+            -- Kept so the bar can show the fraction remaining. Without the
+            -- original span there is nothing to be a fraction OF.
+            self.conn_grace_span = grace
             self.conn_count_active = true
             gui.set_enabled(self.conn_count, true)
             gui.set_text(self.conn_count, string.format("%ds", math.ceil(grace)))
+            M.set_conn_progress(self, 1.0)
         else
             self.conn_count_active = false
+            self.conn_grace_span = nil
             gui.set_enabled(self.conn_count, false)
             gui.set_text(self.conn_count, "")
+            M.set_conn_progress(self, nil)
         end
     else
         gui.set_enabled(self.conn_scrim, false)
         self.conn_count_active = false
+        self.conn_grace_span = nil
     end
+end
+
+--- Draw the grace meter at `frac` remaining (1.0 full, 0 empty; nil hides it).
+--
+-- Scales rather than resizes. A WEST-pivoted node scaled on x drains from a
+-- fixed left edge; changing its size would pull both edges toward the middle
+-- and read as the bar shrinking rather than emptying.
+function M.set_conn_progress(self, frac)
+    if not self.conn_bar then return end
+    if frac == nil then
+        gui.set_enabled(self.conn_bar, false)
+        if self.conn_bar_bg then gui.set_enabled(self.conn_bar_bg, false) end
+        return
+    end
+    if frac < 0 then frac = 0 elseif frac > 1 then frac = 1 end
+
+    gui.set_enabled(self.conn_bar, true)
+    if self.conn_bar_bg then gui.set_enabled(self.conn_bar_bg, true) end
+
+    -- A zero x-scale collapses the node into a degenerate quad that some
+    -- drivers render as a stray sliver; keep a hair of width instead.
+    gui.set_scale(self.conn_bar, vmath.vector3(math.max(frac, 0.0001), 1, 1))
+
+    local colour = C_CONN_CALM
+    if frac <= CONN_URGENT_AT then
+        colour = C_CONN_URGENT
+    elseif frac <= CONN_WARN_AT then
+        colour = C_CONN_WARN
+    end
+    gui.set_color(self.conn_bar, colour)
+    -- The number tracks the bar, so the two can never tell different stories.
+    if self.conn_count then gui.set_color(self.conn_count, colour) end
 end
 
 function M.show_ai_notice(self, opts)
@@ -284,6 +351,7 @@ end
 function M.reset(self)
     M.set_skip_visible(self, false)
     M.set_conn_overlay(self, { show = false })
+    M.set_conn_progress(self, nil)
     M.hide_ai_notices(self)
     if self.exit_popover then gui.set_enabled(self.exit_popover, false) end
     if self.standings_title then gui.set_enabled(self.standings_title, false) end
@@ -295,6 +363,10 @@ function M.update(self, dt)
         local left = (self.conn_deadline or 0) - socket.gettime()
         if left < 0 then left = 0 end
         gui.set_text(self.conn_count, string.format("%ds", math.ceil(left)))
+        -- Driven off the same clock as the number rather than accumulated from
+        -- dt, so the bar cannot drift away from the digits over a long wait.
+        local span = self.conn_grace_span
+        if span and span > 0 then M.set_conn_progress(self, left / span) end
         if left <= 0 then self.conn_count_active = false end
     end
 end

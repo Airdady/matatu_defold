@@ -856,6 +856,28 @@ local function sync_my_hand(self, state)
     end
 end
 
+-- Bring the discard pile back down to the server's count, oldest first.
+--
+-- Only needed after a REPLAYED move. A catch-up animates a card onto a pile
+-- that the IDENTIFY rebuild has ALREADY placed it on, so the pile ends up one
+-- card deeper than the server's. Nothing else reconciles it: do_sync converges
+-- the deck and both hands, but never playedCards.
+--
+-- Left alone that surplus is not just cosmetic — reshuffle_deck recycles
+-- whatever is on the pile, so the client would hand a card back to the deck
+-- that the server still counts as played, and the two decks would disagree on
+-- length at exactly the moment draws are being validated against them.
+--
+-- Trims from the BOTTOM and never touches the last card: the top of the pile is
+-- the card in play, and the ones underneath it are inert scatter.
+local function trim_pile_to(self, target)
+    if type(target) ~= "number" or target < 1 then return end
+    while #self.played_cards > target and #self.played_cards > 1 do
+        local c = table.remove(self.played_cards, 1)
+        if c and c.id then pcall(go.delete, c.id) end
+    end
+end
+
 function M.handle_single_move(self, move_data, new_state, done)
     if self.game_over then done(); return end
 
@@ -864,6 +886,19 @@ function M.handle_single_move(self, move_data, new_state, done)
     local actions     = (move_data and move_data.actions) or {}
     local has_actions = #actions > 0
     local ai_for_me   = is_my_move and (move_data and move_data.aiOnBehalf) and true or false
+    local is_replay   = (move_data and move_data.isReplay) and true or false
+
+    -- A catch-up plays out like any other move — that is the point of it — but
+    -- the pile it lands on already contains the card, so square it up after.
+    local original_done = done
+    if is_replay then
+        done = function()
+            local served = (type(new_state) == "table" and type(new_state.playedCards) == "table")
+                and #new_state.playedCards or nil
+            trim_pile_to(self, served)
+            original_done()
+        end
+    end
 
     if not is_my_move and has_actions then
         local suit = move_data.chosenSuit
