@@ -247,6 +247,53 @@ fi
 print_success "modules/config.lua -> APP_VERSION=${VERSION_NAME} APP_BUILD=${VERSION_CODE}"
 
 # ═══════════════════════════════════════════════════════════
+# 0c. STAMP THE VERSION INTO game.project ITSELF
+# ═══════════════════════════════════════════════════════════
+# Not the same thing as the [project]/[android] overrides written to
+# $TMP_SETTINGS a few steps down. Those exist so package/title never touch
+# game.project directly — four targets share this one file, and baking
+# whichever target happened to build last into it would leave the other
+# three wrong. version does not have that problem: it is "what shipped
+# LAST", a single fact rather than something that differs per target at the
+# same instant, so there is nothing wrong with it living in the checked-in
+# file. And leaving it stamped here is what makes the Defold Editor — and
+# anyone reading game.project directly instead of digging through this
+# script — see the truth instead of whatever version was last hand-edited
+# in. Same failure class the modules/config.lua stamp above exists to
+# close, on a different file.
+print_status "Stamping version $VERSION_NAME ($VERSION_CODE) into game.project..."
+
+if [ ! -f game.project ] || ! grep -q "^\[project\]" game.project; then
+    print_error "game.project not found or has no [project] section — is this the matatu_defold repo root?"
+    exit 1
+fi
+
+sed -i.bak -E "s/^(version[[:space:]]*=[[:space:]]*).*/\1${VERSION_NAME}/" game.project
+
+# version_code has no line to replace on a project that predates this
+# stamp — insert it right after [android] the first time; every later
+# release finds the line already there and replaces it in place instead.
+if grep -q "^version_code[[:space:]]*=" game.project; then
+    sed -i.bak -E "s/^(version_code[[:space:]]*=[[:space:]]*).*/\1${VERSION_CODE}/" game.project
+else
+    sed -i.bak -E "/^\[android\]/a version_code = ${VERSION_CODE}" game.project
+fi
+rm -f game.project.bak
+
+# Verify rather than trust, same reasoning as the config.lua check above: a
+# sed that silently matched nothing must not pass as success.
+if ! grep -q "^version = ${VERSION_NAME}$" game.project; then
+    print_error "Failed to stamp version in game.project"
+    exit 1
+fi
+if ! grep -q "^version_code = ${VERSION_CODE}$" game.project; then
+    print_error "Failed to stamp version_code in game.project"
+    exit 1
+fi
+
+print_success "game.project -> version=${VERSION_NAME} version_code=${VERSION_CODE}"
+
+# ═══════════════════════════════════════════════════════════
 # 1. REGENERATE VISUAL IDENTITY ASSETS FOR $GAME_UPPER
 #    (launcher icon: bundle/android/res/** ; bg_logo watermark: assets/ui/)
 # ═══════════════════════════════════════════════════════════
