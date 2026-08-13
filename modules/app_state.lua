@@ -95,8 +95,35 @@ function M.get_theme()
   return M.THEMES[M.theme] or M.THEMES["default"]
 end
 
+-- THE MATCH OWNS THE THEME WHILE A MATCH IS ON SCREEN.
+--
+-- The server picks one theme for a game — the more expensive of the two
+-- players' — so both people see the same board. That decision has to outrank
+-- the local "my own theme" sync, and it did not: sync_theme_from_user runs on
+-- IDENTIFY, which fires on every reconnect, so a mid-game reconnect quietly
+-- reset the board to the viewer's own theme. For the player who does not own
+-- the match's theme, that is the default sheet, and any card created after it
+-- was built from the wrong one.
+--
+-- Set by OnlineHandler.start_game, cleared when the game screen is left.
+M.match_theme = nil
+
+function M.set_match_theme(theme_id)
+  local id = (type(theme_id) == "string" and M.THEMES[theme_id]) and theme_id or "default"
+  M.match_theme = id
+  M.theme = id
+end
+
+function M.clear_match_theme()
+  M.match_theme = nil
+end
+
 -- Sync the active theme from a user object's themes array (the one with active=true).
 function M.sync_theme_from_user(user)
+  -- A match theme is not a preference, it is what both players are looking at.
+  -- Refuse to overwrite it here; the game screen clears it on the way out and
+  -- re-syncs then.
+  if M.match_theme then return end
   if type(user) ~= "table" or type(user.themes) ~= "table" then return end
   for _, t in ipairs(user.themes) do
     if t.active and t.id and M.THEMES[t.id] then

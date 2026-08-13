@@ -1,5 +1,6 @@
 -- card.script
--- Per-game + per-theme card art. The sprite's sheet is chosen ONCE at spawn:
+-- Per-game + per-theme card art. The sprite's sheet is chosen from the ACTIVE
+-- theme, and re-chosen whenever that theme changes:
 --
 --   WHOT build          -> assets/cards/cards_whot.atlas (single Whot art set;
 --                          frame names "<v><s>" e.g. "10T"/"20W" + BACK_DEFAULT,
@@ -22,7 +23,23 @@ go.property("atlas_whot", resource.atlas("/assets/cards/cards_whot.atlas"))
 local app      = require "modules.app_state"
 local GameMode = require "modules.game_mode"
 
-function init(self)
+-- READ FRESH, AND SETTABLE AGAIN LATER.
+--
+-- This used to run only in init(), which made a card's art a permanent
+-- consequence of the instant it happened to be created. Two ways that showed:
+--
+--   * A card created while the theme was momentarily the player's OWN — a
+--     mid-game IDENTIFY re-syncs it, and every draw carrier, deck placeholder
+--     and resume rebuild spawns cards long after the deal — kept the default
+--     sheet for the rest of the match, on a board where every other card wore
+--     the match's theme. That is the reported "the player who does not own the
+--     theme sees a default card when they draw".
+--
+--   * There was no branch back. The chain only ever assigned drago/batman, so
+--     a card that started on the default sheet could never be corrected even
+--     if something did re-run this. `else` is not a tidy-up here, it is the
+--     half that was missing.
+local function apply_theme(self)
     if GameMode.is_whot() then
         go.set("#sprite", "image", self.atlas_whot)
         return
@@ -32,5 +49,22 @@ function init(self)
         go.set("#sprite", "image", self.atlas_drago)
     elseif set == "batman" then
         go.set("#sprite", "image", self.atlas_batman)
+    else
+        go.set("#sprite", "image", self.atlas_default)
+    end
+end
+
+function init(self)
+    apply_theme(self)
+end
+
+function on_message(self, message_id)
+    -- Broadcast to every live card when the active theme changes — see
+    -- app_state.apply_theme_to_cards. Re-picking the sheet is enough on its
+    -- own: the frame names are identical across the theme atlases, so whatever
+    -- face or back this card is currently showing keeps showing, in the new
+    -- art.
+    if message_id == hash("apply_theme") then
+        apply_theme(self)
     end
 end

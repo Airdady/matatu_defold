@@ -1156,6 +1156,11 @@ function on_message(self, message_id, message, sender)
         -- whatever it was before the match started — that would drift the moment
         -- sync_theme_from_user or next_theme ran for any other reason while a
         -- game was open.
+        --
+        -- The pin has to be released FIRST: while it is set sync_theme_from_user
+        -- deliberately stands down, which is what stops a mid-game IDENTIFY
+        -- resetting the board to the viewer's own theme.
+        app.clear_match_theme()
         app.sync_theme_from_user(ws.current_user_data)
 
     elseif message_id == hash("layout_changed") then

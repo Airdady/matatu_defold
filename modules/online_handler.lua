@@ -1019,6 +1019,32 @@ function M.continues_series(self, state)
     return key ~= "" and key == self._sb_series_key
 end
 
+-- Re-skin every card currently on the board.
+--
+-- card.script chooses its atlas in init() and re-chooses on an "apply_theme"
+-- message; this is what sends it. Posted per card because Defold has no
+-- broadcast to factory-created instances — and the board's cards are exactly
+-- these five places, which is also why this lives here rather than in
+-- app_state, which cannot see any of them.
+--
+-- Frame names are identical across the theme atlases, so a re-skin does not
+-- disturb what each card is showing: a face stays a face, a back stays a back.
+function M.apply_theme_to_cards(self)
+    local groups = {
+        self.deck, self.player_hand, self.ai_hand, self.played_cards,
+        self.cutting_card and { self.cutting_card } or nil,
+    }
+    for _, group in pairs(groups) do
+        for _, c in ipairs(group or {}) do
+            if c and c.id then
+                -- "script" is the component id in main/card.go, the same way
+                -- card_view.sprite_url targets "sprite".
+                pcall(msg.post, msg.url(nil, c.id, "script"), "apply_theme")
+            end
+        end
+    end
+end
+
 function M.start_game(self, state)
     self.is_animating = true
     self.online_mode  = true
@@ -1043,13 +1069,21 @@ function M.start_game(self, state)
     -- re-applies it rather than drifting back to the local default partway
     -- through a best-of-three.
     --
-    -- Overriding the single shared app_state.theme is enough to cover both
-    -- render sites (card_defs.back_frame and card.script's card_set) because
-    -- both call app_state.get_theme() fresh rather than caching it. Restored to
-    -- the player's own theme on leaving the game screen — game.script's
-    -- "disable" handler.
+    -- PINNED, not merely assigned. sync_theme_from_user runs on IDENTIFY, and
+    -- IDENTIFY fires on every reconnect — so simply setting app.theme here let
+    -- a mid-game reconnect quietly reset the board to the VIEWER's own theme.
+    -- For the player who does not own the match's theme that is the default
+    -- sheet, and card.script reads the theme when a card is created, so every
+    -- draw carrier and deck placeholder spawned afterwards was built from the
+    -- wrong one — the reported "drawing a card shows the default theme".
+    -- set_match_theme makes sync_theme_from_user stand down until the game
+    -- screen clears it (game.script's "disable" handler).
     local match_theme = state and (state.theme or (type(state.activeTheme) == "table" and state.activeTheme.id))
-    app.theme = (type(match_theme) == "string" and match_theme ~= "") and match_theme or "default"
+    app.set_match_theme(match_theme)
+    -- Re-skin anything still on the board from the previous game. Cards pick
+    -- their atlas at creation, so leftovers would otherwise keep the old art
+    -- until they were destroyed.
+    M.apply_theme_to_cards(self)
 
     M.setup_ws_listeners(self)
 
