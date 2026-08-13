@@ -926,9 +926,23 @@ function start_new_online_game(self, state, is_explicit_start_event)
     -- Liveness is judged on the BOARD, not on online_game_id alone: that id is
     -- only ever cleared by ws_resync, so it outlives a game the player has left
     -- and would otherwise park the first round of their next one for 12s.
+    -- SAME SERIES ONLY. A different game id is not enough on its own.
+    --
+    -- The guard is about a round CONTINUING — the next round of the series
+    -- already on screen. An unrelated game that happens to arrive while a board
+    -- is still up is not that, and parking one held a completely different
+    -- match behind the 12s backstop with a stale board in front of it. That is
+    -- the "switching from knockout to tournament takes long to initialize".
+    --
+    -- Asked through OnlineHandler.continues_series so this agrees with the two
+    -- places that already decide the same question — game_flow's board-furniture
+    -- teardown and start_game's scoreboard reset. Three different notions of
+    -- "same series" is exactly how the scoreboard and the board disagree about
+    -- which match they are showing.
     local has_live_board = #(self.player_hand or {}) > 0 or #(self.ai_hand or {}) > 0
     if new_id ~= "" and has_live_board and not self.game_over
-        and self.online_game_id ~= "" and new_id ~= tostring(self.online_game_id) then
+        and self.online_game_id ~= "" and new_id ~= tostring(self.online_game_id)
+        and OnlineHandler.continues_series(self, state) then
         print("[DEBUG] start_new_online_game deferred: next round arrived before GAME_OVER")
         ws.active_game_state = state
         self._pending_next_state = state
