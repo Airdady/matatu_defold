@@ -321,5 +321,69 @@ check("an idle frame is still fine", run_frame(st), true)
 
 ----------------------------------------------------------------------
 print("")
+print("6. THE PLAYER CHROME SURVIVES A REBUILD AND DIES ON THE WAY OUT")
+-- The avatars, the two pie timer rings, the balance and the network badges.
+--
+-- reset_hud is sent by two completely different events — a game STARTING and
+-- the screen being LEFT — and they want opposite things here. The hide was
+-- hung off `not keep_scoreboard`, which was harmless only for as long as that
+-- flag was accidentally always true; the moment a game start could legitimately
+-- ask for a full teardown, every new board hid its own avatars and both timers
+-- as it dealt. Nothing brings them back: set_t4_mode(false) is the only thing
+-- that re-enables them, it runs earlier in the same handler, and setup_avatars
+-- only touches the balance label and the avatar flipbooks.
+--
+-- Driven against the real game.gui_script, since the bug is entirely in which
+-- nodes end up enabled.
+----------------------------------------------------------------------
+SIM.install_gui_stub()
+package.loaded["modules.emoji_popover"] = {
+    init = function() end, reset = function() end, close = function() end,
+    bring_to_front = function() end, on_message = function() end,
+    on_input = function() return false end,
+}
+
+SIM.load_script_component("hud_probe", "main/game.gui_script")
+SIM.init_component("hud_probe")
+local hud_probe = SIM.components["hud_probe"]
+local h = hud_probe.self
+
+local function chrome_visible()
+    local nodes = { h.p_avatar_bg, h.o_avatar_bg, h.o_avatar_name }
+    for _, n in pairs(nodes) do
+        if not (n and gui.is_enabled(n)) then return false end
+    end
+    return true
+end
+
+local function reset_hud(payload)
+    return SIM.with_ctx("hud_probe", hud_probe.on_message, h, hash("reset_hud"), payload)
+end
+
+check("the HUD builds with its chrome up", chrome_visible(), true)
+
+-- A NEW GAME, with a full teardown asked for (keep_scoreboard = false). This
+-- is the exact call game_flow's start_game now makes for any game that does
+-- not continue the series on screen — a rematch, a tournament after a
+-- knockout, the first game of anything.
+check("a game-start reset runs", reset_hud({ keep_scoreboard = false }), true)
+check("...and the avatars are still there", chrome_visible(), true)
+check("...and so is the player's pie timer",
+    (h.p_timer ~= nil) and gui.is_enabled(h.p_timer.parent or h.p_timer), true)
+check("...and the opponent's",
+    (h.o_timer ~= nil) and gui.is_enabled(h.o_timer.parent or h.o_timer), true)
+
+-- A round continuation asks for the opposite (keep), and must not disturb it
+-- either.
+check("a continuation reset runs", reset_hud({ keep_scoreboard = true }), true)
+check("...chrome untouched", chrome_visible(), true)
+
+-- LEAVING THE SCREEN. This is the one that must take it all down, or a timer
+-- ring strands itself on top of the lobby — the reason the hide exists.
+check("a leaving reset runs", reset_hud({ leaving = true }), true)
+check("...and the chrome goes with it", chrome_visible(), false)
+
+----------------------------------------------------------------------
+print("")
 print(string.format("──── %d checks, %d failed ────", checks, failures))
 os.exit(failures == 0 and 0 or 1)

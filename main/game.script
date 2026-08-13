@@ -1120,7 +1120,10 @@ function on_message(self, message_id, message, sender)
 
         notify_gui(self.gui_suit, "reset_hud")
         notify_gui(self.gui_over, "reset_hud")
-        notify_gui(self.gui_hud, "reset_hud")
+        -- leaving = the screen is being torn down, not a board being rebuilt.
+        -- This is the one reset that must take the avatars and turn-timer rings
+        -- down with it, so they cannot strand themselves over the lobby.
+        notify_gui(self.gui_hud, "reset_hud", { leaving = true })
         self.awaiting_replay = false
         self._sb_active, self._sb_format, self._sb_stage = false, nil, nil
         self._sb_p, self._sb_o = nil, nil
