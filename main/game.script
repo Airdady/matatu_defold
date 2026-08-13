@@ -29,6 +29,25 @@ end
 local notify_gui = util.notify_gui
 local log        = util.log
 
+-- FORWARD DECLARATIONS. Both are defined much further down, but update() and
+-- on_message() are compiled ABOVE those definitions and call them.
+--
+-- This is not tidiness — without the declarations those calls compile to
+-- GLOBAL lookups (Lua resolves names lexically at compile time, and a `local
+-- function` declared on a later line is simply not in scope on an earlier
+-- one), and the globals do not exist. Every one of them was `attempt to call a
+-- nil value`.
+--
+-- What that broke, specifically: update()'s two next-round watchdogs. They are
+-- the ONLY things that release a parked next round when the normal route (the
+-- round banner reporting itself finished) doesn't run — and they errored out
+-- instead of releasing. Worse, the error aborts the REST of update() for that
+-- frame, and the online game-over watchdog runs later in the same function, so
+-- once a watchdog started firing every frame the game-over sequence stopped
+-- being processed at all: the board sat there with the result already known.
+local start_new_online_game
+local release_round_hold
+
 ----------------------------------------------------------------------
 -- Script Properties
 ----------------------------------------------------------------------
@@ -320,19 +339,12 @@ function update(self, dt)
         
         if socket.gettime() > self.round_story_deadline then
             print("[ROUND-STORY] watchdog released the next-round hold safely")
-            self.round_story_active = false
-            self.round_story_deadline = nil
-            -- Released here too. This watchdog exists to let the next round go,
-            -- and start_new_online_game parks on EITHER flag — so clearing only
-            -- round_story_active would have it re-park the very state this just
-            -- unparked, stalling until the 12s backstop below instead of the
-            -- 8.5s this one is for.
-            self.round_transition_busy = false
-            self._pending_next_deadline = nil
-            GF.finish_round_transition(self)
-            local pending = self._pending_next_state
-            self._pending_next_state = nil
-            if pending then start_new_online_game(self, pending, false) end
+            -- The whole hold goes, not just round_story_active:
+            -- start_new_online_game parks on EITHER flag, so releasing one
+            -- would have it re-park the very state this just unparked and
+            -- stall until the 12s backstop below instead of the 8.5s this
+            -- watchdog is for.
+            release_round_hold(self)
         end
     else
         self.round_story_deadline = nil
@@ -347,14 +359,7 @@ function update(self, dt)
     if self._pending_next_state and self._pending_next_deadline
         and socket.gettime() > self._pending_next_deadline then
         print("[ROUND-TRANSITION] watchdog released a parked next round")
-        self.round_transition_busy = false
-        self.round_story_active = false
-        self.round_story_deadline = nil
-        self._pending_next_deadline = nil
-        local pending = self._pending_next_state
-        self._pending_next_state = nil
-        GF.finish_round_transition(self, true)
-        start_new_online_game(self, pending, false)
+        release_round_hold(self, true)
     end
 
     if self.online_mode then
@@ -846,7 +851,9 @@ local function replay_failed(self, reason)
     msg.post("#controller", "goto_online")
 end
 
-local function start_new_online_game(self, state, is_explicit_start_event)
+-- Assigns the forward-declared local above (see the note at the top of the
+-- file) — NOT a new local, and not a global.
+function start_new_online_game(self, state, is_explicit_start_event)
     print("[DEBUG] start_new_online_game triggered! explicit_start=" .. tostring(is_explicit_start_event))
     if type(state) ~= "table" or next(state) == nil then
         print("[DEBUG] Aborting start_new_online_game: Invalid state.")
@@ -870,7 +877,18 @@ local function start_new_online_game(self, state, is_explicit_start_event)
     -- server sets the next round up the moment the last one is decided and
     -- pushes it immediately, so it routinely arrives mid-reveal. Parking is
     -- what keeps that speed from being visible.
-    if self.round_story_active or self.round_transition_busy then
+    --
+    -- pending_game_over_data is named here as well as the two flags, and not
+    -- because it adds a case they miss — ws_game_over sets it and the hold in
+    -- the same breath. It is here so that the ONE thing this park exists to
+    -- prevent is stated where the decision is made: a result that has been
+    -- received but not yet shown must never be dropped on the floor by a new
+    -- game arriving. Below, the "clearing stale pending_game_over_data" branch
+    -- does exactly that, and every time it ran a player watched a game end with
+    -- no reveal, no count and no dialog. Anything reaching it now is a genuine
+    -- leftover, not a live result.
+    if self.round_story_active or self.round_transition_busy
+        or self.pending_game_over_data then
         print("[DEBUG] start_new_online_game deferred: round transition in progress")
         ws.active_game_state = state
         self._pending_next_state = state
@@ -977,6 +995,35 @@ local function start_new_online_game(self, state, is_explicit_start_event)
     end
 end
 
+-- THE ROUND HAS FINISHED ENDING. Let whatever was waiting on it through.
+--
+-- The hold is taken the instant GAME_OVER lands (see ws_game_over) and covers
+-- the whole ending — the reveal, the count, the round banner — because the
+-- server now pushes the next round immediately and it routinely arrives in the
+-- middle of that. Releasing it is a single act with three parts (drop the
+-- flags, drop the backstop, build anything parked), and every caller that did
+-- it by hand got a different subset of them right.
+--
+-- Returns whether a parked game was actually built, so a caller that was about
+-- to ask for a game of its own can tell that one is already here.
+--
+-- Assigns the forward-declared local at the top of the file.
+function release_round_hold(self, force_finish)
+    self.round_transition_busy = false
+    self.round_story_active    = false
+    self.round_story_deadline  = nil
+    self._pending_next_deadline = nil
+
+    GF.finish_round_transition(self, force_finish)
+
+    local pending = self._pending_next_state
+    self._pending_next_state = nil
+    if not pending then return false end
+
+    start_new_online_game(self, pending, false)
+    return true
+end
+
 ----------------------------------------------------------------------
 -- Message routing
 ----------------------------------------------------------------------
@@ -1014,20 +1061,29 @@ function on_message(self, message_id, message, sender)
         start_new_online_game(self, message.state or ws.get_active_game(), true)
 
     elseif message_id == hash("round_story_done") then
-        self.round_story_active = false
-        self.round_story_deadline = nil
+        -- The round banner has finished. The round has finished ending: release
+        -- the hold and build whatever the server pushed while it was up.
+        release_round_hold(self)
 
-        GF.finish_round_transition(self)
-
-        -- The round has finished ending. Release the hold and build whatever
-        -- the server pushed while it was up.
-        self.round_transition_busy = false
-        self._pending_next_deadline = nil
-        local pending = self._pending_next_state
-        self._pending_next_state = nil
-        if pending then
-            start_new_online_game(self, pending, false)
-        end
+    elseif message_id == hash("round_hold_release") then
+        -- NOTHING IS CONTINUING — the game is over for good (game_flow's
+        -- end_game, non-continuation branch).
+        --
+        -- ws_game_over takes the hold for EVERY online game over, because at
+        -- that moment nobody knows yet whether a next round is coming. When it
+        -- isn't, no round banner runs, so round_story_done — the only route
+        -- that used to release it — never fires and the hold simply stayed set
+        -- for as long as the player remained on the game screen.
+        --
+        -- Everything the player did next then landed on a client that believed
+        -- a round transition was still in progress: the next game they started
+        -- was parked by start_new_online_game, which meant GF.start_game never
+        -- ran, which meant the game-over dialog was never told to close, the
+        -- scoreboard/chamber were never rebuilt for the new mode, and the board
+        -- only appeared when the 12s backstop finally fired. That is the
+        -- "dialogue never closes, old table stays up, new game takes forever"
+        -- report, and it is one flag.
+        release_round_hold(self)
 
     elseif message_id == hash("ws_round_complete") then
         print("[DEBUG] Received ws_round_complete message.")
@@ -1140,6 +1196,18 @@ function on_message(self, message_id, message, sender)
         end
 
     elseif message_id == hash("replay") then
+        -- PLAY AGAIN is the player saying they are finished with the result.
+        -- If a game was already parked behind it — they accepted one while the
+        -- last round was still counting out — this is the moment to build it,
+        -- rather than making them wait out the rest of the minimum-show window
+        -- for a dialog they have just dismissed.
+        --
+        -- And if that is what happened, we are DONE: the game they are asking
+        -- for is the one that just went onto the board. Falling through would
+        -- send a rematch request on top of a live game, which is a second game
+        -- for a player the server already considers busy.
+        if release_round_hold(self) then return end
+
         if self.online_mode then
             local stake = { amount = 100, charge = 10 }
             if self.game_state and self.game_state.stake then
