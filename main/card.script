@@ -14,6 +14,19 @@
 -- Which frame NAMES the game logic asks for comes from modules/card_defs.lua,
 -- which dispatches per game the same way — so the names always exist in
 -- whichever atlas is assigned here.
+--
+-- A THEME IS TWO THINGS, AND BOTH HAVE TO LAND.
+--
+--   card_set  -> which atlas       (default / drago / batman)
+--   card_back -> which frame in it (card_back / card_back_blue / card_back_black)
+--
+-- They are applied through different APIs — the atlas here, the frame by
+-- card_view's play_flipbook — and assigning the sprite's `image` RESETS it to
+-- the component's default animation, which is plain "card_back". So an atlas
+-- assignment silently undoes a themed back played just before it. Three of the
+-- six themes have a back that is NOT "card_back" (blue_basic, black_basic,
+-- blue_drago), and those are exactly the ones that showed a default back on a
+-- freshly spawned card.
 
 go.property("atlas_default", resource.atlas("/assets/cards/cards.atlas"))
 go.property("atlas_drago", resource.atlas("/assets/cards/cards_drago.atlas"))
@@ -22,49 +35,64 @@ go.property("atlas_whot", resource.atlas("/assets/cards/cards_whot.atlas"))
 
 local app      = require "modules.app_state"
 local GameMode = require "modules.game_mode"
+local Defs     = require "modules.card_defs"
 
--- READ FRESH, AND SETTABLE AGAIN LATER.
---
--- This used to run only in init(), which made a card's art a permanent
--- consequence of the instant it happened to be created. Two ways that showed:
---
---   * A card created while the theme was momentarily the player's OWN — a
---     mid-game IDENTIFY re-syncs it, and every draw carrier, deck placeholder
---     and resume rebuild spawns cards long after the deal — kept the default
---     sheet for the rest of the match, on a board where every other card wore
---     the match's theme. That is the reported "the player who does not own the
---     theme sees a default card when they draw".
---
---   * There was no branch back. The chain only ever assigned drago/batman, so
---     a card that started on the default sheet could never be corrected even
---     if something did re-run this. `else` is not a tidy-up here, it is the
---     half that was missing.
-local function apply_theme(self)
-    if GameMode.is_whot() then
-        go.set("#sprite", "image", self.atlas_whot)
-        return
-    end
+local function wanted_atlas(self)
+    if GameMode.is_whot() then return self.atlas_whot, "whot" end
     local set = (app.get_theme() or {}).card_set or "default"
-    if set == "drago" then
-        go.set("#sprite", "image", self.atlas_drago)
-    elseif set == "batman" then
-        go.set("#sprite", "image", self.atlas_batman)
-    else
-        go.set("#sprite", "image", self.atlas_default)
-    end
+    if set == "drago" then return self.atlas_drago, "drago" end
+    if set == "batman" then return self.atlas_batman, "batman" end
+    return self.atlas_default, "default"
+end
+
+-- ONLY ASSIGN WHEN IT ACTUALLY CHANGES.
+--
+-- Not an optimisation — assignment is the thing that wipes the frame. The
+-- sprite already starts on cards.atlas (main/card.go's texture), so for every
+-- theme on the default sheet there is nothing to assign and the themed back
+-- survives untouched. Skipping the no-op assignment is what makes that true.
+--
+-- It also gives the `else` branch a purpose it did not have before: the chain
+-- used to only ever assign drago/batman, so a card that started on the default
+-- sheet could never be corrected back if the theme changed under it.
+local function apply_atlas(self)
+    local atlas, key = wanted_atlas(self)
+    if self._atlas_key == key then return false end
+    self._atlas_key = key
+    go.set("#sprite", "image", atlas)
+    return true
+end
+
+local function play(frame)
+    if not frame or frame == "" then return end
+    pcall(sprite.play_flipbook, "#sprite", hash(frame))
 end
 
 function init(self)
-    apply_theme(self)
+    -- The sprite starts on main/card.go's texture, which is the default sheet.
+    self._atlas_key = "default"
+    if apply_atlas(self) then
+        -- Only when the sheet actually changed, so this cannot fight a caller
+        -- that has already put a FACE on a card whose atlas needed no change.
+        -- A newly created card is face down — card_view.spawn_card sets the
+        -- back the moment it returns — so the back is the right frame to land
+        -- on when the assignment has just cleared it.
+        play(Defs.back_frame())
+    end
 end
 
-function on_message(self, message_id)
-    -- Broadcast to every live card when the active theme changes — see
-    -- app_state.apply_theme_to_cards. Re-picking the sheet is enough on its
-    -- own: the frame names are identical across the theme atlases, so whatever
-    -- face or back this card is currently showing keeps showing, in the new
-    -- art.
+function on_message(self, message_id, message)
+    -- Sent to every live card when the active theme changes — see
+    -- OnlineHandler.apply_theme_to_cards. `frame` is what this card should show
+    -- afterwards: the caller knows whether this one is face up (a hand, the
+    -- pile) or face down (the deck, the opponent's hand), and this does not.
     if message_id == hash("apply_theme") then
-        apply_theme(self)
+        local changed = apply_atlas(self)
+        local frame = message and message.frame
+        -- Re-play whenever a frame was named, changed atlas or not: the point
+        -- of the broadcast is to land on the theme's back, and a card sitting
+        -- on the OLD theme's back frame needs the new one even when both live
+        -- in the same sheet (blue_basic -> black_basic, say).
+        if frame then play(frame) elseif changed then play(Defs.back_frame()) end
     end
 end

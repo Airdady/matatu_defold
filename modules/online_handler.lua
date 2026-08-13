@@ -1066,16 +1066,30 @@ end
 -- Frame names are identical across the theme atlases, so a re-skin does not
 -- disturb what each card is showing: a face stays a face, a back stays a back.
 function M.apply_theme_to_cards(self)
+    -- Each group carries whether its cards are face UP, because switching the
+    -- atlas resets the sprite to its default animation — so every card has to
+    -- be told what to show afterwards, and only the board knows which side each
+    -- one is on. A hand and the pile are faces; the deck and the opponent's
+    -- hand are backs.
     local groups = {
-        self.deck, self.player_hand, self.ai_hand, self.played_cards,
-        self.cutting_card and { self.cutting_card } or nil,
+        { cards = self.deck,         face = false },
+        { cards = self.ai_hand,      face = false },
+        { cards = self.player_hand,  face = true  },
+        { cards = self.played_cards, face = true  },
+        { cards = self.cutting_card and { self.cutting_card } or nil, face = true },
     }
-    for _, group in pairs(groups) do
-        for _, c in ipairs(group or {}) do
+    local back = Defs.back_frame()
+    for _, group in ipairs(groups) do
+        for _, c in ipairs(group.cards or {}) do
             if c and c.id then
+                local frame = back
+                if group.face then
+                    local ok, name = pcall(Defs.frame_name, c)
+                    if ok and name then frame = name end
+                end
                 -- "script" is the component id in main/card.go, the same way
                 -- card_view.sprite_url targets "sprite".
-                pcall(msg.post, msg.url(nil, c.id, "script"), "apply_theme")
+                pcall(msg.post, msg.url(nil, c.id, "script"), "apply_theme", { frame = frame })
             end
         end
     end
