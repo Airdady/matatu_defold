@@ -1,0 +1,321 @@
+-- FROM A HANDSET THE BACKEND HAS NEVER SEEN, TO A PLAYABLE ACCOUNT.
+--
+--   Run: lua tools/test_phone_signup_flow.lua
+--
+-- Reported: "for the phone number input, when I punch in the phone number it
+-- still doesn't redirect me to the profile creation where we have username and
+-- avatar selector."
+--
+-- Two different first launches share this one screen, and both ended somewhere
+-- they should not have:
+--
+--   MATATU   /auth/device answers 404 DEVICE_UNKNOWN, so the number is the
+--            sign-in. It worked, the server said yes — and the screen stayed
+--            on the keypad, because it re-derived which step to show from
+--            `phoneNumber` in the response payload rather than from the fact
+--            that the request had succeeded. A response that did not carry the
+--            field back (the builder strips keys it has no value for, an
+--            account matched on a secondary number answers with a different
+--            default, a degraded build returns a bare row) put the player
+--            straight back where they started, with no error to explain it and
+--            no way to make retyping it help.
+--
+--   WHOT     there is no phone step at all — Nigeria has no mobile-money
+--            identity check to run against a number, so asking for one buys
+--            nothing (app_state.phone_required). That part was already right.
+--            What was not: the username/avatar screen it goes to instead had
+--            nowhere to save. /auth/device signs in but deliberately never
+--            creates, so there was no account id, and update_profile refused
+--            its own request with "User ID required".
+--
+-- This drives the REAL controller.script and profile.gui_script through the
+-- headless runtime in tools/defold_sim.lua, taps the REAL buttons the screen
+-- builds, and answers scripted HTTP. Nothing here asserts against source text.
+
+local ROOT = (debug.getinfo(1, "S").source:match("@(.*/)") or "./") .. "../"
+
+local failures = 0
+local function check(label, got, want)
+    local ok = got == want
+    if not ok then failures = failures + 1 end
+    print(string.format("  %s %s (got %s, want %s)",
+        ok and "PASS" or "FAIL", label, tostring(got), tostring(want)))
+end
+
+-- ── one full app boot, with a scripted backend ──────────────────────────────
+--
+-- Everything is reloaded per case: controller.script, the gui script and every
+-- module keep state in file locals (the socket's reconnect budget, the cached
+-- session, the module-level `identify_ok`) with no public way to reset it, so
+-- a case that ended mid-flight would otherwise hand its state to the next one.
+local function boot(opts)
+    opts = opts or {}
+
+    for name in pairs(package.loaded) do
+        if name:match("^modules%.") or name == "tools.defold_sim" then
+            package.loaded[name] = nil
+        end
+    end
+    package.path = ROOT .. "?.lua;" .. package.path
+
+    local SIM = dofile(ROOT .. "tools/defold_sim.lua")
+    SIM.install_gui_stub()
+
+    -- The build-time game switch, chosen per case instead of per build.
+    package.loaded["modules.game_mode"] = {
+        GAME = opts.game or "MATATU",
+        PATH = (opts.game == "WHOT") and "whot" or "matatu",
+        BRAND = "Test", TITLE = "TEST", TAGLINE = "", BOT = "Test Bot",
+        COUNTRY = "", CURRENCY_CODE = "UGX", CURRENCY_SYMBOL = "UGX",
+        PHONE_COUNTRY_CODE = (opts.game == "WHOT") and "234" or "256",
+        PHONE_PLACEHOLDER = "", DEFAULT_STAKE_AMOUNT = 200,
+        def = function() return { how_to = {}, specials = {} } end,
+        is_whot   = function() return opts.game == "WHOT" end,
+        is_matatu = function() return (opts.game or "MATATU") == "MATATU" end,
+        is_kadi   = function() return opts.game == "KADI" end,
+    }
+
+    _G.window.set_listener = function() end
+    _G.window.set_dim_mode = function() end
+    _G.window.DIMMING_OFF = 0
+    _G.window.WINDOW_EVENT_FOCUS_GAINED = 1
+    _G.window.WINDOW_EVENT_FOCUS_LOST = 2
+    _G.sys.get_config_string = function() return "" end
+    _G.sys.get_config = function() return "" end
+
+    local http_log = {}
+    _G.http = {
+        request = function(url, method, cb, headers, body, options)
+            http_log[#http_log + 1] = { url = url, method = method, body = body }
+            -- Longest pattern wins, so "/auth/device/profile" is not swallowed
+            -- by the "/auth/device" entry that every case registers.
+            local handler, best = nil, -1
+            for _, route in ipairs(opts.routes or {}) do
+                if url:find(route[1], 1, true) and #route[1] > best then
+                    handler, best = route[2], #route[1]
+                end
+            end
+            local resp = handler and handler(body)
+                or { status = 404, response = '{"success":false}' }
+            local ctx = SIM.current_ctx
+            timer.delay(0.1, false, function() SIM.with_ctx(ctx, cb, nil, nil, resp) end)
+        end,
+    }
+
+    -- Every sibling the controller posts to. Only the two under test run real
+    -- code; the rest just have to exist so nothing is dropped on the floor.
+    for _, id in ipairs({ "lobby", "auth", "online", "themes", "payments",
+                          "tournaments", "team_tournament", "standings", "game",
+                          "game_logic", "coins", "signup_bonus", "daily_bonus",
+                          "network", "incoming", "gameover", "update_required",
+                          "toast", "announcement", "season_results", "tutorial",
+                          "suit_select", "card_factory" }) do
+        SIM.add_recorder(id)
+    end
+    SIM.load_script_component("controller", ROOT .. "main/controller.script")
+    SIM.load_script_component("profile", ROOT .. "main/profile.gui_script")
+    SIM.init_component("controller")
+    SIM.init_component("profile")
+    SIM.pump(3.0)
+
+    local env = {
+        SIM = SIM,
+        http_log = http_log,
+        ws = require("modules.websocket_manager"),
+        screen = function() return SIM.components.controller.self.screen end,
+        step = function() return SIM.components.profile.self.step end,
+        pself = function() return SIM.components.profile.self end,
+    }
+
+    -- Press a button the screen ACTUALLY built, through its own on_input.
+    function env.tap(id)
+        local pself = SIM.components.profile.self
+        local penv = SIM.components.profile.env
+        local target
+        for _, b in ipairs(pself.buttons or {}) do
+            if b.id == id then target = b.node end
+        end
+        if not target then return false end
+        gui.pick_node = function(n) return n == target end
+        SIM.with_ctx("profile", penv.on_input, pself, hash("touch"),
+            { pressed = true, x = 0, y = 0 })
+        gui.pick_node = function() return false end
+        SIM.pump(0.2)
+        return true
+    end
+
+    function env.type_digits(s)
+        local all = true
+        for d in s:gmatch(".") do all = env.tap("p_" .. d) and all end
+        return all
+    end
+
+    function env.type_username(s)
+        local all = true
+        for c in s:gmatch(".") do all = env.tap("k_" .. c:upper()) and all end
+        return all
+    end
+
+    function env.called(fragment)
+        for _, h in ipairs(http_log) do
+            if h.url:find(fragment, 1, true) then return true end
+        end
+        return false
+    end
+
+    return env
+end
+
+local DEVICE_UNKNOWN = { "/auth/device", function()
+    return { status = 404, response =
+        '{"success":false,"message":"No account on this device yet.","code":"DEVICE_UNKNOWN"}' }
+end }
+
+-- ---------------------------------------------------------------------------
+print("MATATU: AN UNKNOWN HANDSET IS ASKED FOR A NUMBER")
+do
+    local app = boot({ game = "MATATU", routes = { DEVICE_UNKNOWN } })
+    check("the phone screen is what opens", app.screen(), "profile")
+    check("on the keypad step", app.step(), "phone")
+    -- Not "link": there is no session to link a number TO. The distinction is
+    -- what puts a way out on the screen — in link mode this is the first thing
+    -- a fresh install sees and has no exit at all.
+    check("in sign-in mode, with a way back", app.pself().phone_mode, "login")
+    check("and it did ask the backend first", app.called("/auth/device"), true)
+end
+
+-- ---------------------------------------------------------------------------
+print("")
+print("MATATU: THE NUMBER GOES IN AND THE PROFILE SCREEN COMES UP")
+do
+    -- The payload deliberately carries NO phoneNumber. That is the shape that
+    -- used to strand the player: the sign-in plainly worked, and the screen
+    -- asked the payload rather than the outcome.
+    local app = boot({ game = "MATATU", routes = { DEVICE_UNKNOWN,
+        { "/auth/phone", function()
+            return { status = 200, response = [[{"success":true,"isNewUser":true,
+                "matchedBy":"phone","token":"tok-1",
+                "user":{"_id":"64b7f9a1c2d3e4f5a6b7c8d9","accountId":9001,"balance":0}}]] }
+        end } } })
+
+    check("typed all nine digits", app.type_digits("712345678"), true)
+    check("the field holds them", app.pself().phone, "712345678")
+    check("CONTINUE is on screen", app.tap("phone_link"), true)
+    app.SIM.pump(3.0)
+
+    check("it signed in by number", app.called("/auth/phone"), true)
+    check("no error was raised", tostring(app.pself()._phone_error), "nil")
+    check("the keypad is gone", app.step(), "profile")
+    check("and this is the username/avatar screen", app.screen(), "profile")
+    -- The number is written onto the cached account even though the response
+    -- never mentioned it — the server found or created the account BY it, so
+    -- it is a fact, and phone_complete reads exactly this field.
+    check("the number is remembered locally",
+        (app.ws.current_user_data or {}).phoneNumber, "0712345678")
+end
+
+-- ---------------------------------------------------------------------------
+print("")
+print("MATATU: A NUMBER THAT ALREADY HAS AN ACCOUNT JUST LOGS IN")
+do
+    -- Complete account, so there is nothing left to fill in and the profile
+    -- screen must not detain them.
+    local app = boot({ game = "MATATU", routes = { DEVICE_UNKNOWN,
+        { "/auth/phone", function()
+            return { status = 200, response = [[{"success":true,"isNewUser":false,
+                "matchedBy":"phone","token":"tok-2",
+                "user":{"_id":"64b7f9a1c2d3e4f5a6b7c8d9","username":"Scovia","avatar":12,
+                        "phoneNumber":"0712345678","balance":4200}}]] }
+        end } } })
+
+    app.type_digits("712345678")
+    app.tap("phone_link")
+    app.SIM.pump(3.0)
+
+    check("straight past the profile screen", app.screen(), "online")
+    check("their balance came back", (app.ws.current_user_data or {}).balance, 4200)
+    check("and their name", (app.ws.current_user_data or {}).username, "Scovia")
+end
+
+-- ---------------------------------------------------------------------------
+print("")
+print("MATATU: A REFUSED NUMBER SAYS SO AND STAYS PUT")
+do
+    -- The other half of the fix: moving on must still be conditional on the
+    -- request SUCCEEDING. A rejection has to keep the keypad up.
+    local app = boot({ game = "MATATU", routes = { DEVICE_UNKNOWN,
+        { "/auth/phone", function()
+            return { status = 400, response =
+                '{"success":false,"message":"This identity has been suspended."}' }
+        end } } })
+
+    app.type_digits("712345678")
+    app.tap("phone_link")
+    app.SIM.pump(3.0)
+
+    check("still on the keypad", app.step(), "phone")
+    check("with the reason shown", app.pself()._phone_error, "This identity has been suspended.")
+    check("and not stuck mid-save", app.pself()._phone_saving, false)
+end
+
+-- ---------------------------------------------------------------------------
+print("")
+print("WHOT: NO NUMBER IS ASKED FOR AT ALL")
+do
+    local app = boot({ game = "WHOT", routes = { DEVICE_UNKNOWN,
+        { "/auth/device/profile", function()
+            return { status = 200, response = [[{"success":true,"isNewUser":true,
+                "matchedBy":"device","token":"tok-3",
+                "user":{"_id":"64b7f9a1c2d3e4f5a6b7c8dA","username":"Chidi","avatar":1,
+                        "accountId":9002,"balance":0}}]] }
+        end } } })
+
+    check("the same unknown handset lands on the profile screen", app.screen(), "profile")
+    check("but on the username/avatar step", app.step(), "profile")
+    check("there is no keypad to press", app.tap("p_7"), false)
+    check("and no CONTINUE button either", app.tap("phone_link"), false)
+
+    check("typed a username", app.type_username("Chidi"), true)
+    check("it reads back", app.pself().username, "Chidi")
+    check("SAVE is on screen", app.tap("save"), true)
+    app.SIM.pump(3.0)
+
+    -- The whole point: this save had no account id to PUT to, and used to be
+    -- refused by the client before it left the handset.
+    check("it created the account by device id", app.called("/auth/device/profile"), true)
+    check("nothing was PUT to /users/", app.called("/users/"), false)
+    check("no phone endpoint was touched", app.called("/auth/phone"), false)
+    check("and the player is online", app.screen(), "online")
+    check("signed in as themselves", (app.ws.current_user_data or {}).username, "Chidi")
+end
+
+-- ---------------------------------------------------------------------------
+print("")
+print("WHOT: A REJECTED USERNAME IS REPORTED, NOT SWALLOWED")
+do
+    local app = boot({ game = "WHOT", routes = { DEVICE_UNKNOWN,
+        { "/auth/device/profile", function()
+            return { status = 400, response =
+                '{"success":false,"message":"That username is already taken.",' ..
+                '"error":"USERNAME_TAKEN","suggestions":["Chidi7","Chidi23"]}' }
+        end } } })
+
+    app.type_username("Chidi")
+    app.tap("save")
+    app.SIM.pump(3.0)
+
+    check("still on the profile screen", app.screen(), "profile")
+    check("the save is not left hanging", app.pself()._saving, false)
+    check("the reason is shown", app.pself()._error, "That username is already taken.")
+    local app_state = require("modules.app_state")
+    check("with alternatives to offer", #(app_state.username_suggestions or {}), 2)
+end
+
+print("")
+if failures == 0 then
+    print("ALL PASS")
+    os.exit(0)
+else
+    print(failures .. " FAILURE(S)")
+    os.exit(1)
+end

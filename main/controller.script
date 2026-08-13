@@ -1233,6 +1233,19 @@ function on_message(self, message_id, message, sender)
             if result.success and data.token then
                 local user = type(data.user) == "table" and data.user or {}
                 user.token = data.token
+                -- THE NUMBER WE JUST SIGNED IN WITH IS ON THIS ACCOUNT.
+                --
+                -- The server found or created the account BY this number, so
+                -- that is not an assumption. It is written down because the
+                -- payload does not always carry it back — the builder strips
+                -- keys it has no value for, an account matched on a secondary
+                -- `phoneNumbers` entry answers with a different default, and a
+                -- degraded build falls back to a bare row. app_state's
+                -- phone_complete reads exactly this field to decide whether to
+                -- put the number screen up, so a blank here sent the player
+                -- who had just used their number straight back to the keypad
+                -- to type it again.
+                if (user.phoneNumber or "") == "" then user.phoneNumber = phone end
                 auth_debug("phone_login: signed in (new=%s)", tostring(data.isNewUser))
                 -- Stop the background retry: we have a session now, and
                 -- a silent sign-in landing later would replace this one. The
@@ -1285,6 +1298,11 @@ function on_message(self, message_id, message, sender)
             if result.success and type(result.data) == "table" then
                 local data = result.data
                 local merged_user = type(data.user) == "table" and data.user or {}
+                -- Same reasoning as the phone_login branch above: the request
+                -- succeeded, so the number IS on the account now, whether or
+                -- not the response echoed it back. Written down so the phone
+                -- step cannot re-arm against its own success.
+                if (merged_user.phoneNumber or "") == "" then merged_user.phoneNumber = phone end
                 if data.merged then
                     if data.token then
                         merged_user.token = data.token
@@ -1327,6 +1345,56 @@ function on_message(self, message_id, message, sender)
             phoneNumber = user.phoneNumber or user.phone or "",
         }
         local uid = user._id or user.localId or ""
+
+        -- NO ACCOUNT YET? THEN THIS SAVE IS THE SIGNUP.
+        --
+        -- /auth/device signs in but deliberately never creates, so a handset
+        -- the backend has not seen reaches this screen with no id at all. The
+        -- PUT below refuses without one and the player was told "User ID
+        -- required" — a message about our own plumbing, in answer to them
+        -- typing their name.
+        --
+        -- For matatu the phone step covered that gap, because signing in by
+        -- number creates the account on the way through. Whot and Kadi have
+        -- no phone step (see app_state.phone_required), so for them this
+        -- screen is the ONLY signup there is.
+        if uid == "" then
+            auth_debug("profile_save with no session - creating the account by device id")
+            api.device_profile({ username = message.username, avatar = message.avatar }, function(result)
+                local data = type(result.data) == "table" and result.data or {}
+                if result.success and data.token then
+                    local created = type(data.user) == "table" and data.user or {}
+                    created.token = data.token
+                    -- Belt and braces: the payload build strips undefined
+                    -- keys, and these two are what the profile gate reads.
+                    -- Without them a save that DID land would bounce the
+                    -- player straight back onto this same screen.
+                    created.username = created.username or message.username
+                    created.avatar   = created.avatar or message.avatar
+
+                    cancel_silent_login_retry(self)
+                    self._silent_login_attempts = 0
+                    self._silent_login_inflight = false
+                    identify_and_connect(created)
+                    app_state.sync_theme_from_user(created)
+                    app_state.auth_state = "done"
+                    msg.post("#lobby", "auth_state_changed")
+
+                    for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile", "lobby" }) do
+                        msg.post("#" .. s, "user_data_updated")
+                    end
+                    app_state.username_suggestions = {}
+                    msg.post("#profile", "profile_saved", { ok = true })
+                    show(self, "online")
+                else
+                    app_state.username_suggestions = (type(data) == "table" and data.suggestions) or {}
+                    msg.post("#profile", "profile_saved",
+                        { ok = false, message = result.message or "Could not create your profile." })
+                end
+            end)
+            return
+        end
+
         api.update_profile(uid, payload, function(result)
             if result.success then
                 local data = result.data or {}

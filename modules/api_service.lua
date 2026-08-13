@@ -237,6 +237,42 @@ function M.link_phone(payload, cb)
     request("POST", "/auth/link-phone", payload, cb)
 end
 
+-- SAVING A PROFILE WHEN THERE IS NO ACCOUNT TO SAVE IT TO.
+--
+-- update_profile below PUTs to /users/<id>, and it refuses outright without an
+-- id — correctly, since the request would be to /users/. But that is exactly
+-- the state a brand-new player is in at the moment they finish choosing a
+-- username and avatar: /auth/device signs in, it does not create, so a handset
+-- the backend has never seen has no id yet.
+--
+-- For matatu the phone step used to fill that gap, because signing in by
+-- number creates the account. Whot and Kadi have no phone step at all — there
+-- is no mobile-money identity check for their countries to run — so the
+-- username/avatar screen IS the signup, and it was reporting "User ID
+-- required" to every one of their players.
+--
+-- This is the endpoint that creates it, addressed by the device id. It
+-- answers with a token and the account, exactly like /auth/device does.
+function M.device_profile(payload, cb)
+    payload = payload or {}
+    payload.deviceId = payload.deviceId or M.get_device_id()
+    if not payload.fcmToken then
+        pcall(function()
+            local fbpush = require("modules.firebase_push")
+            if fbpush and fbpush.get_fcm_token then
+                local tok = fbpush.get_fcm_token()
+                if tok and tok ~= "" then payload.fcmToken = tok end
+            end
+        end)
+    end
+    request("POST", "/auth/device/profile", payload, function(result)
+        if result.success and result.data and result.data.token then
+            M.set_auth_token(result.data.token)
+        end
+        if cb then cb(result) end
+    end)
+end
+
 function M.get_user(user_id, cb)
     if not user_id or user_id == "" then
         return cb({
