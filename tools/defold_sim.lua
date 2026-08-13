@@ -210,6 +210,81 @@ _G.sys = {
 }
 
 ----------------------------------------------------------------------
+-- gui (opt-in)
+--
+-- Only installed when a test asks for it, because most tests mount gui
+-- siblings as recorders and never touch a node. Call this BEFORE loading any
+-- real .gui_script component.
+--
+-- Nodes are plain tables that remember the handful of properties assertions
+-- actually read back — enabled state above all, since "is this thing on
+-- screen" is what most HUD bugs come down to.
+----------------------------------------------------------------------
+local gui_node_n = 0
+local function new_gui_node(kind, pos, size_or_text)
+  gui_node_n = gui_node_n + 1
+  return {
+    __node = true, kind = kind, id = gui_node_n,
+    pos = pos or vmath.vector3(0, 0, 0),
+    size = (kind ~= "text") and (size_or_text or vmath.vector3(0, 0, 0)) or nil,
+    text = (kind == "text") and tostring(size_or_text or "") or nil,
+    enabled = true, color = vmath.vector4(1, 1, 1, 1),
+    scale = vmath.vector3(1, 1, 1), parent = nil, children = {},
+  }
+end
+
+function SIM.install_gui_stub()
+  _G.gui = {
+    PIVOT_CENTER = "C", PIVOT_W = "W", PIVOT_E = "E", PIVOT_N = "N", PIVOT_S = "S",
+    PIVOT_NW = "NW", PIVOT_NE = "NE", PIVOT_SW = "SW", PIVOT_SE = "SE",
+    ANCHOR_LEFT = "AL", ANCHOR_RIGHT = "AR", ANCHOR_TOP = "AT",
+    ANCHOR_BOTTOM = "AB", ANCHOR_NONE = "AN",
+    ADJUST_FIT = 1, ADJUST_STRETCH = 2, ADJUST_ZOOM = 3,
+    CLIPPING_MODE_STENCIL = 1, CLIPPING_MODE_NONE = 0,
+    EASING_INQUAD = 8, EASING_OUTBOUNCE = 9,
+    EASING_OUTSINE = 1, EASING_INSINE = 2, EASING_OUTBACK = 3, EASING_OUTCUBIC = 4,
+    EASING_INOUTSINE = 5, EASING_LINEAR = 6, EASING_OUTQUAD = 7,
+    PLAYBACK_ONCE_FORWARD = 1, PLAYBACK_LOOP_PINGPONG = 2, PLAYBACK_ONCE_PINGPONG = 3,
+
+    new_box_node  = function(pos, size) return new_gui_node("box", pos, size) end,
+    new_text_node = function(pos, text) return new_gui_node("text", pos, text) end,
+    new_pie_node  = function(pos, size) return new_gui_node("pie", pos, size) end,
+
+    set_parent = function(n, p) n.parent = p; if p then p.children[#p.children + 1] = n end end,
+    set_position = function(n, p) n.pos = p end,
+    get_position = function(n) return n.pos end,
+    set_size = function(n, s) n.size = s end,
+    set_color = function(n, c) n.color = c end,
+    get_color = function(n) return n.color end,
+    set_text = function(n, t) n.text = tostring(t) end,
+    get_text = function(n) return n.text end,
+    set_enabled = function(n, e) n.enabled = e and true or false end,
+    is_enabled = function(n) return n.enabled end,
+    set_scale = function(n, s) n.scale = s end,
+    get_scale = function(n) return n.scale end,
+    set_pivot = function() end, set_xanchor = function() end, set_yanchor = function() end,
+    set_adjust_mode = function() end, set_rotation = function() end,
+    set_font = function() end, set_shadow = function() end, set_outline = function() end,
+    set_tracking = function() end, set_render_order = function() end,
+    set_fill_angle = function() end, set_perimeter_vertices = function() end,
+    set_texture = function() end, play_flipbook = function() end,
+    new_texture = function() return true end,
+    pick_node = function() return false end,
+    set_clipping_mode = function() end,
+    get_text_metrics_from_node = function() return { width = 10, height = 10 } end,
+    animate = function(n, prop, to, easing, dur, delay, cb)
+      if type(delay) == "function" then cb = delay; delay = 0 end
+      if cb then timer.delay((dur or 0) + (delay or 0), false, function() cb(nil, n) end) end
+    end,
+    cancel_animation = function() end,
+    delete_node = function() end,
+    get_node = function() return new_gui_node("box") end,
+    set_flipbook = function() end,
+  }
+  return _G.gui
+end
+
+----------------------------------------------------------------------
 -- socket / os time
 ----------------------------------------------------------------------
 local BASE_TIME = 1760000000

@@ -271,6 +271,16 @@ function on_message(self, message_id, message)
 
         local keep = message and message.keep_scoreboard
 
+        -- Is this reset a game STARTING, or the screen being LEFT?
+        --
+        -- Both send reset_hud and they want opposite things from the player
+        -- chrome (avatars, the two pie timer rings, the balance and network
+        -- badges): a new board needs it up, the lobby must never see it. There
+        -- is no telling them apart from the absence of a field — msg.post with
+        -- no data delivers an empty table, not nil — so game.script's "disable"
+        -- says so explicitly.
+        local leaving = message and message.leaving
+
         -- Per-deal seats/badges are always cleared. A knockout ROUND
         -- continuation (keep_scoreboard) is the ONLY case that preserves the
         -- score-cap chamber + t4 mode across deals. Every other reset is a full
@@ -298,9 +308,23 @@ function on_message(self, message_id, message)
             -- of everything by default — restore the emoji popover's own
             -- top-most stacking now that it's been buried underneath.
             emoji_popover.bring_to_front(self)
-            -- Leaving the board: hide the avatar + turn-timer chrome so the
-            -- current player's timer ring / square container can't persist on
-            -- top of the lobby and other screens.
+        end
+
+        -- Hidden on the way OUT only, and never as part of a rebuild.
+        --
+        -- This is here to stop a timer ring or avatar container stranding
+        -- itself on top of the lobby, which is a property of leaving the
+        -- screen. It used to hang off `not keep`, which was harmless only
+        -- because keep was accidentally always true — the moment a game start
+        -- could legitimately ask for a teardown, every new board hid its own
+        -- avatars and both pie timers as it dealt.
+        --
+        -- Nothing would have brought them back, either: set_t4_mode(false) in
+        -- the branch above is the ONLY thing that re-enables them, it runs
+        -- BEFORE this, and setup_avatars (which arrives next, from
+        -- OnlineHandler.start_game) only re-enables the balance label and
+        -- swaps the avatar flipbooks.
+        if leaving then
             hud.hide_player_chrome(self)
         end
 
