@@ -448,6 +448,41 @@ local function stamp_ai_hand(self, real_hand)
     end
 end
 
+-- THE PILE'S TOP CARD, FROM THE SERVER.
+--
+-- The one collection nothing reconciled. stamp_deck fixes the deck,
+-- stamp_ai_hand the opponent's hand, sync_my_hand the player's — the discard
+-- pile had no equivalent, so a wrong identity on it stayed wrong for the rest
+-- of the game.
+--
+-- It could get one easily. process_opponent_actions, when it cannot find the
+-- played card in the opponent's hand, takes ANY card from that hand and
+-- RELABELS it (`rec.v, rec.s = v, s`) before flying it to the pile. That is the
+-- right call for the animation — something has to fly — but it means the pile
+-- can end up showing a card the server never played.
+--
+-- Paired with sync_my_hand, which correctly restores the real card into the
+-- player's hand, the result is the same card visible in two places at once:
+-- once in the hand, once on the pile. Exactly the reported duplicate.
+--
+-- Only the TOP is stamped. It is the card in play, the only one whose identity
+-- is legible, and the only one any rule reads. The cards beneath are scatter.
+local function stamp_pile_top(self, state)
+    local top = (state or {}).currentCard
+    if type(top) ~= "table" or top.v == nil then return end
+    local rec = self.played_cards and self.played_cards[#self.played_cards]
+    if not rec or not rec.id then return end
+
+    local v, sv = tonumber(top.v), tostring(top.s or "")
+    if v == nil or sv == "" then return end
+    if tonumber(rec.v) == v and tostring(rec.s) == sv then return end
+
+    rec.v, rec.s = v, sv
+    -- Face-up, unlike the deck and the opponent's hand, so the sprite has to be
+    -- redrawn — setting the fields alone would leave the old art on screen.
+    pcall(self.set_face, rec)
+end
+
 local function stamp_deck(self, real_deck)
     if type(real_deck) ~= "table" then return end
     for i, c in ipairs(self.deck) do
@@ -625,6 +660,7 @@ function M.finalize_state_sync(self, state, on_complete)
         local deck_target = sync_state.deckCount or (sync_state.deck and #sync_state.deck) or #self.deck
         M.sync_deck_size(self, deck_target)
         stamp_deck(self, sync_state.deck)
+        stamp_pile_top(self, sync_state)
 
         local function settle()
             stamp_ai_hand(self, real_hand)
