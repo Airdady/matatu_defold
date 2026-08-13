@@ -33,6 +33,11 @@ M.active_game_state = {}
 -- payloads here in the shared Lua VM and only post a lightweight wake signal.
 M.move_inbox = {}
 M.last_game_over = {}
+-- playerId -> the hand that player held at GAME_OVER, straight from the final
+-- gameState. The end-of-round reveal's source of truth; see the GAME_OVER
+-- branch in parse_message for why nothing else on the client can be trusted for
+-- this once round continuations push the next state in early.
+M.last_game_over_hands = {}
 M.last_season_complete = nil
 M.current_season_status = nil
 M.last_daily_bonus_status = nil
@@ -711,17 +716,56 @@ local function parse_message(json_string)
   elseif t == "GAME_OVER" then
     M.active_game_id = ""
     local results = {}
+    local final_state = {}
     if type(d.gameState) == "table" and type(d.gameState.gameOverState) == "table" then
+      final_state = d.gameState
       results = d.gameState.gameOverState
     elseif type(d.gameOverState) == "table" then
       results = d.gameOverState
     else
       -- Last resort: try to decrypt the gameState blob and pull gameOverState out.
       local gs = M.extract_game_state(d)
+      final_state = gs
       if type(gs.gameOverState) == "table" then results = gs.gameOverState
       elseif next(gs) ~= nil then results = gs end
     end
     M.last_game_over = results
+
+    -- THE HANDS AS THEY WERE WHEN THE GAME ENDED, kept apart from everything
+    -- else on the message.
+    --
+    -- GAME_OVER carries the whole final gameState, hands included — it is the
+    -- only authoritative account of what the opponent was actually holding —
+    -- and all of it except gameOverState used to be thrown away here. The
+    -- reveal at the end of a round then had to go looking, and its last resort
+    -- was M.active_game_state.
+    --
+    -- That is wrong precisely when it matters. The server now sets the next
+    -- round up before it broadcasts GAME_OVER, so by the time the reveal runs,
+    -- active_game_state has routinely already been REPLACED by the NEXT round's
+    -- state — a fresh deal, different cards, possibly a different number of
+    -- them. The opponent's hand was flipped face-up showing cards from a round
+    -- that had not been played yet, or (when the next state had no hand to read)
+    -- showing the raw placeholders the face-down cards were spawned with. Both
+    -- read to the player as "those are not the cards they had", and both only
+    -- happen in the modes that continue: knockouts and tournaments.
+    --
+    -- Copied out card by card rather than kept by reference so this survives
+    -- the next state overwriting anything, and stays small enough to be safe to
+    -- hold: it is only ever read back directly, never posted.
+    local final_hands = {}
+    if type(final_state.players) == "table" then
+      for pid, p in pairs(final_state.players) do
+        if type(p) == "table" and type(p.hand) == "table" then
+          local hand = {}
+          for i, c in ipairs(p.hand) do
+            if type(c) == "table" then hand[i] = { v = c.v, s = c.s } end
+          end
+          final_hands[tostring(pid)] = hand
+        end
+      end
+    end
+    M.last_game_over_hands = final_hands
     -- The backend settles wallets before sending GAME_OVER and ships the
     -- post-game balances in gameOverState.balances — apply ours immediately
     -- so every screen shows the updated balance there and then (the IDENTIFY

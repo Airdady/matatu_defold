@@ -33,6 +33,13 @@ local CARD_SCALE_F = BL.CARD_SCALE_F
 local Z_FLY        = BL.Z_FLY
 local Z_PILE       = BL.Z_PILE
 
+-- How long a FINAL result is guaranteed to stay on screen before anything is
+-- allowed to build a new board underneath it. Not a pause — nothing waits on
+-- this unless a next game actually arrived early, which only happens when the
+-- player has already accepted one. It exists so that "accepted a game while the
+-- last one was still counting" shows the last result rather than swallowing it.
+local RESULT_MIN_SHOW = 2.0
+
 local notify_gui = util.notify_gui
 local log        = util.log
 
@@ -941,42 +948,96 @@ function M.end_game(self, player_won, is_cut, backend_results)
         end
     end
 
+    -- ── WHAT THE OPPONENT WAS ACTUALLY HOLDING ──────────────────────────────
+    --
+    -- The opponent's cards are face-down all game and were spawned as
+    -- placeholders (10 of Hearts — see online_handler's deal), so every one of
+    -- them has to be overwritten with the real card before the reveal flips
+    -- them. Get that wrong and the player is shown a hand their opponent never
+    -- had, which is the whole of the "the cards it revealed aren't the ones
+    -- they had" report — most visible on a cutting card, because that ends the
+    -- round on a full hand instead of an empty one.
+    if self.online_mode then
+        local opp_id = tostring(self.opponent_id or "")
+
+        -- FIRST and best: the hands off the GAME_OVER message itself, kept
+        -- aside by websocket_manager. They are the final state of THIS round,
+        -- by definition, and nothing later can move them.
+        local opp_real_hand = (ws.last_game_over_hands or {})[opp_id]
+
+        -- Then anything the result payload itself happens to carry.
+        if not opp_real_hand and type(backend_results) == "table" then
+            for k, v in pairs(backend_results.players or {}) do
+                if tostring((type(v) == "table" and (v.id or v._id)) or k) == opp_id then
+                    if type(v) == "table" and type(v.hand) == "table" then opp_real_hand = v.hand end
+                    break
+                end
+            end
+            if not opp_real_hand and type(backend_results.hands) == "table" then
+                local h = backend_results.hands[opp_id]
+                if type(h) == "table" then opp_real_hand = h end
+            end
+        end
+
+        -- LAST, and only if it is still describing the round that just ended.
+        --
+        -- This fallback used to be unconditional, and it is the one that was
+        -- actually firing: the server arranges the next round BEFORE it
+        -- broadcasts GAME_OVER, so by now the cached active game has usually
+        -- been replaced by the next round's fresh deal. Reading the opponent's
+        -- hand out of it revealed cards from a round nobody had played yet.
+        if not opp_real_hand then
+            local gs = ws.get_active_game() or {}
+            local gs_id = tostring(gs.id or gs.gameId or "")
+            if gs_id == "" or gs_id == tostring(self.online_game_id or "") then
+                local p = (gs.players or {})[opp_id]
+                if p and type(p.hand) == "table" then opp_real_hand = p.hand end
+            end
+        end
+
+        if opp_real_hand then
+            -- MATCH THE COUNT, not just the values. The local hand is only as
+            -- accurate as the draw/play animations that built it, and a round
+            -- can end (a cutting card especially) with the server holding a
+            -- different number of cards than the board is showing. Overwriting
+            -- pairwise and stopping at the shorter of the two left the surplus
+            -- local cards flipping face-up still holding their placeholder
+            -- value — a fistful of tens of hearts — or hid real cards entirely.
+            for i = #self.ai_hand, #opp_real_hand + 1, -1 do
+                local c = table.remove(self.ai_hand, i)
+                if c and c.id then pcall(go.delete, c.id) end
+            end
+            while #self.ai_hand < #opp_real_hand do
+                table.insert(self.ai_hand,
+                    self.spawn_card(10, "H", vmath.vector3(self.CENTER.x, self.AI_HAND_Y, self.Z_HAND)))
+            end
+
+            for i, c in ipairs(self.ai_hand) do
+                local real_card = opp_real_hand[i]
+                if type(real_card) == "table" then
+                    c.v = tonumber(real_card.v) or c.v
+                    c.s = tostring(real_card.s or c.s)
+                end
+            end
+
+            -- Re-lay the hand out: cards added or removed above have no
+            -- position of their own, and the surviving ones are now spaced for
+            -- a hand size that no longer exists.
+            pcall(function() self.position_hands(false) end)
+        end
+    end
+
+    -- Scored AFTER the reveal above, not before it. Online, the opponent's
+    -- cards are placeholders until that block replaces them, so totalling the
+    -- hand any earlier totals the placeholders — an opponent score invented out
+    -- of face-down cards. (The online game-over dialog prefers the server's own
+    -- cardTotals when it sends them, so this mainly showed up on the paths that
+    -- fall back to these.)
     local p_score = RE.hand_score(self.player_hand)
     local a_score = RE.hand_score(self.ai_hand)
 
     if is_cut and not self.online_mode then
         player_won = p_score < a_score
-    end
-
-    if self.online_mode and backend_results then
-        local op_data = {}
-        if backend_results.players then
-            for k, v in pairs(backend_results.players) do
-                local pid = v.id or v._id or k
-                if pid == self.opponent_id then
-                    op_data = v
-                    break
-                end
-            end
-        end
-
-        local opp_real_hand = op_data.hand or (backend_results.hands and backend_results.hands[self.opponent_id])
-
-        if not opp_real_hand then
-            local gs = ws.get_active_game() or {}
-            local p = (gs.players or {})[self.opponent_id]
-            if p and type(p.hand) == "table" then opp_real_hand = p.hand end
-        end
-
-        if opp_real_hand then
-            for i, c in ipairs(self.ai_hand) do
-                local real_card = opp_real_hand[i]
-                if real_card then
-                    c.v = tonumber(real_card.v) or c.v
-                    c.s = tostring(real_card.s) or c.s
-                end
-            end
-        end
     end
 
     timer.delay(0.4, false, function()
@@ -1059,6 +1120,45 @@ function M.end_game(self, player_won, is_cut, backend_results)
                 is_cut = is_cut, my_id = self.my_player_id, results = slim_results(backend_results),
                 series_active = is_series_active, series_over = is_series_over
             })
+
+            -- THE RESULT IS ON SCREEN. Now, and not before, the next-round hold
+            -- can go.
+            --
+            -- game.script takes that hold the instant GAME_OVER lands
+            -- (ws_game_over), before anyone can know whether a round follows,
+            -- and the only thing that released it was the round banner
+            -- reporting itself finished — which on this branch never runs. So
+            -- for every FINAL game over the hold simply outlived the game, and
+            -- the next game the player started was parked instead of built:
+            -- GF.start_game never ran, so the dialog above was never told to
+            -- close, the scoreboard never switched mode, and the board only
+            -- appeared when the 12s backstop fired.
+            --
+            -- WHY IT IS DELAYED RATHER THAN RELEASED HERE. Releasing on this
+            -- line would flush anything already parked in the same breath as
+            -- opening the dialog, and flushing builds the next board, and
+            -- building the next board closes the dialog again — the result
+            -- would open and vanish inside one frame. The two complaints are
+            -- the two sides of that race: sometimes the dialog is left up over
+            -- a new board, sometimes it never appears at all.
+            --
+            -- So the ordering is made explicit instead of raced. A result that
+            -- has been reached is always SHOWN, for at least this long, before
+            -- anything is allowed to replace the board underneath it. A parked
+            -- game is never discarded to achieve that — only held — and once
+            -- the hold lifts it is built normally, dialog closed by the usual
+            -- reset_hud. Nothing after this point re-arms it, so a game started
+            -- later (the ordinary rematch, minutes later) is never parked at
+            -- all.
+            --
+            -- Online only: the hold belongs to ws_game_over, and releasing
+            -- early offline would pre-empt the 4s series pause below.
+            if self.online_mode then
+                timer.delay(RESULT_MIN_SHOW, false, function()
+                    msg.post("/controller#game_logic", "round_hold_release")
+                end)
+            end
+
             if is_series_active and not is_series_over then
                 timer.delay(4.0, false, function() M.finish_round_transition(self) end)
             else
@@ -1339,19 +1439,40 @@ function M.start_game(self)
     apply_stake_background(self)
     BL.update_layout(self)
 
-    -- An OFFLINE elimination-chamber/quick-bracket session (self.t4) can
-    -- never legitimately be "continued" by whatever start_game is about to
-    -- load next — that next game is either a fresh offline game or (the
-    -- reported bug) an ONLINE game the player just accepted mid-offline-
-    -- session. keep_scoreboard=true below exists so an ONLINE knockout's
-    -- own next round can preserve its chamber board, but it was applied
-    -- unconditionally, so a leftover offline self.t4/t4_chamber bled
-    -- straight into the new game's board instead of being torn down. Force
-    -- a full teardown whenever we're leaving offline t4 mode.
-    local leaving_offline_t4 = (self.t4 ~= nil) and (app.mode ~= "tournament4" and app.mode ~= "chamber4")
-    if leaving_offline_t4 then self.t4 = nil end
+    -- KEEP THE BOARD FURNITURE ONLY FOR A ROUND OF THE MATCH ALREADY ON SCREEN.
+    --
+    -- keep_scoreboard suppresses two teardowns in game.gui_script's reset_hud:
+    -- the knockout score-cap chamber table, and the full rebuild of the battle
+    -- scoreboard (flipper values, round dots, stage title, head-to-head strip).
+    -- Both are right BETWEEN ROUNDS of one match — the chamber is the running
+    -- total, the flippers animate from the previous round's score — and wrong
+    -- for anything else.
+    --
+    -- It was effectively always true. The condition it was gated on read
+    -- self.t4, and GS.destroy_all a dozen lines above sets self.t4 to nil, so
+    -- `leaving_offline_t4` could never be anything but false. Every game start
+    -- therefore inherited the last game's furniture, which is both reports:
+    --
+    --   * a finished match's scores still on the scoreboard when the next one
+    --     deals, because nothing ever rebuilt it;
+    --
+    --   * a KNOCKOUT's chamber table still up during a TOURNAMENT started
+    --     afterwards — and while it is up, update_scoreboard hides the battle
+    --     scoreboard on sight (`if self.t4_chamber or is_knockout`), so the new
+    --     match's mode never appears at all. The wrong table, and no right one.
+    --
+    -- Asked properly now: does the state we are about to build continue the
+    -- series that is already showing? Only a genuine next round says yes.
+    -- Offline modes always tear down — tournament4.start rebuilds its own
+    -- chamber right after this, and an offline session is never a continuation
+    -- of whatever was on screen before it.
+    local keep_board_furniture = false
+    if app.mode == "online" then
+        local next_state = ws.get_active_game()
+        keep_board_furniture = OnlineHandler.continues_series(self, next_state)
+    end
 
-    notify_gui(self.gui_hud, "reset_hud", { keep_scoreboard = not leaving_offline_t4 })
+    notify_gui(self.gui_hud, "reset_hud", { keep_scoreboard = keep_board_furniture })
     notify_gui(self.gui_suit, "reset_hud")
     notify_gui(self.gui_over, "reset_hud")
 

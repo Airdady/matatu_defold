@@ -203,6 +203,10 @@ _G.sys = {
   get_save_file = function() return "/tmp/sim_save" end,
   save = function() return false end,
   load = function() return {} end,
+  -- config.lua reads this at require time to decide whether it is running in a
+  -- browser. Without it, every test that pulls in websocket_manager (which is
+  -- every test that touches the game at all) died on the require itself.
+  get_sys_info = function() return { system_name = "Linux" } end,
 }
 
 ----------------------------------------------------------------------

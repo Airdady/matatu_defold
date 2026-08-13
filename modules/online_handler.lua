@@ -963,6 +963,62 @@ function M.pump_move_queue(self)
     end
 end
 
+-- ── WHICH SERIES DOES THIS STATE BELONG TO? ─────────────────────────────────
+--
+-- A stable identity for "the match/ladder these rounds are rounds OF", so two
+-- consecutive game states can be compared: same key means the next state
+-- continues what is already on screen, a different key (or none) means it is a
+-- new match and everything showing belongs to the previous one.
+--
+-- Derived from the STATE rather than from self, because the two callers ask at
+-- different moments: game_flow's start_game asks before the board has been
+-- rebuilt (self.opponent_id has just been cleared by fresh_state), M.start_game
+-- asks while building it. Reading the opponent out of state.players makes both
+-- answers identical, which is the whole point — they gate different halves of
+-- the same decision.
+function M.series_key(self, state)
+    state = type(state) == "table" and state or {}
+
+    local ts  = (type(state.tournamentScore) == "table") and state.tournamentScore or nil
+    local fmt = (ts and ts.matchFormat) or state.matchFormat
+        or (type(state.tournament) == "table" and state.tournament.matchFormat) or nil
+
+    local my_id = self.my_player_id
+    if my_id == nil or my_id == "" then my_id = ws.get_current_user_id() end
+    my_id = tostring(my_id or "")
+
+    local opp = ""
+    for k, v in pairs(state.players or {}) do
+        local pid = tostring((type(v) == "table" and (v.id or v._id)) or k)
+        if pid ~= my_id then opp = pid break end
+    end
+
+    local t_id = tostring(state.tournamentId or "")
+    if t_id ~= "" then
+        -- Include the opponent id: tournamentId alone stays identical across
+        -- different freelancer opponents at the same level (a level can be
+        -- replayed against someone new after the previous match was
+        -- abandoned/unfinished), which previously made a new pairing look like
+        -- a continuation and kept rendering the stale scoreboard from the old
+        -- opponent.
+        return "t:" .. t_id .. ":" .. opp
+    elseif fmt then
+        return "b:" .. opp .. ":" .. tostring(fmt)
+    end
+    return ""
+end
+
+-- Does this incoming state continue the series currently on screen?
+--
+-- False for the first game of anything, for a one-off match, and — the case
+-- that matters — for a game of a DIFFERENT shape following the last one: a
+-- tournament started right after a knockout, a battle after a tournament. Those
+-- must tear the board furniture down, not inherit it.
+function M.continues_series(self, state)
+    local key = M.series_key(self, state)
+    return key ~= "" and key == self._sb_series_key
+end
+
 function M.start_game(self, state)
     self.is_animating = true
     self.online_mode  = true
@@ -1019,22 +1075,12 @@ function M.start_game(self, state)
         end
     end
 
-    local ts = (type(state.tournamentScore) == "table") and state.tournamentScore or nil
-    local fmt = (ts and ts.matchFormat) or state.matchFormat
-        or (type(state.tournament) == "table" and state.tournament.matchFormat) or nil
-    local series_key = ""
+    -- Same key, computed the same way, as the one game_flow's start_game used a
+    -- moment ago to decide whether to tear the scoreboard and chamber down (see
+    -- M.series_key). The two must agree: one decides whether the FURNITURE
+    -- survives, this one decides whether the SCORES on it do.
     local t_id = tostring(state.tournamentId or "")
-    if t_id ~= "" then
-        -- Include the opponent id: tournamentId alone stays identical across
-        -- different freelancer opponents at the same level (a level can be
-        -- replayed against someone new after the previous match was
-        -- abandoned/unfinished), which previously made is_continuation below
-        -- wrongly true and kept rendering the stale scoreboard from the old
-        -- opponent instead of resetting for the new pairing.
-        series_key = "t:" .. t_id .. ":" .. tostring(self.opponent_id)
-    elseif fmt then
-        series_key = "b:" .. tostring(self.opponent_id) .. ":" .. tostring(fmt)
-    end
+    local series_key = M.series_key(self, state)
     local is_continuation = (series_key ~= "" and series_key == self._sb_series_key)
     if not is_continuation then
         self._sb_active, self._sb_format, self._sb_stage = false, nil, nil
