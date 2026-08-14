@@ -282,12 +282,20 @@ end
 --
 -- The response carries the authoritative balance to count down to, so the
 -- animation never has to work the new figure out by subtracting and hoping.
-function M.join_championship(cb)
-    local uid = ""
-    pcall(function()
-        local ws = require("modules.websocket_manager")
-        uid = (ws.current_user_data or {})._id or ""
-    end)
+-- THE CALLER PASSES THE ID. THIS MODULE MUST NOT REACH FOR IT.
+--
+-- The first cut of this looked it up itself with
+-- `require("modules.websocket_manager")` inside the function body, on the
+-- assumption that a require behind a pcall is a runtime detail. It is not:
+-- bob resolves `require` STATICALLY when it builds the dependency graph, so
+-- that one line made api_service depend on websocket_manager, which already
+-- depends on api_service (see its own local require of this module). The build
+-- stopped with "Circular dependency detected" and nothing shipped.
+--
+-- websocket_manager may depend on this module; this module may not depend on
+-- it. Every caller of this function already holds the user data anyway.
+function M.join_championship(user_id, cb)
+    local uid = tostring(user_id or "")
     if uid == "" then
         return cb({ success = false, status_code = 0, data = {}, message = "Sign in first." })
     end
