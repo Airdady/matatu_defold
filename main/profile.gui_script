@@ -10,6 +10,7 @@ local app_state = require("modules.app_state")
 local ws        = require("modules.websocket_manager")
 local screen    = require("modules.screen")
 local toast     = require("modules.toast")
+local GameMode  = require("modules.game_mode")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local VISIBLE_W, VISIBLE_H = 1280, 720
@@ -61,29 +62,49 @@ end
 -- always-present leading "0" that hadn't actually been typed). The "0" is
 -- added back only at submit time, to match the backend's own 07XXXXXXXX
 -- storage format (be_matatu's normalizeUgPhone).
+-- PER GAME, not per Uganda. This was "^[73]%d%d%d%d%d%d%d%d$" written out
+-- here, so on the Whot build the CONTINUE button could never light: a
+-- Nigerian number is 10 digits after the country code and starts 70/71/80/
+-- 81/90/91, none of which that pattern accepts. The rule now comes from
+-- game_mode.lua, which mirrors be_matatu's COUNTRY_CONFIG.
 local function validate_phone(p)
     p = p or ""
-    if not p:match("^[73]%d%d%d%d%d%d%d%d$") then
-        return false, "Enter a valid Uganda mobile number."
+    if not GameMode.phone_valid(p) then
+        return false, "Enter a valid " .. GameMode.COUNTRY .. " mobile number."
     end
     return true, ""
 end
 
--- This step serves two jobs, both of them "type digits on a keypad":
---   "link"  attach a number to an already-signed-in account (the original)
---   "login" sign IN by number, when Google sign-in cannot work at all
+-- This step serves three jobs, all of them "type digits on a keypad":
+--   "link"     attach a number to an already-signed-in account (the original)
+--   "login"    sign IN by number, when the handset is not recognised
+--   "optional" RECOVERY, for the games that never ask for a number.
 --
--- There is no longer a third "code" mode: sign-in issues no SMS code, so a
--- valid number is the whole of the input and CONTINUE goes straight through
--- to a session.
+-- The third one is why Whot can afford not to ask. A Whot account is opened
+-- from the device id alone, and a device id does not survive a factory reset
+-- or a new handset — so without something else on the account, losing the
+-- phone loses the balance with it. This is that something else, offered
+-- rather than demanded: reachable from the profile screen, skippable, and
+-- never in the way of a new player getting into a game.
+--
+-- There is no longer a "code" mode: sign-in issues no SMS code, so a valid
+-- number is the whole of the input and CONTINUE goes straight through.
 local function phone_mode(self) return self.phone_mode or "link" end
+
+-- Modes the player can back out of. "link" is the mandatory Matatu
+-- account-completion step and has never had a way out, because there is
+-- nowhere to go back TO.
+local function phone_step_escapable(self)
+    local m = phone_mode(self)
+    return m == "login" or m == "optional"
+end
 
 local function step_valid(self)
     return validate_phone(self.phone)
 end
 
 local function step_max_digits(self)
-    return 9
+    return GameMode.PHONE_DIGITS or 9
 end
 
 local BAD = { "fuck","shit","bitch","cunt","dick","pussy","admin","sex","nude" }
@@ -146,8 +167,9 @@ local function rebuild_phone_step(self, d_y)
     local ok, msg_txt = step_valid(self)
 
     local TITLES = {
-        link  = "VERIFY YOUR PHONE",
-        login = "SIGN IN WITH YOUR NUMBER",
+        link     = "VERIFY YOUR PHONE",
+        login    = "SIGN IN WITH YOUR NUMBER",
+        optional = "ADD A RECOVERY NUMBER",
     }
     track(self, ui.text(vmath.vector3(CX, EDGE_T - 40, 0),
         TITLES[phone_mode(self)] or TITLES.link, "subtitle1", P_GOLD))
@@ -158,15 +180,16 @@ local function rebuild_phone_step(self, d_y)
         (ok and not self._phone_saving) and P_DARK_TXT or P_MUTED))
     self.buttons[#self.buttons+1] = { node = cont_btn, id = "phone_link" }
 
-    -- A way out, in LOGIN mode only.
+    -- A way out, in the modes that have one.
     --
-    -- The distinction is which of the two modes is mandatory. "link" is the
+    -- The distinction is which mode is mandatory. "link" is the
     -- account-completion step every Matatu player must pass, and it has never
-    -- had a back button because there is nowhere to go back TO. "login" is now
-    -- something a player can choose from the lobby, and a screen you can enter
-    -- deliberately but not leave is a trap — they would be stuck on a keypad
-    -- with no number they wanted to type and no route to the offline modes.
-    if phone_mode(self) == "login" then
+    -- had a back button because there is nowhere to go back TO. "login" is
+    -- something a player can choose from the lobby, and "optional" is offered
+    -- rather than required — a screen you can enter deliberately but not leave
+    -- is a trap, and for "optional" it would turn a recovery number the player
+    -- was invited to add into one they cannot decline.
+    if phone_step_escapable(self) then
         framed(self, EDGE_L + 90, EDGE_T - 40, 140, 44, P_BORDER, 1, P_PANEL)
         local back_btn = track(self, ui.box(vmath.vector3(EDGE_L + 90, EDGE_T - 40, 0), vmath.vector3(140, 44, 0), vmath.vector4(0,0,0,0.001)))
         track(self, ui.text(vmath.vector3(EDGE_L + 90, EDGE_T - 40, 0), "< BACK", "subtitle2", P_CREAM_DIM))
@@ -244,7 +267,7 @@ local function rebuild_phone_step(self, d_y)
     local chip_x = CX - (card_w - pad)/2 + 14 + chip_w/2
     track(self, ui.box(vmath.vector3(chip_x, input_cy, 0), vmath.vector3(chip_w, input_h - 20, 0), P_BADGE_BG))
     local chip_t = track(self, ui.text(vmath.vector3(chip_x, input_cy, 0),
-        "+256", "subtitle2", P_GOLD_LIGHT))
+        "+" .. GameMode.PHONE_COUNTRY_CODE, "subtitle2", P_GOLD_LIGHT))
     gui.set_scale(chip_t, vmath.vector3(0.6, 0.6, 1))
 
     local digits_x = chip_x + chip_w/2 + 20
@@ -255,7 +278,12 @@ local function rebuild_phone_step(self, d_y)
     local grouped = raw
     if #raw > 3 then grouped = raw:sub(1,3) .. " " .. raw:sub(4) end
     if #raw > 6 then grouped = raw:sub(1,3) .. " " .. raw:sub(4,6) .. " " .. raw:sub(7) end
-    local shown = (self.phone ~= "") and grouped or "7XX XXX XXX"
+    -- The country's own example number, minus the leading 0 the chip already
+    -- stands for ("07XX XXX XXX" -> "7XX XXX XXX", "0801 234 5678" ->
+    -- "801 234 5678"). Hardcoding Uganda's here showed a Whot player a shape
+    -- their own number does not have.
+    local hint = (GameMode.PHONE_PLACEHOLDER or "07XX XXX XXX"):gsub("^0", "")
+    local shown = (self.phone ~= "") and grouped or hint
     local val_color = (self.phone ~= "") and P_CREAM or P_MUTED
     local val = txtL(self, digits_x, input_cy, shown, "body", val_color)
     gui.set_scale(val, vmath.vector3(1.15, 1.15, 1))
@@ -351,6 +379,33 @@ local function rebuild(self)
 
     -- Save feedback now surfaces as a bottom-left toast (see the
     -- profile_saved handler below) instead of inline text here.
+
+    -- RECOVERY, OFFERED RATHER THAN DEMANDED.
+    --
+    -- Only for the games that never ask for a phone number. Those accounts are
+    -- opened from the device id alone, and a device id does not survive a
+    -- factory reset or a new handset — so this is the only thing that can get
+    -- the account back, and until a player adds one there is nothing to get it
+    -- back WITH.
+    --
+    -- Deliberately here, on a screen the player has already chosen to be on,
+    -- and deliberately not on the way in: making it a step would be the phone
+    -- prompt this game was asked not to have. Hidden once a number is on file,
+    -- because then it has done its job.
+    if not app_state.phone_required() and not app_state.phone_complete(ws.current_user_data or {}) then
+        -- Below the username-taken suggestion chips when those are showing:
+        -- they occupy this same row on the right-hand side, and two things
+        -- drawn at one y is one of them unreachable.
+        local rec_y = (self._suggestions and #self._suggestions > 0)
+            and (EDGE_T - 146) or (EDGE_T - 104)
+        local rec_w = 230
+        local rec_x = EDGE_R - 110
+        framed(self, rec_x, rec_y, rec_w, 34, P_BORDER, 1, P_PANEL)
+        local rec_btn = track(self, ui.box(vmath.vector3(rec_x, rec_y, 0), vmath.vector3(rec_w, 34, 0), vmath.vector4(0,0,0,0.001)))
+        local rec_t = track(self, ui.text(vmath.vector3(rec_x, rec_y, 0), "+ ADD RECOVERY NUMBER", "small", P_CREAM_DIM))
+        gui.set_scale(rec_t, vmath.vector3(0.9, 0.9, 1))
+        self.buttons[#self.buttons+1] = { node = rec_btn, id = "add_phone" }
+    end
 
     -- Username-taken suggestions — tap one to fill it into the input.
     if self._suggestions and #self._suggestions > 0 then
@@ -521,6 +576,15 @@ local function decide_step(self)
     end
 end
 
+-- The optional recovery step is entered by TAPPING, so it is the one piece of
+-- state on this screen that is not derived from the account. decide_step would
+-- send the player straight back out of it — phone_required() is false for the
+-- games that offer it, so it always answers "profile" — which is why every
+-- caller has to ask this first.
+local function in_optional_phone_step(self)
+    return self.step == "phone" and self.phone_mode == "optional"
+end
+
 function on_message(self, message_id, message, sender)
     if message_id == hash("screen_enter") then
         refresh_wh()
@@ -547,8 +611,20 @@ function on_message(self, message_id, message, sender)
         if self._active then rebuild(self) end
 
     elseif message_id == hash("phone_link_result") then
+        local was_optional = in_optional_phone_step(self)
         self._phone_saving = false
         if message.ok then
+            if was_optional then
+                -- They came here from the profile screen and are going back to
+                -- it, finished or not. NOT to the lobby: adding a recovery
+                -- number is a side errand, and a player part-way through
+                -- choosing a username must not lose it for running one.
+                toast.success("Recovery number saved.")
+                load_profile_fields(self)
+                self.step = "profile"
+                if self._active then rebuild(self) end
+                return
+            end
             -- Phone is now on file (freshly attached, or merged onto an old
             -- account). If the account is ALREADY fully complete — most
             -- likely a merge onto an old account that already had its own
@@ -564,6 +640,11 @@ function on_message(self, message_id, message, sender)
         else
             self._phone_error = message.message or "Could not link phone number."
             toast.error(self._phone_error)
+            -- Stay on the keypad so the number can be corrected. decide_step
+            -- is not consulted at all here: for an optional add it would drop
+            -- the player back to the profile screen and silently discard the
+            -- attempt.
+            if was_optional then self.step = "phone" end
         end
         if self._active then rebuild(self) end
     elseif message_id == hash("profile_saved") then
@@ -608,14 +689,31 @@ local function handle(self, b)
             msg.post("#controller", "profile_save", { username = self.username, avatar = self.avatar })
             rebuild(self)
         end
+    elseif b.id == "add_phone" then
+        -- Straight to the keypad, in the mode that can be backed out of.
+        self.phone = ""
+        self._phone_error = nil
+        self._phone_saving = false
+        self.phone_mode = "optional"
+        self.step = "phone"
+        rebuild(self)
     elseif b.id == "back" then
         if validate(self.username) then msg.post("#controller", "goto_online") end
     elseif b.id == "phone_cancel" then
-        -- Back to the lobby, not to "online": there is no session behind this
-        -- screen, so the online lobby has nothing to show. The offline modes
-        -- are there, and PLAY NOW restarts Google sign-in.
         self.phone = ""
         self._phone_error = nil
+        if phone_mode(self) == "optional" then
+            -- The player declined an offer, they did not abandon a sign-in.
+            -- There IS a session behind this one, and the screen they came
+            -- from is the profile step — going to the lobby would throw away
+            -- a half-finished username.
+            self.step = "profile"
+            rebuild(self)
+            return
+        end
+        -- Back to the lobby, not to "online": there is no session behind this
+        -- screen, so the online lobby has nothing to show. The offline modes
+        -- are there.
         msg.post("#controller", "goto_lobby")
     elseif b.id == "avatar" then
         self.avatar = b.data
