@@ -225,9 +225,25 @@ function init(self)
     -- WS callbacks run in the socket owner's (controller) context — post back
     -- to THIS component through a URL captured here, in our own context.
     local ME = msg.url("#")
+    -- PARKED, NOT POSTED.
+    --
+    -- The champions banner is a single string carrying twenty names, avatars
+    -- and prize figures — over a kilobyte — and msg.post serializes a message
+    -- table into a small fixed buffer. It overflowed on every delivery:
+    --
+    --   buffer (890 bytes) too small for table, exceeded at '...CHAMPIONS!...'
+    --
+    -- and because the listener threw, the announcement was never queued, never
+    -- shown, and never marked viewed — so the server sent it again, and it
+    -- threw again, several times a second.
+    --
+    -- Same shape the MOVE payloads already use (see websocket_manager's
+    -- move_inbox): park the data in the shared Lua VM and post only a wake
+    -- signal, which is always small enough to fit.
     self._token = ws.on("announcements", function(list)
         if type(list) == "table" and #list > 0 then
-            msg.post(ME, "announcements_push", { list = list })
+            ws.queue_announcements(list)
+            msg.post(ME, "announcements_push")
         end
     end)
 end
@@ -366,8 +382,10 @@ end
 
 function on_message(self, message_id, message)
     if message_id == hash("announcements_push") then
-        local list = (message and message.list) or {}
-        for _, item in ipairs(list) do
+        -- The signal carries nothing; the payload is in the shared VM. Drained
+        -- rather than read, so a second signal arriving while one banner is
+        -- still scrolling cannot replay the same announcement.
+        for _, item in ipairs(ws.take_announcements()) do
             self.queue[#self.queue + 1] = item
         end
         show_next(self)
