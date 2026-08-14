@@ -270,8 +270,31 @@ local function rebuild_phone_step(self, d_y)
     cursor_y = cursor_y - input_h - row_gap
 
     -- Status line beneath the input, inside the card.
-    local status_col = ok and P_SUCCESS or (self.phone ~= "" and P_ERROR or P_MUTED)
-    local status_txt = ok and "Looks good!" or (self.phone ~= "" and msg_txt or "Enter your Uganda mobile number")
+    --
+    -- A REFUSAL FROM THE SERVER OUTRANKS THE LOCAL FORMAT CHECK, AND STAYS.
+    --
+    -- It used to be toasted and nothing else. A toast is bottom-left and
+    -- gone in three seconds, and this is a screen the player cannot leave,
+    -- looking at a card in the middle of it — so a number the backend turned
+    -- down ("Account holder name not found for that number", "This identity
+    -- has been suspended") read as the app doing nothing at all. That is how
+    -- a backend refusal gets reported as "I punch in the number and it does
+    -- not go to the next screen": the app did answer, just not anywhere the
+    -- player was looking, and by the time they looked the answer was gone.
+    --
+    -- Worse, the local check disagrees with it. Nine valid-looking digits
+    -- still satisfy validate_phone, so the line underneath went on saying
+    -- "Looks good!" about the very number that had just been rejected.
+    --
+    -- Cleared on the next keypress (see handle()), so editing the number
+    -- drops a stale answer rather than arguing with what is now on screen.
+    local status_col, status_txt
+    if self._phone_error then
+        status_col, status_txt = P_ERROR, self._phone_error
+    else
+        status_col = ok and P_SUCCESS or (self.phone ~= "" and P_ERROR or P_MUTED)
+        status_txt = ok and "Looks good!" or (self.phone ~= "" and msg_txt or "Enter your Uganda mobile number")
+    end
     local status_lbl = track(self, ui.text(vmath.vector3(CX, cursor_y - status_h/2, 0), status_txt, "body", status_col))
     gui.set_scale(status_lbl, vmath.vector3(0.42, 0.42, 1))
     cursor_y = cursor_y - status_h - row_gap
@@ -404,8 +427,25 @@ local function rebuild(self)
     local line_color = ok and P_GOLD or P_BORDER
     track(self, ui.box(vmath.vector3(lx, input_y - 18, 0), vmath.vector3(line_w, 2, 0), line_color))
 
-    -- Tiny Status Text perfectly tucked below the bottom line
-    local status_lbl = txtL(self, start_x + 10, input_y - 34, ok and "Looks good!" or msg_txt, "body", ok and P_SUCCESS or P_ERROR)
+    -- Tiny Status Text perfectly tucked below the bottom line.
+    --
+    -- Same rule as the phone step's status line: what the SERVER said about
+    -- this name outranks the local format check and stays on the card until
+    -- the name is edited. "That username is already taken" is not something
+    -- the client can work out for itself, and a three-second toast in the
+    -- far corner is not where somebody staring at the input will read it —
+    -- meanwhile this line went on saying "Looks good!" about a name that had
+    -- just been refused. It matters more here than anywhere: for Whot and
+    -- Kadi this screen IS the signup, so a rejection nobody sees is a player
+    -- who cannot get an account at all.
+    local status_col2, status_txt2
+    if self._error then
+        status_col2, status_txt2 = P_ERROR, self._error
+    else
+        status_col2 = ok and P_SUCCESS or P_ERROR
+        status_txt2 = ok and "Looks good!" or msg_txt
+    end
+    local status_lbl = txtL(self, start_x + 10, input_y - 34, status_txt2, "body", status_col2)
     gui.set_scale(status_lbl, vmath.vector3(0.40, 0.40, 1))
 
     -- Draw the keyboard

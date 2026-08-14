@@ -156,6 +156,20 @@ local function boot(opts)
         return all
     end
 
+    -- Is this text actually DRAWN on the card, rather than only toasted?
+    -- A toast is bottom-left and gone in three seconds; these screens cannot
+    -- be left, so a refusal the player does not happen to catch is
+    -- indistinguishable from the app doing nothing.
+    function env.on_screen(fragment)
+        for _, n in ipairs(SIM.components.profile.self.nodes or {}) do
+            if type(n) == "table" and type(n.text) == "string"
+               and n.text:find(fragment, 1, true) then
+                return true
+            end
+        end
+        return false
+    end
+
     function env.called(fragment)
         for _, h in ipairs(http_log) do
             if h.url:find(fragment, 1, true) then return true end
@@ -216,6 +230,61 @@ end
 
 -- ---------------------------------------------------------------------------
 print("")
+print("MATATU: THE SAME THING, WITH THE SOCKET TALKING BACK")
+do
+    -- The case above answers HTTP and leaves the socket silent, which is not
+    -- what a real launch looks like. A fresh install opens a socket and
+    -- IDENTIFYs by device id BEFORE anybody types anything, the server answers
+    -- IDENTIFY_UNKNOWN, and then the account's own IDENTIFY lands a second or
+    -- two AFTER the sign-in — merging a whole user payload over
+    -- ws.current_user_data on the way past.
+    --
+    -- The payload here is the shape handleNearbyPlayers actually produces for
+    -- a brand-new account: it deletes undefined keys, so there is no
+    -- `username` and no `avatar` in it at all.
+    local NEW_USER = [[{"_id":"64b7f9a1c2d3e4f5a6b7c8d9","accountId":9001,"names":"Ada Bem",
+        "phoneNumber":"0712345678","balance":500,"points":0,"rank":[],"position":1,
+        "gamesPlayed":0,"recentForm":[],"winRate":0,"savingCoins":0,"badges":[],
+        "themes":[],"tournaments":[],"myBattles":[],"payments":[],"prizes":[],
+        "teamInvitations":[],"isBlocked":false}]]
+
+    local app = boot({ game = "MATATU", routes = { DEVICE_UNKNOWN,
+        { "/auth/phone", function()
+            return { status = 200, response =
+                '{"success":true,"isNewUser":true,"matchedBy":"phone","token":"tok-1","user":'
+                .. NEW_USER .. '}' }
+        end } } })
+
+    -- The boot socket's device-only IDENTIFY, answered.
+    app.SIM.server_send({ type = "IDENTIFY_UNKNOWN",
+        data = { message = "No account is associated with this device yet." } })
+    app.SIM.pump(2.0)
+    check("that alone does not throw the player off the screen", app.screen(), "profile")
+    check("still asking for the number", app.step(), "phone")
+
+    app.type_digits("712345678")
+    app.tap("phone_link")
+    app.SIM.pump(2.0)
+    check("the keypad is done", app.step(), "profile")
+
+    -- ...and now the account's real IDENTIFY arrives and merges over the
+    -- cached user. It carries no username, so nothing here should re-open the
+    -- phone step behind the player.
+    app.SIM.server_send({ type = "IDENTIFY", data = {
+        _id = "64b7f9a1c2d3e4f5a6b7c8d9", accountId = 9001, names = "Ada Bem",
+        phoneNumber = "0712345678", balance = 500, points = 0, rank = {}, position = 1,
+        gamesPlayed = 0, winRate = 0, savingCoins = 0, badges = {}, themes = {},
+        tournaments = {}, myBattles = {}, payments = {}, prizes = {}, teamInvitations = {},
+    } })
+    app.SIM.pump(5.0)
+    check("and it stays done after IDENTIFY lands", app.step(), "profile")
+    check("on the profile screen", app.screen(), "profile")
+    check("with the username still unchosen, which is the point",
+        tostring((app.ws.current_user_data or {}).username), "nil")
+end
+
+-- ---------------------------------------------------------------------------
+print("")
 print("MATATU: A NUMBER THAT ALREADY HAS AN ACCOUNT JUST LOGS IN")
 do
     -- Complete account, so there is nothing left to fill in and the profile
@@ -256,6 +325,18 @@ do
     check("still on the keypad", app.step(), "phone")
     check("with the reason shown", app.pself()._phone_error, "This identity has been suspended.")
     check("and not stuck mid-save", app.pself()._phone_saving, false)
+    -- ON THE CARD, not only in a toast that is gone in three seconds. This is
+    -- how a backend refusal came to be reported as "I punch in the number and
+    -- nothing happens": the app answered somewhere the player was not looking.
+    check("printed on the card the player is looking at",
+        app.on_screen("This identity has been suspended."), true)
+    -- And the local format check must stop contradicting it. Nine valid-looking
+    -- digits still satisfy validate_phone, so this line went on saying "Looks
+    -- good!" about the number that had just been rejected.
+    check("and not still claiming the number looks good", app.on_screen("Looks good!"), false)
+    -- CONTINUE has to work again, or the only screen with no way out is also
+    -- the only screen with no working button.
+    check("CONTINUE is live again", app.tap("phone_link"), true)
 end
 
 -- ---------------------------------------------------------------------------
@@ -307,6 +388,9 @@ do
     check("still on the profile screen", app.screen(), "profile")
     check("the save is not left hanging", app.pself()._saving, false)
     check("the reason is shown", app.pself()._error, "That username is already taken.")
+    check("printed on the card, not only toasted",
+        app.on_screen("That username is already taken."), true)
+    check("and not still claiming the name looks good", app.on_screen("Looks good!"), false)
     local app_state = require("modules.app_state")
     check("with alternatives to offer", #(app_state.username_suggestions or {}), 2)
 end
