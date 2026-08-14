@@ -273,6 +273,27 @@ function M.device_profile(payload, cb)
     end)
 end
 
+-- ENTER THE GLOBAL CHAMPIONSHIP.
+--
+-- The entry fee is charged HERE, by the backend, exactly once — and this call
+-- is the only thing that may move those coins. The screen used to subtract
+-- them locally and call nothing at all, so the balance dropped on every press
+-- of JOIN while the server knew nothing about any of it.
+--
+-- The response carries the authoritative balance to count down to, so the
+-- animation never has to work the new figure out by subtracting and hoping.
+function M.join_championship(cb)
+    local uid = ""
+    pcall(function()
+        local ws = require("modules.websocket_manager")
+        uid = (ws.current_user_data or {})._id or ""
+    end)
+    if uid == "" then
+        return cb({ success = false, status_code = 0, data = {}, message = "Sign in first." })
+    end
+    request("POST", "/tournaments/global/join", { userId = uid }, cb)
+end
+
 function M.get_user(user_id, cb)
     if not user_id or user_id == "" then
         return cb({

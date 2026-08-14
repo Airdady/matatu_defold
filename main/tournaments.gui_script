@@ -6,6 +6,8 @@ local app_state     = require("modules.app_state")
 local ws            = require("modules.websocket_manager")
 local screen        = require("modules.screen")
 local dialog_search = require("modules.dialog_search")
+local api           = require("modules.api_service")
+local toast         = require("modules.toast")
 
 -- Palette shared with the search dialog (mirrors online.gui_script's C table).
 local DLG_COLORS = {
@@ -1018,21 +1020,69 @@ local function handle(self, b)
         local balance = tonumber(u.balance) or 0
         
         if self.current_level_index == 0 then
+            -- ENTERING THE LADDER. THE BACKEND CHARGES; THIS SCREEN DOES NOT.
+            --
+            -- This used to subtract the fee from the local balance and call
+            -- nothing at all, so every press of JOIN took coins off the display
+            -- while the server knew nothing about it — and the only real charge
+            -- a player ever saw was the old per-level one arriving later.
+            --
+            -- POST /tournaments/global/join is the single charge for the whole
+            -- run, and it is idempotent: a second press, a retry, or a lost
+            -- response all come back JOINED with nothing taken. So the button
+            -- is locked while the call is in flight, and everything visible —
+            -- the deduction animation, the new balance, the pin moving — waits
+            -- for the answer rather than guessing it.
             if balance < cost then
                 msg.post("main:/controller", "show_transaction_modal")
                 return
             end
 
-            -- Deduct entry fee immediately upon starting the tournament climb
-            if cost > 0 then
-                u.balance = math.max(0, balance - cost)
-                if self.top_left_balance_lbl then gui.set_text(self.top_left_balance_lbl, commas(u.balance)) end
-                play_deduction_animation(self)
-            end
             self.play_disabled = true
             self.is_moving = true -- Lock UI inputs
+            self._joining = true
 
-            execute_jump_and_play(self, d)
+            api.join_championship(function(result)
+                self._joining = false
+                local data = (type(result) == "table" and type(result.data) == "table") and result.data or {}
+
+                if not (result and result.success) then
+                    -- Nothing was charged: unlock and say why, rather than
+                    -- moving a pin the server has not agreed to.
+                    self.play_disabled = false
+                    self.is_moving = false
+                    if data.code == "INSUFFICIENT_BALANCE" then
+                        msg.post("main:/controller", "show_transaction_modal")
+                    else
+                        toast.error(result and result.message or "Could not enter the championship.")
+                    end
+                    if self._active then rebuild(self) end
+                    return
+                end
+
+                -- The server's figure, not ours. `balance` comes back on the
+                -- response precisely so the count-down lands on the truth.
+                if data.balance ~= nil then
+                    u.balance = tonumber(data.balance) or u.balance
+                    ws.current_user_data = u
+                    pcall(api.save_session, u)
+                    if self.top_left_balance_lbl then
+                        gui.set_text(self.top_left_balance_lbl, commas(u.balance))
+                    end
+                    for _, sc in ipairs({ "online", "lobby", "payments" }) do
+                        msg.post("#" .. sc, "user_data_updated")
+                    end
+                end
+
+                -- Only animate coins that actually moved. A second press comes
+                -- back with entryFee 0, and showering coins for a charge that
+                -- did not happen would be a lie the player can see.
+                if (tonumber(data.entryFee) or 0) > 0 then
+                    play_deduction_animation(self)
+                end
+
+                execute_jump_and_play(self, d)
+            end)
         else
             execute_jump_and_play(self, d)
         end
