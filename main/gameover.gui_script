@@ -6,7 +6,6 @@ local confetti_fx = require("modules.confetti_fx")
 local sound = require("modules.sound")
 local config = require("modules.config")
 local ui = require("modules.ui")
-local champ = require("modules.championship")
 
 -- Lowest real-money (non-Free) stake tier for the active game — Matatu moved
 -- this from 50 to 100 (Whot/Kadi keep their own lowest tier), so the bonus-
@@ -670,14 +669,6 @@ function on_message(self, message_id, message)
 		-- losing clears their entry. So getting this wrong does not merely look
 		-- wrong, it offers an action that cannot succeed.
 		--
-		-- modules/championship.lua, shared with both invite banners so one match
-		-- cannot read as a championship on one screen and an ordinary tournament
-		-- on the next. Passing the user data lets it fall back to matching the
-		-- tournament id against the player's own list, which is what makes this
-		-- work against a backend that does not send `scope` yet.
-		local t_meta = res.tournamentData or {}
-		local is_championship = (game_type == "TOURNAMENT")
-			and champ.matches(t_meta, ws_ok and ws.current_user_data or nil)
 
 		-- The board is no longer live once the result modal is up: let the global
 		-- incoming-request overlay surface full dialogs again.
@@ -809,19 +800,32 @@ function on_message(self, message_id, message)
 				--
 				-- The button takes them back to the tournament map, where the
 				-- pin hops to the next step, instead of requesting a rematch
-				-- from the player they just eliminated.
+				-- from the player they just eliminated — a request the entry
+				-- gate refuses anyway, since losing clears their entry.
 				--
-				-- It used to require is_tournament_owner, which is the
-				-- backend's "this side is climbing the ladder" flag. In the
-				-- championship nobody is the owner — it belongs to no player —
-				-- so that was false for both sides and every level clear
-				-- offered PLAY AGAIN. Checking the championship directly means
-				-- the right button appears even against a backend that has not
-				-- picked up the participation fix yet.
+				-- NOTHING IS CHECKED HERE BEYOND HAVING WON, AND THAT IS THE FIX.
 				--
-				-- Freelancers in somebody's private battle still get PLAY
-				-- AGAIN: for them each level really is just a battle.
-				if is_victory and (is_tournament_owner or is_championship) then
+				-- This branch is only reachable when the tournament is NOT
+				-- complete, and endGame forces tournamentCompleted on any
+				-- one-level tournament the moment it has a match winner (see
+				-- isOneLevelTournament there). So standing in this branch is
+				-- already proof of a multi-level ladder, mid-run, with a level
+				-- just decided. There is nothing left to establish.
+				--
+				-- Every previous attempt gated this on something further away:
+				-- is_tournament_owner, which is false for both sides of a
+				-- championship because nobody owns it; then a championship
+				-- test, which needs fields the payload may not carry. Each
+				-- gate could only ever suppress the right answer, never
+				-- produce it — which is why the title said LEVEL CLEARED and
+				-- ADVANCING while the button underneath still said PLAY AGAIN.
+				--
+				-- The trade: a freelancer winning a level of somebody else's
+				-- multi-level battle now gets NEXT LEVEL too, and lands on the
+				-- tournament map with no hop to play rather than on a rematch.
+				-- That is a far smaller wrong than firing a rematch request at
+				-- an eliminated opponent.
+				if is_victory then
 					again_txt = "NEXT LEVEL"
 					-- The ROUTE and the ANIMATION TARGET are two separate
 					-- things, and conflating them was a trap: this read
