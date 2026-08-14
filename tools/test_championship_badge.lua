@@ -63,5 +63,43 @@ check("user data without tournaments", champ.matches({ _id = "champ-1" }, {}), f
 check("known_id finds it", champ.known_id(user_data), "champ-1")
 check("known_id on nothing", champ.known_id(nil), "")
 
+-- ── Which badge an invite wears ──────────────────────────────────────────────
+--
+-- The three are NOT separable by any single field. A knockout is usually one
+-- level, so a level count alone calls it a BATTLE; matchType is the only thing
+-- that tells them apart.
+check("championship", champ.kind({ _id = "champ-1", scope = "GLOBAL", levels = 7 }), "CHAMPIONSHIP")
+check("championship by id, payload says nothing",
+      champ.kind({ _id = "champ-1", name = "Season Ladder" }, user_data), "CHAMPIONSHIP")
+
+check("knockout", champ.kind({ _id = "k", matchType = "KNOCKOUT", levels = 1 }), "KNOCKOUT")
+check("knockout, lowercase", champ.kind({ _id = "k", matchType = "knockout", levels = 1 }), "KNOCKOUT")
+check("knockout beats the single-level BATTLE reading",
+      champ.kind({ _id = "k", matchType = "KNOCKOUT", levels = 1 }), "KNOCKOUT")
+check("a multi-level knockout is still a knockout",
+      champ.kind({ _id = "k", matchType = "KNOCKOUT", levels = 4 }), "KNOCKOUT")
+
+check("single level is a battle", champ.kind({ _id = "b", levels = 1 }), "BATTLE")
+check("single level as an array", champ.kind({ _id = "b", levels = {1} }), "BATTLE")
+check("NORMAL matchType does not override the level count",
+      champ.kind({ _id = "b", matchType = "NORMAL", levels = 1 }), "BATTLE")
+
+-- nil means "say nothing", which is not the same as "ordinary". Inventing a
+-- label for a shape nobody named would be worse than leaving the strip alone.
+check("a multi-level private cup gets no badge",
+      champ.kind({ _id = "cup", scope = "PRIVATE", levels = 4 }), nil)
+check("nothing at all gets no badge", champ.kind(nil, user_data), nil)
+check("an empty payload gets no badge", champ.kind({}, user_data), nil)
+
+-- Pill widths are derived, not picked per label, so a new label cannot arrive
+-- with a width nobody checked.
+check("CHAMPIONSHIP width", champ.badge_width("CHAMPIONSHIP"), 132)
+check("KNOCKOUT width", champ.badge_width("KNOCKOUT"), 88)
+check("BATTLE width clamps to the minimum", champ.badge_width("BATTLE"), 66)
+check("every label fits the reserved slot",
+      champ.badge_width("CHAMPIONSHIP") <= 132
+      and champ.badge_width("KNOCKOUT") <= 132
+      and champ.badge_width("BATTLE") <= 132, true)
+
 print(("\n%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

@@ -140,8 +140,14 @@ local BAN_ACCEPT  = vmath.vector4(0.00, 0.90, 0.63, 0.30)
 -- battles and one-level tournaments, and they look identical to a run at the
 -- multi-level ladder. Accepting one costs a level of real progress, so it
 -- should not be indistinguishable from a casual invite.
-local BAN_CHAMP_BG = vmath.vector4(0.78, 0.12, 0.16, 1.00)
-local BAN_CHAMP_TX = vmath.vector4(1.00, 0.94, 0.94, 1.00)
+-- One entry per kind modules/championship.lua can name, identical to the table
+-- in online.gui_script — the two surfaces show the SAME invite, so a colour
+-- that differed would mean one request looked like two.
+local BAN_BADGE = {
+    CHAMPIONSHIP = { bg = vmath.vector4(0.78, 0.12, 0.16, 1.00), tx = vmath.vector4(1.00, 0.94, 0.94, 1.00) },
+    KNOCKOUT     = { bg = vmath.vector4(0.90, 0.42, 0.05, 1.00), tx = vmath.vector4(1.00, 0.96, 0.90, 1.00) },
+    BATTLE       = { bg = vmath.vector4(0.16, 0.42, 0.72, 1.00), tx = vmath.vector4(0.94, 0.97, 1.00, 1.00) },
+}
 
 -- WHERE THE INLINE BADGE GOES, AND WHY H2H MOVES FOR IT.
 --
@@ -154,11 +160,23 @@ local BAN_CHAMP_TX = vmath.vector4(1.00, 0.94, 0.94, 1.00)
 --
 -- The H2H anchor therefore shifts left, and ONLY on a banner carrying the
 -- badge, so every other invite keeps the layout it has today.
+-- The slot reserved is the WIDEST label's, so every badge fits the space the
+-- layout test checks — each pill is then drawn at its own width, centred on the
+-- same point.
 local BAN_H2H_X       = 430
 local BAN_H2H_X_CHAMP = 560
 local BAN_CHAMP_X     = 387
 local BAN_CHAMP_W     = 132
 local BAN_CHAMP_H     = 24
+
+-- Draws one pill, centred, sized to its label.
+local function draw_badge(self, kind, x, y, h, a)
+    local col = BAN_BADGE[kind]
+    if not col then return end
+    local w = champ.badge_width(kind)
+    track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), with_a(col.bg, a)))
+    track(self, ui.text(vmath.vector3(x, y, 0), kind, "small", with_a(col.tx, a)))
+end
 
 -- TEAM CUP badge. Purple, matching the lobby tile's accent, so an invitation
 -- to somebody's cup is not mistaken at a glance for a match starting now —
@@ -195,11 +213,8 @@ local function draw_banner(self, d, a)
     -- title: the title carries a player name of unpredictable length, and the
     -- right-hand side is already crowded by H2H and the two buttons, so
     -- anything flowed from either end eventually collides with something.
-    if d.championship then
-        track(self, ui.box(vmath.vector3(m.CX, top, 0), vmath.vector3(BAN_CHAMP_W, 22, 0),
-            with_a(BAN_CHAMP_BG, a)))
-        track(self, ui.text(vmath.vector3(m.CX, top, 0), "CHAMPIONSHIP", "small",
-            with_a(BAN_CHAMP_TX, a)))
+    if d.badge then
+        draw_badge(self, d.badge, m.CX, top, 22, a)
     elseif d.cup_invite then
         local pill_w, pill_h = 120, 22
         track(self, ui.box(vmath.vector3(m.CX, top, 0), vmath.vector3(pill_w, pill_h, 0),
@@ -231,14 +246,9 @@ local function draw_banner(self, d, a)
 
     -- Inline badge: same centre line as the H2H row and the two buttons, in the
     -- space the shifted H2H anchor opens up.
-    if d.championship then
-        track(self, ui.box(vmath.vector3(m.R - BAN_CHAMP_X, cy, 0),
-            vmath.vector3(BAN_CHAMP_W, BAN_CHAMP_H, 0), with_a(BAN_CHAMP_BG, a)))
-        track(self, ui.text(vmath.vector3(m.R - BAN_CHAMP_X, cy, 0), "CHAMPIONSHIP", "small",
-            with_a(BAN_CHAMP_TX, a)))
-    end
+    draw_badge(self, d.badge, m.R - BAN_CHAMP_X, cy, BAN_CHAMP_H, a)
     if d.h2h then
-        draw_h2h_row(self, m.R - (d.championship and BAN_H2H_X_CHAMP or BAN_H2H_X), cy, h2h_view(d.h2h), a)
+        draw_h2h_row(self, m.R - (d.badge and BAN_H2H_X_CHAMP or BAN_H2H_X), cy, h2h_view(d.h2h), a)
     end
 
     -- Countdown along the bottom edge.
@@ -338,7 +348,10 @@ local function open_dialog(self, d)
         -- input budget demotes it.
         banner = as_banner,
         title = title, desc = desc,
-        championship = d.championship and true or false,
+        -- NOT `kind`: that key is already taken by the dialog's own type
+        -- ("incoming"), and a second `kind` in this constructor silently wins,
+        -- which would send every plain game request down the wrong draw path.
+        badge = d.badge,
         -- Team cup invitation: no request_id, answered over HTTP rather than
         -- the socket, and never auto-declined.
         cup_invite = d.cup_invite and true or false,
@@ -553,28 +566,36 @@ function on_message(self, message_id, message)
         local disp_name = sender.username or (r.user or {}).username or "A player"
 
         local title, desc
-        local championship = false
+        local kind = nil
         if is_tb then
-            -- Same wording as the online screen's inline banner so the two
-            -- surfaces read identically.
-            local kind = (type(raw) == "table" and raw.gameType == "BATTLE") and "BATTLE" or "TOURNAMENT"
-            title = kind .. "  -  " .. tostring(disp_name):upper()
             local tourney = (type(raw) == "table" and type(raw.tournament) == "table") and raw.tournament or {}
-            local amount  = tonumber((tourney.stake or raw.stake or r.stake or {}).amount) or 0
-            desc = "Best of " .. (tonumber(tourney.matchFormat) or 3)
-                .. "   -   " .. (amount > 0 and (commas(amount) .. " Coins") or "Practice Mode")
-            disp_name = (type(raw) == "table" and (raw.tournamentName or raw.name)) or "Tournament Match"
 
-            -- A BATTLE is never the championship however many levels its
-            -- document happens to carry — checking levels alone would badge
-            -- knockouts that share the same shape.
+            -- WHAT THIS INVITE IS, named once and used for both the title and
+            -- the badge. Same call open_banner makes on the online screen, so
+            -- the two surfaces label the same invite the same way.
             --
             -- ws.current_user_data is passed so a request whose payload says
             -- nothing useful can still be recognised by its tournament id
-            -- against the player's own list. That is what makes the badge work
-            -- against a server that does not send `scope` yet.
-            championship = kind == "TOURNAMENT"
-                and champ.matches(tourney, ws.current_user_data)
+            -- against the player's own list.
+            kind = champ.kind(tourney, ws.current_user_data)
+            -- A BATTLE request is never the championship, whatever its document
+            -- says.
+            if (type(raw) == "table" and raw.gameType == "BATTLE") and kind == "CHAMPIONSHIP" then
+                kind = "BATTLE"
+            end
+
+            title = (kind or "TOURNAMENT") .. "  -  " .. tostring(disp_name):upper()
+
+            local amount = tonumber((tourney.stake or raw.stake or r.stake or {}).amount) or 0
+            -- A knockout is played to a score cap, not as a series, so "Best of
+            -- 3" was describing a format it does not use.
+            if kind == "KNOCKOUT" then
+                desc = "First to " .. (tonumber(tourney.scoreCap) or 200)
+            else
+                desc = "Best of " .. (tonumber(tourney.matchFormat) or 3)
+            end
+            desc = desc .. "   -   " .. (amount > 0 and (commas(amount) .. " Coins") or "Practice Mode")
+            disp_name = (type(raw) == "table" and (raw.tournamentName or raw.name)) or "Tournament Match"
         end
 
         open_dialog(self, {
@@ -585,7 +606,7 @@ function on_message(self, message_id, message)
             opponent_id = (r.user or {})._id,
             h2h         = (type(raw) == "table" and raw.headToHead) or nil,
             banner      = banner,
-            championship = championship,
+            badge       = kind,
             title       = title,
             desc        = desc,
         })

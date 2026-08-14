@@ -182,8 +182,16 @@ end
 -- player is on the online screen, that one everywhere else — so a marking that
 -- appeared on only one of them would mean the same request looked like two
 -- different things depending on which screen happened to be up.
-local BAN_CHAMP_BG = vmath.vector4(0.78, 0.12, 0.16, 1.00)
-local BAN_CHAMP_TX = vmath.vector4(1.00, 0.94, 0.94, 1.00)
+-- One entry per kind modules/championship.lua can name. Distinct hues rather
+-- than one badge colour, because the point of the label is to tell three
+-- similar-looking invites apart at a glance — accepting a championship level
+-- spends real progress, a knockout is played to a score cap, a battle is a
+-- single match.
+local BAN_BADGE = {
+    CHAMPIONSHIP = { bg = vmath.vector4(0.78, 0.12, 0.16, 1.00), tx = vmath.vector4(1.00, 0.94, 0.94, 1.00) },
+    KNOCKOUT     = { bg = vmath.vector4(0.90, 0.42, 0.05, 1.00), tx = vmath.vector4(1.00, 0.96, 0.90, 1.00) },
+    BATTLE       = { bg = vmath.vector4(0.16, 0.42, 0.72, 1.00), tx = vmath.vector4(0.94, 0.97, 1.00, 1.00) },
+}
 
 -- WHERE THE INLINE BADGE GOES, AND WHY H2H MOVES FOR IT.
 --
@@ -197,11 +205,23 @@ local BAN_CHAMP_TX = vmath.vector4(1.00, 0.94, 0.94, 1.00)
 -- every other invite keeps exactly the layout it has today. The badge then sits
 -- in the middle of the space that opens up, on the same centre line as the H2H
 -- row and the two buttons.
-local BAN_H2H_X       = 430   -- from the right edge, ordinary invite
-local BAN_H2H_X_CHAMP = 560   -- ...and when the badge needs the room
+-- The slot reserved is the WIDEST label's, so every badge fits the space the
+-- layout test checks — each pill is then drawn at its own width, centred on the
+-- same point.
+local BAN_H2H_X       = 430   -- from the right edge, unbadged invite
+local BAN_H2H_X_CHAMP = 560   -- ...and when a badge needs the room
 local BAN_CHAMP_X     = 387   -- midway between the shifted H2H and DECLINE
 local BAN_CHAMP_W     = 132
 local BAN_CHAMP_H     = 24
+
+-- Draws one pill, centred, sized to its label.
+local function draw_badge(self, kind, x, y, h, a)
+    local col = BAN_BADGE[kind]
+    if not col then return end
+    local w = champ.badge_width(kind)
+    track(self, ui.box(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0), with_a(col.bg, a)))
+    track(self, ui.text(vmath.vector3(x, y, 0), kind, "small", with_a(col.tx, a)))
+end
 
 local function draw_banner(self)
     for idx, b in ipairs(self.banners or {}) do
@@ -212,10 +232,7 @@ local function draw_banner(self)
         -- Sits ON the top rule, centred — a fixed position rather than trailing
         -- the title, which carries a player name of unpredictable length while
         -- the right-hand side is already crowded by H2H and the two buttons.
-        if b.championship then
-            track(self, ui.box(vmath.vector3(CX, cy + 44, 0), vmath.vector3(BAN_CHAMP_W, 22, 0), with_a(BAN_CHAMP_BG, alpha)))
-            track(self, ui.text(vmath.vector3(CX, cy + 44, 0), "CHAMPIONSHIP", "small", with_a(BAN_CHAMP_TX, alpha)))
-        end
+        draw_badge(self, b.badge, CX, cy + 44, 22, alpha)
         -- Sender avatar (framed disc) on the left of the inline invite bar.
         track(self, ui.box(vmath.vector3(EDGE_L + 48, cy, 0), vmath.vector3(60, 60, 0), vmath.vector4(0.10, 0.14, 0.18, alpha)))
         local b_av = track(self, ui.avatar(vmath.vector3(EDGE_L + 48, cy, 0), vmath.vector3(54, 54, 0), b.avatar or 1))
@@ -228,12 +245,9 @@ local function draw_banner(self)
         track(self, ui.text(vmath.vector3(EDGE_R - 225, cy, 0), "DECLINE", "btn_md", vmath.vector4(0.82,0.86,0.91,alpha)))
         -- Inline badge: same centre line as H2H and the buttons, in the space
         -- the shifted H2H anchor opens up.
-        if b.championship then
-            track(self, ui.box(vmath.vector3(EDGE_R - BAN_CHAMP_X, cy, 0), vmath.vector3(BAN_CHAMP_W, BAN_CHAMP_H, 0), with_a(BAN_CHAMP_BG, alpha)))
-            track(self, ui.text(vmath.vector3(EDGE_R - BAN_CHAMP_X, cy, 0), "CHAMPIONSHIP", "small", with_a(BAN_CHAMP_TX, alpha)))
-        end
+        draw_badge(self, b.badge, EDGE_R - BAN_CHAMP_X, cy, BAN_CHAMP_H, alpha)
         if b.h2h then
-            draw_h2h_row(self, EDGE_R - (b.championship and BAN_H2H_X_CHAMP or BAN_H2H_X), cy, h2h_view(b.h2h), alpha)
+            draw_h2h_row(self, EDGE_R - (b.badge and BAN_H2H_X_CHAMP or BAN_H2H_X), cy, h2h_view(b.h2h), alpha)
         end
         local barw = bw * math.max(0, math.min(1, (b.time_left or 10) / (b.max_time or 10)))
         track(self, ui.box(vmath.vector3(CX, cy - 44, 0), vmath.vector3(bw, 3, 0), vmath.vector4(0.12, 0.19, 0.27, alpha)))
@@ -352,18 +366,44 @@ local function open_dialog(self, kind, name, stake, request_id, avatar, opponent
 end
 local function open_banner(self, raw)
     local sender_av = (type(raw.sender) == "table" and tonumber(raw.sender.avatar)) or 1
-    local b = { title = ((raw.gameType or "TOURNAMENT") == "BATTLE" and "BATTLE  -  " or "TOURNAMENT  -  ") .. ((type(raw.sender) == "table" and raw.sender.username) or "Opponent"):upper(), desc = "Best of " .. (tonumber((type(raw.tournament) == "table" and raw.tournament.matchFormat) or 3) or 3) .. "   -   " .. (((tonumber(((type(raw.tournament) == "table" and raw.tournament.stake) or raw.stake or {}).amount) or 0) > 0) and commas(tonumber(((type(raw.tournament) == "table" and raw.tournament.stake) or raw.stake or {}).amount) or 0).." Coins" or "Practice Mode"), request_id = raw.requestId or "", avatar = sender_av, time_left = 10, max_time = 10, alpha = 1, y_off = 0, h2h = raw.headToHead }
-    -- A BATTLE is never the championship however many levels its document
-    -- happens to carry, so the kind is checked before the tournament is. Same
-    -- rule incoming.gui_script applies, so the two surfaces badge exactly the
-    -- same set of invites.
+    local sender_nm = ((type(raw.sender) == "table" and raw.sender.username) or "Opponent"):upper()
+    local tourney   = (type(raw.tournament) == "table") and raw.tournament or nil
+
+    -- WHAT THIS INVITE IS, named once and used for both the title and the badge.
+    --
     -- ws.current_user_data is passed so an invite whose payload says nothing
-    -- useful is still recognised by its tournament id against the player's own
-    -- list — which is what makes the badge appear against a server that does
-    -- not send `scope` yet. Same call incoming.gui_script makes, so the two
-    -- surfaces badge exactly the same set of invites.
-    b.championship = (raw.gameType or "TOURNAMENT") ~= "BATTLE"
-        and champ.matches(type(raw.tournament) == "table" and raw.tournament or nil, ws.current_user_data)
+    -- useful can still be recognised by its tournament id against the player's
+    -- own list. Same call incoming.gui_script makes, so the two surfaces label
+    -- the same invite the same way.
+    local kind = champ.kind(tourney, ws.current_user_data)
+    -- A BATTLE request is never the championship, whatever its document says.
+    if (raw.gameType or "") == "BATTLE" and kind == "CHAMPIONSHIP" then kind = "BATTLE" end
+
+    local stake  = (tourney and tourney.stake) or raw.stake or {}
+    local amount = tonumber(stake.amount) or 0
+
+    -- A knockout is played to a score cap, not as a series, so "Best of 3" was
+    -- describing a format it does not use.
+    local desc
+    if kind == "KNOCKOUT" then
+        desc = "First to " .. (tonumber(tourney and tourney.scoreCap) or 200)
+    else
+        desc = "Best of " .. (tonumber(tourney and tourney.matchFormat) or 3)
+    end
+    desc = desc .. "   -   " .. (amount > 0 and (commas(amount) .. " Coins") or "Practice Mode")
+
+    local b = {
+        title      = (kind or "TOURNAMENT") .. "  -  " .. sender_nm,
+        desc       = desc,
+        badge      = kind,
+        request_id = raw.requestId or "",
+        avatar     = sender_av,
+        time_left  = 10,
+        max_time   = 10,
+        alpha      = 1,
+        y_off      = 0,
+        h2h        = raw.headToHead,
+    }
     if h2h_view(raw.headToHead) and h2h_view(raw.headToHead).opp_winrate then b.desc = b.desc .. "   -   WR " .. math.floor(h2h_view(raw.headToHead).opp_winrate + 0.5) .. "%" end
     self.banners = self.banners or {}; for _, ex in ipairs(self.banners) do if b.request_id ~= "" and ex.request_id == b.request_id then return end end
     table.insert(self.banners, b)

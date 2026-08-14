@@ -1,4 +1,4 @@
--- WHICH TOURNAMENT IS THE GLOBAL CHAMPIONSHIP?
+-- WHAT KIND OF TOURNAMENT IS THIS?
 --
 -- One answer, for every screen that has to ask. It is asked from three places
 -- that see three different shapes of the same tournament:
@@ -79,6 +79,50 @@ function M.matches(t, user_data)
     local id = tostring(t._id or t.id or "")
     if id == "" then return false end
     return id == M.known_id(user_data)
+end
+
+
+-- WHICH BADGE THIS INVITE WEARS.
+--
+-- Three kinds, and they are NOT distinguishable by any single field:
+--
+--   CHAMPIONSHIP  the global multi-level ladder
+--   KNOCKOUT      matchType KNOCKOUT — a score-cap match, not a series
+--   BATTLE        a single level: the tournament IS the match
+--
+-- Order matters. A knockout is usually one level, so a level count alone would
+-- call it a BATTLE; matchType is the only thing that separates the two. And the
+-- championship is checked first because it is the one kind that is never either
+-- of the others.
+--
+-- nil means "say nothing" rather than "ordinary". A multi-level private cup is
+-- none of these three, and inventing a label for it would be worse than leaving
+-- the strip as it was.
+function M.kind(t, user_data)
+    if M.matches(t, user_data) then return "CHAMPIONSHIP" end
+    if type(t) ~= "table" then return nil end
+    if tostring(t.matchType or ""):upper() == "KNOCKOUT" then return "KNOCKOUT" end
+    if level_count(t) == 1 then return "BATTLE" end
+    return nil
+end
+
+-- HOW WIDE THE PILL HAS TO BE FOR A GIVEN LABEL.
+--
+-- Nothing in the Defold GUI measures text at build time, so the pill is sized
+-- from the character count. Derived from the badge that was already on screen
+-- and looked right — 148px for "[CHAMPIONSHIP]", 14 characters — rather than
+-- picked per label, so a new label cannot arrive with a width nobody checked.
+--
+-- Lives here, not in the two banner files, because both draw the same strip and
+-- the layout test asserts they agree. No vmath: this module is deliberately
+-- runnable outside Defold so the rules can be tested without booting a screen.
+M.BADGE_CHAR_W = 11
+M.BADGE_MIN_W  = 66
+
+function M.badge_width(label)
+    local n = #tostring(label or "")
+    local w = n * M.BADGE_CHAR_W
+    return w > M.BADGE_MIN_W and w or M.BADGE_MIN_W
 end
 
 return M

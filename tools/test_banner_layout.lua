@@ -66,6 +66,12 @@ for _, path in ipairs({ "main/online.gui_script", "main/incoming.gui_script" }) 
     c.BAN_CHAMP_X and c.BAN_CHAMP_W and c.BAN_H2H_X and c.BAN_H2H_X_CHAMP)
 
   -- The badge sits between the H2H block and DECLINE, touching neither.
+  -- Widths come from championship.badge_width; the reserved slot must hold the
+  -- widest label, since every pill is centred on the same point.
+  check(tag .. ": the reserved slot holds the widest label",
+    c.BAN_CHAMP_W >= 12 * 11,
+    ("slot %d vs CHAMPIONSHIP %d"):format(c.BAN_CHAMP_W, 12 * 11))
+
   check(tag .. ": badge clears DECLINE",
     clear_of(r.badge[2], r.decline[1]),
     ("badge left edge R-%d vs decline R-%d"):format(r.badge[2], r.decline[1]))
@@ -82,14 +88,29 @@ for _, path in ipairs({ "main/online.gui_script", "main/incoming.gui_script" }) 
   -- An ordinary invite must be untouched by any of this.
   check(tag .. ": ordinary invites keep the original H2H anchor", c.BAN_H2H_X == 430)
 
-  -- No brackets, as asked, and the same word on both surfaces.
+  -- No brackets, as asked.
   check(tag .. ": badge text has no brackets", not src:find("%[CHAMPIONSHIP%]"))
-  check(tag .. ": badge text is CHAMPIONSHIP", src:find('"CHAMPIONSHIP"') ~= nil)
+
+  -- Every kind championship.kind can return needs a colour here. draw_badge
+  -- returns early on a kind the palette does not name, so a missing entry is an
+  -- invisible badge rather than a crash — exactly the sort of thing that ships.
+  for _, kind in ipairs({ "CHAMPIONSHIP", "KNOCKOUT", "BATTLE" }) do
+    check(tag .. ": " .. kind .. " has a badge colour",
+      src:find(kind .. "%s*=%s*{ bg") ~= nil)
+  end
 
   -- Drawn on the buttons' own centre line, which is what "vertically centred"
   -- means on this strip.
   check(tag .. ": inline badge is on the cy centre line",
-    src:find("BAN_CHAMP_X, cy, 0") ~= nil)
+    src:find("BAN_CHAMP_X, cy, BAN_CHAMP_H") ~= nil)
+
+  -- The badge field must NOT be called `kind`. incoming.gui_script's dialog
+  -- table already carries a `kind` ("incoming") that selects the draw path, and
+  -- a second `kind` in the same constructor silently wins — which would send
+  -- every plain game request down the wrong path. Caught exactly that way.
+  check(tag .. ": badge is carried as `badge`", src:find("%.badge") ~= nil)
+  check(tag .. ": and nothing re-uses `kind` for it",
+    src:find("kind%s*=%s*d%.kind") == nil and src:find("^%s*kind%s*=%s*kind,") == nil)
 end
 
 -- The two files must agree, or the same invite is laid out two ways.
