@@ -143,6 +143,23 @@ local BAN_ACCEPT  = vmath.vector4(0.00, 0.90, 0.63, 0.30)
 local BAN_CHAMP_BG = vmath.vector4(0.78, 0.12, 0.16, 1.00)
 local BAN_CHAMP_TX = vmath.vector4(1.00, 0.94, 0.94, 1.00)
 
+-- WHERE THE INLINE BADGE GOES, AND WHY H2H MOVES FOR IT.
+--
+-- Same figures as online.gui_script's banner, because it is the same strip: the
+-- right-hand side is laid out from the right edge, ACCEPT at R-90 and DECLINE
+-- at R-225 (both 120 wide, so the buttons start at R-285), with the H2H block
+-- anchored at R-430 running to about anchor+70. The 75px that leaves between
+-- them is narrower than the word CHAMPIONSHIP, so the badge would sit on top of
+-- the H2H form squares.
+--
+-- The H2H anchor therefore shifts left, and ONLY on a banner carrying the
+-- badge, so every other invite keeps the layout it has today.
+local BAN_H2H_X       = 430
+local BAN_H2H_X_CHAMP = 560
+local BAN_CHAMP_X     = 387
+local BAN_CHAMP_W     = 132
+local BAN_CHAMP_H     = 24
+
 -- TEAM CUP badge. Purple, matching the lobby tile's accent, so an invitation
 -- to somebody's cup is not mistaken at a glance for a match starting now —
 -- the two arrive on the same strip and are answered on very different clocks.
@@ -179,10 +196,9 @@ local function draw_banner(self, d, a)
     -- right-hand side is already crowded by H2H and the two buttons, so
     -- anything flowed from either end eventually collides with something.
     if d.championship then
-        local pill_w, pill_h = 148, 22
-        track(self, ui.box(vmath.vector3(m.CX, top, 0), vmath.vector3(pill_w, pill_h, 0),
+        track(self, ui.box(vmath.vector3(m.CX, top, 0), vmath.vector3(BAN_CHAMP_W, 22, 0),
             with_a(BAN_CHAMP_BG, a)))
-        track(self, ui.text(vmath.vector3(m.CX, top, 0), "[CHAMPIONSHIP]", "small",
+        track(self, ui.text(vmath.vector3(m.CX, top, 0), "CHAMPIONSHIP", "small",
             with_a(BAN_CHAMP_TX, a)))
     elseif d.cup_invite then
         local pill_w, pill_h = 120, 22
@@ -213,7 +229,17 @@ local function draw_banner(self, d, a)
     mkbtn(self, "accept",  vmath.vector3(m.R - 90,  cy, 0), vmath.vector3(120, 46, 0),
         d.accept_label or "ACCEPT",  with_a(BAN_ACCEPT,  a), nil, "btn_md", with_a(COL_WHITE, a))
 
-    if d.h2h then draw_h2h_row(self, m.R - 430, cy, h2h_view(d.h2h), a) end
+    -- Inline badge: same centre line as the H2H row and the two buttons, in the
+    -- space the shifted H2H anchor opens up.
+    if d.championship then
+        track(self, ui.box(vmath.vector3(m.R - BAN_CHAMP_X, cy, 0),
+            vmath.vector3(BAN_CHAMP_W, BAN_CHAMP_H, 0), with_a(BAN_CHAMP_BG, a)))
+        track(self, ui.text(vmath.vector3(m.R - BAN_CHAMP_X, cy, 0), "CHAMPIONSHIP", "small",
+            with_a(BAN_CHAMP_TX, a)))
+    end
+    if d.h2h then
+        draw_h2h_row(self, m.R - (d.championship and BAN_H2H_X_CHAMP or BAN_H2H_X), cy, h2h_view(d.h2h), a)
+    end
 
     -- Countdown along the bottom edge.
     local frac  = math.max(0, math.min(1, (d.time_left or 0) / (d.max_time or 10)))

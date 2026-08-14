@@ -185,6 +185,24 @@ end
 local BAN_CHAMP_BG = vmath.vector4(0.78, 0.12, 0.16, 1.00)
 local BAN_CHAMP_TX = vmath.vector4(1.00, 0.94, 0.94, 1.00)
 
+-- WHERE THE INLINE BADGE GOES, AND WHY H2H MOVES FOR IT.
+--
+-- The right-hand side of the strip is laid out from the right edge: ACCEPT at
+-- R-90 and DECLINE at R-225 (both 120 wide, so the buttons start at R-285),
+-- with the H2H block anchored at R-430 and running to about anchor+70. That
+-- leaves a 75px gap between them — narrower than the word CHAMPIONSHIP, so
+-- dropping the badge in as-is would have it overlap the H2H form squares.
+--
+-- So the H2H anchor shifts left, and ONLY on a banner that carries the badge:
+-- every other invite keeps exactly the layout it has today. The badge then sits
+-- in the middle of the space that opens up, on the same centre line as the H2H
+-- row and the two buttons.
+local BAN_H2H_X       = 430   -- from the right edge, ordinary invite
+local BAN_H2H_X_CHAMP = 560   -- ...and when the badge needs the room
+local BAN_CHAMP_X     = 387   -- midway between the shifted H2H and DECLINE
+local BAN_CHAMP_W     = 132
+local BAN_CHAMP_H     = 24
+
 local function draw_banner(self)
     for idx, b in ipairs(self.banners or {}) do
         local bw, slide = VISIBLE_W, (b.y_off or 0) * 132
@@ -195,8 +213,8 @@ local function draw_banner(self)
         -- the title, which carries a player name of unpredictable length while
         -- the right-hand side is already crowded by H2H and the two buttons.
         if b.championship then
-            track(self, ui.box(vmath.vector3(CX, cy + 44, 0), vmath.vector3(148, 22, 0), with_a(BAN_CHAMP_BG, alpha)))
-            track(self, ui.text(vmath.vector3(CX, cy + 44, 0), "[CHAMPIONSHIP]", "small", with_a(BAN_CHAMP_TX, alpha)))
+            track(self, ui.box(vmath.vector3(CX, cy + 44, 0), vmath.vector3(BAN_CHAMP_W, 22, 0), with_a(BAN_CHAMP_BG, alpha)))
+            track(self, ui.text(vmath.vector3(CX, cy + 44, 0), "CHAMPIONSHIP", "small", with_a(BAN_CHAMP_TX, alpha)))
         end
         -- Sender avatar (framed disc) on the left of the inline invite bar.
         track(self, ui.box(vmath.vector3(EDGE_L + 48, cy, 0), vmath.vector3(60, 60, 0), vmath.vector4(0.10, 0.14, 0.18, alpha)))
@@ -208,7 +226,15 @@ local function draw_banner(self)
         track(self, ui.text(vmath.vector3(EDGE_R - 90, cy, 0), "ACCEPT", "btn_md", vmath.vector4(1,1,1,alpha)))
         self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(EDGE_R - 225, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.12, 0.19, 0.27, 0.85 * alpha))), id = "banner_decline", data = b.request_id }
         track(self, ui.text(vmath.vector3(EDGE_R - 225, cy, 0), "DECLINE", "btn_md", vmath.vector4(0.82,0.86,0.91,alpha)))
-        if b.h2h then draw_h2h_row(self, EDGE_R - 430, cy, h2h_view(b.h2h), alpha) end
+        -- Inline badge: same centre line as H2H and the buttons, in the space
+        -- the shifted H2H anchor opens up.
+        if b.championship then
+            track(self, ui.box(vmath.vector3(EDGE_R - BAN_CHAMP_X, cy, 0), vmath.vector3(BAN_CHAMP_W, BAN_CHAMP_H, 0), with_a(BAN_CHAMP_BG, alpha)))
+            track(self, ui.text(vmath.vector3(EDGE_R - BAN_CHAMP_X, cy, 0), "CHAMPIONSHIP", "small", with_a(BAN_CHAMP_TX, alpha)))
+        end
+        if b.h2h then
+            draw_h2h_row(self, EDGE_R - (b.championship and BAN_H2H_X_CHAMP or BAN_H2H_X), cy, h2h_view(b.h2h), alpha)
+        end
         local barw = bw * math.max(0, math.min(1, (b.time_left or 10) / (b.max_time or 10)))
         track(self, ui.box(vmath.vector3(CX, cy - 44, 0), vmath.vector3(bw, 3, 0), vmath.vector4(0.12, 0.19, 0.27, alpha)))
         if barw > 1 then track(self, ui.box(vmath.vector3(CX - bw/2 + barw/2, cy - 44, 0), vmath.vector3(barw, 3, 0), barw/bw < 0.3 and COL_RED or COL_GREEN)) end
