@@ -164,6 +164,22 @@ end
 -- phone_complete is kept, and still answers honestly, because the profile
 -- screen uses it to decide whether to show the prompt. It simply no longer
 -- feeds profile_complete.
+--
+-- MATATU ONLY, AND THAT IS ABOUT WHAT THE NUMBER CAN PROVE.
+--
+-- A number is worth asking for where something can be learned from it. In
+-- Uganda that is a live mobile-money name enquiry: the backend looks the
+-- number up, gets the account holder's real name back, and matches it against
+-- the blocked-identity lists. That is the identity check, and the number is
+-- how it is run.
+--
+-- Nigeria (Whot) and Kenya (Kadi) have no such provider wired up — be_matatu's
+-- validatePhone says so itself, answering "format check only, no live
+-- verification yet" and no name at all. So in those apps the keypad would
+-- collect a string, verify nothing with it, and stand between the player and
+-- the game on the strength of it. There is nothing to skip TO the number for,
+-- so it is skipped: sign-in is the device id, and the username/avatar screen
+-- is the whole of signing up (POST /auth/device/profile).
 function M.phone_required()
   local ok, GameMode = pcall(require, "modules.game_mode")
   return ok and GameMode.is_matatu()

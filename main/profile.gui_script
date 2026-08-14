@@ -298,8 +298,31 @@ local function rebuild_phone_step(self, d_y)
     cursor_y = cursor_y - input_h - row_gap
 
     -- Status line beneath the input, inside the card.
-    local status_col = ok and P_SUCCESS or (self.phone ~= "" and P_ERROR or P_MUTED)
-    local status_txt = ok and "Looks good!" or (self.phone ~= "" and msg_txt or "Enter your Uganda mobile number")
+    --
+    -- A REFUSAL FROM THE SERVER OUTRANKS THE LOCAL FORMAT CHECK, AND STAYS.
+    --
+    -- It used to be toasted and nothing else. A toast is bottom-left and
+    -- gone in three seconds, and this is a screen the player cannot leave,
+    -- looking at a card in the middle of it — so a number the backend turned
+    -- down ("Account holder name not found for that number", "This identity
+    -- has been suspended") read as the app doing nothing at all. That is how
+    -- a backend refusal gets reported as "I punch in the number and it does
+    -- not go to the next screen": the app did answer, just not anywhere the
+    -- player was looking, and by the time they looked the answer was gone.
+    --
+    -- Worse, the local check disagrees with it. Nine valid-looking digits
+    -- still satisfy validate_phone, so the line underneath went on saying
+    -- "Looks good!" about the very number that had just been rejected.
+    --
+    -- Cleared on the next keypress (see handle()), so editing the number
+    -- drops a stale answer rather than arguing with what is now on screen.
+    local status_col, status_txt
+    if self._phone_error then
+        status_col, status_txt = P_ERROR, self._phone_error
+    else
+        status_col = ok and P_SUCCESS or (self.phone ~= "" and P_ERROR or P_MUTED)
+        status_txt = ok and "Looks good!" or (self.phone ~= "" and msg_txt or "Enter your Uganda mobile number")
+    end
     local status_lbl = track(self, ui.text(vmath.vector3(CX, cursor_y - status_h/2, 0), status_txt, "body", status_col))
     gui.set_scale(status_lbl, vmath.vector3(0.42, 0.42, 1))
     cursor_y = cursor_y - status_h - row_gap
@@ -459,8 +482,25 @@ local function rebuild(self)
     local line_color = ok and P_GOLD or P_BORDER
     track(self, ui.box(vmath.vector3(lx, input_y - 18, 0), vmath.vector3(line_w, 2, 0), line_color))
 
-    -- Tiny Status Text perfectly tucked below the bottom line
-    local status_lbl = txtL(self, start_x + 10, input_y - 34, ok and "Looks good!" or msg_txt, "body", ok and P_SUCCESS or P_ERROR)
+    -- Tiny Status Text perfectly tucked below the bottom line.
+    --
+    -- Same rule as the phone step's status line: what the SERVER said about
+    -- this name outranks the local format check and stays on the card until
+    -- the name is edited. "That username is already taken" is not something
+    -- the client can work out for itself, and a three-second toast in the
+    -- far corner is not where somebody staring at the input will read it —
+    -- meanwhile this line went on saying "Looks good!" about a name that had
+    -- just been refused. It matters more here than anywhere: for Whot and
+    -- Kadi this screen IS the signup, so a rejection nobody sees is a player
+    -- who cannot get an account at all.
+    local status_col2, status_txt2
+    if self._error then
+        status_col2, status_txt2 = P_ERROR, self._error
+    else
+        status_col2 = ok and P_SUCCESS or P_ERROR
+        status_txt2 = ok and "Looks good!" or msg_txt
+    end
+    local status_lbl = txtL(self, start_x + 10, input_y - 34, status_txt2, "body", status_col2)
     gui.set_scale(status_lbl, vmath.vector3(0.40, 0.40, 1))
 
     -- Draw the keyboard
@@ -568,8 +608,38 @@ end
 -- means it reliably reappears on every login/reconnect until satisfied.
 local function decide_step(self)
     local u = ws.current_user_data or {}
-    self.phone_mode = "link"
-    if app_state.phone_required() and not app_state.phone_complete(u) then
+    local signed_in = type(u._id) == "string" and u._id ~= ""
+
+    -- WHICH OF THE TWO JOBS THE KEYPAD IS DOING.
+    --
+    -- It was always "link" — attach a number to the account you are already
+    -- signed into — which is the wrong word for the case that actually sends
+    -- players here. DEVICE_UNKNOWN opens this screen with NO session: there is
+    -- nothing to link the number to, the number IS the sign-in (see
+    -- controller.script's link_phone, which routes to phone_login when there
+    -- is no session), and the header said VERIFY YOUR PHONE about an account
+    -- that did not exist yet.
+    --
+    -- "login" also carries the < BACK button, and that matters more than the
+    -- wording: without a session this screen is the first thing a fresh
+    -- install sees, and in "link" mode it has no exit at all. A player who
+    -- does not want to type their number was left with a keypad and no route
+    -- to the offline modes.
+    self.phone_mode = signed_in and "link" or "login"
+
+    -- NO SESSION IS THE ONE CASE THAT IS NOT OPTIONAL.
+    --
+    -- With a session, the number is worth having — it is the identity that
+    -- survives a new handset — but it is not what lets the player in, so it
+    -- is offered rather than demanded, and only where there is a live
+    -- mobile-money identity behind it to be worth demanding (app_state.
+    -- phone_required: matatu only; whot and kadi have no such check for their
+    -- countries, so they skip this step entirely).
+    --
+    -- Without one there is nothing else to go on, so it is the whole screen.
+    if not signed_in then
+        self.step = app_state.phone_required() and "phone" or "profile"
+    elseif app_state.phone_required() and not app_state.phone_complete(u) then
         self.step = "phone"
     else
         self.step = "profile"
@@ -636,7 +706,31 @@ function on_message(self, message_id, message, sender)
                 return
             end
             load_profile_fields(self)
-            decide_step(self)
+
+            -- THE STEP IS OVER BECAUSE THE REQUEST SUCCEEDED, NOT BECAUSE
+            -- THE PAYLOAD SAYS SO.
+            --
+            -- This used to call decide_step(), which re-reads
+            -- ws.current_user_data and re-asks phone_complete() — so the
+            -- screen only moved on if the number came back in the response.
+            -- That is a second condition on top of "the server said yes", and
+            -- when it was not met the player typed a valid number, watched
+            -- VERIFYING... finish with no error, and was left looking at the
+            -- same keypad. Reported exactly that way: the number goes in and
+            -- nothing happens.
+            --
+            -- There are real ways for the field to be missing while the call
+            -- genuinely succeeded — the payload build strips undefined keys,
+            -- an account matched on a secondary `phoneNumbers` entry, a
+            -- degraded response that fell back to a bare user row. None of
+            -- them mean the player has to type it again, and retyping it
+            -- cannot help: the same answer comes back.
+            --
+            -- decide_step still owns the decision on ENTRY (screen_enter),
+            -- where the account data is all there is to go on. This is the
+            -- one place that knows something the data does not.
+            self.step = "profile"
+            self.phone = ""
         else
             self._phone_error = message.message or "Could not link phone number."
             toast.error(self._phone_error)

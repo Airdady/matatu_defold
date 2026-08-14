@@ -32,6 +32,20 @@ M.active_game_state = {}
 -- arrays (e.g. the `rank` list with its `points` fields). So we park MOVE
 -- payloads here in the shared Lua VM and only post a lightweight wake signal.
 M.move_inbox = {}
+
+-- ANNOUNCEMENTS TRAVEL THE SAME WAY, AND FOR THE SAME REASON.
+--
+-- The top-10 champions banner is one long string — twenty names, avatars and
+-- prize figures, well over a kilobyte — and it was being handed to msg.post
+-- verbatim. Defold overflowed on it every single time:
+--
+--   buffer (890 bytes) too small for table, exceeded at '...CHAMPIONS!...'
+--
+-- The listener threw, so the announcement was never queued, never shown and
+-- never marked as viewed — which is why it arrived again on the next push and
+-- threw again, several times a second, forever.
+M.announcement_inbox = {}
+
 M.last_game_over = {}
 -- playerId -> the hand that player held at GAME_OVER, straight from the final
 -- gameState. The end-of-round reveal's source of truth; see the GAME_OVER
@@ -1345,6 +1359,19 @@ end
 function M.take_moves()
   local out = M.move_inbox
   M.move_inbox = {}
+  return out
+end
+
+function M.queue_announcements(list)
+  if type(list) ~= "table" then return end
+  for _, item in ipairs(list) do
+    M.announcement_inbox[#M.announcement_inbox + 1] = item
+  end
+end
+
+function M.take_announcements()
+  local out = M.announcement_inbox
+  M.announcement_inbox = {}
   return out
 end
 

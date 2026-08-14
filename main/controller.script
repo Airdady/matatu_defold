@@ -74,6 +74,74 @@ local function route_after_auth(self)
     end
 end
 
+-- THE WELCOME BONUS, ON THE ROUTES THAT ACTUALLY MINT AN ACCOUNT.
+--
+-- The backend credits it at creation (auth.routes' newAccountDefaults: 500
+-- UGX for matatu, 200 NGN for whot, 20 KES for kadi) and reports the account
+-- as isNewUser. The screen that celebrates it, though, was only ever posted to
+-- from handle_device_result — the /auth/device path, which deliberately
+-- creates nothing and hardcodes isNewUser:false in its reply.
+--
+-- So the trigger sat on the one route that could never fire it, and the two
+-- that can — signing in by phone, and saving a profile onto a handset with no
+-- account — said nothing at all. The coins arrived; nobody was ever told. For
+-- whot and kadi it is worse than silence: /auth/device/profile is their ONLY
+-- signup, so the bonus screen was unreachable in those apps outright.
+--
+-- Reads the balance the server actually sent rather than assuming a figure —
+-- the three games pay three different amounts in three different currencies,
+-- and 500 is only right for one of them.
+local function announce_signup_bonus(user)
+    local amount = tonumber((user or {}).balance)
+    if not amount or amount <= 0 then return end
+    msg.post("#signup_bonus", "show_signup_bonus", { amount = amount })
+end
+
+-- ASK THE SERVER WHAT THE ACCOUNT ACTUALLY LOOKS LIKE NOW.
+--
+-- Reported: right after signing up, BAL and PTS on the online screen read 0,
+-- and only a refresh fills them in.
+--
+-- Nothing on the client is wrong with them — the info card reads
+-- ws.current_user_data live and repaints on user_data_updated, so it shows
+-- whatever it has been given. The problem is what it has been given: the
+-- responses that BUILD an account are not the response that DESCRIBES one.
+--
+--   POST /auth/phone, /auth/device/profile   a snapshot taken mid-creation.
+--                     The account is written again after it (tournament
+--                     enrolment, fcm token), so the payload is a moment old
+--                     before it is even sent.
+--   PUT  /users/:id   findByIdAndUpdate's raw mongoose document. No rank, no
+--                     position, no prizes, no tournaments — none of the
+--                     computed fields the screens read, because that route
+--                     never builds them.
+--
+-- GET /users/:id is the one that answers the question properly: it returns
+-- the same enriched payload IDENTIFY does. It has existed all along and was
+-- called from nowhere, which is why the only way to get it was for the player
+-- to go and refresh by hand.
+--
+-- Merged, never assigned, so the session token and anything else the response
+-- has no opinion about survives.
+local function refresh_account(uid)
+    uid = tostring(uid or "")
+    if uid == "" then return end
+    api.get_user(uid, function(result)
+        if not result.success or type(result.data) ~= "table" then
+            auth_debug("refresh_account: %s did not answer (%s)", uid, tostring(result.message))
+            return
+        end
+        local src = (type(result.data.user) == "table") and result.data.user or result.data
+        local u = ws.current_user_data or {}
+        for k, v in pairs(src) do u[k] = v end
+        ws.current_user_data = u
+        pcall(api.save_session, u)
+        for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile", "lobby" }) do
+            msg.post("#" .. s, "user_data_updated")
+        end
+    end)
+end
+
 local function identify_and_connect(user)
     if type(user) ~= "table" then return end
     ws.current_user_data = user
@@ -480,8 +548,11 @@ handle_device_result = function(self, result)
     if tok ~= "" then api.set_auth_token(tok) end
     api.save_session(user)
 
+    -- Kept, and dead on this path by construction: /auth/device deliberately
+    -- never creates an account, so it answers isNewUser:false every time. See
+    -- announce_signup_bonus, which the two routes that DO create now call.
     if data.isNewUser then
-        msg.post("#signup_bonus", "show_signup_bonus", { amount = tonumber(user.balance) or 500 })
+        announce_signup_bonus(user)
     end
 
     app_state.auth_state = "done"
@@ -1233,6 +1304,19 @@ function on_message(self, message_id, message, sender)
             if result.success and data.token then
                 local user = type(data.user) == "table" and data.user or {}
                 user.token = data.token
+                -- THE NUMBER WE JUST SIGNED IN WITH IS ON THIS ACCOUNT.
+                --
+                -- The server found or created the account BY this number, so
+                -- that is not an assumption. It is written down because the
+                -- payload does not always carry it back — the builder strips
+                -- keys it has no value for, an account matched on a secondary
+                -- `phoneNumbers` entry answers with a different default, and a
+                -- degraded build falls back to a bare row. app_state's
+                -- phone_complete reads exactly this field to decide whether to
+                -- put the number screen up, so a blank here sent the player
+                -- who had just used their number straight back to the keypad
+                -- to type it again.
+                if (user.phoneNumber or "") == "" then user.phoneNumber = phone end
                 auth_debug("phone_login: signed in (new=%s)", tostring(data.isNewUser))
                 -- Stop the background retry: we have a session now, and
                 -- a silent sign-in landing later would replace this one. The
@@ -1245,6 +1329,13 @@ function on_message(self, message_id, message, sender)
                 identify_and_connect(user)
                 app_state.auth_state = "done"
                 msg.post("#lobby", "auth_state_changed")
+                -- Posted BEFORE the routing below, so the modal is already
+                -- claimed by the time the profile screen builds. signup_bonus
+                -- outranks a screen in app_state.MODAL_PRIORITY, and the
+                -- profile screen checks input_blocked() — so the order is what
+                -- stops a tap meant for the bonus landing on the keypad
+                -- underneath it.
+                if data.isNewUser then announce_signup_bonus(user) end
                 msg.post("#profile", "phone_link_result", { ok = true })
                 route_after_auth(self)
                 return
@@ -1275,6 +1366,20 @@ function on_message(self, message_id, message, sender)
         -- only button called an endpoint that requires the Bearer token it does
         -- not have, so the one route back into an existing account after
         -- changing handsets answered 401.
+        -- is_logged_in() only asks whether a user id is CACHED. It cannot ask
+        -- whether the token beside it still works, and a cached session
+        -- outlives its token in every ordinary way — the account was merged
+        -- away by somebody else's phone link, the app sat closed past the
+        -- expiry, the cache belongs to a different backend. So the answer
+        -- above is a good guess and not a fact, and when it is wrong the
+        -- request lands on an endpoint that can only refuse it.
+        --
+        -- The player cannot act on that. They typed a number; whether it links
+        -- or signs in is our bookkeeping, not theirs, and a 401 leaves them on
+        -- the one screen with no way out, holding the one button that does not
+        -- work. Falling through to the sign-in — which needs no token and
+        -- creates the account if there is not one — makes the answer to a
+        -- phone number always the same: an account, and the profile screen.
         if not is_logged_in() then
             auth_debug("link_phone with no session - signing in by phone instead")
             msg.post("#controller", "phone_login", { phoneNumber = phone })
@@ -1282,9 +1387,22 @@ function on_message(self, message_id, message, sender)
         end
 
         api.link_phone({ phoneNumber = phone }, function(result)
+            -- 401 ONLY. A 403 from this endpoint is ACCOUNT_BLOCKED, which is
+            -- a real answer about the player and would only be refused again,
+            -- more vaguely, by the sign-in.
+            if not result.success and result.status_code == 401 then
+                auth_debug("link_phone: the cached session is not valid - signing in by phone instead")
+                msg.post("#controller", "phone_login", { phoneNumber = phone })
+                return
+            end
             if result.success and type(result.data) == "table" then
                 local data = result.data
                 local merged_user = type(data.user) == "table" and data.user or {}
+                -- Same reasoning as the phone_login branch above: the request
+                -- succeeded, so the number IS on the account now, whether or
+                -- not the response echoed it back. Written down so the phone
+                -- step cannot re-arm against its own success.
+                if (merged_user.phoneNumber or "") == "" then merged_user.phoneNumber = phone end
                 if data.merged then
                     if data.token then
                         merged_user.token = data.token
@@ -1324,9 +1442,78 @@ function on_message(self, message_id, message, sender)
         local payload = {
             username    = message.username,
             avatar      = message.avatar,
-            phoneNumber = user.phoneNumber or user.phone or "",
         }
+        -- ONLY IF WE HAVE ONE. This used to send `phoneNumber = ... or ""`,
+        -- and the server wrote what it was sent — so a save from a client
+        -- that did not happen to be holding the number BLANKED it on the
+        -- account, seconds after the account had been created by it.
+        --
+        -- There is no phone field on this screen. The player is choosing a
+        -- username and an avatar; they are not saying anything about their
+        -- number, and an empty string is not them saying it should be empty.
+        -- Sending nothing says nothing, which is the truth.
+        local known_phone = user.phoneNumber or user.phone or ""
+        if known_phone ~= "" then payload.phoneNumber = known_phone end
+
         local uid = user._id or user.localId or ""
+
+        -- NO ACCOUNT YET? THEN THIS SAVE IS THE SIGNUP.
+        --
+        -- /auth/device signs in but deliberately never creates, so a handset
+        -- the backend has not seen reaches this screen with no id at all. The
+        -- PUT below refuses without one and the player was told "User ID
+        -- required" — a message about our own plumbing, in answer to them
+        -- typing their name.
+        --
+        -- For matatu the phone step covered that gap, because signing in by
+        -- number creates the account on the way through. Whot and Kadi have
+        -- no phone step (see app_state.phone_required), so for them this
+        -- screen is the ONLY signup there is.
+        if uid == "" then
+            auth_debug("profile_save with no session - creating the account by device id")
+            api.device_profile({ username = message.username, avatar = message.avatar }, function(result)
+                local data = type(result.data) == "table" and result.data or {}
+                if result.success and data.token then
+                    local created = type(data.user) == "table" and data.user or {}
+                    created.token = data.token
+                    -- Belt and braces: the payload build strips undefined
+                    -- keys, and these two are what the profile gate reads.
+                    -- Without them a save that DID land would bounce the
+                    -- player straight back onto this same screen.
+                    created.username = created.username or message.username
+                    created.avatar   = created.avatar or message.avatar
+
+                    cancel_silent_login_retry(self)
+                    self._silent_login_attempts = 0
+                    self._silent_login_inflight = false
+                    identify_and_connect(created)
+                    app_state.sync_theme_from_user(created)
+                    app_state.auth_state = "done"
+                    msg.post("#lobby", "auth_state_changed")
+
+                    for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile", "lobby" }) do
+                        msg.post("#" .. s, "user_data_updated")
+                    end
+                    app_state.username_suggestions = {}
+                    -- Whot and Kadi have no phone step, so THIS is where their
+                    -- accounts are born and the only moment their welcome
+                    -- bonus can be announced.
+                    if data.isNewUser then announce_signup_bonus(created) end
+                    msg.post("#profile", "profile_saved", { ok = true })
+                    show(self, "online")
+                    -- The account was created by the request that just
+                    -- returned, so its payload is a snapshot of a half-built
+                    -- one. Ask for the finished article.
+                    refresh_account(created._id or created.localId)
+                else
+                    app_state.username_suggestions = (type(data) == "table" and data.suggestions) or {}
+                    msg.post("#profile", "profile_saved",
+                        { ok = false, message = result.message or "Could not create your profile." })
+                end
+            end)
+            return
+        end
+
         api.update_profile(uid, payload, function(result)
             if result.success then
                 local data = result.data or {}
@@ -1347,6 +1534,13 @@ function on_message(self, message_id, message, sender)
                 app_state.username_suggestions = {}
                 msg.post("#profile", "profile_saved", { ok = true })
                 show(self, "online")
+                -- What this PUT answers with is findByIdAndUpdate's raw
+                -- document: no rank, no position, no prizes, no tournaments —
+                -- none of the computed fields the screen we have just moved
+                -- to reads, because this route never builds them. For an
+                -- account created moments ago that is the difference between
+                -- BAL 500 and BAL 0.
+                refresh_account(uid)
             else
                 local rdata = result.data
                 app_state.username_suggestions = (type(rdata) == "table" and rdata.suggestions) or {}
