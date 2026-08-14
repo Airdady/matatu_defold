@@ -117,7 +117,8 @@ local function mark_savings_promo_seen()
         pcall(api.update_profile, uid, { savingsPromoSeen = true }, function() end)
     end
 end
-local function clear(self) for _, n in ipairs(self.nodes) do pcall(gui.delete_node, n) end; self.nodes, self.buttons = {}, {} end
+-- ban_bars holds node handles into self.nodes, so it dies with them.
+local function clear(self) for _, n in ipairs(self.nodes) do pcall(gui.delete_node, n) end; self.nodes, self.buttons, self.ban_bars = {}, {}, nil end
 local function track(self, n) self.nodes[#self.nodes+1] = n; return n end
 local function txtL(self, x, y, str, font, color) local t = track(self, ui.text(vmath.vector3(x, y, 0), str, font, color)); gui.set_pivot(t, gui.PIVOT_W); return t end
 local function txtR(self, x, y, str, font, color) local t = track(self, ui.text(vmath.vector3(x, y, 0), str, font, color)); gui.set_pivot(t, gui.PIVOT_E); return t end
@@ -214,6 +215,28 @@ local BAN_CHAMP_X     = 387   -- midway between the shifted H2H and DECLINE
 local BAN_CHAMP_W     = 132
 local BAN_CHAMP_H     = 24
 
+-- SLIDING THE COUNTDOWN BARS, EVERY FRAME.
+--
+-- The bars were redrawn by rebuild(), and rebuild() only runs when the
+-- WHOLE-SECOND counter changes — so a bar that should sweep smoothly across ten
+-- seconds jumped in ten steps. Reported as "animating in bits".
+--
+-- Rebuilding per frame is not the fix: rebuild() tears down and recreates the
+-- entire screen, not just the strip. So each fill node is created once and
+-- kept, and this resizes them in place. The once-a-second rebuild stays as it
+-- was, for the things that really do change only once a second.
+local function update_ban_bars(self)
+    for _, bar in ipairs(self.ban_bars or {}) do
+        local b = bar.b
+        local frac = math.max(0, math.min(1, (b.time_left or 0) / (b.max_time or 10)))
+        local w = bar.w * frac
+        gui.set_size(bar.node, vmath.vector3(w, 3, 0))
+        -- Grows from the left edge, so the centre moves with the width.
+        gui.set_position(bar.node, vmath.vector3(bar.left + w / 2, bar.y, 0))
+        gui.set_color(bar.node, frac < 0.3 and COL_RED or COL_GREEN)
+    end
+end
+
 -- Draws one pill, centred, sized to its label.
 local function draw_badge(self, kind, x, y, h, a)
     local col = BAN_BADGE[kind]
@@ -224,6 +247,7 @@ local function draw_badge(self, kind, x, y, h, a)
 end
 
 local function draw_banner(self)
+    self.ban_bars = {}
     for idx, b in ipairs(self.banners or {}) do
         local bw, slide = VISIBLE_W, (b.y_off or 0) * 132
         local cy, alpha = EDGE_T - 70 - (idx - 1) * 102 + slide, b.alpha or 1
@@ -232,7 +256,9 @@ local function draw_banner(self)
         -- Sits ON the top rule, centred — a fixed position rather than trailing
         -- the title, which carries a player name of unpredictable length while
         -- the right-hand side is already crowded by H2H and the two buttons.
-        draw_badge(self, b.badge, CX, cy + 44, 22, alpha)
+        -- No centred badge on the rule: the label sits inline below, between
+        -- the H2H block and the buttons. Saying it twice on one strip is not
+        -- twice as clear.
         -- Sender avatar (framed disc) on the left of the inline invite bar.
         track(self, ui.box(vmath.vector3(EDGE_L + 48, cy, 0), vmath.vector3(60, 60, 0), vmath.vector4(0.10, 0.14, 0.18, alpha)))
         local b_av = track(self, ui.avatar(vmath.vector3(EDGE_L + 48, cy, 0), vmath.vector3(54, 54, 0), b.avatar or 1))
@@ -249,9 +275,13 @@ local function draw_banner(self)
         if b.h2h then
             draw_h2h_row(self, EDGE_R - (b.badge and BAN_H2H_X_CHAMP or BAN_H2H_X), cy, h2h_view(b.h2h), alpha)
         end
-        local barw = bw * math.max(0, math.min(1, (b.time_left or 10) / (b.max_time or 10)))
+        -- The fill is created unconditionally, even at zero width, because
+        -- update_ban_bars resizes this exact node every frame — a node created
+        -- only when there was something to show would not exist on the frames
+        -- that need to grow it.
         track(self, ui.box(vmath.vector3(CX, cy - 44, 0), vmath.vector3(bw, 3, 0), vmath.vector4(0.12, 0.19, 0.27, alpha)))
-        if barw > 1 then track(self, ui.box(vmath.vector3(CX - bw/2 + barw/2, cy - 44, 0), vmath.vector3(barw, 3, 0), barw/bw < 0.3 and COL_RED or COL_GREEN)) end
+        local fill = track(self, ui.box(vmath.vector3(CX - bw/2, cy - 44, 0), vmath.vector3(0, 3, 0), COL_GREEN))
+        self.ban_bars[#self.ban_bars + 1] = { node = fill, b = b, w = bw, left = CX - bw/2, y = cy - 44 }
     end
 end
 
@@ -386,9 +416,18 @@ local function open_banner(self, raw)
     -- describing a format it does not use.
     local desc
     if kind == "KNOCKOUT" then
-        desc = "First to " .. (tonumber(tourney and tourney.scoreCap) or 200)
+        desc = "SCORE CAP " .. (tonumber(tourney and tourney.scoreCap) or 200)
     else
-        desc = "Best of " .. (tonumber(tourney and tourney.matchFormat) or 3)
+        -- "Best of 1" describes nothing. A single-game match is a single game,
+        -- and a knockout reaching here means matchType did not arrive — which
+        -- is exactly when matchFormat reads 1 and the old text said BEST OF 1.
+        local fmt = tonumber(tourney and tourney.matchFormat) or 3
+        local cap = tonumber(tourney and tourney.scoreCap)
+        if fmt <= 1 then
+            desc = cap and ("SCORE CAP " .. cap) or "Single game"
+        else
+            desc = "Best of " .. fmt
+        end
     end
     desc = desc .. "   -   " .. (amount > 0 and (commas(amount) .. " Coins") or "Practice Mode")
 
@@ -457,6 +496,9 @@ function update(self, dt)
 
             if b.time_left <= 0 then table.insert(expired, b) end
         end
+        -- Smooth: resize the existing fills. The whole-second rebuild above
+        -- still happens, for everything that genuinely ticks in seconds.
+        pcall(update_ban_bars, self)
         for _, b in ipairs(expired) do
             if b.request_id and b.request_id ~= "" then ws.decline_game_request(b.request_id) end
             for i = #self.banners, 1, -1 do if self.banners[i].request_id == b.request_id then table.remove(self.banners, i) end end

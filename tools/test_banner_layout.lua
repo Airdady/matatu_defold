@@ -104,6 +104,25 @@ for _, path in ipairs({ "main/online.gui_script", "main/incoming.gui_script" }) 
   check(tag .. ": inline badge is on the cy centre line",
     src:find("BAN_CHAMP_X, cy, BAN_CHAMP_H") ~= nil)
 
+  -- ONE badge per strip. There used to be a second, centred on the top rule,
+  -- saying the same thing in a second place.
+  local badge_draws = 0
+  for _ in src:gmatch("draw_badge%(self, [db]%.badge") do badge_draws = badge_draws + 1 end
+  check(tag .. ": exactly one badge is drawn", badge_draws == 1,
+    ("found %d"):format(badge_draws))
+  check(tag .. ": nothing draws a badge on the top rule",
+    src:find("draw_badge%(self, [db]%.badge, [mCX]+[%.%w]*, top") == nil
+    and src:find("draw_badge%(self, [db]%.badge, CX, cy %+ 44") == nil)
+
+  -- A knockout is played to a cap, not as a series.
+  check(tag .. ": a knockout is described by its score cap",
+    src:find('"SCORE CAP "') ~= nil)
+  check(tag .. ": and no longer as a best-of",
+    src:find('desc = "Best of " %.%. %(tonumber') == nil)
+  -- "Best of 1" describes nothing, and it is precisely what a knockout shows
+  -- when matchType fails to arrive — the case reported.
+  check(tag .. ": never says Best of 1", src:find("fmt <= 1") ~= nil)
+
   -- The badge field must NOT be called `kind`. incoming.gui_script's dialog
   -- table already carries a `kind` ("incoming") that selects the draw path, and
   -- a second `kind` in the same constructor silently wins — which would send

@@ -54,6 +54,8 @@ end
 local function clear(self)
     for _, n in ipairs(self.nodes) do pcall(gui.delete_node, n) end
     self.nodes, self.buttons = {}, {}
+    -- The countdown bar's node handle points into the list just deleted.
+    self.ban_bar = nil
 end
 local function track(self, n) self.nodes[#self.nodes+1] = n; return n end
 
@@ -169,6 +171,28 @@ local BAN_CHAMP_X     = 387
 local BAN_CHAMP_W     = 132
 local BAN_CHAMP_H     = 24
 
+-- SLIDING THE COUNTDOWN BAR, EVERY FRAME.
+--
+-- The bar used to be redrawn by rebuild(), and rebuild() only runs when the
+-- WHOLE-SECOND counter changes — so a bar that should sweep smoothly across ten
+-- seconds jumped in ten steps. Reported as "animating in bits".
+--
+-- Rebuilding per frame is not the fix: rebuild() deletes and recreates every
+-- node on the strip, and doing that sixty times a second to slide a 3px bar is
+-- not a trade worth making. So the fill node is created once and kept, and this
+-- resizes it in place. The once-a-second rebuild stays exactly as it was, for
+-- the things that really do only change once a second.
+local function update_ban_bar(self, d)
+    local bar = self.ban_bar
+    if not bar or not d then return end
+    local frac = math.max(0, math.min(1, (d.time_left or 0) / (d.max_time or 10)))
+    local w = bar.w * frac
+    gui.set_size(bar.node, vmath.vector3(w, 3, 0))
+    -- Grows from the left edge, so the centre moves with the width.
+    gui.set_position(bar.node, vmath.vector3(bar.left + w / 2, bar.y, 0))
+    gui.set_color(bar.node, with_a(frac < 0.3 and COL_RED or COL_GREEN, bar.alpha))
+end
+
 -- Draws one pill, centred, sized to its label.
 local function draw_badge(self, kind, x, y, h, a)
     local col = BAN_BADGE[kind]
@@ -213,9 +237,13 @@ local function draw_banner(self, d, a)
     -- title: the title carries a player name of unpredictable length, and the
     -- right-hand side is already crowded by H2H and the two buttons, so
     -- anything flowed from either end eventually collides with something.
-    if d.badge then
-        draw_badge(self, d.badge, m.CX, top, 22, a)
-    elseif d.cup_invite then
+    -- No centred badge on the rule. The invite carries its label inline,
+    -- between the H2H block and the buttons, and having it twice on one strip
+    -- said the same thing twice in two places.
+    --
+    -- TEAM CUP keeps the rule to itself: it is not a match request, it has no
+    -- H2H and no inline slot to sit in, and it is answered on a different clock.
+    if d.cup_invite then
         local pill_w, pill_h = 120, 22
         track(self, ui.box(vmath.vector3(m.CX, top, 0), vmath.vector3(pill_w, pill_h, 0),
             with_a(BAN_CUP_BG, a)))
@@ -251,14 +279,14 @@ local function draw_banner(self, d, a)
         draw_h2h_row(self, m.R - (d.badge and BAN_H2H_X_CHAMP or BAN_H2H_X), cy, h2h_view(d.h2h), a)
     end
 
-    -- Countdown along the bottom edge.
-    local frac  = math.max(0, math.min(1, (d.time_left or 0) / (d.max_time or 10)))
-    local bar_w = bw * frac
+    -- Countdown along the bottom edge. The fill is created unconditionally,
+    -- even at zero width, because update_ban_bar resizes this exact node every
+    -- frame — a node created only when there was something to show would not
+    -- exist on the frames that need to grow it.
     track(self, ui.box(vmath.vector3(m.CX, bot, 0), vmath.vector3(bw, 3, 0), with_a(BAN_TRACK, a)))
-    if bar_w > 1 then
-        track(self, ui.box(vmath.vector3(m.L + bar_w / 2, bot, 0), vmath.vector3(bar_w, 3, 0),
-            with_a(frac < 0.3 and COL_RED or COL_GREEN, a)))
-    end
+    local fill = track(self, ui.box(vmath.vector3(m.L, bot, 0), vmath.vector3(0, 3, 0), with_a(COL_GREEN, a)))
+    self.ban_bar = { node = fill, w = bw, left = m.L, y = bot, alpha = a }
+    update_ban_bar(self, d)
 end
 
 -- ── Rendering ─────────────────────────────────────────────────────────────────
@@ -516,6 +544,11 @@ function update(self, dt)
         local need_reb = false
 
         self.dialog.time_left = (self.dialog.time_left or 10) - dt
+
+        -- Smooth: resize the existing bar. The whole-second rebuild below still
+        -- happens, for the numeric countdown that genuinely ticks in seconds.
+        if self.dialog.banner then pcall(update_ban_bar, self, self.dialog) end
+
         local cur_sec = math.floor(math.max(0, self.dialog.time_left))
         if cur_sec ~= self.dialog._last_sec then
             self.dialog._last_sec = cur_sec
@@ -590,9 +623,19 @@ function on_message(self, message_id, message)
             -- A knockout is played to a score cap, not as a series, so "Best of
             -- 3" was describing a format it does not use.
             if kind == "KNOCKOUT" then
-                desc = "First to " .. (tonumber(tourney.scoreCap) or 200)
+                desc = "SCORE CAP " .. (tonumber(tourney.scoreCap) or 200)
             else
-                desc = "Best of " .. (tonumber(tourney.matchFormat) or 3)
+                -- "Best of 1" describes nothing. A single-game match is a
+                -- single game, and a knockout reaching here means matchType did
+                -- not arrive — which is exactly when matchFormat reads 1 and the
+                -- old text said BEST OF 1.
+                local fmt = tonumber(tourney.matchFormat) or 3
+                local cap = tonumber(tourney.scoreCap)
+                if fmt <= 1 then
+                    desc = cap and ("SCORE CAP " .. cap) or "Single game"
+                else
+                    desc = "Best of " .. fmt
+                end
             end
             desc = desc .. "   -   " .. (amount > 0 and (commas(amount) .. " Coins") or "Practice Mode")
             disp_name = (type(raw) == "table" and (raw.tournamentName or raw.name)) or "Tournament Match"
