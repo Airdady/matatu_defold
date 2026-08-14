@@ -1288,6 +1288,20 @@ function on_message(self, message_id, message, sender)
         -- only button called an endpoint that requires the Bearer token it does
         -- not have, so the one route back into an existing account after
         -- changing handsets answered 401.
+        -- is_logged_in() only asks whether a user id is CACHED. It cannot ask
+        -- whether the token beside it still works, and a cached session
+        -- outlives its token in every ordinary way — the account was merged
+        -- away by somebody else's phone link, the app sat closed past the
+        -- expiry, the cache belongs to a different backend. So the answer
+        -- above is a good guess and not a fact, and when it is wrong the
+        -- request lands on an endpoint that can only refuse it.
+        --
+        -- The player cannot act on that. They typed a number; whether it links
+        -- or signs in is our bookkeeping, not theirs, and a 401 leaves them on
+        -- the one screen with no way out, holding the one button that does not
+        -- work. Falling through to the sign-in — which needs no token and
+        -- creates the account if there is not one — makes the answer to a
+        -- phone number always the same: an account, and the profile screen.
         if not is_logged_in() then
             auth_debug("link_phone with no session - signing in by phone instead")
             msg.post("#controller", "phone_login", { phoneNumber = phone })
@@ -1295,6 +1309,14 @@ function on_message(self, message_id, message, sender)
         end
 
         api.link_phone({ phoneNumber = phone }, function(result)
+            -- 401 ONLY. A 403 from this endpoint is ACCOUNT_BLOCKED, which is
+            -- a real answer about the player and would only be refused again,
+            -- more vaguely, by the sign-in.
+            if not result.success and result.status_code == 401 then
+                auth_debug("link_phone: the cached session is not valid - signing in by phone instead")
+                msg.post("#controller", "phone_login", { phoneNumber = phone })
+                return
+            end
             if result.success and type(result.data) == "table" then
                 local data = result.data
                 local merged_user = type(data.user) == "table" and data.user or {}

@@ -308,6 +308,42 @@ end
 
 -- ---------------------------------------------------------------------------
 print("")
+print("MATATU: A STALE SESSION FALLS THROUGH TO SIGNING IN")
+do
+    -- is_logged_in() only asks whether a user id is CACHED, which is a guess
+    -- about the token beside it. When the guess is wrong the submit goes to
+    -- /auth/link-phone, which needs a Bearer token, and can only answer 401 —
+    -- leaving the player on the one screen with no way out, holding the one
+    -- button that does not work. The number they typed is not our bookkeeping
+    -- problem: it becomes an account either way.
+    local app = boot({ game = "MATATU", routes = { DEVICE_UNKNOWN,
+        { "/auth/link-phone", function()
+            return { status = 401, response = '{"success":false,"message":"Invalid token"}' }
+        end },
+        { "/auth/phone", function()
+            return { status = 200, response = [[{"success":true,"isNewUser":true,
+                "matchedBy":"phone","token":"tok-4",
+                "user":{"_id":"64b7f9a1c2d3e4f5a6b7c8dB","accountId":9003,"balance":500}}]] }
+        end } } })
+
+    -- A cached id with a token the backend no longer honours.
+    app.ws.current_user_data = { _id = "64b7f9a1c2d3e4f5a6b7c8dC", username = "" }
+    app.SIM.components.controller.self.screen = "profile"
+    app.SIM.with_ctx("controller", app.SIM.components.controller.on_message,
+        app.SIM.components.controller.self, hash("link_phone"),
+        { phoneNumber = "0712345678" })
+    app.SIM.pump(3.0)
+
+    check("it tried to link first", app.called("/auth/link-phone"), true)
+    check("then signed in when the session was refused", app.called("/auth/phone"), true)
+    check("and the player has an account", (app.ws.current_user_data or {})._id,
+        "64b7f9a1c2d3e4f5a6b7c8dB")
+    check("on the profile screen", app.screen(), "profile")
+    check("at the username step", app.step(), "profile")
+end
+
+-- ---------------------------------------------------------------------------
+print("")
 print("MATATU: A REFUSED NUMBER SAYS SO AND STAYS PUT")
 do
     -- The other half of the fix: moving on must still be conditional on the
