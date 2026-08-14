@@ -74,6 +74,29 @@ local function route_after_auth(self)
     end
 end
 
+-- THE WELCOME BONUS, ON THE ROUTES THAT ACTUALLY MINT AN ACCOUNT.
+--
+-- The backend credits it at creation (auth.routes' newAccountDefaults: 500
+-- UGX for matatu, 200 NGN for whot, 20 KES for kadi) and reports the account
+-- as isNewUser. The screen that celebrates it, though, was only ever posted to
+-- from handle_device_result — the /auth/device path, which deliberately
+-- creates nothing and hardcodes isNewUser:false in its reply.
+--
+-- So the trigger sat on the one route that could never fire it, and the two
+-- that can — signing in by phone, and saving a profile onto a handset with no
+-- account — said nothing at all. The coins arrived; nobody was ever told. For
+-- whot and kadi it is worse than silence: /auth/device/profile is their ONLY
+-- signup, so the bonus screen was unreachable in those apps outright.
+--
+-- Reads the balance the server actually sent rather than assuming a figure —
+-- the three games pay three different amounts in three different currencies,
+-- and 500 is only right for one of them.
+local function announce_signup_bonus(user)
+    local amount = tonumber((user or {}).balance)
+    if not amount or amount <= 0 then return end
+    msg.post("#signup_bonus", "show_signup_bonus", { amount = amount })
+end
+
 local function identify_and_connect(user)
     if type(user) ~= "table" then return end
     ws.current_user_data = user
@@ -480,8 +503,11 @@ handle_device_result = function(self, result)
     if tok ~= "" then api.set_auth_token(tok) end
     api.save_session(user)
 
+    -- Kept, and dead on this path by construction: /auth/device deliberately
+    -- never creates an account, so it answers isNewUser:false every time. See
+    -- announce_signup_bonus, which the two routes that DO create now call.
     if data.isNewUser then
-        msg.post("#signup_bonus", "show_signup_bonus", { amount = tonumber(user.balance) or 500 })
+        announce_signup_bonus(user)
     end
 
     app_state.auth_state = "done"
@@ -1258,6 +1284,13 @@ function on_message(self, message_id, message, sender)
                 identify_and_connect(user)
                 app_state.auth_state = "done"
                 msg.post("#lobby", "auth_state_changed")
+                -- Posted BEFORE the routing below, so the modal is already
+                -- claimed by the time the profile screen builds. signup_bonus
+                -- outranks a screen in app_state.MODAL_PRIORITY, and the
+                -- profile screen checks input_blocked() — so the order is what
+                -- stops a tap meant for the bonus landing on the keypad
+                -- underneath it.
+                if data.isNewUser then announce_signup_bonus(user) end
                 msg.post("#profile", "phone_link_result", { ok = true })
                 route_after_auth(self)
                 return
@@ -1406,6 +1439,10 @@ function on_message(self, message_id, message, sender)
                         msg.post("#" .. s, "user_data_updated")
                     end
                     app_state.username_suggestions = {}
+                    -- Whot and Kadi have no phone step, so THIS is where their
+                    -- accounts are born and the only moment their welcome
+                    -- bonus can be announced.
+                    if data.isNewUser then announce_signup_bonus(created) end
                     msg.post("#profile", "profile_saved", { ok = true })
                     show(self, "online")
                 else

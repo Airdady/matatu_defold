@@ -170,6 +170,14 @@ local function boot(opts)
         return false
     end
 
+    -- What the signup-bonus screen was told, if anything.
+    function env.bonus_shown()
+        for _, r in ipairs(SIM.components.signup_bonus.received or {}) do
+            if r.mid == hash("show_signup_bonus") then return (r.msg or {}).amount end
+        end
+        return nil
+    end
+
     function env.called(fragment)
         for _, h in ipairs(http_log) do
             if h.url:find(fragment, 1, true) then return true end
@@ -209,7 +217,7 @@ do
         { "/auth/phone", function()
             return { status = 200, response = [[{"success":true,"isNewUser":true,
                 "matchedBy":"phone","token":"tok-1",
-                "user":{"_id":"64b7f9a1c2d3e4f5a6b7c8d9","accountId":9001,"balance":0}}]] }
+                "user":{"_id":"64b7f9a1c2d3e4f5a6b7c8d9","accountId":9001,"balance":500}}]] }
         end } } })
 
     check("typed all nine digits", app.type_digits("712345678"), true)
@@ -226,6 +234,12 @@ do
     -- it is a fact, and phone_complete reads exactly this field.
     check("the number is remembered locally",
         (app.ws.current_user_data or {}).phoneNumber, "0712345678")
+    -- The backend credits the welcome bonus at creation. Nothing told the
+    -- player: the celebration screen was only ever posted to from the
+    -- /auth/device path, which creates nothing and answers isNewUser:false
+    -- every time, so the trigger sat on the one route that could never fire
+    -- it. The coins arrived and nobody was ever told.
+    check("and the welcome bonus is announced", app.bonus_shown(), 500)
 end
 
 -- ---------------------------------------------------------------------------
@@ -304,6 +318,10 @@ do
     check("straight past the profile screen", app.screen(), "online")
     check("their balance came back", (app.ws.current_user_data or {}).balance, 4200)
     check("and their name", (app.ws.current_user_data or {}).username, "Scovia")
+    -- isNewUser:false. Congratulating a returning player on signing up, over
+    -- a balance that is their own money, would be worse than saying nothing.
+    check("and no welcome bonus is claimed for them",
+        tostring(app.bonus_shown()), "nil")
 end
 
 -- ---------------------------------------------------------------------------
@@ -384,7 +402,7 @@ do
             return { status = 200, response = [[{"success":true,"isNewUser":true,
                 "matchedBy":"device","token":"tok-3",
                 "user":{"_id":"64b7f9a1c2d3e4f5a6b7c8dA","username":"Chidi","avatar":1,
-                        "accountId":9002,"balance":0}}]] }
+                        "accountId":9002,"balance":200}}]] }
         end } } })
 
     check("the same unknown handset lands on the profile screen", app.screen(), "profile")
@@ -404,6 +422,10 @@ do
     check("no phone endpoint was touched", app.called("/auth/phone"), false)
     check("and the player is online", app.screen(), "online")
     check("signed in as themselves", (app.ws.current_user_data or {}).username, "Chidi")
+    -- Whot's ONLY signup route, so this is the only moment its welcome bonus
+    -- can be announced — and 200 NGN, the figure the server actually sent,
+    -- not Matatu's 500 UGX.
+    check("with the welcome bonus announced", app.bonus_shown(), 200)
 end
 
 -- ---------------------------------------------------------------------------
