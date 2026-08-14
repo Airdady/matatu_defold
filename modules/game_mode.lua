@@ -46,6 +46,12 @@ local DEFS = {
         currency_symbol     = "UGX",
         phone_country_code  = "256",
         phone_placeholder   = "07XX XXX XXX",
+        -- The digits typed AFTER the country chip (the leading "0" is implied
+        -- by the chip and added back at submit time). Mirrors be_matatu's
+        -- COUNTRY_CONFIG[game].phoneRegex, minus that leading zero:
+        --   /^0(7|3)\d{8}$/  ->  9 digits, first one 7 or 3
+        phone_digits        = 9,
+        phone_pattern       = "^[73]%d%d%d%d%d%d%d%d$",
         default_stake_amount = 200,
         how_to  = {
             "On your turn, play a card matching the",
@@ -71,6 +77,9 @@ local DEFS = {
         currency_symbol     = "\226\130\166", -- ₦
         phone_country_code  = "234",
         phone_placeholder   = "0801 234 5678",
+        -- /^0(70|71|80|81|90|91)\d{8}$/ -> 10 digits, first two 7/8/9 then 0/1
+        phone_digits        = 10,
+        phone_pattern       = "^[789][01]%d%d%d%d%d%d%d%d$",
         -- Was 100, a tier that no longer exists in the ladder. A default
         -- that isn't in STAKE_LEVELS leaves online.gui_script's lookup
         -- falling back to index 2 and the backend rejecting the stake.
@@ -99,6 +108,9 @@ local DEFS = {
         currency_symbol     = "KSh",
         phone_country_code  = "254",
         phone_placeholder   = "07XX XXX XXX",
+        -- /^0(7|1)\d{8}$/ -> 9 digits, first one 7 or 1
+        phone_digits        = 9,
+        phone_pattern       = "^[71]%d%d%d%d%d%d%d%d$",
         default_stake_amount = 10,
         how_to  = {
             "On your turn, play a card matching the",
@@ -129,6 +141,16 @@ M.CURRENCY_CODE        = d.currency_code
 M.CURRENCY_SYMBOL      = d.currency_symbol
 M.PHONE_COUNTRY_CODE   = d.phone_country_code
 M.PHONE_PLACEHOLDER    = d.phone_placeholder
+M.PHONE_DIGITS         = d.phone_digits
+M.PHONE_PATTERN        = d.phone_pattern
+
+-- Is what has been typed so far a complete, well-formed number for THIS
+-- game's country? The profile screen used to answer this with Uganda's rule
+-- written into it ("^[73]%d%d%d%d%d%d%d%d$"), so a Nigerian number could not
+-- be typed at all — the CONTINUE button never lit.
+function M.phone_valid(digits)
+    return type(digits) == "string" and digits:match(d.phone_pattern) ~= nil
+end
 M.DEFAULT_STAKE_AMOUNT = d.default_stake_amount
 
 -- Convenience predicates
