@@ -1300,6 +1300,30 @@ function on_message(self, message_id, message, sender)
                     end
                     pcall(ws.disconnect)
                     identify_and_connect(merged_user)
+                elseif data.token then
+                    -- A TOKEN HERE MEANS THE SERVER SIGNED US IN, NOT LINKED.
+                    --
+                    -- link-phone upserts now: with no usable session it finds
+                    -- or creates the account on this number and hands back a
+                    -- session, which is what makes a first run work at all —
+                    -- the client's logged-in flag comes from a CACHED session
+                    -- at boot, before anything has verified it, so an install
+                    -- with a stale token takes THIS route rather than the
+                    -- sign-in one.
+                    --
+                    -- Merging the fields and dropping the token would leave
+                    -- the app holding an account it cannot authenticate as:
+                    -- the very next authenticated call — saving the profile —
+                    -- would fail. So this is treated as the sign-in it is.
+                    merged_user.token = data.token
+                    api.set_auth_token(data.token)
+                    cancel_silent_login_retry(self)
+                    self._silent_login_attempts = 0
+                    self._silent_login_inflight = false
+                    pcall(ws.disconnect)
+                    identify_and_connect(merged_user)
+                    app_state.auth_state = "done"
+                    msg.post("#lobby", "auth_state_changed")
                 else
                     -- No old account found — the phone number was just
                     -- saved onto the current (already-authenticated)
@@ -1314,6 +1338,12 @@ function on_message(self, message_id, message, sender)
                     end
                 end
                 msg.post("#profile", "phone_link_result", { ok = true, merged = data.merged and true or false })
+                -- Same follow-up phone_login does: an account with no username
+                -- or avatar routes to the profile screen, a complete one to
+                -- the lobby. Only when a session actually changed hands —
+                -- linking a number onto an already-signed-in account leaves
+                -- the player exactly where they were.
+                if data.merged or data.token then route_after_auth(self) end
             else
                 msg.post("#profile", "phone_link_result", { ok = false, message = result.message or "Could not link phone number." })
             end
