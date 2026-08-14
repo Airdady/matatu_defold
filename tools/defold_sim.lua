@@ -102,7 +102,19 @@ _G.msg = {
     if b ~= nil or c ~= nil then
       return { path = b, fragment = c }
     end
-    local frag = tostring(a):match("#(.+)$") or tostring(a)
+    -- A BARE "#" IS THE CALLER ITSELF.
+    --
+    -- msg.url("#") is how a script captures its own address to hand to a
+    -- callback that will run in somebody else's context — the pattern every
+    -- ws.on() listener in this project uses. There is nothing after the "#",
+    -- so the match below returns nil and this used to fall through to the
+    -- literal string "#", which resolves to no component at all: the post was
+    -- dropped on the floor and the test saw a listener that appeared to do
+    -- nothing.
+    local frag = tostring(a):match("#(.+)$")
+    if not frag then
+      frag = (tostring(a) == "#") and SIM.current_ctx or tostring(a)
+    end
     return { path = "/controller", fragment = frag }
   end,
   post = function(target, message_id, message)
@@ -271,6 +283,12 @@ function SIM.install_gui_stub()
     new_texture = function() return true end,
     pick_node = function() return false end,
     set_clipping_mode = function() end,
+    -- The other two halves of a stencil clipper. Missing, these raise inside
+    -- build() and take the whole gui_script's init with them — including any
+    -- ws.on() it was about to register, which then looks like a listener that
+    -- never fires rather than a screen that never finished being built.
+    set_clipping_visible = function() end,
+    set_clipping_inverted = function() end,
     get_text_metrics_from_node = function() return { width = 10, height = 10 } end,
     animate = function(n, prop, to, easing, dur, delay, cb)
       if type(delay) == "function" then cb = delay; delay = 0 end
