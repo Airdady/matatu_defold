@@ -176,7 +176,20 @@ local function level_count(t)
     return 1
 end
 
+-- SCOPE FIRST, LEVEL COUNT ONLY AS A FALLBACK.
+--
+-- The level count was the only test, and it never fired once: the request
+-- payload carried {_id, name, stake, matchFormat} and nothing else, so
+-- level_count read an absent field, answered 1, and no invite was ever badged.
+-- The server sends `scope` and `isChampionship` now, which is the fact rather
+-- than a proxy for it.
+--
+-- The count is kept underneath for a client talking to a backend that predates
+-- those fields, where it is still the best guess available.
 local function is_championship(tourney)
+    if type(tourney) ~= "table" then return false end
+    if tourney.isChampionship == true then return true end
+    if tourney.scope == "GLOBAL" then return true end
     return level_count(tourney) >= MIN_CHAMPIONSHIP_LEVELS
 end
 local BAN_DECLINE = vmath.vector4(0.12, 0.19, 0.27, 0.85)

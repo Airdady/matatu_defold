@@ -176,12 +176,40 @@ local function make_ctx()
 end
 
 -- ── Banner System ─────────────────────────────────────────────────────────────
+-- CHAMPIONSHIP badge, identical to the one incoming.gui_script draws on the
+-- global overlay. The two surfaces show the SAME invite — this one while the
+-- player is on the online screen, that one everywhere else — so a marking that
+-- appeared on only one of them would mean the same request looked like two
+-- different things depending on which screen happened to be up.
+local BAN_CHAMP_BG = vmath.vector4(0.78, 0.12, 0.16, 1.00)
+local BAN_CHAMP_TX = vmath.vector4(1.00, 0.94, 0.94, 1.00)
+
+-- Matches the server's own threshold, and gameover.gui_script's. Only used when
+-- the payload predates `scope`.
+local MIN_CHAMPIONSHIP_LEVELS = 7
+
+local function is_championship_tourney(t)
+    if type(t) ~= "table" then return false end
+    if t.isChampionship == true then return true end
+    if t.scope == "GLOBAL" then return true end
+    local levels = t.levels
+    if type(levels) == "table" then return #levels >= MIN_CHAMPIONSHIP_LEVELS end
+    return (tonumber(levels) or 1) >= MIN_CHAMPIONSHIP_LEVELS
+end
+
 local function draw_banner(self)
     for idx, b in ipairs(self.banners or {}) do
         local bw, slide = VISIBLE_W, (b.y_off or 0) * 132
         local cy, alpha = EDGE_T - 70 - (idx - 1) * 102 + slide, b.alpha or 1
         self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(CX, cy, 0), vmath.vector3(bw, 92, 0), vmath.vector4(0.06, 0.10, 0.14, 0.97 * alpha))), id = "banner_block" }
         track(self, ui.box(vmath.vector3(CX, cy + 44, 0), vmath.vector3(bw, 3, 0), vmath.vector4(0.2, 0.9, 1.0, alpha)))
+        -- Sits ON the top rule, centred — a fixed position rather than trailing
+        -- the title, which carries a player name of unpredictable length while
+        -- the right-hand side is already crowded by H2H and the two buttons.
+        if b.championship then
+            track(self, ui.box(vmath.vector3(CX, cy + 44, 0), vmath.vector3(148, 22, 0), with_a(BAN_CHAMP_BG, alpha)))
+            track(self, ui.text(vmath.vector3(CX, cy + 44, 0), "[CHAMPIONSHIP]", "small", with_a(BAN_CHAMP_TX, alpha)))
+        end
         -- Sender avatar (framed disc) on the left of the inline invite bar.
         track(self, ui.box(vmath.vector3(EDGE_L + 48, cy, 0), vmath.vector3(60, 60, 0), vmath.vector4(0.10, 0.14, 0.18, alpha)))
         local b_av = track(self, ui.avatar(vmath.vector3(EDGE_L + 48, cy, 0), vmath.vector3(54, 54, 0), b.avatar or 1))
@@ -311,6 +339,12 @@ end
 local function open_banner(self, raw)
     local sender_av = (type(raw.sender) == "table" and tonumber(raw.sender.avatar)) or 1
     local b = { title = ((raw.gameType or "TOURNAMENT") == "BATTLE" and "BATTLE  -  " or "TOURNAMENT  -  ") .. ((type(raw.sender) == "table" and raw.sender.username) or "Opponent"):upper(), desc = "Best of " .. (tonumber((type(raw.tournament) == "table" and raw.tournament.matchFormat) or 3) or 3) .. "   -   " .. (((tonumber(((type(raw.tournament) == "table" and raw.tournament.stake) or raw.stake or {}).amount) or 0) > 0) and commas(tonumber(((type(raw.tournament) == "table" and raw.tournament.stake) or raw.stake or {}).amount) or 0).." Coins" or "Practice Mode"), request_id = raw.requestId or "", avatar = sender_av, time_left = 10, max_time = 10, alpha = 1, y_off = 0, h2h = raw.headToHead }
+    -- A BATTLE is never the championship however many levels its document
+    -- happens to carry, so the kind is checked before the tournament is. Same
+    -- rule incoming.gui_script applies, so the two surfaces badge exactly the
+    -- same set of invites.
+    b.championship = (raw.gameType or "TOURNAMENT") ~= "BATTLE"
+        and is_championship_tourney(type(raw.tournament) == "table" and raw.tournament or nil)
     if h2h_view(raw.headToHead) and h2h_view(raw.headToHead).opp_winrate then b.desc = b.desc .. "   -   WR " .. math.floor(h2h_view(raw.headToHead).opp_winrate + 0.5) .. "%" end
     self.banners = self.banners or {}; for _, ex in ipairs(self.banners) do if b.request_id ~= "" and ex.request_id == b.request_id then return end end
     table.insert(self.banners, b)

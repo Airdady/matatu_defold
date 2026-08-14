@@ -54,6 +54,12 @@ local AVATAR_IMG  = 84
 -- Shown here as a visible countdown so a "WAITING..." tap doesn't look stuck.
 local REPLAY_WAIT_SECONDS = 10
 
+-- The multi-level ladder. Same figure incoming.gui_script's badge uses and the
+-- same one the server calls a championship, so a build talking to a backend too
+-- old to send `scope` still recognises the same set of tournaments as every
+-- other surface does.
+local CHAMPIONSHIP_LEVELS = 7
+
 local GRADIENT_ID = "go_radial_gradient"
 
 -- Native point sizes of the bundled .font resources. label() scales a node so
@@ -560,14 +566,20 @@ function on_input(self, action_id, action)
 	if self.locked then return true end
 
 	if hit(self.n_again_bg, action) then
-		-- Tournament owner just cleared a level: NEXT LEVEL routes to the
-		-- online tournament map (where the pin hops to the next step) instead
-		-- of requesting a rematch. No wallet check — the owner pays no stake.
+		-- A level was just cleared: NEXT LEVEL routes to the tournament map
+		-- (where the pin hops to the next step) instead of requesting a
+		-- rematch. No wallet check — the ladder is paid for at the door, and a
+		-- level costs nothing.
 		if self._tournament_next_level then
 			self.locked = true
 			set_visible(self, false)
-			app_state.tournament_level_up_target = self._tournament_next_level
+			-- nil is a valid value here: it means "go to the map, but there is
+			-- no hop to play". The map reads this flag on screen_enter and
+			-- ignores a nil, so the player lands on their real position either
+			-- way rather than being sent to a level nobody reported.
+			app_state.tournament_level_up_target = self._tournament_level_target
 			self._tournament_next_level = nil
+			self._tournament_level_target = nil
 			msg.post("#controller", "goto_tournaments")
 			return true
 		end
@@ -654,6 +666,27 @@ function on_message(self, message_id, message)
 		local my_part = message.won and res.winnerParticipantResult or res.loserParticipantResult
 		local is_tournament_owner = (game_type == "TOURNAMENT")
 			and type(my_part) == "table" and my_part.isParticipating == true
+
+		-- IS THIS THE GLOBAL CHAMPIONSHIP?
+		--
+		-- It decides between two opposite buttons. NEXT LEVEL walks back to the
+		-- map; PLAY AGAIN fires a rematch request at the opponent who was just
+		-- knocked out — and on the ladder that request is refused anyway, since
+		-- losing clears their entry. So getting this wrong does not merely look
+		-- wrong, it offers an action that cannot succeed.
+		--
+		-- Three ways of asking, because a client in the wild talks to whatever
+		-- backend is deployed: the explicit flag, the scope it is derived from,
+		-- and the level count for a build older than either. A battle is never
+		-- the championship however many levels its document carries.
+		local t_meta = res.tournamentData or {}
+		local t_levels = (type(t_meta.levels) == "table" and #t_meta.levels)
+			or tonumber(t_meta.levels) or 1
+		local is_championship = (game_type == "TOURNAMENT") and (
+			t_meta.isChampionship == true
+			or t_meta.scope == "GLOBAL"
+			or t_levels >= CHAMPIONSHIP_LEVELS
+		)
 
 		-- The board is no longer live once the result modal is up: let the global
 		-- incoming-request overlay surface full dialogs again.
@@ -768,6 +801,7 @@ function on_message(self, message_id, message)
 		local subtitle  = ""
 		local again_txt = "PLAY AGAIN"
 		self._tournament_next_level = nil
+		self._tournament_level_target = nil
 
 		if message.series_active and not message.series_over then
 			title_str = is_victory and "ROUND WON" or "ROUND LOST"
@@ -780,13 +814,34 @@ function on_message(self, message_id, message)
 			elseif res.isMatchComplete then
 				if is_victory then title_str = "LEVEL CLEARED"; title_col = C_VICTORY; subtitle = "Advancing..."
 				else title_str = "ELIMINATED"; title_col = C_DEFEAT; subtitle = "Match Lost" end
-				-- The participating owner advances through the map — the button
-				-- takes them back to the tournament map (pin hops to the next
-				-- step there) instead of requesting a rematch. Freelancers keep
-				-- PLAY AGAIN: for them each level is just a battle.
-				if is_victory and is_tournament_owner then
+				-- A CLEARED LEVEL IS NOT A GAME TO PLAY AGAIN.
+				--
+				-- The button takes them back to the tournament map, where the
+				-- pin hops to the next step, instead of requesting a rematch
+				-- from the player they just eliminated.
+				--
+				-- It used to require is_tournament_owner, which is the
+				-- backend's "this side is climbing the ladder" flag. In the
+				-- championship nobody is the owner — it belongs to no player —
+				-- so that was false for both sides and every level clear
+				-- offered PLAY AGAIN. Checking the championship directly means
+				-- the right button appears even against a backend that has not
+				-- picked up the participation fix yet.
+				--
+				-- Freelancers in somebody's private battle still get PLAY
+				-- AGAIN: for them each level really is just a battle.
+				if is_victory and (is_tournament_owner or is_championship) then
 					again_txt = "NEXT LEVEL"
-					self._tournament_next_level = tonumber(res.winnerNewLevel) or 0
+					-- The ROUTE and the ANIMATION TARGET are two separate
+					-- things, and conflating them was a trap: this read
+					-- `tonumber(res.winnerNewLevel) or 0`, and 0 is TRUTHY in
+					-- Lua, so a missing level still routed — to a target the
+					-- map cannot animate. Now a missing level still routes (the
+					-- rematch is the wrong action regardless) and simply lands
+					-- on the map without the hop.
+					self._tournament_next_level = true
+					local lvl = tonumber(res.winnerNewLevel)
+					self._tournament_level_target = (lvl and lvl >= 1) and lvl or nil
 				end
 			end
 		end
@@ -935,6 +990,7 @@ function on_message(self, message_id, message)
 		self.locked = false
 		self.replay_countdown = nil
 		self._tournament_next_level = nil
+		self._tournament_level_target = nil
 		clear_confetti(self)
 		set_visible(self, false)
 
