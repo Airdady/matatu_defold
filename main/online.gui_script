@@ -15,6 +15,7 @@ local right_panel     = require("modules.online_right")
 local dialog_incoming = require("modules.dialog_incoming")
 local dialog_outgoing = require("modules.dialog_outgoing")
 local toast           = require("modules.toast")
+local champ           = require("modules.championship")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local VISIBLE_W, VISIBLE_H = 1280, 720
@@ -184,19 +185,6 @@ end
 local BAN_CHAMP_BG = vmath.vector4(0.78, 0.12, 0.16, 1.00)
 local BAN_CHAMP_TX = vmath.vector4(1.00, 0.94, 0.94, 1.00)
 
--- Matches the server's own threshold, and gameover.gui_script's. Only used when
--- the payload predates `scope`.
-local MIN_CHAMPIONSHIP_LEVELS = 7
-
-local function is_championship_tourney(t)
-    if type(t) ~= "table" then return false end
-    if t.isChampionship == true then return true end
-    if t.scope == "GLOBAL" then return true end
-    local levels = t.levels
-    if type(levels) == "table" then return #levels >= MIN_CHAMPIONSHIP_LEVELS end
-    return (tonumber(levels) or 1) >= MIN_CHAMPIONSHIP_LEVELS
-end
-
 local function draw_banner(self)
     for idx, b in ipairs(self.banners or {}) do
         local bw, slide = VISIBLE_W, (b.y_off or 0) * 132
@@ -343,8 +331,13 @@ local function open_banner(self, raw)
     -- happens to carry, so the kind is checked before the tournament is. Same
     -- rule incoming.gui_script applies, so the two surfaces badge exactly the
     -- same set of invites.
+    -- ws.current_user_data is passed so an invite whose payload says nothing
+    -- useful is still recognised by its tournament id against the player's own
+    -- list — which is what makes the badge appear against a server that does
+    -- not send `scope` yet. Same call incoming.gui_script makes, so the two
+    -- surfaces badge exactly the same set of invites.
     b.championship = (raw.gameType or "TOURNAMENT") ~= "BATTLE"
-        and is_championship_tourney(type(raw.tournament) == "table" and raw.tournament or nil)
+        and champ.matches(type(raw.tournament) == "table" and raw.tournament or nil, ws.current_user_data)
     if h2h_view(raw.headToHead) and h2h_view(raw.headToHead).opp_winrate then b.desc = b.desc .. "   -   WR " .. math.floor(h2h_view(raw.headToHead).opp_winrate + 0.5) .. "%" end
     self.banners = self.banners or {}; for _, ex in ipairs(self.banners) do if b.request_id ~= "" and ex.request_id == b.request_id then return end end
     table.insert(self.banners, b)

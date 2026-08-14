@@ -22,6 +22,7 @@ local dialog_incoming = require("modules.dialog_incoming")
 local api    = require("modules.api_service")
 local toast  = require("modules.toast")
 local budget = require("modules.incoming_budget")
+local champ  = require("modules.championship")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local CX, CY = 640, 360
@@ -159,39 +160,9 @@ local BAN_CUP_TX = vmath.vector4(1.00, 0.97, 1.00, 1.00)
 -- CUPS tile regardless.
 local CUP_BANNER_SECONDS = 15
 
--- Matches MIN_LEVELS_FOR_PUSH / MIN_TOURNAMENT_LEVELS_FOR_ANNOUNCEMENT on the
--- server. Kept as its own constant rather than "more than one level", so the
--- badge means the same thing here as "championship" means there.
-local MIN_CHAMPIONSHIP_LEVELS = 7
-
--- levels arrives either as an array of level definitions or, on older
--- documents, as a bare count. Same normalisation the server does — a mismatch
--- would badge a different set of invites than the server treats as the
--- championship.
-local function level_count(t)
-    local levels = type(t) == "table" and t.levels or nil
-    if type(levels) == "table" then return #levels end
-    local n = tonumber(levels)
-    if n and n > 0 then return n end
-    return 1
-end
-
--- SCOPE FIRST, LEVEL COUNT ONLY AS A FALLBACK.
---
--- The level count was the only test, and it never fired once: the request
--- payload carried {_id, name, stake, matchFormat} and nothing else, so
--- level_count read an absent field, answered 1, and no invite was ever badged.
--- The server sends `scope` and `isChampionship` now, which is the fact rather
--- than a proxy for it.
---
--- The count is kept underneath for a client talking to a backend that predates
--- those fields, where it is still the best guess available.
-local function is_championship(tourney)
-    if type(tourney) ~= "table" then return false end
-    if tourney.isChampionship == true then return true end
-    if tourney.scope == "GLOBAL" then return true end
-    return level_count(tourney) >= MIN_CHAMPIONSHIP_LEVELS
-end
+-- Which invites get the badge: modules/championship.lua, shared with the online
+-- screen's inline banner and the game-over panel so one match cannot read as a
+-- championship on one screen and an ordinary tournament on the next.
 local BAN_DECLINE = vmath.vector4(0.12, 0.19, 0.27, 0.85)
 
 local function draw_banner(self, d, a)
@@ -571,7 +542,13 @@ function on_message(self, message_id, message)
             -- A BATTLE is never the championship however many levels its
             -- document happens to carry — checking levels alone would badge
             -- knockouts that share the same shape.
-            championship = kind == "TOURNAMENT" and is_championship(tourney)
+            --
+            -- ws.current_user_data is passed so a request whose payload says
+            -- nothing useful can still be recognised by its tournament id
+            -- against the player's own list. That is what makes the badge work
+            -- against a server that does not send `scope` yet.
+            championship = kind == "TOURNAMENT"
+                and champ.matches(tourney, ws.current_user_data)
         end
 
         open_dialog(self, {

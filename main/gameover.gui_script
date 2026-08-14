@@ -6,6 +6,7 @@ local confetti_fx = require("modules.confetti_fx")
 local sound = require("modules.sound")
 local config = require("modules.config")
 local ui = require("modules.ui")
+local champ = require("modules.championship")
 
 -- Lowest real-money (non-Free) stake tier for the active game — Matatu moved
 -- this from 50 to 100 (Whot/Kadi keep their own lowest tier), so the bonus-
@@ -53,12 +54,6 @@ local AVATAR_IMG  = 84
 -- to accept a rematch before game.script gives up and returns to the lobby.
 -- Shown here as a visible countdown so a "WAITING..." tap doesn't look stuck.
 local REPLAY_WAIT_SECONDS = 10
-
--- The multi-level ladder. Same figure incoming.gui_script's badge uses and the
--- same one the server calls a championship, so a build talking to a backend too
--- old to send `scope` still recognises the same set of tournaments as every
--- other surface does.
-local CHAMPIONSHIP_LEVELS = 7
 
 local GRADIENT_ID = "go_radial_gradient"
 
@@ -675,18 +670,14 @@ function on_message(self, message_id, message)
 		-- losing clears their entry. So getting this wrong does not merely look
 		-- wrong, it offers an action that cannot succeed.
 		--
-		-- Three ways of asking, because a client in the wild talks to whatever
-		-- backend is deployed: the explicit flag, the scope it is derived from,
-		-- and the level count for a build older than either. A battle is never
-		-- the championship however many levels its document carries.
+		-- modules/championship.lua, shared with both invite banners so one match
+		-- cannot read as a championship on one screen and an ordinary tournament
+		-- on the next. Passing the user data lets it fall back to matching the
+		-- tournament id against the player's own list, which is what makes this
+		-- work against a backend that does not send `scope` yet.
 		local t_meta = res.tournamentData or {}
-		local t_levels = (type(t_meta.levels) == "table" and #t_meta.levels)
-			or tonumber(t_meta.levels) or 1
-		local is_championship = (game_type == "TOURNAMENT") and (
-			t_meta.isChampionship == true
-			or t_meta.scope == "GLOBAL"
-			or t_levels >= CHAMPIONSHIP_LEVELS
-		)
+		local is_championship = (game_type == "TOURNAMENT")
+			and champ.matches(t_meta, ws_ok and ws.current_user_data or nil)
 
 		-- The board is no longer live once the result modal is up: let the global
 		-- incoming-request overlay surface full dialogs again.
