@@ -60,6 +60,16 @@ _G.vmath = {
   end,
   vector4 = function(x, y, z, w) return setmetatable({x=x or 0, y=y or 0, z=z or 0, w=w or 0}, v_mt) end,
   lerp = function(t, a, b) return a end,
+  -- Rotations. Nothing here reads them back — gui.set_rotation is a no-op —
+  -- but a screen that rotates anything (the tournament map's signposts) dies
+  -- in rebuild() without them, and a gui_script that cannot finish building
+  -- looks like a screen with no buttons rather than a missing stub.
+  quat = function(x, y, z, w)
+    return setmetatable({ x = x or 0, y = y or 0, z = z or 0, w = w or 1 }, v_mt)
+  end,
+  quat_rotation_x = function(a) return setmetatable({ x = a or 0, y = 0, z = 0, w = 1 }, v_mt) end,
+  quat_rotation_y = function(a) return setmetatable({ x = 0, y = a or 0, z = 0, w = 1 }, v_mt) end,
+  quat_rotation_z = function(a) return setmetatable({ x = 0, y = 0, z = a or 0, w = 1 }, v_mt) end,
 }
 
 ----------------------------------------------------------------------
