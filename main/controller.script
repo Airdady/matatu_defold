@@ -97,6 +97,51 @@ local function announce_signup_bonus(user)
     msg.post("#signup_bonus", "show_signup_bonus", { amount = amount })
 end
 
+-- ASK THE SERVER WHAT THE ACCOUNT ACTUALLY LOOKS LIKE NOW.
+--
+-- Reported: right after signing up, BAL and PTS on the online screen read 0,
+-- and only a refresh fills them in.
+--
+-- Nothing on the client is wrong with them — the info card reads
+-- ws.current_user_data live and repaints on user_data_updated, so it shows
+-- whatever it has been given. The problem is what it has been given: the
+-- responses that BUILD an account are not the response that DESCRIBES one.
+--
+--   POST /auth/phone, /auth/device/profile   a snapshot taken mid-creation.
+--                     The account is written again after it (tournament
+--                     enrolment, fcm token), so the payload is a moment old
+--                     before it is even sent.
+--   PUT  /users/:id   findByIdAndUpdate's raw mongoose document. No rank, no
+--                     position, no prizes, no tournaments — none of the
+--                     computed fields the screens read, because that route
+--                     never builds them.
+--
+-- GET /users/:id is the one that answers the question properly: it returns
+-- the same enriched payload IDENTIFY does. It has existed all along and was
+-- called from nowhere, which is why the only way to get it was for the player
+-- to go and refresh by hand.
+--
+-- Merged, never assigned, so the session token and anything else the response
+-- has no opinion about survives.
+local function refresh_account(uid)
+    uid = tostring(uid or "")
+    if uid == "" then return end
+    api.get_user(uid, function(result)
+        if not result.success or type(result.data) ~= "table" then
+            auth_debug("refresh_account: %s did not answer (%s)", uid, tostring(result.message))
+            return
+        end
+        local src = (type(result.data.user) == "table") and result.data.user or result.data
+        local u = ws.current_user_data or {}
+        for k, v in pairs(src) do u[k] = v end
+        ws.current_user_data = u
+        pcall(api.save_session, u)
+        for _, s in ipairs({ "online", "themes", "payments", "tournaments", "profile", "lobby" }) do
+            msg.post("#" .. s, "user_data_updated")
+        end
+    end)
+end
+
 local function identify_and_connect(user)
     if type(user) ~= "table" then return end
     ws.current_user_data = user
@@ -1445,6 +1490,10 @@ function on_message(self, message_id, message, sender)
                     if data.isNewUser then announce_signup_bonus(created) end
                     msg.post("#profile", "profile_saved", { ok = true })
                     show(self, "online")
+                    -- The account was created by the request that just
+                    -- returned, so its payload is a snapshot of a half-built
+                    -- one. Ask for the finished article.
+                    refresh_account(created._id or created.localId)
                 else
                     app_state.username_suggestions = (type(data) == "table" and data.suggestions) or {}
                     msg.post("#profile", "profile_saved",
@@ -1474,6 +1523,13 @@ function on_message(self, message_id, message, sender)
                 app_state.username_suggestions = {}
                 msg.post("#profile", "profile_saved", { ok = true })
                 show(self, "online")
+                -- What this PUT answers with is findByIdAndUpdate's raw
+                -- document: no rank, no position, no prizes, no tournaments —
+                -- none of the computed fields the screen we have just moved
+                -- to reads, because this route never builds them. For an
+                -- account created moments ago that is the difference between
+                -- BAL 500 and BAL 0.
+                refresh_account(uid)
             else
                 local rdata = result.data
                 app_state.username_suggestions = (type(rdata) == "table" and rdata.suggestions) or {}

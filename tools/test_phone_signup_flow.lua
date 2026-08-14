@@ -62,17 +62,35 @@ local function boot(opts)
     SIM.install_gui_stub()
 
     -- The build-time game switch, chosen per case instead of per build.
+    --
+    -- The phone rules are the REAL ones from modules/game_mode.lua rather than
+    -- invented here: the keypad's digit cap and the CONTINUE button's enable
+    -- both come off them, so a stub that got them wrong would test a keypad
+    -- this app does not ship.
+    local GAME = opts.game or "MATATU"
+    local PHONE = {
+        MATATU = { code = "256", digits = 9,  pattern = "^[73]%d%d%d%d%d%d%d%d$",     country = "Uganda"  },
+        WHOT   = { code = "234", digits = 10, pattern = "^[789][01]%d%d%d%d%d%d%d%d$", country = "Nigeria" },
+        KADI   = { code = "254", digits = 9,  pattern = "^[71]%d%d%d%d%d%d%d%d$",     country = "Kenya"   },
+    }
+    local ph = PHONE[GAME]
     package.loaded["modules.game_mode"] = {
-        GAME = opts.game or "MATATU",
-        PATH = (opts.game == "WHOT") and "whot" or "matatu",
+        GAME = GAME,
+        PATH = (GAME == "WHOT") and "whot" or ((GAME == "KADI") and "kadi" or "matatu"),
         BRAND = "Test", TITLE = "TEST", TAGLINE = "", BOT = "Test Bot",
-        COUNTRY = "", CURRENCY_CODE = "UGX", CURRENCY_SYMBOL = "UGX",
-        PHONE_COUNTRY_CODE = (opts.game == "WHOT") and "234" or "256",
-        PHONE_PLACEHOLDER = "", DEFAULT_STAKE_AMOUNT = 200,
+        COUNTRY = ph.country, CURRENCY_CODE = "UGX", CURRENCY_SYMBOL = "UGX",
+        PHONE_COUNTRY_CODE = ph.code,
+        PHONE_PLACEHOLDER = "",
+        PHONE_DIGITS = ph.digits,
+        PHONE_PATTERN = ph.pattern,
+        phone_valid = function(digits)
+            return type(digits) == "string" and digits:match(ph.pattern) ~= nil
+        end,
+        DEFAULT_STAKE_AMOUNT = 200,
         def = function() return { how_to = {}, specials = {} } end,
-        is_whot   = function() return opts.game == "WHOT" end,
-        is_matatu = function() return (opts.game or "MATATU") == "MATATU" end,
-        is_kadi   = function() return opts.game == "KADI" end,
+        is_whot   = function() return GAME == "WHOT" end,
+        is_matatu = function() return GAME == "MATATU" end,
+        is_kadi   = function() return GAME == "KADI" end,
     }
 
     _G.window.set_listener = function() end
@@ -95,7 +113,7 @@ local function boot(opts)
                     handler, best = route[2], #route[1]
                 end
             end
-            local resp = handler and handler(body)
+            local resp = handler and handler(body, method)
                 or { status = 404, response = '{"success":false}' }
             local ctx = SIM.current_ctx
             timer.delay(0.1, false, function() SIM.with_ctx(ctx, cb, nil, nil, resp) end)
@@ -104,7 +122,7 @@ local function boot(opts)
 
     -- Every sibling the controller posts to. Only the two under test run real
     -- code; the rest just have to exist so nothing is dropped on the floor.
-    for _, id in ipairs({ "lobby", "auth", "online", "themes", "payments",
+    for _, id in ipairs({ "lobby", "auth", "themes", "payments",
                           "tournaments", "team_tournament", "standings", "game",
                           "game_logic", "coins", "signup_bonus", "daily_bonus",
                           "network", "incoming", "gameover", "update_required",
@@ -114,8 +132,16 @@ local function boot(opts)
     end
     SIM.load_script_component("controller", ROOT .. "main/controller.script")
     SIM.load_script_component("profile", ROOT .. "main/profile.gui_script")
+    -- The online screen is loaded for real only when a case asks, because it
+    -- is the heaviest of them and most cases never look at it.
+    if opts.with_online then
+        SIM.load_script_component("online", ROOT .. "main/online.gui_script")
+    else
+        SIM.add_recorder("online")
+    end
     SIM.init_component("controller")
     SIM.init_component("profile")
+    if opts.with_online then SIM.init_component("online") end
     SIM.pump(3.0)
 
     local env = {
@@ -160,14 +186,30 @@ local function boot(opts)
     -- A toast is bottom-left and gone in three seconds; these screens cannot
     -- be left, so a refusal the player does not happen to catch is
     -- indistinguishable from the app doing nothing.
-    function env.on_screen(fragment)
-        for _, n in ipairs(SIM.components.profile.self.nodes or {}) do
+    function env.on_screen(fragment, comp)
+        for _, n in ipairs(SIM.components[comp or "profile"].self.nodes or {}) do
             if type(n) == "table" and type(n.text) == "string"
                and n.text:find(fragment, 1, true) then
                 return true
             end
         end
         return false
+    end
+
+    -- The text node drawn straight after `label` — the info card lays its
+    -- stats out as a caption ("BAL.") followed by its figure, so this is how
+    -- to read what the player sees next to a heading rather than merely
+    -- somewhere on the screen.
+    function env.rendered_after(label, comp)
+        local nodes = SIM.components[comp or "online"].self.nodes or {}
+        local found = false
+        for _, n in ipairs(nodes) do
+            if type(n) == "table" and type(n.text) == "string" and n.text ~= "" then
+                if found then return n.text end
+                if n.text == label then found = true end
+            end
+        end
+        return nil
     end
 
     -- What the signup-bonus screen was told, if anything.
@@ -178,9 +220,14 @@ local function boot(opts)
         return nil
     end
 
-    function env.called(fragment)
+    -- `method` is optional: one URL can carry two verbs with very different
+    -- meanings (PUT /users/:id saves a profile, GET /users/:id describes an
+    -- account), so an assertion about one must be able to say which.
+    function env.called(fragment, method)
         for _, h in ipairs(http_log) do
-            if h.url:find(fragment, 1, true) then return true end
+            if h.url:find(fragment, 1, true) and (not method or h.method == method) then
+                return true
+            end
         end
         return false
     end
@@ -418,7 +465,11 @@ do
     -- The whole point: this save had no account id to PUT to, and used to be
     -- refused by the client before it left the handset.
     check("it created the account by device id", app.called("/auth/device/profile"), true)
-    check("nothing was PUT to /users/", app.called("/users/"), false)
+    -- The save must not go through update_profile, which needs an account id
+    -- this player does not have yet. A GET to the same path afterwards is a
+    -- different thing entirely — that is refresh_account asking what the
+    -- account it just created looks like.
+    check("nothing was PUT to /users/", app.called("/users/", "PUT"), false)
     check("no phone endpoint was touched", app.called("/auth/phone"), false)
     check("and the player is online", app.screen(), "online")
     check("signed in as themselves", (app.ws.current_user_data or {}).username, "Chidi")
@@ -451,6 +502,69 @@ do
     check("and not still claiming the name looks good", app.on_screen("Looks good!"), false)
     local app_state = require("modules.app_state")
     check("with alternatives to offer", #(app_state.username_suggestions or {}), 2)
+end
+
+-- ---------------------------------------------------------------------------
+print("")
+print("A BRAND-NEW ACCOUNT ARRIVES WITH ITS BALANCE AND POINTS")
+do
+    -- Reported: right after signing up, BAL and PTS read 0 on the online
+    -- screen, and only a manual refresh fills them in.
+    --
+    -- The routes that BUILD an account are not the route that DESCRIBES one.
+    -- /auth/phone answers with a snapshot taken mid-creation, and PUT
+    -- /users/:id answers with findByIdAndUpdate's raw document — no rank, no
+    -- position, no prizes, none of the computed fields the screen reads. So
+    -- both payloads here deliberately carry no balance and no points, which is
+    -- the worst case, and the screen must still end up showing the real
+    -- figures without anybody touching anything.
+    local app = boot({ game = "MATATU", with_online = true, routes = { DEVICE_UNKNOWN,
+        { "/auth/phone", function()
+            return { status = 200, response = [[{"success":true,"isNewUser":true,
+                "matchedBy":"phone","token":"tok-5",
+                "user":{"_id":"64b7f9a1c2d3e4f5a6b7c8dD","accountId":9004,
+                        "phoneNumber":"0712345678","names":"Ada Bem"}}]] }
+        end },
+        { "/users/", function(_, method)
+            -- ONE URL, TWO VERBS, TWO VERY DIFFERENT ANSWERS.
+            --
+            -- PUT is updateUser: it replies with findByIdAndUpdate's raw
+            -- mongoose document. Modelled faithfully here — the document has
+            -- the account's own columns and none of the computed ones, so no
+            -- rank, no position, and (as far as this screen is concerned) no
+            -- usable balance or points.
+            if method == "PUT" then
+                return { status = 200, response = [[{"success":true,
+                    "user":{"_id":"64b7f9a1c2d3e4f5a6b7c8dD","accountId":9004,
+                            "username":"Ada","avatar":3,"phoneNumber":"0712345678",
+                            "names":"Ada Bem","gamesPlayed":0,"gamesWon":0}}]] }
+            end
+            -- GET is getUser, which answers with the full handleNearbyPlayers
+            -- payload — the same thing IDENTIFY carries, and the same thing
+            -- the player was getting by refreshing by hand.
+            return { status = 200, response = [[{"success":true,
+                "_id":"64b7f9a1c2d3e4f5a6b7c8dD","accountId":9004,"username":"Ada","avatar":3,
+                "balance":500,"points":12,"savingCoins":0,"rank":[],"position":1,
+                "phoneNumber":"0712345678","names":"Ada Bem","themes":[]}}]] }
+        end } } })
+
+    app.type_digits("712345678")
+    app.tap("phone_link")
+    app.SIM.pump(2.0)
+    app.type_username("Ada")
+    app.tap("save")
+    app.SIM.pump(4.0)
+
+    check("the player is on the online screen", app.screen(), "online")
+    check("and it asked what the account looks like", app.called("/users/", "GET"), true)
+    check("the balance is known", (app.ws.current_user_data or {}).balance, 500)
+    check("and the points", (app.ws.current_user_data or {}).points, 12)
+    -- The figures the card is actually PAINTING, read from beside their own
+    -- labels. Searching the whole screen for "500" is not good enough — the
+    -- stake ladder draws that number too, so the assertion passed while the
+    -- info card said 0.
+    check("BAL reads the real balance", app.rendered_after("BAL."), "500")
+    check("PTS reads the real points", app.rendered_after("PTS."), "12")
 end
 
 print("")
