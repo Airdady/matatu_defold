@@ -425,9 +425,34 @@ check_timer_states = function(self)
     end
 end
 
+-- AM I IN THE CHAMPIONSHIP?
+--
+-- One answer, used by both the button that offers to sell the entry and the
+-- handler that charges for it, because the two disagreeing is the entire bug:
+-- the button kept showing the price to somebody who had already paid, so every
+-- press posted another join.
+--
+-- It used to be inferred from the level — index 0 meaning "not started". That
+-- reads fine under pay-per-level, where there is nothing to be "in", but
+-- joining does NOT advance the level: the ladder starts at level 1 and the
+-- entry buys the run, not a rung. So a player who had just paid still looked
+-- identical to one who never had.
+--
+-- `joined` comes off the tournament payload and is the backend's own
+-- entryPaidAt. The level fallback is only for a client running against a
+-- backend too old to send the field, where the old inference is still the best
+-- guess available.
+local function is_joined(self)
+    local t = pick_tournament() or {}
+    local up = t.userProgress or {}
+    if t.joined ~= nil then return t.joined and true or false end
+    if up.joined ~= nil then return up.joined and true or false end
+    return (self.current_level_index or 0) > 0
+end
+
 update_play_button = function(self)
     if not self.play_btn_node or not self.play_txt_node then return end
-    
+
     local t = pick_tournament() or {}
     local stake = t.stake or { amount = 0 }
 
@@ -451,12 +476,23 @@ update_play_button = function(self)
         gui.set_text(self.play_txt_node, "FINISHED")
         gui.set_enabled(self.play_lock_node, true)
         self.play_disabled = true
+    elseif self._joining then
+        -- The join is in flight. Neither price nor PLAY is true yet, and a
+        -- second tap would post a second join, so say what is happening and
+        -- refuse the press until the server answers.
+        gui.set_text(self.play_txt_node, "JOINING...")
+        self.play_disabled = true
     else
-        if self.current_level_index == 0 then
+        if not is_joined(self) then
+            -- Not in yet: the button IS the price tag. Pressing it buys the
+            -- entry, once, and this is the only state in which it can charge.
             gui.set_text(self.play_txt_node, commas(stake.amount or 0))
             gui.set_enabled(self.play_coin_node, true)
             gui.set_enabled(self.play_lock_node, true)
         else
+            -- Paid up. Every level from here is free, so no price and no coin
+            -- — showing either would be offering to sell something already
+            -- bought.
             gui.set_text(self.play_txt_node, "PLAY")
         end
         self.play_disabled = false
@@ -868,6 +904,12 @@ function on_message(self, message_id, message, sender)
         self._msg = nil
         self.search = nil
         self.is_moving = false
+        -- A join that was in flight when the player walked off this screen is
+        -- no longer being waited on, and leaving the flag set strands the
+        -- button on JOINING... forever. The charge itself is safe either way:
+        -- the server answered or it did not, and a repeat join is refused as
+        -- ALREADY_JOINED without taking anything.
+        self._joining = false
         app_state.searching_tournament = false
         rebuild(self)
         try_level_up_jump(self)
@@ -1013,13 +1055,20 @@ local function handle(self, b)
         msg.post("#controller", "goto_online")
     elseif b.id == "play" then
         if self.play_disabled or self.is_moving then return end
-        
+        -- A join already in flight. The button is disabled while one is, but a
+        -- tap queued in the same frame gets here anyway, and two joins is the
+        -- one thing this must not send.
+        if self._joining then return end
+
         local d = b.data or {}
         local u = ws.current_user_data or {}
         local cost = tonumber(d.stake.amount) or 0
         local balance = tonumber(u.balance) or 0
-        
-        if self.current_level_index == 0 then
+
+        -- NOT "am I on level 1", but "have I paid". See is_joined: the two were
+        -- the same question under pay-per-level and stopped being the same one
+        -- the moment the entry became a single charge at the door.
+        if not is_joined(self) then
             -- ENTERING THE LADDER. THE BACKEND CHARGES; THIS SCREEN DOES NOT.
             --
             -- This used to subtract the fee from the local balance and call
@@ -1041,6 +1090,10 @@ local function handle(self, b)
             self.play_disabled = true
             self.is_moving = true -- Lock UI inputs
             self._joining = true
+            -- Repaint the button as JOINING... immediately. update_play_button
+            -- rather than rebuild(): the map is mid-state and a full rebuild
+            -- here would re-read a level the server has not answered on yet.
+            pcall(update_play_button, self)
 
             api.join_championship(u._id or "", function(result)
                 self._joining = false
@@ -1074,14 +1127,57 @@ local function handle(self, b)
                     end
                 end
 
-                -- Only animate coins that actually moved. A second press comes
-                -- back with entryFee 0, and showering coins for a charge that
-                -- did not happen would be a lie the player can see.
-                if (tonumber(data.entryFee) or 0) > 0 then
-                    play_deduction_animation(self)
+                -- THE PLAYER IS IN. Record it here rather than waiting for the
+                -- next IDENTIFY, so the button settles on PLAY the moment the
+                -- server says so instead of offering to sell the entry again
+                -- for however long the refresh takes.
+                local t = pick_tournament()
+                if t then
+                    t.joined = true
+                    t.userProgress = t.userProgress or {}
+                    t.userProgress.joined = true
                 end
 
-                execute_jump_and_play(self, d)
+                -- ONLY ANIMATE COINS THAT ACTUALLY MOVED.
+                --
+                -- `charged`, not `entryFee`. entryFee is the PRICE and it is on
+                -- both answers — the already-joined replay reports it too, so
+                -- reading it here played the whole deduction animation on every
+                -- single press over a balance that had not changed. That is the
+                -- reported "each time I click join it does the coins animation".
+                --
+                -- The `or entryFee` fallback is for a backend too old to send
+                -- `charged`, and it is gated on JOINED so the replay still
+                -- animates nothing there.
+                local charged = tonumber(data.charged)
+                if charged == nil and data.code == "JOINED" then
+                    charged = tonumber(data.entryFee)
+                end
+
+                -- JOINING IS A STEP THAT FINISHES. It does not roll straight
+                -- into a match.
+                --
+                -- It used to call execute_jump_and_play here, which opened the
+                -- find-an-opponent dialog the instant the entry was paid — so
+                -- the button never visibly became PLAY, and the player was put
+                -- into a search they had not asked for. Entering the ladder and
+                -- playing a level are two presses because they are two things.
+                --
+                -- The settle waits for the coins to land: the animation parks
+                -- its sprites in the tracked-node list, and rebuild() clears
+                -- that list, so rebuilding underneath a flight in progress
+                -- deletes the coins mid-air.
+                local function settle()
+                    self.play_disabled = false
+                    self.is_moving = false
+                    if self._active then rebuild(self) end
+                end
+
+                if (charged or 0) > 0 then
+                    play_deduction_animation(self, settle)
+                else
+                    settle()
+                end
             end)
         else
             execute_jump_and_play(self, d)
