@@ -189,12 +189,45 @@ function on_message(self, message_id, message)
         end
 
         local best_of, p_score, o_score, stage = 3, 0, 0, "Match"
+        -- Set once the stage names BOTH players' levels. state.tournament below
+        -- carries a single `level`, and letting it overwrite a per-player stage
+        -- would put the one-level-for-both caption straight back.
+        local stage_per_player = false
 
         if state and type(state) == "table" then
             if state.matchFormat then best_of = state.matchFormat end
             if state.tournamentScore and type(state.tournamentScore) == "table" then
                 best_of = state.tournamentScore.matchFormat or best_of
-                stage = "Level " .. tostring(state.tournamentScore.currentLevel or 1)
+
+                -- EACH PLAYER'S OWN RUNG, not one level captioning both.
+                --
+                -- `levels` is keyed by user id, like `scores` beside it.
+                -- `currentLevel` next to it is a SINGLE number read from
+                -- whichever side's progress the server happened to load, so
+                -- labelling the match with it showed one of the two players the
+                -- OTHER player's level.
+                --
+                -- Two players are matched on COMPATIBLE levels, never equal
+                -- ones — level 1 pairs with anyone at 1 or below, and above
+                -- that with anyone at your level or higher — so differing is
+                -- the ordinary case, not an edge one.
+                local lv = state.tournamentScore.levels
+                local my_lv, opp_lv
+                if type(lv) == "table" then
+                    my_lv = tonumber(lv[self.my_id])
+                    for k, v in pairs(lv) do
+                        if tostring(k) ~= tostring(self.my_id) then opp_lv = tonumber(v); break end
+                    end
+                end
+                -- currentLevel is the fallback for a server too old to send the
+                -- map. It is still one number, but it is the only one there is.
+                my_lv = my_lv or tonumber(state.tournamentScore.currentLevel) or 1
+                if opp_lv and opp_lv ~= my_lv then
+                    stage = string.format("LV %d vs LV %d", my_lv, opp_lv)
+                else
+                    stage = "Level " .. tostring(my_lv)
+                end
+                stage_per_player = true
                 if type(state.tournamentScore.scores) == "table" then
                     p_score = state.tournamentScore.scores[self.my_id] or p_score
                     for k, v in pairs(state.tournamentScore.scores) do
@@ -206,7 +239,9 @@ function on_message(self, message_id, message)
                 best_of = state.tournament.matchFormat or best_of
                 local stg = state.tournament.stageName
                 if stg and stg ~= "" then stage = stg
-                elseif state.tournament.level then stage = "Level " .. tostring(state.tournament.level) end
+                elseif state.tournament.level and not stage_per_player then
+                    stage = "Level " .. tostring(state.tournament.level)
+                end
             end
             if state.gameOverState and type(state.gameOverState) == "table" then
                 if type(state.gameOverState.currentScores) == "table" then
