@@ -223,6 +223,17 @@ local function boot(opts)
     -- `method` is optional: one URL can carry two verbs with very different
     -- meanings (PUT /users/:id saves a profile, GET /users/:id describes an
     -- account), so an assertion about one must be able to say which.
+    -- The raw body of the last request matching a URL fragment and verb.
+    function env.body_of(fragment, method)
+        local found
+        for _, h in ipairs(http_log) do
+            if h.url:find(fragment, 1, true) and (not method or h.method == method) then
+                found = h.body
+            end
+        end
+        return found or ""
+    end
+
     function env.called(fragment, method)
         for _, h in ipairs(http_log) do
             if h.url:find(fragment, 1, true) and (not method or h.method == method) then
@@ -565,6 +576,51 @@ do
     -- info card said 0.
     check("BAL reads the real balance", app.rendered_after("BAL."), "500")
     check("PTS reads the real points", app.rendered_after("PTS."), "12")
+
+    -- AND THE NUMBER SURVIVED THE SAVE.
+    --
+    -- Reported as "on new account creation phoneNumber is not set". It IS set
+    -- — /auth/phone creates the account BY it. The save that follows took it
+    -- away: the payload was built as `phoneNumber = ... or ""` from whatever
+    -- the client was holding, which right after signup is nothing, and the
+    -- server wrote the empty string it was sent.
+    --
+    -- There is no phone field on this screen. Sending nothing says nothing,
+    -- which is the truth; sending "" says "erase it", which nobody asked for.
+    check("the save carried the number it knew", app.body_of("/users/", "PUT"):find("0712345678", 1, true) ~= nil, true)
+    check("and never an empty one", app.body_of("/users/", "PUT"):find('"phoneNumber":""', 1, true), nil)
+end
+
+-- ---------------------------------------------------------------------------
+print("")
+print("A SAVE WITH NO NUMBER TO REPORT SENDS NO NUMBER AT ALL")
+do
+    -- The whot shape, where there is genuinely no phone number anywhere: the
+    -- key must be absent rather than empty, or the very first profile save
+    -- would blank a field the player never saw.
+    local app = boot({ game = "MATATU", with_online = false, routes = { DEVICE_UNKNOWN,
+        { "/auth/phone", function()
+            return { status = 200, response = [[{"success":true,"isNewUser":true,"token":"tok-6",
+                "user":{"_id":"64b7f9a1c2d3e4f5a6b7c8dE","accountId":9005,"balance":500}}]] }
+        end },
+        { "/users/", function()
+            return { status = 200, response = [[{"success":true,
+                "user":{"_id":"64b7f9a1c2d3e4f5a6b7c8dE","username":"Ada","avatar":3}}]] }
+        end } } })
+
+    -- Sign in by number, then wipe what the client cached about it, so the
+    -- save genuinely has nothing to report.
+    app.type_digits("712345678")
+    app.tap("phone_link")
+    app.SIM.pump(2.0)
+    app.ws.current_user_data.phoneNumber = nil
+    app.type_username("Ada")
+    app.tap("save")
+    app.SIM.pump(3.0)
+
+    check("the profile still saved", app.called("/users/", "PUT"), true)
+    check("with no phoneNumber key at all",
+        app.body_of("/users/", "PUT"):find("phoneNumber", 1, true), nil)
 end
 
 print("")

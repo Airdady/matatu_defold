@@ -1442,8 +1442,19 @@ function on_message(self, message_id, message, sender)
         local payload = {
             username    = message.username,
             avatar      = message.avatar,
-            phoneNumber = user.phoneNumber or user.phone or "",
         }
+        -- ONLY IF WE HAVE ONE. This used to send `phoneNumber = ... or ""`,
+        -- and the server wrote what it was sent — so a save from a client
+        -- that did not happen to be holding the number BLANKED it on the
+        -- account, seconds after the account had been created by it.
+        --
+        -- There is no phone field on this screen. The player is choosing a
+        -- username and an avatar; they are not saying anything about their
+        -- number, and an empty string is not them saying it should be empty.
+        -- Sending nothing says nothing, which is the truth.
+        local known_phone = user.phoneNumber or user.phone or ""
+        if known_phone ~= "" then payload.phoneNumber = known_phone end
+
         local uid = user._id or user.localId or ""
 
         -- NO ACCOUNT YET? THEN THIS SAVE IS THE SIGNUP.
