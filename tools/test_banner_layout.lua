@@ -114,14 +114,20 @@ for _, path in ipairs({ "main/online.gui_script", "main/incoming.gui_script" }) 
     src:find("draw_badge%(self, [db]%.badge, [mCX]+[%.%w]*, top") == nil
     and src:find("draw_badge%(self, [db]%.badge, CX, cy %+ 44") == nil)
 
-  -- A knockout is played to a cap, not as a series.
-  check(tag .. ": a knockout is described by its score cap",
-    src:find('"SCORE CAP "') ~= nil)
-  check(tag .. ": and no longer as a best-of",
-    src:find('desc = "Best of " %.%. %(tonumber') == nil)
-  -- "Best of 1" describes nothing, and it is precisely what a knockout shows
-  -- when matchType fails to arrive — the case reported.
-  check(tag .. ": never says Best of 1", src:find("fmt <= 1") ~= nil)
+  -- Both surfaces get their description from the ONE shared function, so a
+  -- knockout cannot read as a score cap on one strip and a best-of on the other.
+  check(tag .. ": description comes from championship.format_text",
+    src:find("champ%.format_text") ~= nil)
+  check(tag .. ": and neither file builds its own",
+    src:find('"Best of "') == nil and src:find('"SCORE CAP "') == nil)
+
+  -- There is no such thing as a single game on this strip: it only ever shows
+  -- tournament, battle and knockout invites.
+  check(tag .. ": never says Single game", src:find("Single game") == nil)
+
+  -- A BATTLE request with no tournament payload to read is still a battle.
+  check(tag .. ": a bare BATTLE request still gets a badge",
+    src:find('kind = kind or "BATTLE"') ~= nil)
 
   -- The badge field must NOT be called `kind`. incoming.gui_script's dialog
   -- table already carries a `kind` ("incoming") that selects the draw path, and

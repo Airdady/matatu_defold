@@ -611,33 +611,23 @@ function on_message(self, message_id, message)
             -- nothing useful can still be recognised by its tournament id
             -- against the player's own list.
             kind = champ.kind(tourney, ws.current_user_data)
-            -- A BATTLE request is never the championship, whatever its document
-            -- says.
-            if (type(raw) == "table" and raw.gameType == "BATTLE") and kind == "CHAMPIONSHIP" then
-                kind = "BATTLE"
+            if type(raw) == "table" and raw.gameType == "BATTLE" then
+                -- A BATTLE request is never the championship, whatever its
+                -- document says.
+                if kind == "CHAMPIONSHIP" then kind = "BATTLE" end
+                -- And if the payload carried no tournament to read at all, the
+                -- request type is still enough to label it.
+                kind = kind or "BATTLE"
             end
 
             title = (kind or "TOURNAMENT") .. "  -  " .. tostring(disp_name):upper()
 
             local amount = tonumber((tourney.stake or raw.stake or r.stake or {}).amount) or 0
-            -- A knockout is played to a score cap, not as a series, so "Best of
-            -- 3" was describing a format it does not use.
-            if kind == "KNOCKOUT" then
-                desc = "SCORE CAP " .. (tonumber(tourney.scoreCap) or 200)
-            else
-                -- "Best of 1" describes nothing. A single-game match is a
-                -- single game, and a knockout reaching here means matchType did
-                -- not arrive — which is exactly when matchFormat reads 1 and the
-                -- old text said BEST OF 1.
-                local fmt = tonumber(tourney.matchFormat) or 3
-                local cap = tonumber(tourney.scoreCap)
-                if fmt <= 1 then
-                    desc = cap and ("SCORE CAP " .. cap) or "Single game"
-                else
-                    desc = "Best of " .. fmt
-                end
-            end
-            desc = desc .. "   -   " .. (amount > 0 and (commas(amount) .. " Coins") or "Practice Mode")
+            -- A knockout is played to a score cap, not as a series. Shared with
+            -- the online screen's inline banner so the same invite is described
+            -- the same way on both.
+            desc = champ.format_text(tourney, kind)
+                .. "   -   " .. (amount > 0 and (commas(amount) .. " Coins") or "Practice Mode")
             disp_name = (type(raw) == "table" and (raw.tournamentName or raw.name)) or "Tournament Match"
         end
 

@@ -406,30 +406,23 @@ local function open_banner(self, raw)
     -- own list. Same call incoming.gui_script makes, so the two surfaces label
     -- the same invite the same way.
     local kind = champ.kind(tourney, ws.current_user_data)
-    -- A BATTLE request is never the championship, whatever its document says.
-    if (raw.gameType or "") == "BATTLE" and kind == "CHAMPIONSHIP" then kind = "BATTLE" end
+    if (raw.gameType or "") == "BATTLE" then
+        -- A BATTLE request is never the championship, whatever its document says.
+        if kind == "CHAMPIONSHIP" then kind = "BATTLE" end
+        -- And if the payload carried no tournament to read at all, the request
+        -- type is still enough to label it. Better a correct BATTLE badge than
+        -- a bare strip.
+        kind = kind or "BATTLE"
+    end
 
     local stake  = (tourney and tourney.stake) or raw.stake or {}
     local amount = tonumber(stake.amount) or 0
 
-    -- A knockout is played to a score cap, not as a series, so "Best of 3" was
-    -- describing a format it does not use.
-    local desc
-    if kind == "KNOCKOUT" then
-        desc = "SCORE CAP " .. (tonumber(tourney and tourney.scoreCap) or 200)
-    else
-        -- "Best of 1" describes nothing. A single-game match is a single game,
-        -- and a knockout reaching here means matchType did not arrive — which
-        -- is exactly when matchFormat reads 1 and the old text said BEST OF 1.
-        local fmt = tonumber(tourney and tourney.matchFormat) or 3
-        local cap = tonumber(tourney and tourney.scoreCap)
-        if fmt <= 1 then
-            desc = cap and ("SCORE CAP " .. cap) or "Single game"
-        else
-            desc = "Best of " .. fmt
-        end
-    end
-    desc = desc .. "   -   " .. (amount > 0 and (commas(amount) .. " Coins") or "Practice Mode")
+    -- A knockout is played to a score cap, not as a series. Shared with the
+    -- global overlay so the same invite is described the same way on both, and
+    -- so "Best of 1" cannot come back on one of them.
+    local desc = champ.format_text(tourney, kind)
+        .. "   -   " .. (amount > 0 and (commas(amount) .. " Coins") or "Practice Mode")
 
     local b = {
         title      = (kind or "TOURNAMENT") .. "  -  " .. sender_nm,

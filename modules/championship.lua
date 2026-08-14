@@ -91,9 +91,21 @@ end
 --   BATTLE        a single level: the tournament IS the match
 --
 -- Order matters. A knockout is usually one level, so a level count alone would
--- call it a BATTLE; matchType is the only thing that separates the two. And the
--- championship is checked first because it is the one kind that is never either
--- of the others.
+-- call it a BATTLE; and the championship is checked first because it is the one
+-- kind that is never either of the others.
+--
+-- A MATCH FORMAT OF ONE IS A KNOCKOUT, not a one-game battle.
+--
+-- matchType is the field that says so outright, but it only reaches the client
+-- from a server new enough to send it, and a knockout carries matchFormat 1
+-- because its length is set by a score cap rather than by a series — the engine
+-- reads requiredWins from scoreCap for exactly these (see
+-- updateTournamentProgress). So the format is a second, independent tell.
+--
+-- It is safe to read it that way HERE specifically: this strip only ever shows
+-- tournament, battle and knockout invites, and none of those is a single game.
+-- Before this, such an invite fell through to "Best of 1" — a series of one,
+-- which describes nothing — and wore no badge at all.
 --
 -- nil means "say nothing" rather than "ordinary". A multi-level private cup is
 -- none of these three, and inventing a label for it would be worse than leaving
@@ -102,8 +114,32 @@ function M.kind(t, user_data)
     if M.matches(t, user_data) then return "CHAMPIONSHIP" end
     if type(t) ~= "table" then return nil end
     if tostring(t.matchType or ""):upper() == "KNOCKOUT" then return "KNOCKOUT" end
+    local fmt = tonumber(t.matchFormat)
+    if fmt and fmt <= 1 then return "KNOCKOUT" end
     if level_count(t) == 1 then return "BATTLE" end
     return nil
+end
+
+-- The cap a knockout is played to.
+--
+-- 200 mirrors updateTournamentProgress's own fallback, so the number on the
+-- banner is the number the match is actually played to. (The schema default is
+-- 100 and the engine's fallback is 200 — they disagree, but the field has a
+-- default so the fallback effectively never fires. Matching the engine is the
+-- safer of the two if it ever does.)
+function M.score_cap(t)
+    return tonumber(type(t) == "table" and t.scoreCap or nil) or 200
+end
+
+-- What the strip says underneath the title.
+--
+-- "Best of 1" can no longer appear: anything with a format of one is a KNOCKOUT
+-- by the rule above, and a knockout is described by its cap.
+function M.format_text(t, kind)
+    if kind == "KNOCKOUT" then
+        return "SCORE CAP " .. M.score_cap(t)
+    end
+    return "Best of " .. (tonumber(type(t) == "table" and t.matchFormat or nil) or 3)
 end
 
 -- HOW WIDE THE PILL HAS TO BE FOR A GIVEN LABEL.

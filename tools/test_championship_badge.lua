@@ -79,6 +79,20 @@ check("knockout beats the single-level BATTLE reading",
 check("a multi-level knockout is still a knockout",
       champ.kind({ _id = "k", matchType = "KNOCKOUT", levels = 4 }), "KNOCKOUT")
 
+-- A MATCH FORMAT OF ONE IS A KNOCKOUT ON THIS STRIP.
+--
+-- The reported case: a knockout invite showed no badge and read "Best of 1",
+-- because matchType had not reached the client and the level count said BATTLE.
+-- A knockout carries matchFormat 1 — its length comes from the score cap, not
+-- from a series — and the strip only ever shows tournament, battle and knockout
+-- invites, so a one-game series there is a knockout by elimination.
+check("format of 1 is a knockout even with no matchType",
+      champ.kind({ _id = "k", matchFormat = 1, levels = 1 }), "KNOCKOUT")
+check("format of 0 too", champ.kind({ _id = "k", matchFormat = 0, levels = 1 }), "KNOCKOUT")
+check("an absent format does NOT imply a knockout",
+      champ.kind({ _id = "b", levels = 1 }), "BATTLE")
+check("nor does a real series", champ.kind({ _id = "b", matchFormat = 3, levels = 1 }), "BATTLE")
+
 check("single level is a battle", champ.kind({ _id = "b", levels = 1 }), "BATTLE")
 check("single level as an array", champ.kind({ _id = "b", levels = {1} }), "BATTLE")
 check("NORMAL matchType does not override the level count",
@@ -90,6 +104,28 @@ check("a multi-level private cup gets no badge",
       champ.kind({ _id = "cup", scope = "PRIVATE", levels = 4 }), nil)
 check("nothing at all gets no badge", champ.kind(nil, user_data), nil)
 check("an empty payload gets no badge", champ.kind({}, user_data), nil)
+
+-- ── What the strip says underneath the title ─────────────────────────────────
+--
+-- "Best of 1" must be unreachable: a format of one is a KNOCKOUT by the rule
+-- above, and a knockout is described by its cap. It is the exact string the
+-- knockout banner was showing.
+check("a knockout is described by its cap",
+      champ.format_text({ matchFormat = 1, scoreCap = 250 }, "KNOCKOUT"), "SCORE CAP 250")
+check("a knockout with no cap falls back to the engine's own figure",
+      champ.format_text({ matchFormat = 1 }, "KNOCKOUT"), "SCORE CAP 200")
+check("a series is described by its length",
+      champ.format_text({ matchFormat = 3 }, "BATTLE"), "Best of 3")
+check("and an absent format reads as best of three",
+      champ.format_text({}, "BATTLE"), "Best of 3")
+
+-- The end-to-end shape of the reported bug: this payload used to produce no
+-- badge and "Best of 1".
+local knockout_payload = { _id = "k", matchFormat = 1, scoreCap = 300, levels = {1} }
+local k = champ.kind(knockout_payload)
+check("the reported payload badges KNOCKOUT", k, "KNOCKOUT")
+check("...and reads SCORE CAP 300", champ.format_text(knockout_payload, k), "SCORE CAP 300")
+check("...and never says Best of 1", champ.format_text(knockout_payload, k) ~= "Best of 1", true)
 
 -- Pill widths are derived, not picked per label, so a new label cannot arrive
 -- with a width nobody checked.
