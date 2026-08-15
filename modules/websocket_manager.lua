@@ -10,6 +10,8 @@ local json_util = require("modules.json_util")
 local util = require("modules.util")
 local aes = require("modules.aes")
 local DC = require("modules.disconnect_events")
+-- Requires nothing itself, deliberately, so this cannot start a require cycle.
+local champ = require("modules.championship")
 
 local M = {}
 
@@ -611,6 +613,23 @@ local function parse_message(json_string)
   elseif t == "PUBLIC_ANNOUNCEMENTS" then
     emit("announcements", d)
   elseif t == "GAME_REQUEST" then
+    -- ONLY ENTRANTS ARE SHOWN A CHAMPIONSHIP INVITE.
+    --
+    -- The server refuses to send these to anyone who has not paid at the door;
+    -- this is the near side of the same rule, and it is here rather than in the
+    -- two banner screens because both draw from this one event and a guard in
+    -- one of them is a guard in neither.
+    --
+    -- Declined rather than ignored: silence leaves the requester watching a
+    -- search dialog for the full ten seconds on somebody who was never going to
+    -- answer, where a decline frees their broadcast at once to reach a real
+    -- entrant. See championship.should_drop_request for why it refuses only the
+    -- one case it is certain about.
+    if champ.should_drop_request(d, M.current_user_data) then
+      print("[WS] dropping a championship request for a tournament this player has not joined")
+      if d.requestId and d.requestId ~= "" then M.decline_game_request(d.requestId) end
+      return
+    end
     M.last_game_request = { user = d.user or {}, stake = d.stake or {}, requestId = d.requestId or "", raw = d }
     emit("game_request", d.user or {}, d.stake or {}, d.requestId or "", d)
   elseif t == "GAME_REQUEST_CANCELLED" then

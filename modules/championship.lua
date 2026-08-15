@@ -81,6 +81,86 @@ function M.matches(t, user_data)
     return id == M.known_id(user_data)
 end
 
+--- The player's own record of a tournament, from the list IDENTIFY brought.
+--
+-- Looked up by id rather than by content for the same reason known_id exists:
+-- a request payload describes the TOURNAMENT, and only the player's own copy
+-- knows anything about the player.
+function M.my_entry(tournament_id, user_data)
+    local id = tostring(tournament_id or "")
+    if id == "" then return nil end
+    local list = type(user_data) == "table" and user_data.tournaments or nil
+    if type(list) ~= "table" then return nil end
+    for _, t in ipairs(list) do
+        if type(t) == "table" and tostring(t._id or t.id or "") == id then return t end
+    end
+    return nil
+end
+
+--- Has this player PAID to be on the ladder?
+--
+-- Same answer the tournament map's is_joined uses, and for the same reason it
+-- stopped inferring from the level: joining does not advance the level, so a
+-- player who has just paid and one who never has both sit at level 1. `joined`
+-- is the backend's own entryPaidAt, sent on the tournament and again on its
+-- userProgress; either will do.
+--
+-- Answers FALSE when it has no record to read, which is deliberate — see
+-- should_drop_request, where "no record" is never on its own a reason to act.
+function M.joined(entry)
+    if type(entry) ~= "table" then return false end
+    if entry.joined ~= nil then return entry.joined and true or false end
+    local up = entry.userProgress
+    if type(up) == "table" then
+        if up.joined ~= nil then return up.joined and true or false end
+        if up.entryPaidAt ~= nil then return true end
+    end
+    return entry.entryPaidAt ~= nil
+end
+
+--- Should an incoming GAME_REQUEST be dropped without ever being shown?
+--
+-- ONLY ENTRANTS PLAY THE CHAMPIONSHIP. The ladder is bought once at the door
+-- (POST /tournaments/global/join), and the server is what enforces that — this
+-- is the near side of the same rule, and it earns its place for one reason:
+-- accepting a championship invite costs the entry in real coins, so a request
+-- that should never have arrived must not be one tap away from taking
+-- somebody's money.
+--
+-- Deliberately narrow, and it FAILS OPEN in every uncertain case:
+--
+--   no tournament id            -> shown. An ordinary challenge.
+--   id not in the player's list -> shown. Somebody else's battle or cup; the
+--                                  player's own list would not contain it, and
+--                                  a guess here would start eating invites the
+--                                  player wanted.
+--   record says nothing of joining -> shown. An older server sends no `joined`
+--                                  at all, and silently swallowing every
+--                                  championship invite on that build would be
+--                                  a worse bug than the one this fixes.
+--
+-- Which leaves exactly one case that drops: this IS the championship, the
+-- player holds a record of it, and that record says they are not in it.
+function M.should_drop_request(payload, user_data)
+    if type(payload) ~= "table" then return false end
+    local t = (type(payload.tournament) == "table") and payload.tournament or nil
+    local id = (t and (t._id or t.id)) or payload.tournamentId
+    if not id or tostring(id) == "" then return false end
+
+    local mine = M.my_entry(id, user_data)
+    if not mine then return false end
+    if not (M.matches(mine, user_data) or M.matches(t, user_data)) then return false end
+    -- The field has to be PRESENT to refuse on. Absent means an older backend,
+    -- not a bystander.
+    if mine.joined == nil
+        and type(mine.userProgress) ~= "table" then return false end
+    if mine.joined == nil
+        and mine.userProgress.joined == nil
+        and mine.userProgress.entryPaidAt == nil then return false end
+
+    return not M.joined(mine)
+end
+
 
 -- WHICH BADGE THIS INVITE WEARS.
 --
