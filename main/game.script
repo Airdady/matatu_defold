@@ -19,6 +19,7 @@ local DC    = require "modules.disconnect_events"
 local OnlineHandler = require "modules.online_handler"
 local OfflineHandler = require "modules.offline_handler"
 local Tut   = require "modules.tutorial"
+local TL    = require "modules.turn_locks"
 
 -- Tutorial hooks are always pcall-guarded so a walkthrough bug can never break play.
 local function tut(name, ...)
@@ -771,7 +772,12 @@ function on_input(self, action_id, action)
         local ok, p = pcall(go.get_position, deck_top.id)
         if not ok then p = self.DECK_POS end
         if math.abs(x - p.x) <= 120 and math.abs(y - p.y) <= 150 then
-            if not self.is_player_turn() or self.waiting or self.is_local_action_locked or self.is_suit_selection_active then
+            -- The shared gate in front of everything a deck tap can mean. It
+            -- now also refuses while a card is still flying INTO the hand,
+            -- which is the difference between one card and two when a second
+            -- tap lands during that flight — see modules/turn_locks.lua for
+            -- how the other flags came to be cleared out from under it.
+            if not TL.board_may_touch_deck(self) then
                 return true
             end
 

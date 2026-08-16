@@ -15,6 +15,7 @@ local BL             = require "modules.board_layout"
 local RE             = require "modules.rules_eval"
 local Tut            = require "modules.tutorial"
 local RQ             = require "modules.reshuffle_queue"
+local TL             = require "modules.turn_locks"
 
 -- Tutorial hooks must never be able to break live play: route every call
 -- through pcall so a walkthrough bug can only ever no-op.
@@ -106,6 +107,29 @@ function M.play_card(self, rec, is_player, result)
     RE.pre_validate_hand(self)
 end
 
+-- HAND THE TURN BACK TO A PLAYER WHO KEPT IT — UNLESS THEY ALREADY USED IT.
+--
+-- Every caller of this is a branch of after_play_settled, which runs when the
+-- played card finishes its ~0.42s flight to the pile. play_card has ALREADY
+-- re-opened input for all three of these results, synchronously, at tap time
+-- (see the "Rapid play" note there), so this later unlock can never be the one
+-- that unblocks a waiting player.
+--
+-- What it CAN do, and did, is undo what the player has done with the turn in
+-- the meantime. Tapping the deck inside that window starts a draw and sets both
+-- flags; wiping them here let a second tap take a second card. That is the
+-- reported "I tapped twice very fast and got two cards instead of one".
+--
+-- The SKIP prompt is left alone in that case for the same reason: check_post_draw
+-- owns it once a draw is under way, and it knows whether the drawn card left
+-- anything playable.
+local function reopen_kept_turn(self)
+    if not TL.board_may_reopen_kept_turn(self) then return end
+    self.player_has_drawn = false
+    self.is_local_action_locked = false
+    notify_gui(self.gui_hud, "skip", { show = false })
+end
+
 function M.after_play_settled(self, rec, is_player, result, ticket)
     if self.game_over then return end
     
@@ -167,9 +191,7 @@ function M.after_play_settled(self, rec, is_player, result, ticket)
                 end
                 return
             end
-            self.player_has_drawn = false
-            self.is_local_action_locked = false
-            notify_gui(self.gui_hud, "skip", { show = false })
+            reopen_kept_turn(self)
             RE.pre_validate_hand(self)
         else
             OfflineHandler.do_ai_turn(self, true)
@@ -224,9 +246,7 @@ function M.after_play_settled(self, rec, is_player, result, ticket)
                 else self.next_turn() end
                 return
             end
-            self.player_has_drawn = false
-            self.is_local_action_locked = false
-            notify_gui(self.gui_hud, "skip", { show = false })
+            reopen_kept_turn(self)
             RE.pre_validate_hand(self)
         else
             OfflineHandler.do_ai_turn(self, true)
@@ -247,9 +267,7 @@ function M.after_play_settled(self, rec, is_player, result, ticket)
                     else self.next_turn() end
                     return
                 end
-                self.player_has_drawn = false
-                self.is_local_action_locked = false
-                notify_gui(self.gui_hud, "skip", { show = false })
+                reopen_kept_turn(self)
                 RE.pre_validate_hand(self)
             else
                 OfflineHandler.do_ai_turn(self, true)
