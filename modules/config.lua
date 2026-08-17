@@ -118,16 +118,21 @@ end
 -- ---------------------------------------------------------------------------
 -- SUPPORT CONTACT
 -- ---------------------------------------------------------------------------
--- WhatsApp, not email. Players here reach support on WhatsApp; a mailto: link
--- opens whatever mail client the device has configured, which on a lot of
--- these phones is none at all — the tap did nothing and the player concluded
--- there was no way to reach anyone.
+-- EMAIL. CONTACT opens a mail composer addressed here, prefilled with the
+-- diagnostic block support needs.
 --
--- DIGITS ONLY, with the country code and no leading '+': that is the format
--- wa.me requires. A '+' or a space in the path silently 404s the link.
-M.SUPPORT_WHATSAPP = "256700372678"
--- How the same number is shown to a human.
-M.SUPPORT_WHATSAPP_DISPLAY = "+256 700 372 678"
+-- This was WhatsApp, for a stated reason worth keeping on the record: a
+-- mailto: link opens whatever mail client the device has configured, and on a
+-- lot of these phones that is none at all — the tap did nothing and the player
+-- concluded there was no way to reach anyone. wa.me had no such failure mode,
+-- since it falls back to the web client in a browser.
+--
+-- Asked for as email regardless, so email it is. The address is a Gmail one,
+-- so if the silent-tap problem comes back the fix is a Gmail web-compose URL
+-- (https://mail.google.com/mail/?view=cm&fs=1&to=...), which opens in a
+-- browser on a device with no mail app and in the Gmail app on one that has
+-- it — the same escape hatch wa.me was giving us.
+M.SUPPORT_EMAIL = "matatu.league@gmail.com"
 
 M.GAME_STATE_SECRET = "a27a120adfbc9f727c187748fff44547e1ee72f09481c8a965d62ed1c02e6ea3"
 

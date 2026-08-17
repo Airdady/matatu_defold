@@ -84,11 +84,18 @@ local function suggested_levels(max_players)
     return lv
 end
 
--- Percent-encodes a string for a wa.me ?text= query value.
+-- Percent-encodes a string for a mailto: query value (the subject and body of
+-- the CONTACT mail).
 --
--- Newlines are encoded as a bare LF (%0A), NOT the CRLF a mailto: body wants:
--- WhatsApp renders the stray CR as a visible box on some clients, so the
--- diagnostic block below would arrive speckled with junk characters.
+-- Newlines are normalised to a bare LF and encoded as %0A. RFC 2368 writes
+-- mailto bodies with CRLF, but every mail client in practice accepts %0A and
+-- treats it as a line break — while a client that does NOT fold the CR renders
+-- it as a visible junk character in the middle of the diagnostic block, which
+-- is the more likely and the more visible failure of the two.
+--
+-- Everything outside the unreserved set is escaped, `&` and `=` included, so a
+-- username or a brand containing one cannot terminate the query early and drop
+-- the rest of the message.
 local function url_encode(str)
     str = tostring(str or ""):gsub("\r\n", "\n")
     str = str:gsub("([^%w%-%_%.%~])", function(c)
@@ -559,19 +566,25 @@ local function handle(self, b)
         local uname = (me.username and me.username ~= "") and me.username or "Not set"
         local phone = (me.phoneNumber and me.phoneNumber ~= "") and me.phoneNumber or "Not set"
         local acct  = (me._id and me._id ~= "") and me._id or "Unknown"
-        -- Same diagnostic block the email carried — support still needs to
-        -- know who is writing, and asking a player to find their account id
-        -- by hand is asking them not to bother.
-        local text = GameMode.BRAND .. " Support\n\nPlease describe your issue below:\n\n\n---\nUsername: "
+        -- The diagnostic block support needs. Asking a player to find their
+        -- own account id by hand is asking them not to bother.
+        local body = "Please describe your issue below:\n\n\n---\nUsername: "
             .. uname
             .. "\nPhone: " .. phone
             .. "\nAccount ID: " .. acct
             .. "\nApp: " .. tostring(config.APP_VERSION)
             .. " (" .. tostring(config.APP_BUILD or 0) .. ")"
-        -- wa.me opens WhatsApp if installed and the web client otherwise, so
-        -- this works on a device with no mail client — which the mailto: link
-        -- it replaces did not.
-        sys.open_url("https://wa.me/" .. config.SUPPORT_WHATSAPP .. "?text=" .. url_encode(text))
+        -- STRAIGHT TO EMAIL, not to WhatsApp.
+        --
+        -- The subject rides in the URL as well as the body, so a mail that
+        -- arrives with an empty subject line is not the norm.
+        --
+        -- The address itself is NOT percent-encoded: it goes in the mailto:
+        -- path rather than in a query value, where an encoded '@' (%40) is
+        -- accepted by some clients and rejected as malformed by others.
+        sys.open_url("mailto:" .. config.SUPPORT_EMAIL
+            .. "?subject=" .. url_encode(GameMode.BRAND .. " Support")
+            .. "&body=" .. url_encode(body))
     end); return
     elseif b.id == "theme_open" then msg.post("#controller", "goto_themes"); return end
 
