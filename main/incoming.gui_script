@@ -54,9 +54,9 @@ end
 local function clear(self)
     for _, n in ipairs(self.nodes) do pcall(gui.delete_node, n) end
     self.nodes, self.buttons = {}, {}
-    -- The countdown bar's node handle points into the list just deleted, and
-    -- so does the championship strip's shimmer. Animating either afterwards is
-    -- a call on a deleted node.
+    -- Both countdown handles point into the list just deleted — the ordinary
+    -- strip's and the championship strip's. Animating either afterwards is a
+    -- call on a deleted node.
     self.ban_bar = nil
     self.ban_anim = nil
 end
@@ -581,10 +581,9 @@ function update(self, dt)
         -- Smooth: resize the existing bar. The whole-second rebuild below still
         -- happens, for the numeric countdown that genuinely ticks in seconds.
         --
-        -- The championship strip runs its own animator: it has a shimmer to
-        -- sweep as well as a bar to slide, and both move per frame for the same
-        -- reason — rebuilding every node sixty times a second to move two of
-        -- them is not a trade worth making.
+        -- The championship strip runs its own animator, for the same reason:
+        -- rebuilding every node sixty times a second to slide one bar is not a
+        -- trade worth making.
         if self.dialog.banner then
             if self.ban_anim then
                 pcall(champ_banner.animate, self.ban_anim, dt,

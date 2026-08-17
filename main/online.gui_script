@@ -230,9 +230,8 @@ local BAN_CHAMP_H     = 24
 local function update_ban_bars(self, dt)
     for _, bar in ipairs(self.ban_bars or {}) do
         local b = bar.b
-        if bar.shimmer ~= nil or bar.fill ~= nil then
-            -- A championship strip. It has a shimmer to sweep as well as a bar
-            -- to slide, and its own animator owns both.
+        if bar.fill ~= nil then
+            -- A championship strip: its own animator owns the countdown.
             pcall(champ_banner.animate, bar, dt or 0, b.time_left, b.max_time or 10)
         else
             local frac = math.max(0, math.min(1, (b.time_left or 0) / (b.max_time or 10)))

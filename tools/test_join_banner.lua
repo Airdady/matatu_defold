@@ -171,15 +171,27 @@ end
 
 check("the strip is taller than the ordinary 92px one", cb.HEIGHT > 92, true)
 
--- Laid out from the right edge, same convention as the ordinary strip. The
--- prize plaque must clear the buttons, and the buttons must clear each other.
-local join_left   = cb.JOIN_X + cb.JOIN_W / 2
+-- EVERYTHING ON ONE LINE. The plaque used to sit ABOVE the buttons, which put
+-- the thing being offered and the thing that accepts it in different halves of
+-- the strip. Laid out right to left now — JOIN, CANCEL, plaque — all on the
+-- same centre line, so each has to clear the next.
+local join_left    = cb.JOIN_X + cb.JOIN_W / 2
 local cancel_right = cb.CANCEL_X - cb.CANCEL_W / 2
 check("CANCEL sits left of JOIN without touching it", cancel_right > join_left, true)
 
-local plaque_left = cb.PLAQUE_X + cb.PLAQUE_W / 2
-local cancel_left = cb.CANCEL_X + cb.CANCEL_W / 2
-check("the prize plaque clears both buttons", plaque_left >= cancel_left, true)
+local plaque_right = cb.PLAQUE_X - cb.PLAQUE_W / 2
+local cancel_left  = cb.CANCEL_X + cb.CANCEL_W / 2
+check("the prize plaque clears CANCEL", plaque_right >= cancel_left, true)
+
+-- ...and it has to fit beside the copy on the left. The name and its caption
+-- start at L+86; on the narrowest logical width the app lays out for (1280),
+-- the plaque's left edge must leave them room.
+local plaque_left_x = 1280 - (cb.PLAQUE_X + cb.PLAQUE_W / 2)
+check("and leaves room for the copy at the left", plaque_left_x > 86 + 200, true)
+
+-- The plaque is on the centre line, so it must fit inside the strip's height.
+check("the plaque fits within the strip", cb.PLAQUE_H + 8 <= cb.HEIGHT, true)
+check("...and so do the buttons beside it", cb.BTN_H + 8 <= cb.HEIGHT, true)
 
 local src = source("modules/champ_banner.lua")
 check("the plate fades toward one corner rather than filling flat",
@@ -188,10 +200,14 @@ check("...built from stepped slices, since a box takes one colour",
       src:find("FADE_STEPS") ~= nil, true)
 check("...and the ramp is curved so the glow stays out of the left",
       src:find("t %* t %* t") ~= nil, true)
-check("the prize has a shimmer that moves per frame, not per rebuild",
-      src:find("function M%.animate") ~= nil and src:find("anim%.shimmer") ~= nil, true)
-check("the shimmer is confined to the plaque's own span",
-      src:find("shimmer_span = {") ~= nil, true)
+
+-- THE SHIMMER IS GONE, by request. On a strip that is only on screen for ten
+-- seconds it was movement competing with the countdown for the same glance.
+-- Asserted as an absence so it cannot drift back in unnoticed.
+check("no shimmer node is created", src:find("shimmer_span") == nil, true)
+check("...and nothing animates one", src:find("anim%.shimmer") == nil, true)
+check("the countdown fill is still animated per frame",
+      src:find("function M%.animate") ~= nil and src:find("anim%.fill") ~= nil, true)
 
 ----------------------------------------------------------------------
 print("\n── and both surfaces use it ──")

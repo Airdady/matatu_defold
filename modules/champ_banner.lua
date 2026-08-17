@@ -12,8 +12,8 @@
 --
 --   a plate that FADES TO ONE CORNER, warm gold at the right and dying out to
 --     the left, so the eye lands on the prize rather than on the avatar
---   the GRAND PRIZE on a plaque of its own, in gold, at title size, with a
---     SHIMMER sweeping across it
+--   the GRAND PRIZE on a plaque of its own, in gold, at title size, sitting on
+--     the same line as the buttons that act on it
 --   a button that names its own price — JOIN FOR 500, not JOIN
 --
 -- WHY THIS IS A MODULE AND NOT TWO COPIES
@@ -32,10 +32,15 @@
 
 local M = {}
 
--- Taller than the ordinary 92px strip. The prize plaque needs vertical room to
--- read as a plaque rather than as a third line of text, and the buttons drop
--- below the copy instead of sitting beside it.
-M.HEIGHT = 132
+-- Taller than the ordinary 92px strip, but only by enough for the prize plaque
+-- to read as a plaque rather than as a third line of text.
+--
+-- It was 132, with the plaque stacked ABOVE the buttons. Everything sits on ONE
+-- line now — copy, prize, buttons — which is what an inline strip should be:
+-- the stacked version was a small dialog wearing a banner's slot, and it pushed
+-- the buttons far enough from the prize that the two stopped reading as one
+-- offer.
+M.HEIGHT = 104
 
 -- ── palette ─────────────────────────────────────────────────────────────────
 -- Near-black, warmer than the ordinary strip's blue-grey so the two do not
@@ -52,7 +57,6 @@ local PLAQUE_BG  = vmath.vector4(0.10, 0.08, 0.03, 0.92)
 local PLAQUE_BRD = vmath.vector4(1.00, 0.80, 0.24, 0.85)
 local PRIZE_GOLD = vmath.vector4(1.00, 0.85, 0.28, 1.00)
 local PRIZE_CAP  = vmath.vector4(0.82, 0.68, 0.34, 1.00)
-local SHIMMER    = vmath.vector4(1.00, 0.98, 0.86, 1.00)
 local JOIN_BG    = vmath.vector4(1.00, 0.74, 0.10, 0.96)
 local JOIN_TX    = vmath.vector4(0.12, 0.08, 0.00, 1.00)
 local CANCEL_BG  = vmath.vector4(0.16, 0.14, 0.11, 0.90)
@@ -62,9 +66,15 @@ local AV_BG      = vmath.vector4(0.13, 0.10, 0.06, 1.00)
 -- ── geometry, as offsets from the right edge ────────────────────────────────
 -- Same convention as the ordinary strip's, so the two can be checked against
 -- each other by the layout test.
-M.PLAQUE_X = 300   -- centre of the prize plaque
-M.PLAQUE_W = 250
-M.PLAQUE_H = 86
+--
+-- All four sit on the SAME centre line, laid out right to left: JOIN, CANCEL,
+-- then the prize plaque. The plaque's right edge has to clear CANCEL's left
+-- edge, which is what the layout test checks rather than trusts — nothing in
+-- the Defold GUI measures anything at build time, so an overlap here is a
+-- number nobody added up.
+M.PLAQUE_X = 452   -- centre of the prize plaque
+M.PLAQUE_W = 240
+M.PLAQUE_H = 76
 M.JOIN_X   = 100   -- centre of the JOIN button
 M.JOIN_W   = 176
 M.CANCEL_X = 254   -- centre of CANCEL
@@ -133,8 +143,8 @@ end
 -- }
 -- d   = { title, desc, avatar, prize, entry_fee, time_left, max_time }
 --
--- Returns the animation handle for M.animate: the shimmer node and the
--- countdown fill, both of which move every frame rather than once a second.
+-- Returns the animation handle for M.animate: the countdown fill, which moves
+-- every frame rather than once a second.
 function M.draw(ctx, d, cy, a)
     local track, ui, box = ctx.track, ctx.ui, ctx.box
     a = a or 1
@@ -150,51 +160,38 @@ function M.draw(ctx, d, cy, a)
 
     -- ── left: who, and what for ──
     local av_x = box.L + 46
-    track(ui.box(vmath.vector3(av_x, cy + 6, 0), vmath.vector3(58, 58, 0), with_a(AV_BG, a)))
+    track(ui.box(vmath.vector3(av_x, cy, 0), vmath.vector3(58, 58, 0), with_a(AV_BG, a)))
     gui.set_color(
-        track(ui.avatar(vmath.vector3(av_x, cy + 6, 0), vmath.vector3(52, 52, 0), d.avatar or 1)),
+        track(ui.avatar(vmath.vector3(av_x, cy, 0), vmath.vector3(52, 52, 0), d.avatar or 1)),
         vmath.vector4(1, 1, 1, a))
 
     -- The kind, then who, then the terms. `opponent_name` rather than `title`:
     -- the ordinary strip's title reads "CHAMPIONSHIP  -  RIVAL", and printing
     -- that under a caption already saying GLOBAL CHAMPIONSHIP says it twice.
-    gui.set_pivot(track(ui.text(vmath.vector3(box.L + 86, cy + 34, 0),
+    gui.set_pivot(track(ui.text(vmath.vector3(box.L + 86, cy + 26, 0),
         "GLOBAL CHAMPIONSHIP", "small", with_a(RULE, a))), gui.PIVOT_W)
-    gui.set_pivot(track(ui.text(vmath.vector3(box.L + 86, cy + 8, 0),
+    gui.set_pivot(track(ui.text(vmath.vector3(box.L + 86, cy + 2, 0),
         tostring(d.opponent_name or d.title or "A PLAYER"), "body", with_a(TITLE, a))), gui.PIVOT_W)
-    gui.set_pivot(track(ui.text(vmath.vector3(box.L + 86, cy - 16, 0),
+    gui.set_pivot(track(ui.text(vmath.vector3(box.L + 86, cy - 22, 0),
         tostring(d.desc or ""), "small", with_a(SUB, a))), gui.PIVOT_W)
 
-    -- ── centre-right: the prize, on a plaque of its own ──
-    local shimmer_node, shimmer_span
+    -- ── ONE LINE: prize, then the buttons that act on it ──
+    --
+    -- The plaque used to sit ABOVE the buttons, which put the thing being
+    -- offered and the thing that accepts it in different halves of the strip.
+    -- They belong on the same line and read as one offer there.
+    local joining = d.joining and true or false
+
     local prize = tonumber(d.prize) or 0
     if prize > 0 then
         local px = box.R - M.PLAQUE_X
-        local py = cy + 10
-        track(ui.box(vmath.vector3(px, py, 0),
+        track(ui.box(vmath.vector3(px, cy, 0),
             vmath.vector3(M.PLAQUE_W + 4, M.PLAQUE_H + 4, 0), with_a(PLAQUE_BRD, a)))
-        track(ui.box(vmath.vector3(px, py, 0),
+        track(ui.box(vmath.vector3(px, cy, 0),
             vmath.vector3(M.PLAQUE_W, M.PLAQUE_H, 0), with_a(PLAQUE_BG, a)))
-
-        -- THE SHIMMER. A narrow bright bar that sweeps across the plaque and
-        -- off its right edge, over and over. Created once here and MOVED every
-        -- frame by M.animate — rebuilding the strip sixty times a second to
-        -- slide one bar is not a trade worth making, which is the same reason
-        -- the countdown fill is handled this way.
-        --
-        -- Clipped to the plaque by construction rather than by a stencil: the
-        -- sweep is confined to the plaque's own x-range, so it never runs out
-        -- over the copy on the left.
-        shimmer_span = { left = px - M.PLAQUE_W / 2, right = px + M.PLAQUE_W / 2, y = py }
-        shimmer_node = track(ui.box(vmath.vector3(shimmer_span.left, py, 0),
-            vmath.vector3(26, M.PLAQUE_H - 6, 0), with_a(SHIMMER, a * 0.13)))
-
-        track(ui.text(vmath.vector3(px, py + 24, 0), "GRAND PRIZE", "small", with_a(PRIZE_CAP, a)))
-        track(ui.text(vmath.vector3(px, py - 12, 0), commas(prize), "title", with_a(PRIZE_GOLD, a)))
+        track(ui.text(vmath.vector3(px, cy + 20, 0), "GRAND PRIZE", "small", with_a(PRIZE_CAP, a)))
+        track(ui.text(vmath.vector3(px, cy - 12, 0), commas(prize), "title", with_a(PRIZE_GOLD, a)))
     end
-
-    -- ── buttons, below the copy rather than beside it ──
-    local by = bot + M.BTN_H / 2 + 10
 
     -- THE STRIP IS THE SAME EITHER WAY; ONLY THE BUTTON CHANGES.
     --
@@ -203,27 +200,25 @@ function M.draw(ctx, d, cy, a)
     -- at the same tournament and the same prize, so both get the same surface —
     -- gating the whole design on the second case is what made it invisible to
     -- everybody already in.
-    local joining = d.joining and true or false
-
-    local cancel = track(ui.box(vmath.vector3(box.R - M.CANCEL_X, by, 0),
+    local cancel = track(ui.box(vmath.vector3(box.R - M.CANCEL_X, cy, 0),
         vmath.vector3(M.CANCEL_W, M.BTN_H, 0), with_a(CANCEL_BG, a)))
     ctx.button("decline", cancel)
-    track(ui.text(vmath.vector3(box.R - M.CANCEL_X, by, 0),
+    track(ui.text(vmath.vector3(box.R - M.CANCEL_X, cy, 0),
         joining and "CANCEL" or "DECLINE", "btn_md", with_a(CANCEL_TX, a)))
 
-    local join = track(ui.box(vmath.vector3(box.R - M.JOIN_X, by, 0),
+    local join = track(ui.box(vmath.vector3(box.R - M.JOIN_X, cy, 0),
         vmath.vector3(M.JOIN_W, M.BTN_H, 0), with_a(JOIN_BG, a)))
     ctx.button("accept", join)
-    track(ui.text(vmath.vector3(box.R - M.JOIN_X, by, 0),
+    track(ui.text(vmath.vector3(box.R - M.JOIN_X, cy, 0),
         joining and M.join_label(d.entry_fee) or "ACCEPT", "btn_md", with_a(JOIN_TX, a)))
 
-    -- The price again, in words, under the button that charges it. The label
+    -- The price again, in words, under the buttons that charge it. The label
     -- carries the number; this says what KIND of charge it is — once, ever,
     -- rather than per match. Absent entirely when nothing is being charged,
-    -- rather than reading "One-time join fee - 0".
+    -- rather than reading "One-time join fee" beside an ACCEPT.
     if joining and (tonumber(d.entry_fee) or 0) > 0 then
-        gui.set_pivot(track(ui.text(vmath.vector3(box.R - M.PLAQUE_X, by, 0),
-            "One-time join fee", "small", with_a(SUB, a))), gui.PIVOT_CENTER)
+        track(ui.text(vmath.vector3(box.R - M.JOIN_X, cy - M.BTN_H / 2 - 13, 0),
+            "One-time join fee", "small", with_a(SUB, a)))
     end
 
     -- Countdown along the bottom edge, same mechanism as the ordinary strip.
@@ -231,53 +226,26 @@ function M.draw(ctx, d, cy, a)
     local fill = track(ui.box(vmath.vector3(box.L, bot, 0), vmath.vector3(0, 3, 0), with_a(RULE, a)))
 
     return {
-        shimmer = shimmer_node,
-        span = shimmer_span,
         fill = fill,
         w = w,
         left = box.L,
         y = bot,
         alpha = a,
-        t = 0,
     }
 end
 
--- How long one shimmer sweep takes, and how long it waits before the next.
--- Slow enough to read as a sheen rather than a strobe on a strip that is only
--- on screen for ten seconds.
-local SWEEP_SECONDS = 1.6
-local SWEEP_PAUSE   = 0.9
-
---- Advance the shimmer and the countdown. Called every frame.
+--- Advance the countdown. Called every frame.
+--
+-- The prize plaque used to carry a shimmer swept across it from here. It is
+-- gone by request: on a strip that is only on screen for ten seconds it was
+-- movement competing with the countdown for the same glance, and the gold
+-- plaque reads as the important thing without it.
 function M.animate(anim, dt, time_left, max_time)
-    if not anim then return end
-
-    if anim.fill then
-        local frac = math.max(0, math.min(1, (time_left or 0) / (max_time or 10)))
-        local w = anim.w * frac
-        gui.set_size(anim.fill, vmath.vector3(w, 3, 0))
-        gui.set_position(anim.fill, vmath.vector3(anim.left + w / 2, anim.y, 0))
-    end
-
-    if anim.shimmer and anim.span then
-        anim.t = (anim.t or 0) + (dt or 0)
-        local cycle = SWEEP_SECONDS + SWEEP_PAUSE
-        local phase = anim.t % cycle
-        if phase > SWEEP_SECONDS then
-            -- Resting between sweeps: parked at the left edge and invisible,
-            -- rather than sitting lit at the end of its run.
-            gui.set_color(anim.shimmer, vmath.vector4(SHIMMER.x, SHIMMER.y, SHIMMER.z, 0))
-        else
-            local p = phase / SWEEP_SECONDS
-            local x = anim.span.left + p * (anim.span.right - anim.span.left)
-            gui.set_position(anim.shimmer, vmath.vector3(x, anim.span.y, 0))
-            -- Brightest in the middle of the pass and faded at both ends, so
-            -- it does not pop into existence at the plaque's left edge.
-            local ease = math.sin(p * math.pi)
-            gui.set_color(anim.shimmer,
-                vmath.vector4(SHIMMER.x, SHIMMER.y, SHIMMER.z, 0.16 * ease * (anim.alpha or 1)))
-        end
-    end
+    if not anim or not anim.fill then return end
+    local frac = math.max(0, math.min(1, (time_left or 0) / (max_time or 10)))
+    local w = anim.w * frac
+    gui.set_size(anim.fill, vmath.vector3(w, 3, 0))
+    gui.set_position(anim.fill, vmath.vector3(anim.left + w / 2, anim.y, 0))
 end
 
 return M
