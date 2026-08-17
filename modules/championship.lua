@@ -190,6 +190,12 @@ function M.offer(payload, user_data)
         joining      = joining,
         entry_fee    = joining and num(type(payload) == "table" and payload.entryFee) or 0,
         prize        = M.grand_prize(t),
+        -- The label carries the PRICE, not just the verb: "JOIN FOR 500". A
+        -- button that spends coins should say how much on its own face — the
+        -- fee line beside it is the explanation, not the disclosure, and a
+        -- player who reads only the button must still know what it costs.
+        -- champ_banner owns the wording so the strip that draws it and the
+        -- strip that measures it cannot disagree.
         accept_label = joining and "JOIN" or "ACCEPT",
         decline_label = joining and "CANCEL" or "DECLINE",
     }

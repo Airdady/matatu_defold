@@ -16,6 +16,7 @@ local dialog_incoming = require("modules.dialog_incoming")
 local dialog_outgoing = require("modules.dialog_outgoing")
 local toast           = require("modules.toast")
 local champ           = require("modules.championship")
+local champ_banner    = require("modules.champ_banner")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local VISIBLE_W, VISIBLE_H = 1280, 720
@@ -215,17 +216,6 @@ local BAN_CHAMP_X     = 387   -- midway between the shifted H2H and DECLINE
 local BAN_CHAMP_W     = 132
 local BAN_CHAMP_H     = 24
 
--- THE JOIN STRIP. Identical figures to incoming.gui_script's, because the two
--- surfaces draw the SAME invite and a difference between them would mean one
--- request looked like two. See the long note there for why the prize takes
--- H2H's space and the badge moves up onto the rule.
-local BAN_H_JOIN      = 118
-local BAN_PRIZE_X     = 420
-local BAN_JOIN        = vmath.vector4(1.00, 0.72, 0.09, 0.92)
-local BAN_JOIN_TX     = vmath.vector4(0.10, 0.07, 0.00, 1.00)
-local BAN_PRIZE       = vmath.vector4(1.00, 0.84, 0.20, 1.00)
-local BAN_PRIZE_CAP   = vmath.vector4(0.72, 0.62, 0.30, 1.00)
-local BAN_FEE         = vmath.vector4(0.98, 0.78, 0.35, 1.00)
 
 -- SLIDING THE COUNTDOWN BARS, EVERY FRAME.
 --
@@ -237,15 +227,21 @@ local BAN_FEE         = vmath.vector4(0.98, 0.78, 0.35, 1.00)
 -- entire screen, not just the strip. So each fill node is created once and
 -- kept, and this resizes them in place. The once-a-second rebuild stays as it
 -- was, for the things that really do change only once a second.
-local function update_ban_bars(self)
+local function update_ban_bars(self, dt)
     for _, bar in ipairs(self.ban_bars or {}) do
         local b = bar.b
-        local frac = math.max(0, math.min(1, (b.time_left or 0) / (b.max_time or 10)))
-        local w = bar.w * frac
-        gui.set_size(bar.node, vmath.vector3(w, 3, 0))
-        -- Grows from the left edge, so the centre moves with the width.
-        gui.set_position(bar.node, vmath.vector3(bar.left + w / 2, bar.y, 0))
-        gui.set_color(bar.node, frac < 0.3 and COL_RED or COL_GREEN)
+        if bar.shimmer ~= nil or bar.fill ~= nil then
+            -- A championship strip. It has a shimmer to sweep as well as a bar
+            -- to slide, and its own animator owns both.
+            pcall(champ_banner.animate, bar, dt or 0, b.time_left, b.max_time or 10)
+        else
+            local frac = math.max(0, math.min(1, (b.time_left or 0) / (b.max_time or 10)))
+            local w = bar.w * frac
+            gui.set_size(bar.node, vmath.vector3(w, 3, 0))
+            -- Grows from the left edge, so the centre moves with the width.
+            gui.set_position(bar.node, vmath.vector3(bar.left + w / 2, bar.y, 0))
+            gui.set_color(bar.node, frac < 0.3 and COL_RED or COL_GREEN)
+        end
     end
 end
 
@@ -262,78 +258,64 @@ local function draw_banner(self)
     self.ban_bars = {}
     for idx, b in ipairs(self.banners or {}) do
         local bw, slide = VISIBLE_W, (b.y_off or 0) * 132
-        -- A JOIN strip is taller by the fee line it carries, and the stack
-        -- below it steps down by the same amount so two of them cannot overlap.
         local joining = b.joining and true or false
-        local bh = joining and BAN_H_JOIN or 92
+        local bh = joining and champ_banner.HEIGHT or 92
         local half = bh / 2
         local cy, alpha = EDGE_T - 70 - (idx - 1) * 102 + slide - (joining and (bh - 92) / 2 or 0), b.alpha or 1
-        self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(CX, cy, 0), vmath.vector3(bw, bh, 0), vmath.vector4(0.06, 0.10, 0.14, 0.97 * alpha))), id = "banner_block" }
-        track(self, ui.box(vmath.vector3(CX, cy + half, 0), vmath.vector3(bw, 3, 0), vmath.vector4(0.2, 0.9, 1.0, alpha)))
-        if joining and b.badge then
-            -- Up onto the rule: the prize takes the inline slot the badge used
-            -- to sit in, and an invite that costs coins still has to say what
-            -- it is.
-            draw_badge(self, b.badge, CX, cy + half, BAN_CHAMP_H, alpha)
-        end
-        -- Sits ON the top rule, centred — a fixed position rather than trailing
-        -- the title, which carries a player name of unpredictable length while
-        -- the right-hand side is already crowded by H2H and the two buttons.
-        -- No centred badge on the rule: the label sits inline below, between
-        -- the H2H block and the buttons. Saying it twice on one strip is not
-        -- twice as clear.
-        -- Sender avatar (framed disc) on the left of the inline invite bar.
-        track(self, ui.box(vmath.vector3(EDGE_L + 48, cy, 0), vmath.vector3(60, 60, 0), vmath.vector4(0.10, 0.14, 0.18, alpha)))
-        local b_av = track(self, ui.avatar(vmath.vector3(EDGE_L + 48, cy, 0), vmath.vector3(54, 54, 0), b.avatar or 1))
-        gui.set_color(b_av, vmath.vector4(1, 1, 1, alpha))
-        local ty = joining and (cy + 30) or (cy + 20)
-        local dy = joining and (cy + 2) or (cy - 12)
-        gui.set_pivot(track(self, ui.text(vmath.vector3(EDGE_L + 90, ty, 0), b.title or "GAME REQUEST", "body", vmath.vector4(0.92, 0.96, 1.0, alpha))), gui.PIVOT_W)
-        gui.set_pivot(track(self, ui.text(vmath.vector3(EDGE_L + 90, dy, 0), b.desc or "", "small", vmath.vector4(0.42, 0.56, 0.68, alpha))), gui.PIVOT_W)
-        -- JOIN is amber, ACCEPT is green. The one button on this strip that
-        -- spends coins should not look like the one that does not.
-        local acc_bg = joining and vmath.vector4(BAN_JOIN.x, BAN_JOIN.y, BAN_JOIN.z, BAN_JOIN.w * alpha)
-            or vmath.vector4(0.0, 0.9, 0.63, 0.30 * alpha)
-        local acc_tx = joining and vmath.vector4(BAN_JOIN_TX.x, BAN_JOIN_TX.y, BAN_JOIN_TX.z, alpha)
-            or vmath.vector4(1, 1, 1, alpha)
-        self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(EDGE_R - 90, cy, 0), vmath.vector3(120, 46, 0), acc_bg)), id = "banner_accept", data = b.request_id }
-        track(self, ui.text(vmath.vector3(EDGE_R - 90, cy, 0), b.accept_label or "ACCEPT", "btn_md", acc_tx))
-        self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(EDGE_R - 225, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.12, 0.19, 0.27, 0.85 * alpha))), id = "banner_decline", data = b.request_id }
-        track(self, ui.text(vmath.vector3(EDGE_R - 225, cy, 0), b.decline_label or "DECLINE", "btn_md", vmath.vector4(0.82,0.86,0.91,alpha)))
 
         if joining then
-            -- What it costs, under the button that charges it.
-            local fee = tonumber(b.entry_fee) or 0
-            if fee > 0 then
-                track(self, ui.text(vmath.vector3(EDGE_R - 157, cy - half + 20, 0),
-                    "One-time join fee  -  " .. commas(fee), "small",
-                    vmath.vector4(BAN_FEE.x, BAN_FEE.y, BAN_FEE.z, alpha)))
-            end
-            -- And what it is FOR, in the space H2H would have taken. Past form
-            -- against one opponent is not what this decision is about.
-            local prize = tonumber(b.prize) or 0
-            if prize > 0 then
-                local px = EDGE_R - BAN_PRIZE_X
-                track(self, ui.text(vmath.vector3(px, cy + 24, 0), "GRAND PRIZE", "small",
-                    vmath.vector4(BAN_PRIZE_CAP.x, BAN_PRIZE_CAP.y, BAN_PRIZE_CAP.z, alpha)))
-                track(self, ui.text(vmath.vector3(px, cy - 12, 0), commas(prize), "subtitle1",
-                    vmath.vector4(BAN_PRIZE.x, BAN_PRIZE.y, BAN_PRIZE.z, alpha)))
-            end
+            -- A CHAMPIONSHIP OFFER IS NOT A GAME REQUEST, and gets its own
+            -- surface. Drawn by the shared module so this inline strip and
+            -- incoming.gui_script's global overlay render the identical thing
+            -- — see the long note in modules/champ_banner.lua for why it is
+            -- written once rather than twice.
+            local anim = champ_banner.draw({
+                track = function(node) return track(self, node) end,
+                ui = ui,
+                box = { L = EDGE_L, R = EDGE_R, CX = CX },
+                button = function(kind, node)
+                    self.buttons[#self.buttons + 1] = {
+                        node = node,
+                        id = (kind == "accept") and "banner_accept" or "banner_decline",
+                        data = b.request_id,
+                    }
+                end,
+            }, b, cy, alpha)
+            anim.b = b
+            self.ban_bars[#self.ban_bars + 1] = anim
         else
+            self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(CX, cy, 0), vmath.vector3(bw, bh, 0), vmath.vector4(0.06, 0.10, 0.14, 0.97 * alpha))), id = "banner_block" }
+            track(self, ui.box(vmath.vector3(CX, cy + half, 0), vmath.vector3(bw, 3, 0), vmath.vector4(0.2, 0.9, 1.0, alpha)))
+            -- Sits ON the top rule, centred — a fixed position rather than
+            -- trailing the title, which carries a player name of unpredictable
+            -- length while the right-hand side is already crowded by H2H and
+            -- the two buttons. No centred badge on the rule: the label sits
+            -- inline below, between the H2H block and the buttons. Saying it
+            -- twice on one strip is not twice as clear.
+            -- Sender avatar (framed disc) on the left of the inline invite bar.
+            track(self, ui.box(vmath.vector3(EDGE_L + 48, cy, 0), vmath.vector3(60, 60, 0), vmath.vector4(0.10, 0.14, 0.18, alpha)))
+            local b_av = track(self, ui.avatar(vmath.vector3(EDGE_L + 48, cy, 0), vmath.vector3(54, 54, 0), b.avatar or 1))
+            gui.set_color(b_av, vmath.vector4(1, 1, 1, alpha))
+            gui.set_pivot(track(self, ui.text(vmath.vector3(EDGE_L + 90, cy + 20, 0), b.title or "GAME REQUEST", "body", vmath.vector4(0.92, 0.96, 1.0, alpha))), gui.PIVOT_W)
+            gui.set_pivot(track(self, ui.text(vmath.vector3(EDGE_L + 90, cy - 12, 0), b.desc or "", "small", vmath.vector4(0.42, 0.56, 0.68, alpha))), gui.PIVOT_W)
+            self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(EDGE_R - 90, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.0, 0.9, 0.63, 0.30 * alpha))), id = "banner_accept", data = b.request_id }
+            track(self, ui.text(vmath.vector3(EDGE_R - 90, cy, 0), "ACCEPT", "btn_md", vmath.vector4(1,1,1,alpha)))
+            self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(EDGE_R - 225, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.12, 0.19, 0.27, 0.85 * alpha))), id = "banner_decline", data = b.request_id }
+            track(self, ui.text(vmath.vector3(EDGE_R - 225, cy, 0), "DECLINE", "btn_md", vmath.vector4(0.82,0.86,0.91,alpha)))
             -- Inline badge: same centre line as H2H and the buttons, in the
             -- space the shifted H2H anchor opens up.
             draw_badge(self, b.badge, EDGE_R - BAN_CHAMP_X, cy, BAN_CHAMP_H, alpha)
             if b.h2h then
                 draw_h2h_row(self, EDGE_R - (b.badge and BAN_H2H_X_CHAMP or BAN_H2H_X), cy, h2h_view(b.h2h), alpha)
             end
+            -- The fill is created unconditionally, even at zero width, because
+            -- update_ban_bars resizes this exact node every frame — a node
+            -- created only when there was something to show would not exist on
+            -- the frames that need to grow it.
+            track(self, ui.box(vmath.vector3(CX, cy - half, 0), vmath.vector3(bw, 3, 0), vmath.vector4(0.12, 0.19, 0.27, alpha)))
+            local fill = track(self, ui.box(vmath.vector3(CX - bw/2, cy - half, 0), vmath.vector3(0, 3, 0), COL_GREEN))
+            self.ban_bars[#self.ban_bars + 1] = { node = fill, b = b, w = bw, left = CX - bw/2, y = cy - half }
         end
-        -- The fill is created unconditionally, even at zero width, because
-        -- update_ban_bars resizes this exact node every frame — a node created
-        -- only when there was something to show would not exist on the frames
-        -- that need to grow it.
-        track(self, ui.box(vmath.vector3(CX, cy - half, 0), vmath.vector3(bw, 3, 0), vmath.vector4(0.12, 0.19, 0.27, alpha)))
-        local fill = track(self, ui.box(vmath.vector3(CX - bw/2, cy - half, 0), vmath.vector3(0, 3, 0), COL_GREEN))
-        self.ban_bars[#self.ban_bars + 1] = { node = fill, b = b, w = bw, left = CX - bw/2, y = cy - half }
     end
 end
 
@@ -553,7 +535,7 @@ function update(self, dt)
         end
         -- Smooth: resize the existing fills. The whole-second rebuild above
         -- still happens, for everything that genuinely ticks in seconds.
-        pcall(update_ban_bars, self)
+        pcall(update_ban_bars, self, dt)
         for _, b in ipairs(expired) do
             if b.request_id and b.request_id ~= "" then ws.decline_game_request(b.request_id) end
             for i = #self.banners, 1, -1 do if self.banners[i].request_id == b.request_id then table.remove(self.banners, i) end end

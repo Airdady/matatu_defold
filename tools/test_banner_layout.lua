@@ -104,34 +104,25 @@ for _, path in ipairs({ "main/online.gui_script", "main/incoming.gui_script" }) 
   check(tag .. ": inline badge is on the cy centre line",
     src:find("BAN_CHAMP_X, cy, BAN_CHAMP_H") ~= nil)
 
-  -- ONE badge per strip, still — but there are now TWO places it can be drawn,
-  -- and they are mutually exclusive at runtime:
+  -- ONE badge per strip. There used to be a second, centred on the top rule,
+  -- saying the same thing in a second place.
   --
-  --   ordinary strip   inline, on the buttons' centre line
-  --   JOIN strip       up on the top rule, because the grand prize has taken
-  --                    the inline slot
-  --
-  -- What must never come back is BOTH on one strip, which is what the single
-  -- count used to be guarding against. So the count is two call sites, and the
-  -- guard becomes: the rule badge is inside the `joining` branch and the inline
-  -- one is inside its `else`.
+  -- The championship JOIN offer is not a counter-example: it is drawn by
+  -- modules/champ_banner.lua on a surface of its own, wears the words GLOBAL
+  -- CHAMPIONSHIP rather than a pill, and never reaches this code at all.
   local badge_draws = 0
   for _ in src:gmatch("draw_badge%(self, [db]%.badge") do badge_draws = badge_draws + 1 end
-  check(tag .. ": exactly two badge call sites, one per strip kind", badge_draws == 2,
+  check(tag .. ": exactly one badge is drawn", badge_draws == 1,
     ("found %d"):format(badge_draws))
+  check(tag .. ": nothing draws a badge on the top rule",
+    src:find("draw_badge%(self, [db]%.badge, [mCX]+[%.%w]*, top") == nil
+    and src:find("draw_badge%(self, [db]%.badge, CX, cy %+ 44") == nil)
 
-  check(tag .. ": the rule badge is only drawn on a JOIN strip",
-    src:find("joining and [db]%.badge") ~= nil)
-  check(tag .. ": and the inline badge only when NOT joining",
-    -- The inline draw sits after an `else` belonging to `if joining then`.
-    (function()
-      local at = src:find("draw_badge%(self, [db]%.badge, [EDGE_Rm%.]+ %- BAN_CHAMP_X")
-      if not at then return false end
-      local before = src:sub(1, at)
-      local else_at = before:match(".*()else")
-      local join_at = before:match(".*()if joining then")
-      return else_at ~= nil and join_at ~= nil and join_at < else_at
-    end)())
+  -- And the championship offer leaves this strip entirely, rather than being
+  -- a variant of it. If that branch ever falls through, an offer that costs
+  -- money gets drawn as an ordinary invite.
+  check(tag .. ": a championship offer is handed to its own module",
+    src:find("champ_banner%.draw") ~= nil)
 
   -- Both surfaces get their description from the ONE shared function, so a
   -- knockout cannot read as a score cap on one strip and a best-of on the other.

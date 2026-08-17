@@ -751,15 +751,39 @@ local function rebuild_body(self)
         -- Visual left-alignment anchors for info card texts via PIVOT_W
         local text_start_x = card_cx - card_w/2 + 16
 
+        -- ROOM BETWEEN THE THREE LINES.
+        --
+        -- The round name, the reward and the score were pinned at +14, -4 and
+        -- -20 from the row's centre — 18px and 16px apart, for text at "body"
+        -- size. They read as one block rather than three facts, and the
+        -- descenders of the name very nearly touched the reward beneath it.
+        --
+        -- Spread from the card's own height instead of from fixed offsets, so
+        -- the spacing holds on a short screen (where row_gap shrinks) as well
+        -- as a tall one. Clamped at both ends: below 22 the crowding is back,
+        -- and above 30 the three lines drift apart into three unrelated things.
+        --
+        -- The middle slot is skipped entirely when there is no reward to show,
+        -- rather than left as a gap — two lines centred read as two lines,
+        -- while two lines with a hole between them read as one that failed to
+        -- load.
+        local card_h = row_gap - 8
+        local line_gap = math.max(22, math.min(30, card_h / 3))
+        local has_middle = (is_final and grand > 0) or (tonumber(lv.points) or 0) > 0
+
+        local name_y  = row_cy + (has_middle and line_gap or line_gap * 0.55)
+        local mid_y   = row_cy
+        local score_y = row_cy - (has_middle and line_gap or line_gap * 0.55)
+
         local name_col = is_final and vmath.vector4(1, 0.84, 0, 1) or vmath.vector4(0.95, 0.95, 0.95, 1)
-        local n_node = track(self, ui.text(vmath.vector3(text_start_x, row_cy + 14, 0), (lv.name or ("Level " .. i)), "body", name_col))
+        local n_node = track(self, ui.text(vmath.vector3(text_start_x, name_y, 0), (lv.name or ("Level " .. i)), "body", name_col))
         gui.set_pivot(n_node, gui.PIVOT_W)
 
         if is_final and grand > 0 then
-            local p_node = track(self, ui.text(vmath.vector3(text_start_x, row_cy - 4, 0), "Prize: " .. commas(grand) .. " Coins", "small", vmath.vector4(1, 0.84, 0, 1)))
+            local p_node = track(self, ui.text(vmath.vector3(text_start_x, mid_y, 0), "Prize: " .. commas(grand) .. " Coins", "small", vmath.vector4(1, 0.84, 0, 1)))
             gui.set_pivot(p_node, gui.PIVOT_W)
         elseif (tonumber(lv.points) or 0) > 0 then
-            local r_node = track(self, ui.text(vmath.vector3(text_start_x, row_cy - 4, 0), "Reward: " .. tostring(lv.points) .. " Pts", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+            local r_node = track(self, ui.text(vmath.vector3(text_start_x, mid_y, 0), "Reward: " .. tostring(lv.points) .. " Pts", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
             gui.set_pivot(r_node, gui.PIVOT_W)
         end
 
@@ -778,7 +802,7 @@ local function rebuild_body(self)
         end
 
         local sc_col = done and vmath.vector4(0.3, 0.8, 0.3, 1) or (cur and vmath.vector4(0.7, 0.7, 0.7, 1) or vmath.vector4(0.4, 0.4, 0.4, 1))
-        local s_node = track(self, ui.text(vmath.vector3(text_start_x, row_cy - 20, 0), string.format("Score: %d:%d", my_sc, op_sc), "body", sc_col))
+        local s_node = track(self, ui.text(vmath.vector3(text_start_x, score_y, 0), string.format("Score: %d:%d", my_sc, op_sc), "body", sc_col))
         gui.set_pivot(s_node, gui.PIVOT_W)
     end
 

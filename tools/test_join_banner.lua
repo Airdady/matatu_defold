@@ -107,54 +107,81 @@ check("absent is zero, not nil", champ.grand_prize({}), 0)
 check("and nothing at all is zero too", champ.grand_prize(nil), 0)
 
 ----------------------------------------------------------------------
-print("\n── the join strip's geometry, in both files ──")
+print("\n── the button names its own price ──")
 ----------------------------------------------------------------------
--- Nothing in the Defold GUI measures text at build time, so an overlap is only
--- ever found by reading the numbers. Both files are checked because they draw
--- the SAME invite.
+-- A button that spends coins should say how much on its own face. The fee line
+-- beside it is the explanation, not the disclosure: a player who reads only the
+-- button must still know what it costs.
+--
+-- champ_banner draws, so unlike championship.lua beside it there is no
+-- pretending it does not need Defold: its palette is built from vmath at load
+-- time. Two stub globals are enough to load the module and reach the pure
+-- parts — the label and the geometry constants — which is all that is being
+-- asked of it here. The drawing itself is exercised by the app.
+_G.vmath = _G.vmath or {
+  vector4 = function(x, y, z, w) return { x = x, y = y, z = z, w = w } end,
+  vector3 = function(x, y, z) return { x = x, y = y, z = z } end,
+}
+_G.gui = _G.gui or setmetatable({}, { __index = function() return function() end end })
+local cb = require("modules.champ_banner")
+check("the label carries the fee", cb.join_label(500), "JOIN FOR 500")
+check("...with thousands grouped", cb.join_label(20000), "JOIN FOR 20,000")
+check("a fee of zero leaves a bare JOIN", cb.join_label(0), "JOIN")
+check("...and so does no fee at all", cb.join_label(nil), "JOIN")
+check("junk does not produce a price", cb.join_label("free"), "JOIN")
+
+----------------------------------------------------------------------
+print("\n── the championship strip's own geometry ──")
+----------------------------------------------------------------------
+-- It is one module drawn by two surfaces, so the figures are checked once —
+-- which is the point of it being a module. Nothing in the Defold GUI measures
+-- text at build time, so an overlap is only ever found by reading numbers.
 local function source(path)
   local f = assert(io.open(here .. "/../" .. path))
   local s = f:read("*a"); f:close()
   return s
 end
 
+check("the strip is taller than the ordinary 92px one", cb.HEIGHT > 92, true)
+
+-- Laid out from the right edge, same convention as the ordinary strip. The
+-- prize plaque must clear the buttons, and the buttons must clear each other.
+local join_left   = cb.JOIN_X + cb.JOIN_W / 2
+local cancel_right = cb.CANCEL_X - cb.CANCEL_W / 2
+check("CANCEL sits left of JOIN without touching it", cancel_right > join_left, true)
+
+local plaque_left = cb.PLAQUE_X + cb.PLAQUE_W / 2
+local cancel_left = cb.CANCEL_X + cb.CANCEL_W / 2
+check("the prize plaque clears both buttons", plaque_left >= cancel_left, true)
+
+local src = source("modules/champ_banner.lua")
+check("the plate fades toward one corner rather than filling flat",
+      src:find("draw_corner_fade") ~= nil, true)
+check("...built from stepped slices, since a box takes one colour",
+      src:find("FADE_STEPS") ~= nil, true)
+check("...and the ramp is curved so the glow stays out of the left",
+      src:find("t %* t %* t") ~= nil, true)
+check("the prize has a shimmer that moves per frame, not per rebuild",
+      src:find("function M%.animate") ~= nil and src:find("anim%.shimmer") ~= nil, true)
+check("the shimmer is confined to the plaque's own span",
+      src:find("shimmer_span = {") ~= nil, true)
+
+----------------------------------------------------------------------
+print("\n── and both surfaces use it ──")
+----------------------------------------------------------------------
 for _, file in ipairs({ "main/incoming.gui_script", "main/online.gui_script" }) do
-  local src = source(file)
+  local s = source(file)
   local tag = file:match("([^/]+)$")
-
-  local function const(name)
-    return tonumber(src:match("local " .. name .. "%s*=%s*(%-?%d+)"))
-  end
-
-  check(tag .. ": the join strip is taller than the ordinary one",
-        (const("BAN_H_JOIN") or 0) > 92, true)
-
-  -- The prize block sits where H2H would have been. It must clear the buttons,
-  -- which start at R-285 (ACCEPT centred at R-90, DECLINE at R-225, both 120
-  -- wide). "subtitle1" is a 34px face; a five-figure amount is comfortably
-  -- under 200px, so ±100 from its centre is the span to keep clear.
-  local prize_x = const("BAN_PRIZE_X") or 0
-  check(tag .. ": the prize is left of the buttons", prize_x - 100 > 285, true)
-
-  -- ...and the fee line sits under the buttons rather than beside them, so it
-  -- cannot push into the prize.
-  check(tag .. ": the fee line is drawn on the bottom edge, not the centre",
-        src:find("One%-time join fee") ~= nil, true)
-
-  check(tag .. ": JOIN has its own colour, distinct from ACCEPT's green",
-        src:find("BAN_JOIN%s*=%s*vmath%.vector4") ~= nil, true)
-  check(tag .. ": the labels come from the shared offer, not a literal",
-        src:find("accept_label") ~= nil, true)
-  check(tag .. ": and the offer is asked for by name",
-        src:find("champ%.offer") ~= nil, true)
-end
-
--- The two files must AGREE on every shared figure, or one invite looks like two.
-local a, b = source("main/incoming.gui_script"), source("main/online.gui_script")
-for _, name in ipairs({ "BAN_H_JOIN", "BAN_PRIZE_X" }) do
-  local va = tonumber(a:match("local " .. name .. "%s*=%s*(%-?%d+)"))
-  local vb = tonumber(b:match("local " .. name .. "%s*=%s*(%-?%d+)"))
-  check("both files agree on " .. name, va ~= nil and va == vb, true)
+  check(tag .. ": draws the offer through the shared module",
+        s:find("champ_banner%.draw") ~= nil, true)
+  check(tag .. ": and animates it every frame",
+        s:find("champ_banner%.animate") ~= nil, true)
+  check(tag .. ": the offer itself is asked for by name",
+        s:find("champ%.offer") ~= nil, true)
+  -- The old inline JOIN variant of the ordinary strip is gone. Left behind it
+  -- would be a second, worse rendering of the same invite.
+  check(tag .. ": no leftover inline join layout",
+        s:find("BAN_H_JOIN") == nil, true)
 end
 
 ----------------------------------------------------------------------

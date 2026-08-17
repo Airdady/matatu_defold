@@ -54,8 +54,11 @@ end
 local function clear(self)
     for _, n in ipairs(self.nodes) do pcall(gui.delete_node, n) end
     self.nodes, self.buttons = {}, {}
-    -- The countdown bar's node handle points into the list just deleted.
+    -- The countdown bar's node handle points into the list just deleted, and
+    -- so does the championship strip's shimmer. Animating either afterwards is
+    -- a call on a deleted node.
     self.ban_bar = nil
+    self.ban_anim = nil
 end
 local function track(self, n) self.nodes[#self.nodes+1] = n; return n end
 
@@ -171,32 +174,12 @@ local BAN_CHAMP_X     = 387
 local BAN_CHAMP_W     = 132
 local BAN_CHAMP_H     = 24
 
--- THE JOIN STRIP IS A DIFFERENT ANSWER TO A DIFFERENT QUESTION.
---
--- An ACCEPT invite asks "do you want this match". A JOIN invite asks "do you
--- want to enter the championship, for this much, to play for that much" — and
--- it takes real coins on the way through. Three things follow, and all three
--- need room the ordinary strip does not have:
---
---   the GRAND PRIZE     the reason to say yes, so it leads: big, gold, and
---                       given the space the head-to-head block would have had.
---                       H2H is deliberately dropped on this strip — past form
---                       against one opponent is not what this decision is
---                       about, and it is the only thing here worth its width.
---   the ENTRY FEE       stated under the buttons, because a button that costs
---                       money must say so where the thumb already is.
---   the BADGE           moved up onto the top rule, since the prize now
---                       occupies the inline slot it used to sit in.
---
--- Taller than the ordinary strip by exactly the fee line, so the layout it
--- shares with online.gui_script is otherwise untouched.
-local BAN_H_JOIN      = 118
-local BAN_PRIZE_X     = 420   -- from the right edge; clears the buttons at R-285
-local BAN_JOIN        = vmath.vector4(1.00, 0.72, 0.09, 0.92)  -- amber: not the green ACCEPT
-local BAN_JOIN_TX     = vmath.vector4(0.10, 0.07, 0.00, 1.00)
-local BAN_PRIZE       = vmath.vector4(1.00, 0.84, 0.20, 1.00)
-local BAN_PRIZE_CAP   = vmath.vector4(0.72, 0.62, 0.30, 1.00)
-local BAN_FEE         = vmath.vector4(0.98, 0.78, 0.35, 1.00)
+-- THE JOIN STRIP IS A DIFFERENT ANSWER TO A DIFFERENT QUESTION, so it is a
+-- different surface entirely: modules/champ_banner.lua draws it, and the online
+-- screen's inline strip calls the same module. See the long note there for why
+-- a championship offer does not belong in the same grey row as a match request,
+-- and why it is written once rather than twice.
+local champ_banner = require("modules.champ_banner")
 
 -- SLIDING THE COUNTDOWN BAR, EVERY FRAME.
 --
@@ -254,14 +237,27 @@ local BAN_DECLINE = vmath.vector4(0.12, 0.19, 0.27, 0.85)
 local function draw_banner(self, d, a)
     local m  = screen.metrics()
     local bw = m.VW
-    -- A JOIN strip is taller by the fee line it has to carry. Centred so it
-    -- grows downward from the same top edge, leaving everything above it alone.
-    local joining = d.joining and true or false
-    local bh = joining and BAN_H_JOIN or BAN_H
-    local cy = m.T - 70 - (joining and (bh - BAN_H) / 2 or 0)
-    local top, bot = cy + bh / 2, cy - bh / 2
 
-    track(self, ui.box(vmath.vector3(m.CX, cy, 0), vmath.vector3(bw, bh, 0), with_a(BAN_PANEL, a)))
+    -- A CHAMPIONSHIP OFFER IS NOT A GAME REQUEST, and gets its own surface.
+    -- Grows downward from the same top edge so nothing above it moves.
+    if d.joining then
+        local cy = m.T - 70 - (champ_banner.HEIGHT - BAN_H) / 2
+        self.ban_anim = champ_banner.draw({
+            track = function(node) return track(self, node) end,
+            ui = ui,
+            box = { L = m.L, R = m.R, CX = m.CX },
+            button = function(kind, node)
+                self.buttons[#self.buttons + 1] = { node = node, id = kind }
+            end,
+        }, d, cy, a)
+        self.ban_bar = nil
+        return
+    end
+
+    local cy = m.T - 70
+    local top, bot = cy + BAN_H / 2, cy - BAN_H / 2
+
+    track(self, ui.box(vmath.vector3(m.CX, cy, 0), vmath.vector3(bw, BAN_H, 0), with_a(BAN_PANEL, a)))
     track(self, ui.box(vmath.vector3(m.CX, top, 0), vmath.vector3(bw, 3, 0), with_a(BAN_RULE, a)))
 
     -- Sits ON the top rule, centred. A fixed position rather than trailing the
@@ -280,12 +276,6 @@ local function draw_banner(self, d, a)
             with_a(BAN_CUP_BG, a)))
         track(self, ui.text(vmath.vector3(m.CX, top, 0), "[TEAM CUP]", "small",
             with_a(BAN_CUP_TX, a)))
-    elseif joining and d.badge then
-        -- The badge comes up onto the rule on a JOIN strip: the prize now
-        -- occupies the inline slot it used to sit in, and the label still has
-        -- to be somewhere — this invite costs money, so what it IS matters
-        -- more here than on any other strip.
-        draw_badge(self, d.badge, m.CX, top, BAN_CHAMP_H, a)
     end
 
     -- Sender avatar (framed disc) on the left.
@@ -294,57 +284,26 @@ local function draw_banner(self, d, a)
     gui.set_color(track(self, ui.avatar(vmath.vector3(av_x, cy, 0), vmath.vector3(54, 54, 0), d.avatar or 1)),
         with_a(COL_WHITE, a))
 
-    -- Title + one-line description, left-aligned beside the avatar. Lifted on
-    -- a JOIN strip so the fee line has somewhere to sit underneath them.
-    local ty = joining and (cy + 30) or (cy + 20)
-    local dy = joining and (cy + 2) or (cy - 12)
-    gui.set_pivot(track(self, ui.text(vmath.vector3(m.L + 90, ty, 0),
+    -- Title + one-line description, left-aligned beside the avatar.
+    gui.set_pivot(track(self, ui.text(vmath.vector3(m.L + 90, cy + 20, 0),
         tostring(d.title or "GAME REQUEST"), "body", with_a(BAN_TITLE, a))), gui.PIVOT_W)
-    gui.set_pivot(track(self, ui.text(vmath.vector3(m.L + 90, dy, 0),
+    gui.set_pivot(track(self, ui.text(vmath.vector3(m.L + 90, cy - 12, 0),
         tostring(d.desc or ""), "small", with_a(BAN_DESC, a))), gui.PIVOT_W)
 
     -- Actions on the right, in the same order as the online screen's banner.
     -- Labels are overridable because a cup invitation is not answered the way
     -- a match request is: there is no opponent waiting, so the left-hand button
-    -- puts it off rather than turning it down. On a JOIN strip they read
-    -- JOIN / CANCEL, and JOIN is AMBER rather than the ordinary green — the
-    -- one button on this overlay that spends coins should not be the same
-    -- colour as the one that does not.
+    -- puts it off rather than turning it down.
     mkbtn(self, "decline", vmath.vector3(m.R - 225, cy, 0), vmath.vector3(120, 46, 0),
         d.decline_label or "DECLINE", with_a(BAN_DECLINE, a), nil, "btn_md", with_a(COL_MID, a))
     mkbtn(self, "accept",  vmath.vector3(m.R - 90,  cy, 0), vmath.vector3(120, 46, 0),
-        d.accept_label or "ACCEPT",
-        with_a(joining and BAN_JOIN or BAN_ACCEPT, a), nil, "btn_md",
-        with_a(joining and BAN_JOIN_TX or COL_WHITE, a))
+        d.accept_label or "ACCEPT",  with_a(BAN_ACCEPT,  a), nil, "btn_md", with_a(COL_WHITE, a))
 
-    if joining then
-        -- WHAT IT COSTS, under the button that charges it. Directly beneath
-        -- the pair rather than off with the title, because this is the line
-        -- that has to be read before the thumb lands.
-        local fee = tonumber(d.entry_fee) or 0
-        if fee > 0 then
-            track(self, ui.text(vmath.vector3(m.R - 157, bot + 20, 0),
-                "One-time join fee  -  " .. commas(fee), "small", with_a(BAN_FEE, a)))
-        end
-
-        -- WHAT IT IS FOR. The prize leads, in the space H2H would have taken:
-        -- past form against one opponent is not what this decision is about,
-        -- and it is the only thing on the strip worth its width.
-        local prize = tonumber(d.prize) or 0
-        if prize > 0 then
-            local px = m.R - BAN_PRIZE_X
-            track(self, ui.text(vmath.vector3(px, cy + 24, 0), "GRAND PRIZE", "small",
-                with_a(BAN_PRIZE_CAP, a)))
-            track(self, ui.text(vmath.vector3(px, cy - 12, 0), commas(prize), "subtitle1",
-                with_a(BAN_PRIZE, a)))
-        end
-    else
-        -- Inline badge: same centre line as the H2H row and the two buttons, in
-        -- the space the shifted H2H anchor opens up.
-        draw_badge(self, d.badge, m.R - BAN_CHAMP_X, cy, BAN_CHAMP_H, a)
-        if d.h2h then
-            draw_h2h_row(self, m.R - (d.badge and BAN_H2H_X_CHAMP or BAN_H2H_X), cy, h2h_view(d.h2h), a)
-        end
+    -- Inline badge: same centre line as the H2H row and the two buttons, in
+    -- the space the shifted H2H anchor opens up.
+    draw_badge(self, d.badge, m.R - BAN_CHAMP_X, cy, BAN_CHAMP_H, a)
+    if d.h2h then
+        draw_h2h_row(self, m.R - (d.badge and BAN_H2H_X_CHAMP or BAN_H2H_X), cy, h2h_view(d.h2h), a)
     end
 
     -- Countdown along the bottom edge. The fill is created unconditionally,
@@ -615,7 +574,19 @@ function update(self, dt)
 
         -- Smooth: resize the existing bar. The whole-second rebuild below still
         -- happens, for the numeric countdown that genuinely ticks in seconds.
-        if self.dialog.banner then pcall(update_ban_bar, self, self.dialog) end
+        --
+        -- The championship strip runs its own animator: it has a shimmer to
+        -- sweep as well as a bar to slide, and both move per frame for the same
+        -- reason — rebuilding every node sixty times a second to move two of
+        -- them is not a trade worth making.
+        if self.dialog.banner then
+            if self.ban_anim then
+                pcall(champ_banner.animate, self.ban_anim, dt,
+                    self.dialog.time_left, self.dialog.max_time or 10)
+            else
+                pcall(update_ban_bar, self, self.dialog)
+            end
+        end
 
         local cur_sec = math.floor(math.max(0, self.dialog.time_left))
         if cur_sec ~= self.dialog._last_sec then
