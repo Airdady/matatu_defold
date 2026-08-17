@@ -1,6 +1,8 @@
 local ws       = require("modules.websocket_manager")
 local config   = require("modules.config")
 local GameMode = require("modules.game_mode")
+local psort    = require("modules.player_sort")
+local app_state = require("modules.app_state")
 
 local TAB_QUICK   = 1
 local TAB_BATTLES = 2
@@ -235,6 +237,28 @@ function M.draw(self, ctx)
             end
         end
     end
+
+    -- WHO IS WORTH SHOWING FIRST.
+    --
+    -- Until now the list was in whatever order the server sent it, so the
+    -- players who could be challenged with a single tap were scattered through
+    -- it and the ones already mid-game — whose rows are not even tappable —
+    -- were as likely as anyone to be at the top.
+    --
+    -- My stake, then other stakes, then free, then playing. And when the
+    -- balance cannot cover any paid stake the same ladder is read around a
+    -- pivot of zero, which puts free first without a second ordering existing.
+    -- See modules/player_sort.lua.
+    --
+    -- The stake comes from app_state rather than from self.stake_index because
+    -- that is the one the socket has actually been told about (ws.update_stake
+    -- writes both together), so the list is ordered by the stake a challenge
+    -- would really go out at.
+    psort.sort(rows, {
+        selected_stake = app_state.selected_stake,
+        balance = (ws.current_user_data or {}).balance,
+        levels = config.STAKE_LEVELS,
+    })
 
     local content_h  = #rows * step
     local max_scroll = 0
