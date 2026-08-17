@@ -171,8 +171,23 @@ end
 function M.offer(payload, user_data)
     local t = (type(payload) == "table" and type(payload.tournament) == "table")
         and payload.tournament or nil
+
+    -- THREE WAYS TO RECOGNISE IT, because three shapes of invite arrive.
+    --
+    --   isChampionship      stated outright. The one to rely on.
+    --   the tournament      matched by scope / name / level count, or by its id
+    --                       against the player's own list — see M.matches.
+    --   a bare tournamentId some paths send no tournament object at all (a
+    --                       round continuation, and handleGameRequest's
+    --                       mid-game branch). Without this they fall through to
+    --                       the ordinary strip, which is the failure this whole
+    --                       function exists to prevent.
     local is_champ = (type(payload) == "table" and payload.isChampionship == true)
         or M.matches(t, user_data)
+    if not is_champ and type(payload) == "table" and payload.tournamentId then
+        local known = M.known_id(user_data)
+        is_champ = known ~= "" and tostring(payload.tournamentId) == known
+    end
 
     -- Present and false is the only thing that means "not in yet". Absent means
     -- an older server that never answered the question, and inventing a JOIN
@@ -185,6 +200,15 @@ function M.offer(payload, user_data)
     if type(payload) == "table" then said = payload.youHaveJoined end
     local joining = is_champ and said == false
 
+    -- WHAT SWITCHES THE PREMIUM STRIP ON IS `championship`, NOT `joining`.
+    --
+    -- Those were conflated once, and the result was a design nobody could see:
+    -- it fired only for a player who had not joined, so anybody already in the
+    -- championship — which is everybody testing it — got the ordinary grey
+    -- strip, and so did every player on a server that does not yet send
+    -- `youHaveJoined` at all. A championship invite looks like a championship
+    -- invite either way; joining only changes the BUTTON and whether a fee is
+    -- named.
     return {
         championship = is_champ,
         joining      = joining,

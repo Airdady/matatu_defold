@@ -258,12 +258,16 @@ local function draw_banner(self)
     self.ban_bars = {}
     for idx, b in ipairs(self.banners or {}) do
         local bw, slide = VISIBLE_W, (b.y_off or 0) * 132
-        local joining = b.joining and true or false
-        local bh = joining and champ_banner.HEIGHT or 92
+        -- Keyed on `championship`, NOT on `joining`: those were conflated
+        -- once and the design was invisible for it — it fired only for a
+        -- player who had not joined, so everybody already in the championship
+        -- got the ordinary grey strip. Joining only changes the button.
+        local premium = b.championship and true or false
+        local bh = premium and champ_banner.HEIGHT or 92
         local half = bh / 2
-        local cy, alpha = EDGE_T - 70 - (idx - 1) * 102 + slide - (joining and (bh - 92) / 2 or 0), b.alpha or 1
+        local cy, alpha = EDGE_T - 70 - (idx - 1) * 102 + slide - (premium and (bh - 92) / 2 or 0), b.alpha or 1
 
-        if joining then
+        if premium then
             -- A CHAMPIONSHIP OFFER IS NOT A GAME REQUEST, and gets its own
             -- surface. Drawn by the shared module so this inline strip and
             -- incoming.gui_script's global overlay render the identical thing
@@ -474,7 +478,11 @@ local function open_banner(self, raw)
         alpha      = 1,
         y_off      = 0,
         h2h        = raw.headToHead,
+        championship  = offer.championship,
         joining       = offer.joining,
+        -- The sender's name alone: the premium strip prints GLOBAL
+        -- CHAMPIONSHIP itself, so `title` would say it twice.
+        opponent_name = sender_nm,
         entry_fee     = offer.entry_fee,
         prize         = offer.prize,
         accept_label  = offer.accept_label,

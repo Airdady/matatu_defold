@@ -155,10 +155,13 @@ function M.draw(ctx, d, cy, a)
         track(ui.avatar(vmath.vector3(av_x, cy + 6, 0), vmath.vector3(52, 52, 0), d.avatar or 1)),
         vmath.vector4(1, 1, 1, a))
 
+    -- The kind, then who, then the terms. `opponent_name` rather than `title`:
+    -- the ordinary strip's title reads "CHAMPIONSHIP  -  RIVAL", and printing
+    -- that under a caption already saying GLOBAL CHAMPIONSHIP says it twice.
     gui.set_pivot(track(ui.text(vmath.vector3(box.L + 86, cy + 34, 0),
         "GLOBAL CHAMPIONSHIP", "small", with_a(RULE, a))), gui.PIVOT_W)
     gui.set_pivot(track(ui.text(vmath.vector3(box.L + 86, cy + 8, 0),
-        tostring(d.title or "A PLAYER"), "body", with_a(TITLE, a))), gui.PIVOT_W)
+        tostring(d.opponent_name or d.title or "A PLAYER"), "body", with_a(TITLE, a))), gui.PIVOT_W)
     gui.set_pivot(track(ui.text(vmath.vector3(box.L + 86, cy - 16, 0),
         tostring(d.desc or ""), "small", with_a(SUB, a))), gui.PIVOT_W)
 
@@ -193,21 +196,32 @@ function M.draw(ctx, d, cy, a)
     -- ── buttons, below the copy rather than beside it ──
     local by = bot + M.BTN_H / 2 + 10
 
+    -- THE STRIP IS THE SAME EITHER WAY; ONLY THE BUTTON CHANGES.
+    --
+    -- A player already in the championship is being asked to play a match, and
+    -- a player who is not is being asked to buy a run at one. Both are looking
+    -- at the same tournament and the same prize, so both get the same surface —
+    -- gating the whole design on the second case is what made it invisible to
+    -- everybody already in.
+    local joining = d.joining and true or false
+
     local cancel = track(ui.box(vmath.vector3(box.R - M.CANCEL_X, by, 0),
         vmath.vector3(M.CANCEL_W, M.BTN_H, 0), with_a(CANCEL_BG, a)))
     ctx.button("decline", cancel)
-    track(ui.text(vmath.vector3(box.R - M.CANCEL_X, by, 0), "CANCEL", "btn_md", with_a(CANCEL_TX, a)))
+    track(ui.text(vmath.vector3(box.R - M.CANCEL_X, by, 0),
+        joining and "CANCEL" or "DECLINE", "btn_md", with_a(CANCEL_TX, a)))
 
     local join = track(ui.box(vmath.vector3(box.R - M.JOIN_X, by, 0),
         vmath.vector3(M.JOIN_W, M.BTN_H, 0), with_a(JOIN_BG, a)))
     ctx.button("accept", join)
     track(ui.text(vmath.vector3(box.R - M.JOIN_X, by, 0),
-        M.join_label(d.entry_fee), "btn_md", with_a(JOIN_TX, a)))
+        joining and M.join_label(d.entry_fee) or "ACCEPT", "btn_md", with_a(JOIN_TX, a)))
 
     -- The price again, in words, under the button that charges it. The label
     -- carries the number; this says what KIND of charge it is — once, ever,
-    -- rather than per match.
-    if (tonumber(d.entry_fee) or 0) > 0 then
+    -- rather than per match. Absent entirely when nothing is being charged,
+    -- rather than reading "One-time join fee - 0".
+    if joining and (tonumber(d.entry_fee) or 0) > 0 then
         gui.set_pivot(track(ui.text(vmath.vector3(box.R - M.PLAQUE_X, by, 0),
             "One-time join fee", "small", with_a(SUB, a))), gui.PIVOT_CENTER)
     end

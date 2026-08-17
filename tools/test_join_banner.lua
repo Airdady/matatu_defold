@@ -50,8 +50,35 @@ local function invite(over)
 end
 
 ----------------------------------------------------------------------
-print("── which question the strip asks ──")
+
 ----------------------------------------------------------------------
+-- THE ONE THAT MADE THE WHOLE DESIGN INVISIBLE.
+--
+-- The premium strip is selected by `championship`, not by `joining`. Those were
+-- conflated once: the strip fired only for a player who had NOT joined, so
+-- everybody already in the championship — which is everybody testing it — got
+-- the ordinary grey strip, and so did everybody on a server not yet sending
+-- `youHaveJoined` at all. Reported as "still no difference on the championship
+-- incoming request".
+print("── which invites get the premium strip ──")
+check("a championship invite to somebody NOT in it",
+      champ.offer(invite(), user_data).championship, true)
+check("a championship invite to somebody ALREADY in it",
+      champ.offer(invite({ youHaveJoined = true, entryFee = 0 }), user_data).championship, true)
+check("...and an older payload that answers neither question",
+      champ.offer({
+        requestId = "r1",
+        tournament = { _id = "champ-1", name = "Global Championship" },
+      }, user_data).championship, true)
+check("...and one carrying only a bare tournamentId",
+      champ.offer({ requestId = "r1", tournamentId = "champ-1" }, user_data).championship, true)
+check("a battle never does",
+      champ.offer({ requestId = "r2", tournament = { _id = "battle-9", levels = { 1 } } },
+        user_data).championship, false)
+check("nor does a bare id for something else",
+      champ.offer({ requestId = "r2", tournamentId = "battle-9" }, user_data).championship, false)
+
+print("\n── which question the strip asks ──")
 local not_in = champ.offer(invite(), user_data)
 check("a player who is not in is asked to JOIN", not_in.joining, true)
 check("...and the button says so", not_in.accept_label, "JOIN")

@@ -238,9 +238,15 @@ local function draw_banner(self, d, a)
     local m  = screen.metrics()
     local bw = m.VW
 
-    -- A CHAMPIONSHIP OFFER IS NOT A GAME REQUEST, and gets its own surface.
-    -- Grows downward from the same top edge so nothing above it moves.
-    if d.joining then
+    -- A CHAMPIONSHIP INVITE IS NOT AN ORDINARY GAME REQUEST, and gets its own
+    -- surface — whether or not this player has joined. Grows downward from the
+    -- same top edge so nothing above it moves.
+    --
+    -- Keyed on `championship`, NOT on `joining`. Those were conflated once and
+    -- the design was invisible for it: it fired only for a player who had not
+    -- joined, so everybody already in the championship saw the ordinary grey
+    -- strip, and so did everybody on a server not yet sending `youHaveJoined`.
+    if d.championship then
         local cy = m.T - 70 - (champ_banner.HEIGHT - BAN_H) / 2
         self.ban_anim = champ_banner.draw({
             track = function(node) return track(self, node) end,
@@ -686,9 +692,17 @@ function on_message(self, message_id, message)
             badge       = kind,
             title       = title,
             desc        = desc,
+            -- `championship` is what selects the premium strip; `joining` only
+            -- decides its button and whether a fee is named.
+            championship  = is_tb and offer.championship or false,
             joining       = is_tb and offer.joining or false,
             entry_fee     = offer.entry_fee,
             prize         = offer.prize,
+            -- The sender's name on its own. The premium strip prints GLOBAL
+            -- CHAMPIONSHIP as its own caption, so `title` — which reads
+            -- "CHAMPIONSHIP  -  RIVAL" — would say it twice.
+            opponent_name = tostring(sender.username
+                or (r.user or {}).username or "A player"):upper(),
             accept_label  = is_tb and offer.accept_label or nil,
             decline_label = is_tb and offer.decline_label or nil,
         })
