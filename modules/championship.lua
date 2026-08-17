@@ -81,87 +81,6 @@ function M.matches(t, user_data)
     return id == M.known_id(user_data)
 end
 
---- The player's own record of a tournament, from the list IDENTIFY brought.
---
--- Looked up by id rather than by content for the same reason known_id exists:
--- a request payload describes the TOURNAMENT, and only the player's own copy
--- knows anything about the player.
-function M.my_entry(tournament_id, user_data)
-    local id = tostring(tournament_id or "")
-    if id == "" then return nil end
-    local list = type(user_data) == "table" and user_data.tournaments or nil
-    if type(list) ~= "table" then return nil end
-    for _, t in ipairs(list) do
-        if type(t) == "table" and tostring(t._id or t.id or "") == id then return t end
-    end
-    return nil
-end
-
---- Has this player PAID to be on the ladder?
---
--- Same answer the tournament map's is_joined uses, and for the same reason it
--- stopped inferring from the level: joining does not advance the level, so a
--- player who has just paid and one who never has both sit at level 1. `joined`
--- is the backend's own entryPaidAt, sent on the tournament and again on its
--- userProgress; either will do.
---
--- Answers FALSE when it has no record to read, which is deliberate — see
--- should_drop_request, where "no record" is never on its own a reason to act.
-function M.joined(entry)
-    if type(entry) ~= "table" then return false end
-    if entry.joined ~= nil then return entry.joined and true or false end
-    local up = entry.userProgress
-    if type(up) == "table" then
-        if up.joined ~= nil then return up.joined and true or false end
-        if up.entryPaidAt ~= nil then return true end
-    end
-    return entry.entryPaidAt ~= nil
-end
-
---- Should an incoming GAME_REQUEST be dropped without ever being shown?
---
--- ONLY ENTRANTS PLAY THE CHAMPIONSHIP. The ladder is bought once at the door
--- (POST /tournaments/global/join), and the server is what enforces that — this
--- is the near side of the same rule, and it earns its place for one reason:
--- accepting a championship invite costs the entry in real coins, so a request
--- that should never have arrived must not be one tap away from taking
--- somebody's money.
---
--- Deliberately narrow, and it FAILS OPEN in every uncertain case:
---
---   no tournament id            -> shown. An ordinary challenge.
---   id not in the player's list -> shown. Somebody else's battle or cup; the
---                                  player's own list would not contain it, and
---                                  a guess here would start eating invites the
---                                  player wanted.
---   record says nothing of joining -> shown. An older server sends no `joined`
---                                  at all, and silently swallowing every
---                                  championship invite on that build would be
---                                  a worse bug than the one this fixes.
---
--- Which leaves exactly one case that drops: this IS the championship, the
--- player holds a record of it, and that record says they are not in it.
-function M.should_drop_request(payload, user_data)
-    if type(payload) ~= "table" then return false end
-    local t = (type(payload.tournament) == "table") and payload.tournament or nil
-    local id = (t and (t._id or t.id)) or payload.tournamentId
-    if not id or tostring(id) == "" then return false end
-
-    local mine = M.my_entry(id, user_data)
-    if not mine then return false end
-    if not (M.matches(mine, user_data) or M.matches(t, user_data)) then return false end
-    -- The field has to be PRESENT to refuse on. Absent means an older backend,
-    -- not a bystander.
-    if mine.joined == nil
-        and type(mine.userProgress) ~= "table" then return false end
-    if mine.joined == nil
-        and mine.userProgress.joined == nil
-        and mine.userProgress.entryPaidAt == nil then return false end
-
-    return not M.joined(mine)
-end
-
-
 -- WHICH BADGE THIS INVITE WEARS.
 --
 -- Three kinds, and they are NOT distinguishable by any single field:
@@ -198,6 +117,88 @@ function M.kind(t, user_data)
     if fmt and fmt <= 1 then return "KNOCKOUT" end
     if level_count(t) == 1 then return "BATTLE" end
     return nil
+end
+
+-- WHAT THIS INVITE IS ASKING THE PLAYER TO DO.
+--
+-- Championship invites now reach every eligible player, joined or not, because
+-- a ladder nobody may be invited to fills up very slowly. So one strip has to
+-- carry two different questions:
+--
+--   already in    ACCEPT / DECLINE. A match, on terms they have already paid.
+--   not in        JOIN / CANCEL, with the one-off entry fee stated. Tapping it
+--                 enters them AND starts the match, and it costs real coins —
+--                 so it must not look like the same button as ACCEPT.
+--
+-- The server settles which of the two it is (`youHaveJoined` on the payload,
+-- decided against the recipient's own progress row) precisely so the client
+-- never has to infer it from a level number: level 1 is both "just joined" and
+-- "knocked back to the start", and only one of those has to pay again.
+--
+-- `entryFee` is what THIS recipient would pay — zero for somebody already in,
+-- and zero for anything that is not the championship — so the strip can never
+-- quote a fee nobody is being charged.
+--
+-- Falls back to "no join needed" whenever the payload says nothing, which is
+-- every build older than this one. An unlabelled invite showing ACCEPT is the
+-- behaviour that already exists; showing JOIN and a fee that nothing will
+-- actually charge would be a lie.
+local function num(v)
+    local n = tonumber(v)
+    return (n and n > 0) and n or 0
+end
+
+--- The grand prize on offer, as a plain number, or 0 if the payload has none.
+--
+-- Reads the shape the tournament document uses — grandPrize.value — and the
+-- two flatter spellings older payloads carried, because the strip leads on
+-- this figure and a banner with a blank where the prize should be is worse
+-- than one that quietly omits the block.
+function M.grand_prize(t)
+    if type(t) ~= "table" then return 0 end
+    local gp = t.grandPrize
+    if type(gp) == "table" then
+        return num(gp.value) > 0 and num(gp.value) or num(gp.coins)
+    end
+    return num(gp)
+end
+
+--- What the strip should offer for this request.
+--
+-- `payload` is the GAME_REQUEST data as it arrived. Returns a plain table so
+-- both banner surfaces render from one answer and cannot disagree about
+-- whether a player is being asked to join or to accept.
+function M.offer(payload, user_data)
+    local t = (type(payload) == "table" and type(payload.tournament) == "table")
+        and payload.tournament or nil
+    local is_champ = (type(payload) == "table" and payload.isChampionship == true)
+        or M.matches(t, user_data)
+
+    -- Present and false is the only thing that means "not in yet". Absent means
+    -- an older server that never answered the question, and inventing a JOIN
+    -- prompt on top of one would ask for money nothing is going to take.
+    --
+    -- Written out rather than as `x and y or nil`: the value being tested for
+    -- is FALSE, and that idiom collapses false to nil — which is exactly the
+    -- one distinction this has to keep.
+    local said = nil
+    if type(payload) == "table" then said = payload.youHaveJoined end
+    local joining = is_champ and said == false
+
+    return {
+        championship = is_champ,
+        joining      = joining,
+        entry_fee    = joining and num(type(payload) == "table" and payload.entryFee) or 0,
+        prize        = M.grand_prize(t),
+        accept_label = joining and "JOIN" or "ACCEPT",
+        decline_label = joining and "CANCEL" or "DECLINE",
+    }
+end
+
+--- The line under the buttons when a fee is about to be charged.
+function M.fee_text(offer)
+    if not offer or not offer.joining or offer.entry_fee <= 0 then return nil end
+    return "One-time join fee"
 end
 
 -- The cap a knockout is played to.
