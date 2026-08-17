@@ -17,6 +17,10 @@ local dialog_outgoing = require("modules.dialog_outgoing")
 local toast           = require("modules.toast")
 local champ           = require("modules.championship")
 local champ_banner    = require("modules.champ_banner")
+-- The opponent's win rate, drawn as a tier pill rather than a percentage. Same
+-- module the two request dialogs and the game-over panel use, so one player
+-- cannot be a PRO on the invite strip and something else on the result screen.
+local rank            = require("modules.rank_badge")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local VISIBLE_W, VISIBLE_H = 1280, 720
@@ -216,6 +220,14 @@ local BAN_CHAMP_X     = 387   -- midway between the shifted H2H and DECLINE
 local BAN_CHAMP_W     = 132
 local BAN_CHAMP_H     = 24
 
+-- THE RANK PILL, on the LEFT of the strip and on the title line, where the
+-- sender's name is. Height and the gap to the name it belongs to are constants
+-- here and in incoming.gui_script for the same reason the figures above are:
+-- the two surfaces draw the SAME invite, and the layout test asserts they have
+-- not drifted apart.
+local BAN_RANK_H      = 22
+local BAN_RANK_GAP    = 10
+
 
 -- SLIDING THE COUNTDOWN BARS, EVERY FRAME.
 --
@@ -299,7 +311,26 @@ local function draw_banner(self)
             track(self, ui.box(vmath.vector3(EDGE_L + 48, cy, 0), vmath.vector3(60, 60, 0), vmath.vector4(0.10, 0.14, 0.18, alpha)))
             local b_av = track(self, ui.avatar(vmath.vector3(EDGE_L + 48, cy, 0), vmath.vector3(54, 54, 0), b.avatar or 1))
             gui.set_color(b_av, vmath.vector4(1, 1, 1, alpha))
-            gui.set_pivot(track(self, ui.text(vmath.vector3(EDGE_L + 90, cy + 20, 0), b.title or "GAME REQUEST", "body", vmath.vector4(0.92, 0.96, 1.0, alpha))), gui.PIVOT_W)
+            -- RANK PILL FIRST, THEN THE NAME.
+            --
+            -- It LEADS the title line rather than trailing it. Trailing would
+            -- put it in the one direction this strip has no room in: the title
+            -- ends with a username of unpredictable length, and the space to
+            -- its right is already spoken for by the H2H block, the kind badge
+            -- and the two buttons — a long name would march the pill straight
+            -- into them. Leading it, the pill sits at a fixed x and pushes the
+            -- title into the empty middle of the strip instead, which is the
+            -- direction that has slack.
+            --
+            -- Draws nothing and returns 0 for a sender with no rating, so an
+            -- unrated invite keeps exactly the title position it has today.
+            local rank_w = rank.draw(
+                { track = function(n) return track(self, n) end, ui = ui },
+                b.opp_winrate,
+                EDGE_L + 90 + rank.badge_width(b.opp_winrate) / 2, cy + 20,
+                BAN_RANK_H, alpha)
+            local title_x = EDGE_L + 90 + (rank_w > 0 and (rank_w + BAN_RANK_GAP) or 0)
+            gui.set_pivot(track(self, ui.text(vmath.vector3(title_x, cy + 20, 0), b.title or "GAME REQUEST", "body", vmath.vector4(0.92, 0.96, 1.0, alpha))), gui.PIVOT_W)
             gui.set_pivot(track(self, ui.text(vmath.vector3(EDGE_L + 90, cy - 12, 0), b.desc or "", "small", vmath.vector4(0.42, 0.56, 0.68, alpha))), gui.PIVOT_W)
             self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(EDGE_R - 90, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.0, 0.9, 0.63, 0.30 * alpha))), id = "banner_accept", data = b.request_id }
             track(self, ui.text(vmath.vector3(EDGE_R - 90, cy, 0), "ACCEPT", "btn_md", vmath.vector4(1,1,1,alpha)))
@@ -477,6 +508,12 @@ local function open_banner(self, raw)
         alpha      = 1,
         y_off      = 0,
         h2h        = raw.headToHead,
+        -- THE SENDER'S STANDING, carried as the raw win rate rather than as a
+        -- rendered string. Both branches of draw_banner turn it into a tier
+        -- pill — the ordinary strip inline beside the name, the championship
+        -- strip beside the name on its own line — and a pre-formatted
+        -- "WR 48%" could only ever have been one of them.
+        opp_winrate = (h2h_view(raw.headToHead) or {}).opp_winrate,
         championship  = offer.championship,
         joining       = offer.joining,
         -- The sender's name alone: the premium strip prints GLOBAL
@@ -487,7 +524,6 @@ local function open_banner(self, raw)
         accept_label  = offer.accept_label,
         decline_label = offer.decline_label,
     }
-    if h2h_view(raw.headToHead) and h2h_view(raw.headToHead).opp_winrate then b.desc = b.desc .. "   -   WR " .. math.floor(h2h_view(raw.headToHead).opp_winrate + 0.5) .. "%" end
     self.banners = self.banners or {}; for _, ex in ipairs(self.banners) do if b.request_id ~= "" and ex.request_id == b.request_id then return end end
     table.insert(self.banners, b)
     -- Audible cue for an incoming tournament/battle invite.

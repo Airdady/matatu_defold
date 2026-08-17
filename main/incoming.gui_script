@@ -23,6 +23,11 @@ local api    = require("modules.api_service")
 local toast  = require("modules.toast")
 local budget = require("modules.incoming_budget")
 local champ  = require("modules.championship")
+-- The sender's win rate, drawn as a tier pill rather than a percentage. Same
+-- module the two request dialogs, the online screen's inline strip and the
+-- game-over panel use, so one player cannot be a PRO on one surface and
+-- something else on the next.
+local rank   = require("modules.rank_badge")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local CX, CY = 640, 360
@@ -174,6 +179,14 @@ local BAN_CHAMP_X     = 387
 local BAN_CHAMP_W     = 132
 local BAN_CHAMP_H     = 24
 
+-- THE RANK PILL, on the LEFT of the strip and on the title line, where the
+-- sender's name is. Height and the gap to the name it belongs to are constants
+-- here and in online.gui_script for the same reason the figures above are: the
+-- two surfaces draw the SAME invite, and the layout test asserts they have not
+-- drifted apart.
+local BAN_RANK_H      = 22
+local BAN_RANK_GAP    = 10
+
 -- THE JOIN STRIP IS A DIFFERENT ANSWER TO A DIFFERENT QUESTION, so it is a
 -- different surface entirely: modules/champ_banner.lua draws it, and the online
 -- screen's inline strip calls the same module. See the long note there for why
@@ -291,7 +304,22 @@ local function draw_banner(self, d, a)
         with_a(COL_WHITE, a))
 
     -- Title + one-line description, left-aligned beside the avatar.
-    gui.set_pivot(track(self, ui.text(vmath.vector3(m.L + 90, cy + 20, 0),
+    --
+    -- RANK PILL FIRST, THEN THE NAME. It LEADS the title line rather than
+    -- trailing it: the title ends with a username of unpredictable length, and
+    -- the space to its right is already spoken for by the H2H block, the kind
+    -- badge and the two buttons, so a long name would march the pill straight
+    -- into them. Leading it, the pill sits at a fixed x and pushes the title
+    -- into the empty middle of the strip instead — the direction with slack.
+    --
+    -- Draws nothing and returns 0 for a sender with no rating, so an unrated
+    -- invite keeps exactly the title position it has today.
+    local rank_w = rank.draw(
+        { track = function(n) return track(self, n) end, ui = ui },
+        d.opp_winrate, m.L + 90 + rank.badge_width(d.opp_winrate) / 2, cy + 20,
+        BAN_RANK_H, a)
+    local title_x = m.L + 90 + (rank_w > 0 and (rank_w + BAN_RANK_GAP) or 0)
+    gui.set_pivot(track(self, ui.text(vmath.vector3(title_x, cy + 20, 0),
         tostring(d.title or "GAME REQUEST"), "body", with_a(BAN_TITLE, a))), gui.PIVOT_W)
     gui.set_pivot(track(self, ui.text(vmath.vector3(m.L + 90, cy - 12, 0),
         tostring(d.desc or ""), "small", with_a(BAN_DESC, a))), gui.PIVOT_W)
@@ -404,6 +432,11 @@ local function open_dialog(self, d)
         name = d.name, stake = d.stake or {}, request_id = d.request_id,
         avatar = tonumber(d.avatar) or 1, time_left = window, max_time = window,
         opponent_id = d.opponent_id and tostring(d.opponent_id) or nil, h2h = d.h2h,
+        -- Derived HERE rather than passed in, so every caller of open_dialog —
+        -- the game request, the tournament invite, the cup invitation — gets
+        -- the badge from the one head-to-head payload they all already carry,
+        -- and none of them has to remember to thread a second field through.
+        opp_winrate = (h2h_view(d.h2h) or {}).opp_winrate,
         -- Tournament / battle / knockout invites render as the top banner; a
         -- plain game request gets the full dialog (set in on_message) until the
         -- input budget demotes it.

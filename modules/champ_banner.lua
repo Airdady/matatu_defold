@@ -30,6 +30,10 @@
 -- and how to register a button), so the drawing can be reasoned about — and
 -- the geometry tested — without booting a screen.
 
+-- The sender's win rate, drawn as a tier pill rather than a percentage — the
+-- same module every other surface that shows an opponent's standing uses.
+local rank = require("modules.rank_badge")
+
 local M = {}
 
 -- Taller than the ordinary 92px strip, but only by enough for the prize plaque
@@ -80,6 +84,13 @@ M.JOIN_W   = 176
 M.CANCEL_X = 254   -- centre of CANCEL
 M.CANCEL_W = 120
 M.BTN_H    = 44
+
+-- The rank pill on the name line, and the gap between it and the name. Same
+-- figures the ordinary strip uses (BAN_RANK_H / BAN_RANK_GAP in both banner
+-- files) so a sender's badge is the same size whichever surface carries the
+-- invite.
+M.RANK_H   = 22
+M.RANK_GAP = 10
 
 -- How many slices the corner fade is built from.
 --
@@ -141,7 +152,8 @@ end
 --   box    = { L, R, CX }              the strip's horizontal extent
 --   button = function(kind, node)      kind is "accept" or "decline"
 -- }
--- d   = { title, desc, avatar, prize, entry_fee, time_left, max_time }
+-- d   = { title, desc, avatar, prize, entry_fee, time_left, max_time,
+--         opp_winrate }
 --
 -- Returns the animation handle for M.animate: the countdown fill, which moves
 -- every frame rather than once a second.
@@ -170,7 +182,15 @@ function M.draw(ctx, d, cy, a)
     -- that under a caption already saying GLOBAL CHAMPIONSHIP says it twice.
     gui.set_pivot(track(ui.text(vmath.vector3(box.L + 86, cy + 26, 0),
         "GLOBAL CHAMPIONSHIP", "small", with_a(RULE, a))), gui.PIVOT_W)
-    gui.set_pivot(track(ui.text(vmath.vector3(box.L + 86, cy + 2, 0),
+    -- RANK PILL, THEN THE NAME, on one line. Leading rather than trailing for
+    -- the reason the ordinary strip's does: the right-hand end of this line is
+    -- the prize plaque, and a pill pushed out by a long username would run
+    -- into it. Nothing is drawn for an unrated sender, and the name then sits
+    -- exactly where it did before.
+    local rank_w = rank.draw({ track = track, ui = ui }, d.opp_winrate,
+        box.L + 86 + rank.badge_width(d.opp_winrate) / 2, cy + 2, M.RANK_H, a)
+    local name_x = box.L + 86 + (rank_w > 0 and (rank_w + M.RANK_GAP) or 0)
+    gui.set_pivot(track(ui.text(vmath.vector3(name_x, cy + 2, 0),
         tostring(d.opponent_name or d.title or "A PLAYER"), "body", with_a(TITLE, a))), gui.PIVOT_W)
     gui.set_pivot(track(ui.text(vmath.vector3(box.L + 86, cy - 22, 0),
         tostring(d.desc or ""), "small", with_a(SUB, a))), gui.PIVOT_W)

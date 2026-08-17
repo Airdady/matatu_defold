@@ -1,7 +1,8 @@
 -- modules/dialog_outgoing.lua
 -- Handles the outgoing/challenging game request dialog rendering.
 
-local ws = require("modules.websocket_manager")
+local ws   = require("modules.websocket_manager")
+local rank = require("modules.rank_badge")
 
 local M = {}
 
@@ -47,19 +48,32 @@ function M.draw(self, ctx, d, a)
 
     -- Opponent column
     dlg_avatar(self, opp_x, av_y, av_size, d.avatar or 1, a)
+    -- THE OPPONENT'S STANDING, AS A TIER RATHER THAN A PERCENTAGE.
+    --
+    -- This slot used to read "WR 48%" in one of three colours. The number is
+    -- the wrong shape for the glance it gets: the player has ten seconds and
+    -- one decision, and working out whether 48 is good takes context nobody
+    -- holds at that moment. The tier says it in a word — AMATEUR, CONTENDER,
+    -- PRO, LEGEND — from the same win rate, in the same place.
+    --
+    -- Nothing is drawn when the server sent no rating: an unrated stranger has
+    -- not been shown to be bad, and badging them as the bottom tier would
+    -- invent a fact about them. See modules/rank_badge.lua.
     local hv = h2h_view(d.h2h)
-    if hv and hv.opp_winrate then
-        local wr     = math.floor(hv.opp_winrate + 0.5)
-        local wr_col = wr >= 60 and C.COL_GREEN or (wr >= 40 and C.COL_GOLD or C.COL_RED)
-        track(self, ui.text(vmath.vector3(opp_x, av_y - 68, 0), "WR "..wr.."%", "small", with_a(wr_col, a)))
+    if hv then
+        rank.draw({ track = function(n) return track(self, n) end, ui = ui },
+            hv.opp_winrate, opp_x, av_y - 68, 22, a)
     end
-    track(self, ui.text(vmath.vector3(opp_x, av_y - 88, 0), (d.name or "PLAYER"):upper(), "body", with_a(C.COL_WHITE, a)))
+    -- The name sits lower than it used to, by the difference between a 22px
+    -- pill and the line of text it replaced. Both columns move, not just the
+    -- badged one, so the two names stay on one line.
+    track(self, ui.text(vmath.vector3(opp_x, av_y - 96, 0), (d.name or "PLAYER"):upper(), "body", with_a(C.COL_WHITE, a)))
 
     -- Me ("YOU") column - Avatar, Balance, YOU
     local u = ws.current_user_data or {}
     dlg_avatar(self, me_x, av_y, av_size, u.avatar or 1, a)
     track(self, ui.text(vmath.vector3(me_x, av_y - 68, 0), commas(u.balance or 0), "small", with_a(C.COL_GOLD, a)))
-    track(self, ui.text(vmath.vector3(me_x, av_y - 88, 0), "YOU", "body", with_a(ctx.DLG_SEARCH, a)))
+    track(self, ui.text(vmath.vector3(me_x, av_y - 96, 0), "YOU", "body", with_a(ctx.DLG_SEARCH, a)))
 
     -- Central Pot Element. Centred ON the avatars' own centre line (both sit
     -- at av_y), so the pot reads as sitting BETWEEN the two players rather

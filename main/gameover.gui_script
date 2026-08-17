@@ -6,6 +6,10 @@ local confetti_fx = require("modules.confetti_fx")
 local sound = require("modules.sound")
 local config = require("modules.config")
 local ui = require("modules.ui")
+-- The win-rate tier badge, shared with the two request dialogs and both invite
+-- strips, so a player who is a PRO on the invite that started the match is
+-- still a PRO on the screen that ends it.
+local rank = require("modules.rank_badge")
 
 -- Lowest real-money (non-Free) stake tier for the active game — Matatu moved
 -- this from 50 to 100 (Whot/Kadi keep their own lowest tier), so the bonus-
@@ -48,6 +52,25 @@ local C_BTN_TEXT  = vmath.vector4(0.020, 0.090, 0.110, 1.0) -- dark text on cyan
 
 local AVATAR_SIZE = 100
 local AVATAR_IMG  = 84
+
+-- THE RANK BADGE BESIDE EACH NAME.
+--
+-- It sits OUTBOARD — to the left of "YOU" and to the right of the opponent's
+-- name, away from the centre line — rather than being centred with the name as
+-- one group. Centring would push both names ~40px towards the middle, and the
+-- middle at this height is already occupied by the PRIZE / POINTS / WIN BONUS
+-- strip (stat_val_y is -70, this row is -75). Growing outwards costs nothing:
+-- there is empty screen between the avatars and the edges, and every existing
+-- element keeps the exact position it has today.
+--
+-- RANK_NATIVE is the text size modules/rank_badge.lua's width rule is
+-- calibrated for (the "small" atlas font the invite strips draw the pill at).
+-- This screen draws every label at a size of its own, so the width scales with
+-- it — otherwise a 14px word would sit in a pill sized for an 18px one.
+local RANK_H      = 20
+local RANK_TXT    = 14
+local RANK_GAP    = 8
+local RANK_NATIVE = 18
 
 -- Mirrors game.script's REPLAY_TIMEOUT — how long we wait for the opponent
 -- to accept a rematch before game.script gives up and returns to the lobby.
@@ -243,6 +266,24 @@ local function build(self)
 	self.n_opp_name = label(vmath.vector3(0, 0, 0), "OPPONENT", 20, C_SECONDARY, gui.PIVOT_CENTER, "helvetica_bold")
 	attach(self.n_opp_name, 180, -75)
 
+	-- Rank badges, one beside each name. Sized, coloured and positioned when a
+	-- result arrives (place_rank_badge) — there is nothing to draw until a win
+	-- rate is known, and the pill's width depends on which word it carries.
+	-- The label is parented to the pill so the pair moves, and hides, as one.
+	self.n_you_rank_bg = box(vmath.vector3(0, 0, 0), vmath.vector3(RANK_H, RANK_H, 0), C_AVATAR_BG, gui.PIVOT_CENTER)
+	attach(self.n_you_rank_bg, -180, -75)
+	self.n_you_rank_tx = label(vmath.vector3(0, 0, 0), "", RANK_TXT, C_PRIMARY, gui.PIVOT_CENTER, "helvetica_bold")
+	gui.set_parent(self.n_you_rank_tx, self.n_you_rank_bg)
+	gui.set_position(self.n_you_rank_tx, vmath.vector3(0, 0, 0))
+	gui.set_enabled(self.n_you_rank_bg, false)
+
+	self.n_opp_rank_bg = box(vmath.vector3(0, 0, 0), vmath.vector3(RANK_H, RANK_H, 0), C_AVATAR_BG, gui.PIVOT_CENTER)
+	attach(self.n_opp_rank_bg, 180, -75)
+	self.n_opp_rank_tx = label(vmath.vector3(0, 0, 0), "", RANK_TXT, C_PRIMARY, gui.PIVOT_CENTER, "helvetica_bold")
+	gui.set_parent(self.n_opp_rank_tx, self.n_opp_rank_bg)
+	gui.set_position(self.n_opp_rank_tx, vmath.vector3(0, 0, 0))
+	gui.set_enabled(self.n_opp_rank_bg, false)
+
 	-- Card sum placed directly below the name
 	self.n_you_sum = label(vmath.vector3(0, 0, 0), "", 16, C_ORANGE, gui.PIVOT_CENTER, "helvetica_bold")
 	attach(self.n_you_sum, -180, -95)
@@ -292,6 +333,12 @@ local function build(self)
 	-- "only show when a deduction actually happened this game" — its
 	-- enabled state is set explicitly, after apply_layout() runs, in the
 	-- game_over handler instead.
+	--
+	-- The two rank pills are left out for the same reason: a player the server
+	-- sent no win rate for has no badge, and blanket-enabling would show an
+	-- empty coloured pill next to their name. place_rank_badges() sets both
+	-- explicitly, and it is called after apply_layout so it can hide them on a
+	-- result that has no score block at all.
 
 	self.stats = {}
 	for i = 1, 3 do
@@ -382,6 +429,56 @@ local function apply_layout(self, has_score, has_sub, has_stats)
 
 	for _, n in ipairs(self.score_nodes) do gui.set_enabled(n, has_score) end
 	gui.set_enabled(self.n_score_divider, has_score and has_stats)
+end
+
+-- RANK BADGES
+
+-- The on-screen width of a text node, in the layout's own units.
+--
+-- gui.get_text_metrics_from_node measures at the font's native size, so the
+-- node's own scale has to be applied — this screen scales every label from a
+-- native point size (see FONT_BASE). Same measurement the savings row does to
+-- centre its coin-and-text pair.
+local function text_width(node)
+	local ok, m = pcall(gui.get_text_metrics_from_node, node)
+	if not (ok and m) then return 0 end
+	return (m.width or 0) * gui.get_scale(node).x
+end
+
+-- Place one pill beside one name, or hide it.
+--
+-- `dir` is which way to grow: -1 puts the pill to the LEFT of the name (the
+-- player's own column, on the left of the screen), +1 to the right. Outboard
+-- in both cases — see the note on RANK_H for why the pair is not centred as a
+-- group instead.
+local function place_rank_badge(self, bg, tx, name_node, winrate, dir, shown)
+	local t = shown and rank.tier(winrate) or nil
+	gui.set_enabled(bg, t ~= nil)
+	if not t then return end
+
+	local w = rank.width(t.label) * RANK_TXT / RANK_NATIVE
+	gui.set_size(bg, vmath.vector3(w, RANK_H, 0))
+	gui.set_color(bg, rank.v4(t.bg))
+	gui.set_text(tx, t.label)
+	gui.set_color(tx, rank.v4(t.tx))
+
+	-- Measured from the name AS IT NOW READS, so a long opponent name pushes
+	-- the pill further out instead of the pill landing on the last letters.
+	local at = gui.get_position(name_node)
+	local half = text_width(name_node) / 2
+	gui.set_position(bg, vmath.vector3(at.x + dir * (half + RANK_GAP + w / 2), at.y, 0))
+end
+
+-- Both pills, from whatever win rates the last setup_avatars carried.
+--
+-- `shown` is the score block's own visibility: the badges belong to the names,
+-- and a result that shows no names must not leave two pills floating on their
+-- own. Call it AFTER apply_layout, which is what decides that.
+local function place_rank_badges(self, shown)
+	place_rank_badge(self, self.n_you_rank_bg, self.n_you_rank_tx,
+		self.n_you_name, self.my_winrate, -1, shown)
+	place_rank_badge(self, self.n_opp_rank_bg, self.n_opp_rank_tx,
+		self.n_opp_name, self.opp_winrate, 1, shown)
 end
 
 -- Visibility / entrance
@@ -624,6 +721,12 @@ function on_message(self, message_id, message)
 		self.opp_name_str = oi.username or oi.name or "OPPONENT"
 		self.my_avatar    = mi.avatar or 1
 		self.opp_avatar   = oi.avatar or 1
+		-- online_handler.public_player_info already carries winRate for both
+		-- sides, so the badge costs no new field on the wire. nil stays nil:
+		-- a player the server rated nothing for gets no pill rather than the
+		-- bottom one (see modules/rank_badge.lua).
+		self.my_winrate   = tonumber(mi.winRate)
+		self.opp_winrate  = tonumber(oi.winRate)
 
 		if self.avatars_ok then
 			pcall(function() gui.play_flipbook(self.n_you_av, hash("avatar_" .. tostring(self.my_avatar))) end)
@@ -633,6 +736,10 @@ function on_message(self, message_id, message)
 		local on = self.opp_name_str
 		if string.len(on) > 12 then on = string.sub(on, 1, 12) .. "..." end
 		gui.set_text(self.n_opp_name, string.upper(on))
+		-- The names are set, so they can be measured. This runs while the panel
+		-- is still hidden; the game_over handler re-places them once the final
+		-- layout is known, because a name that changes length moves the pill.
+		place_rank_badges(self, true)
 
 	elseif message_id == hash("game_over") then
 		self.locked = false
@@ -937,6 +1044,12 @@ function on_message(self, message_id, message)
 
 		-- Dynamically structure and position content eliminating awkward gaps
 		apply_layout(self, has_score, subtitle ~= "", has_stats)
+
+		-- After apply_layout, for the same reason the savings row is: the pills
+		-- are not in score_nodes, so nothing else turns them off on a result
+		-- with no score block, and the names they are measured against have
+		-- just been re-set above.
+		place_rank_badges(self, has_score)
 
 		-- Set independently of score_nodes/apply_layout (see note above): only
 		-- visible when this game actually deducted into Savings. Must NOT also
