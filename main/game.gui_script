@@ -9,6 +9,22 @@ local app_state     = require("modules.app_state")
 local LOGICAL_W = 1280
 local LOGICAL_H = 720
 
+-- HOW MANY LEVELS THIS TOURNAMENT HAS.
+--
+-- `totalLevels` is a COUNT, and is now sent as one. It was not: initializeDeck
+-- put the levels ARRAY in it — a list of subdocuments under a name and a type
+-- that both say number — so anything reading it as a count got nil, and the
+-- board had no way to tell a one-level battle from a seven-level ladder.
+--
+-- Both shapes are handled because the fixed server has to reach handsets that
+-- are already running, and until it does every live game is still sending the
+-- array. A tournament with no levels at all counts as one: a battle IS its
+-- single level, and one is the reading that suppresses the caption.
+local function level_count(v)
+    local n = (type(v) == "table") and #v or tonumber(v)
+    return (n and n > 0) and n or 1
+end
+
 function init(self)
     msg.post(".", "acquire_input_focus")
     gui.set_render_order(13)
@@ -199,35 +215,47 @@ function on_message(self, message_id, message)
             if state.tournamentScore and type(state.tournamentScore) == "table" then
                 best_of = state.tournamentScore.matchFormat or best_of
 
-                -- EACH PLAYER'S OWN RUNG, not one level captioning both.
+                -- MY OWN RUNG, AND ONLY WHEN THERE IS A LADDER TO BE ON.
                 --
-                -- `levels` is keyed by user id, like `scores` beside it.
-                -- `currentLevel` next to it is a SINGLE number read from
-                -- whichever side's progress the server happened to load, so
-                -- labelling the match with it showed one of the two players the
-                -- OTHER player's level.
+                -- Two things this caption used to get wrong.
                 --
-                -- Two players are matched on COMPATIBLE levels, never equal
-                -- ones — level 1 pairs with anyone at 1 or below, and above
-                -- that with anyone at your level or higher — so differing is
-                -- the ordinary case, not an edge one.
+                -- 1. A ONE-LEVEL GAME HAS NO LEVEL WORTH NAMING. A battle's
+                --    single level IS the match, so "LEVEL 1" on the board says
+                --    nothing and reads as though six more are coming. Suppressed
+                --    entirely below one level.
+                --
+                -- 2. WHOSE LEVEL. `levels` is keyed by user id, like `scores`
+                --    beside it; `currentLevel` next to it is a SINGLE number
+                --    read from whichever side's progress the server happened to
+                --    load, so captioning the match with it showed one of the two
+                --    players the OTHER player's level. Players are matched on
+                --    COMPATIBLE levels, never equal ones — level 1 pairs with
+                --    anyone at 1 or below, above that with anyone at your level
+                --    or higher — so differing is the ordinary case.
+                --
+                -- The board now shows the VIEWER'S own rung and nothing else.
+                -- It briefly showed "LV 1 vs LV 5", which is honest but reads as
+                -- a matchup line rather than as where I am, and puts a number on
+                -- screen that is not mine and that I cannot act on.
+                local total = level_count(state.tournamentScore.totalLevels)
                 local lv = state.tournamentScore.levels
-                local my_lv, opp_lv
-                if type(lv) == "table" then
-                    my_lv = tonumber(lv[self.my_id])
-                    for k, v in pairs(lv) do
-                        if tostring(k) ~= tostring(self.my_id) then opp_lv = tonumber(v); break end
-                    end
-                end
+                local my_lv
+                if type(lv) == "table" then my_lv = tonumber(lv[self.my_id]) end
                 -- currentLevel is the fallback for a server too old to send the
                 -- map. It is still one number, but it is the only one there is.
                 my_lv = my_lv or tonumber(state.tournamentScore.currentLevel) or 1
-                if opp_lv and opp_lv ~= my_lv then
-                    stage = string.format("LV %d vs LV %d", my_lv, opp_lv)
-                else
+
+                if total > 1 then
                     stage = "Level " .. tostring(my_lv)
+                    stage_per_player = true
+                else
+                    -- Nothing to say. "Match" is the value the title check
+                    -- treats as "no stage", so the caption is simply absent.
+                    stage = "Match"
+                    -- Still true: a single-level game must not have
+                    -- state.tournament.level put a caption back below.
+                    stage_per_player = true
                 end
-                stage_per_player = true
                 if type(state.tournamentScore.scores) == "table" then
                     p_score = state.tournamentScore.scores[self.my_id] or p_score
                     for k, v in pairs(state.tournamentScore.scores) do
@@ -237,10 +265,18 @@ function on_message(self, message_id, message)
             end
             if state.tournament and type(state.tournament) == "table" then
                 best_of = state.tournament.matchFormat or best_of
-                local stg = state.tournament.stageName
-                if stg and stg ~= "" then stage = stg
-                elseif state.tournament.level and not stage_per_player then
-                    stage = "Level " .. tostring(state.tournament.level)
+                -- A one-level tournament gets NO stage caption from here
+                -- either. "Quarter Finals" and "Level 1" are both claims about
+                -- a bracket, and a battle has none — its single level is the
+                -- match. Checked against this object's own level count so it
+                -- holds even when tournamentScore never arrived.
+                local t_total = level_count(state.tournament.levels or state.tournament.totalLevels)
+                if t_total > 1 then
+                    local stg = state.tournament.stageName
+                    if stg and stg ~= "" then stage = stg
+                    elseif state.tournament.level and not stage_per_player then
+                        stage = "Level " .. tostring(state.tournament.level)
+                    end
                 end
             end
             if state.gameOverState and type(state.gameOverState) == "table" then
