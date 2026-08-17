@@ -1,94 +1,67 @@
 #!/bin/bash
 
 # ==========================================================
-# DEfOLD ANDROID DEBUG BUILD + MULTI-DEVICE INSTALL
+# DEFOLD ANDROID DEBUG BUILD + MULTI-DEVICE INSTALL
 # INSTALLS ON ALL CONNECTED DEVICES
 # PRESERVES APP DATA/CACHE
 #
 # USAGE:
 #   ./build.sh [whot|matatu|matatu_nap|kadi] [--version-name <x.x.x>] [--version-code <int>]
 #
-# --version-name/--version-code stamp game.project's version/version_code
-# the same way release.sh does for a real release (see that script's "0c.
-# STAMP THE VERSION INTO game.project" step) — so a debug build reports a
-# real, comparable version to the backend's version gate instead of
-# whatever was last checked in from an unrelated release. Without this, a
-# debug build of one target could silently read a stale version stamped by
-# a PREVIOUS release of a DIFFERENT target (they all share this one
-# game.project), pass or fail that target's floor for reasons that have
-# nothing to do with what's actually being tested.
-#
-# Both optional. Default is 99.99.99 / 999999 — a value obviously synthetic
-# (nobody ships that number) and, being a numeric ordering comparison, well
-# above any real floor for any target, so an ordinary debug run for
-# GAMEPLAY testing is never blocked by the version gate. Pass real-looking
-# values explicitly when you actually want to test the gate itself (a
-# refusal, an update-required screen, a floor edge case).
-#
-# The game argument (default: whot) patches modules/game_mode.lua's M.GAME so
-# every endpoint, card-art path and in-app label follows (see that file's
-# header), sets game.project's [project] title AND [android] package to
-# match, and regenerates the Android launcher icon + bg_logo watermark
-# (bundle/android/res/**, assets/ui/bg_logo.png) from tools/icons/<game>.svg
-# and tools/logos/<game>.svg — so every visual identity asset matches
-# whichever game was just built instead of whatever happened to be baked in
-# from the last manual run.
-#
-# Package names (fixed per TARGET, see the case statement below):
-#   matatu     -> com.matatu.champ
-#   matatu_nap -> com.matatu.nap
-#   whot       -> com.matatu.pro
-#   kadi       -> com.matatu.kadi
-#
-# TARGET vs GAME: these were the same thing until matatu_nap. A target is what
-# you are shipping — a package name, a keystore, a Play listing. A game is what
-# the app IS at runtime (M.GAME), which drives endpoints, rules, currency and
-# card art. matatu_nap is a second SHIPPING TARGET for the same GAME: byte for
-# byte the same Matatu build, differing only in package name and signing, so
-# GAME_UPPER stays MATATU and only the packaging changes.
-#
-# IMPORTANT — Google Sign-In (GPGS): it's registered in Google Cloud Console
-# against one specific (package name + signing certificate SHA-1) pair per
-# [gpgs] client_id/app_id in game.project. Building under a package that
-# ISN'T registered as an Android OAuth client makes on-device Google Sign-In
-# fail with a DEVELOPER_ERROR before the request ever reaches the backend —
-# it looks like a server/auth bug but is actually a client identity
-# mismatch. All three packages above are signed with the SAME keystore (one
-# Defold bundle config), so the SHA-1 is constant — but EACH package name
-# still needs its OWN Android OAuth client entry registered in Google Cloud
-# Console before Sign-In will work for that game. If a game's Sign-In starts
-# failing right after switching its package here, that registration is the
-# first thing to check.
-#
-# [gpgs] force_refresh_token = 1 asks Play Games for a NEW server auth code
-# instead of replaying a cached one. A cached code that has already been
-# redeemed, or has expired, comes back as an EMPTY STRING — which on the
-# device looks exactly like a successful sign-in with nothing to send to the
-# backend ("GPGS success, auth_code_present=false" in the auth debug trail).
-# The refresh costs one extra round trip and removes that failure mode.
-# It lives in game.project, which has no comment syntax, so the note is here.
 # ==========================================================
 
 set -e
 
-# ---------------- CONFIG ----------------
-TARGET=""
+# ═══════════════════════════════════════════════════════════
+# CONFIGURATION
+# ═══════════════════════════════════════════════════════════
+BOB_JAR="bob.jar"
+
+# Default Variables
+GAME="whot"
 VERSION_NAME="99.99.99"
 VERSION_CODE="999999"
 
+# Terminal Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# ═══════════════════════════════════════════════════════════
+# FUNCTIONS & UX UTILITIES
+# ═══════════════════════════════════════════════════════════
+print_status()  { echo -e "${BLUE}[INFO]${NC} $1"; }
+print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+print_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
+print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
+print_usage() {
+    echo -e "Usage: ./build.sh [whot|matatu|matatu_nap|kadi] [--version-name <x.x.x>] [--version-code <int>]"
+    echo -e "Example: ${YELLOW}./build.sh matatu --version-name \"1.2.0\" --version-code 15${NC}"
+}
+
+# ═══════════════════════════════════════════════════════════
+# ARGUMENT PARSING
+# ═══════════════════════════════════════════════════════════
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --version-name) VERSION_NAME="$2"; shift 2 ;;
         --version-code) VERSION_CODE="$2"; shift 2 ;;
+        --game)         GAME="$2"; shift 2 ;;
+        -*)             print_error "Unknown flag: $1"; print_usage; exit 1 ;;
         *)
-            if [ -z "$TARGET" ]; then TARGET="$1"; fi
+            if [ -z "$TARGET" ]; then GAME="$1"; fi
             shift ;;
     esac
 done
-TARGET="${TARGET:-whot}"
-TARGET="$(echo "$TARGET" | tr '[:upper:]' '[:lower:]')"
-GAME="$TARGET"
 
+GAME="$(echo "$GAME" | tr '[:upper:]' '[:lower:]')"
+TARGET="$GAME"
+
+# ═══════════════════════════════════════════════════════════
+# PER-GAME CONFIG
+# ═══════════════════════════════════════════════════════════
 case "$TARGET" in
     whot)   GAME_UPPER="WHOT";   PROJECT_TITLE="Whot"
             PACKAGE_NAME="com.matatu.pro"
@@ -100,16 +73,9 @@ case "$TARGET" in
             ICON_SVG="tools/icons/matatu.svg"; ICON_BG="#4a3020,#2b1810"
             LOGO_SVG="tools/logos/matatu.svg"
             KEYSTORE_PATH="./champion-keystore.jks"; KEYSTORE_PASS="./champion-keystore.pass.txt"; KEYSTORE_ALIAS="upload" ;;
-    # Same GAME as matatu above — same M.GAME, same endpoints, same rules, same
-    # gameplay. A separate shipping target: its own package name, its own
-    # keystore (see release.sh) and its own launcher icon, so the two Matatu
-    # apps are told apart on a home screen that has both installed.
     matatu_nap) GAME_UPPER="MATATU"; PROJECT_TITLE="Matatu"
             PACKAGE_NAME="com.matatu.nap"
             ICON_SVG="tools/icons/matatu_nap.svg"; ICON_BG="#4a3020,#2b1810"
-            # No nap-specific watermark yet, so fall back to matatu's. Drop
-            # tools/logos/matatu_nap.svg in and this picks it up with no code
-            # change — the icon above is already nap's own.
             LOGO_SVG="tools/logos/matatu.svg"
             if [ -f "tools/logos/matatu_nap.svg" ]; then
                 LOGO_SVG="tools/logos/matatu_nap.svg"
@@ -122,58 +88,95 @@ case "$TARGET" in
             LOGO_SVG="tools/logos/kadi.svg"
             KEYSTORE_PATH="./kadi.keystore"; KEYSTORE_PASS="./kadi.pass.txt"; KEYSTORE_ALIAS="matatu_alias" ;;
     *)
-        echo "❌ Unknown target '$TARGET' — expected: whot | matatu | matatu_nap | kadi"
+        print_error "Unknown target '$TARGET' — expected: whot | matatu | matatu_nap | kadi"
+        print_usage
         exit 1
         ;;
 esac
 
-# Keyed by TARGET, not GAME: matatu and matatu_nap are both MATATU, and a
-# shared directory would have them overwriting each other's bundle.
 BUNDLE_DIR="./bundles/android_debug_${TARGET}"
-
-# Optional manual activity
 MAIN_ACTIVITY=""
-
-# Log filters
 LOG_FILTER="defold|FirebaseAuth|AUTH|DEBUG|Lua|lua|AndroidRuntime|crash|CRASH|FATAL|Exception"
-
-# Architectures
 ARCHITECTURES="armv7-android,arm64-android"
 
-# ----------------------------------------------------------
-
-echo "=========================================================="
-echo "🚀 Starting Defold Android Debug Build"
-echo "🎯 Target:  $TARGET"
-echo "🎮 Game:    $GAME_UPPER"
-echo "📦 Package: $PACKAGE_NAME"
-echo "🏷  Version: $VERSION_NAME ($VERSION_CODE)"
-echo "=========================================================="
-
-# ==========================================================
-# 0. SWITCH THE GAME MODE (modules/game_mode.lua + game.project title)
-# ==========================================================
+# ═══════════════════════════════════════════════════════════
+# SIGNING IDENTITY PRINT
+# ═══════════════════════════════════════════════════════════
+if command -v keytool >/dev/null 2>&1 && [ -f "$KEYSTORE_PATH" ] && [ -f "$KEYSTORE_PASS" ]; then
+    SHA1=$(keytool -list -v -keystore "$KEYSTORE_PATH" \
+             -storepass "$(cat "$KEYSTORE_PASS")" -alias "$KEYSTORE_ALIAS" 2>/dev/null \
+           | grep -m1 -oE 'SHA1: [0-9A-F:]+' | cut -d' ' -f2)
+    [ -z "$SHA1" ] && SHA1="(could not read — check $KEYSTORE_PASS and alias '$KEYSTORE_ALIAS')"
+else
+    SHA1="(keytool unavailable or keystore files missing)"
+fi
 
 echo ""
-echo "🎛️  Setting GAME_MODE to $GAME_UPPER..."
+print_status "Preparing Defold Debug Build: $GAME_UPPER v$VERSION_NAME (Code: $VERSION_CODE)"
+echo "🔐 Signing identity for this build:"
+echo "   package : $PACKAGE_NAME"
+echo "   keystore: $KEYSTORE_PATH  (alias $KEYSTORE_ALIAS)"
+echo "   SHA-1   : $SHA1"
+echo ""
+
+# ═══════════════════════════════════════════════════════════
+# 0. SWITCH THE GAME MODE (modules/game_mode.lua)
+# ═══════════════════════════════════════════════════════════
+print_status "Setting GAME_MODE to $GAME_UPPER..."
 
 if [ ! -f modules/game_mode.lua ]; then
-    echo "❌ modules/game_mode.lua not found — is this the matatu_defold repo root?"
+    print_error "modules/game_mode.lua not found — is this the matatu_defold repo root?"
     exit 1
 fi
 
-# M.GAME = "WHOT"          -- "MATATU" | "WHOT" | "KADI"
 sed -i.bak -E "s/^(M\.GAME[[:space:]]*=[[:space:]]*)\"[A-Z]+\"/\1\"${GAME_UPPER}\"/" modules/game_mode.lua
 rm -f modules/game_mode.lua.bak
 
 if ! grep -q "M.GAME = \"${GAME_UPPER}\"" modules/game_mode.lua; then
-    echo "❌ Failed to set M.GAME in modules/game_mode.lua"
+    print_error "Failed to set M.GAME in modules/game_mode.lua"
     exit 1
 fi
 
-echo "✅ modules/game_mode.lua -> M.GAME = \"${GAME_UPPER}\""
+print_success "modules/game_mode.lua -> M.GAME = \"${GAME_UPPER}\""
 
-# [project] title = ... / [android] package = ...
+# ═══════════════════════════════════════════════════════════
+# 0b. STAMP THE VERSION INTO modules/config.lua
+# ═══════════════════════════════════════════════════════════
+print_status "Stamping version $VERSION_NAME ($VERSION_CODE) into modules/config.lua..."
+
+if [ ! -f modules/config.lua ]; then
+    print_error "modules/config.lua not found — is this the matatu_defold repo root?"
+    exit 1
+fi
+
+sed -i.bak -E \
+    -e "s/^(M\.APP_VERSION[[:space:]]*=[[:space:]]*)\".*\"/\1\"${VERSION_NAME}\"/" \
+    -e "s/^(M\.APP_BUILD[[:space:]]*=[[:space:]]*).*/\1${VERSION_CODE}/" \
+    modules/config.lua
+rm -f modules/config.lua.bak
+
+if ! grep -q "^M.APP_VERSION = \"${VERSION_NAME}\"" modules/config.lua; then
+    print_error "Failed to stamp M.APP_VERSION in modules/config.lua"
+    exit 1
+fi
+if ! grep -q "^M.APP_BUILD   = ${VERSION_CODE}$" modules/config.lua; then
+    print_error "Failed to stamp M.APP_BUILD in modules/config.lua"
+    exit 1
+fi
+
+print_success "modules/config.lua -> APP_VERSION=${VERSION_NAME} APP_BUILD=${VERSION_CODE}"
+
+# ═══════════════════════════════════════════════════════════
+# 0c. STAMP THE VERSION AND TARGET INTO game.project ITSELF
+# ═══════════════════════════════════════════════════════════
+print_status "Updating game.project title, package, and version ($VERSION_NAME / $VERSION_CODE)..."
+
+if [ ! -f game.project ] || ! grep -q "^\[project\]" game.project; then
+    print_error "game.project not found or has no [project] section — is this the matatu_defold repo root?"
+    exit 1
+fi
+
+# Update project title and package name
 awk -v t="$PROJECT_TITLE" -v p="$PACKAGE_NAME" '
     /^\[project\]/ { print; in_project=1; in_android=0; next }
     /^\[android\]/ { print; in_android=1; in_project=0; next }
@@ -183,130 +186,85 @@ awk -v t="$PROJECT_TITLE" -v p="$PACKAGE_NAME" '
     { print }
 ' game.project > game.project.tmp && mv game.project.tmp game.project
 
-echo "✅ game.project -> title = $PROJECT_TITLE"
-echo "✅ game.project -> [android] package = $PACKAGE_NAME"
-
-# [project] version = ... / [android] version_code = ...
-#
-# Same stamp release.sh does for a real release (see its "0c. STAMP THE
-# VERSION INTO game.project" step) — without it, a debug build reports
-# whatever version was last checked in by an unrelated release, which is
-# what let a matatu_nap debug build silently fail League's version floor
-# while testing something that had nothing to do with versioning.
+# Update version and version_code
 sed -i.bak -E "s/^(version[[:space:]]*=[[:space:]]*).*/\1${VERSION_NAME}/" game.project
 if grep -q "^version_code[[:space:]]*=" game.project; then
     sed -i.bak -E "s/^(version_code[[:space:]]*=[[:space:]]*).*/\1${VERSION_CODE}/" game.project
     rm -f game.project.bak
 else
-    # Insert right after [android]. NOT sed's `a` command: GNU sed accepts
-    # "/pattern/a text" on one line, but BSD/macOS sed (what ships on every
-    # Mac, no GNU coreutils installed) demands the text start on its own
-    # line after "a\" — the one-line form that works on Linux CI fails on a
-    # dev's Mac with "command a expects \ followed by text". awk has no such
-    # split, so it works the same way on both.
     awk -v vc="version_code = ${VERSION_CODE}" '
         /^\[android\]/ { print; print vc; next }
         { print }
     ' game.project > game.project.tmp && mv game.project.tmp game.project
 fi
 
+# Verification checks
 if ! grep -q "^version = ${VERSION_NAME}$" game.project; then
-    echo "❌ Failed to stamp version in game.project"
+    print_error "Failed to stamp version in game.project"
     exit 1
 fi
 if ! grep -q "^version_code = ${VERSION_CODE}$" game.project; then
-    echo "❌ Failed to stamp version_code in game.project"
+    print_error "Failed to stamp version_code in game.project"
     exit 1
 fi
 
-echo "✅ game.project -> version = $VERSION_NAME"
-echo "✅ game.project -> version_code = $VERSION_CODE"
-
-# game.project is NOT an ini file, whatever it looks like. Bob's parser
-# (Project.loadPropertiesData) accepts exactly two line shapes — "[section]"
-# and "key = value" — and has no comment syntax at all. A "#" or ";" line
-# fails the whole build with a bare "Could not parse: .../game.project" and no
-# line number, which is a genuinely miserable thing to debug, so catch it here
-# where we can say which line is wrong.
-#
-# This also runs after the rewrites above, so a malformed awk/sed edit is
-# caught before bob rather than by it.
+# game.project Syntax Validation for bob
 bad_line=""
 while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
-        # Comment markers first: "; force_refresh_token = 1" contains an "="
-        # and would otherwise pass as a key/value line.
         \#*|\;*|" "*\#*|" "*\;*) bad_line="$line"; break ;;
         ""|\[*\])                continue ;;
         *=*)                     continue ;;
         *)                       bad_line="$line"; break ;;
     esac
 done < game.project
+
 if [ -n "$bad_line" ]; then
-    echo "❌ game.project has a line bob cannot parse:"
+    print_error "game.project has a line bob cannot parse:"
     echo "     $bad_line"
-    echo "   Only [section] headers and key = value lines are allowed."
-    echo "   There is no comment syntax — '#' and ';' lines break the build."
     exit 1
 fi
-echo "✅ game.project parses"
-echo "ℹ️  Make sure ${PACKAGE_NAME} is registered as an Android OAuth client for Google Sign-In (see note above) before relying on it for this game."
 
-# ==========================================================
-# 1. REGENERATE VISUAL IDENTITY ASSETS FOR $GAME_UPPER
-#    (launcher icon: bundle/android/res/** ; bg_logo watermark: assets/ui/)
-# ==========================================================
+print_success "game.project -> title=$PROJECT_TITLE, package=$PACKAGE_NAME, version=$VERSION_NAME ($VERSION_CODE)"
 
-echo ""
-echo "🎨 Regenerating launcher icon for $GAME_UPPER..."
+# ═══════════════════════════════════════════════════════════
+# 1. REGENERATE VISUAL IDENTITY ASSETS
+# ═══════════════════════════════════════════════════════════
+print_status "Regenerating launcher icon for $GAME_UPPER..."
 
-# These used to soft-fail and silently keep whatever icon/logo was already on
-# disk — which meant a build with missing deps would ship the PREVIOUS game's
-# branding (e.g. building matatu on a machine that last successfully
-# generated kadi's assets would silently keep showing Kadi's table-center
-# logo) with only an easy-to-miss warning as evidence. Hard-failing here
-# means the wrong branding can never ship unnoticed.
 if [ ! -f "$ICON_SVG" ]; then
-    echo "❌ $ICON_SVG not found — cannot regenerate the launcher icon for $GAME_UPPER."
+    print_error "$ICON_SVG not found — cannot regenerate launcher icon."
     exit 1
 elif ! command -v python3 >/dev/null 2>&1; then
-    echo "❌ python3 not found — cannot regenerate the launcher icon for $GAME_UPPER. Install Python 3."
+    print_error "python3 not found. Install Python 3."
     exit 1
 else
     if python3 tools/generate_android_icons.py "$ICON_SVG" --background "$ICON_BG" --out . ; then
-        echo "✅ bundle/android/res/** -> ${ICON_SVG}"
+        print_success "bundle/android/res/** -> ${ICON_SVG}"
     else
-        echo "❌ Icon generation failed (see error above) — refusing to continue with a stale/wrong icon. Install deps with: pip install pillow cairosvg"
+        print_error "Icon generation failed. Install deps with: pip install pillow cairosvg"
         exit 1
     fi
 fi
 
-echo ""
-echo "🎨 Regenerating bg_logo watermark for $GAME_UPPER..."
+print_status "Regenerating bg_logo watermark for $GAME_UPPER..."
 
 if [ ! -f "$LOGO_SVG" ]; then
-    echo "❌ $LOGO_SVG not found — cannot regenerate the bg_logo watermark for $GAME_UPPER."
-    exit 1
-elif ! command -v python3 >/dev/null 2>&1; then
-    echo "❌ python3 not found — cannot regenerate the bg_logo watermark for $GAME_UPPER. Install Python 3."
+    print_error "$LOGO_SVG not found — cannot regenerate bg_logo watermark."
     exit 1
 else
     if python3 tools/generate_bg_logo.py "$LOGO_SVG" ; then
-        echo "✅ assets/ui/bg_logo.png -> ${LOGO_SVG}"
+        print_success "assets/ui/bg_logo.png -> ${LOGO_SVG}"
     else
-        echo "❌ bg_logo generation failed (see error above) — refusing to continue with a stale/wrong table-center logo. Install deps with: pip install pillow cairosvg"
+        print_error "bg_logo generation failed. Install deps with: pip install pillow cairosvg"
         exit 1
     fi
 fi
 
-# ==========================================================
+# ═══════════════════════════════════════════════════════════
 # 2. BUILD APK
-# ==========================================================
-
-echo ""
-echo "=========================================================="
-echo "🔨 Building APK..."
-echo "=========================================================="
+# ═══════════════════════════════════════════════════════════
+print_status "Building APK..."
 
 KEYSTORE_ARGS=()
 if [ -n "$KEYSTORE_PATH" ] && [ -f "$KEYSTORE_PATH" ] && [ -f "$KEYSTORE_PASS" ]; then
@@ -315,11 +273,11 @@ if [ -n "$KEYSTORE_PATH" ] && [ -f "$KEYSTORE_PATH" ] && [ -f "$KEYSTORE_PASS" ]
         -ksp "$KEYSTORE_PASS"
         -ksa "$KEYSTORE_ALIAS"
     )
-    echo "🔑 Signing with keystore: $KEYSTORE_PATH (alias: $KEYSTORE_ALIAS)"
+    print_status "Signing with keystore: $KEYSTORE_PATH (alias: $KEYSTORE_ALIAS)"
 fi
 
 java --enable-native-access=ALL-UNNAMED \
-    -jar bob.jar \
+    -jar "$BOB_JAR" \
     --archive \
     --platform armv7-android \
     --architectures "$ARCHITECTURES" \
@@ -328,125 +286,81 @@ java --enable-native-access=ALL-UNNAMED \
     "${KEYSTORE_ARGS[@]}" \
     build bundle
 
-echo "✅ Build completed"
+print_success "Build completed successfully."
 
-# ==========================================================
+# ═══════════════════════════════════════════════════════════
 # 3. FIND APK
-# ==========================================================
-
-echo ""
-echo "🔍 Searching APK..."
+# ═══════════════════════════════════════════════════════════
+print_status "Searching for output APK..."
 
 APK_PATH=$(find "$BUNDLE_DIR" ./build/default -name "*.apk" 2>/dev/null | head -n 1)
 
 if [ -z "$APK_PATH" ]; then
-    echo "❌ APK not found!"
+    print_error "APK not found!"
     exit 1
 fi
 
-echo "✅ APK Found:"
-echo "$APK_PATH"
+print_success "APK Found: $APK_PATH"
 
-# ==========================================================
+# ═══════════════════════════════════════════════════════════
 # 4. GET CONNECTED DEVICES
-# ==========================================================
-
-echo ""
-echo "📱 Detecting Android devices..."
+# ═══════════════════════════════════════════════════════════
+print_status "Detecting Android devices..."
 
 DEVICES=$(adb devices | grep -w "device" | cut -f1)
 
 if [ -z "$DEVICES" ]; then
-    echo "❌ No Android devices connected"
+    print_error "No Android devices connected!"
     exit 1
 fi
 
-echo "✅ Connected devices:"
+print_success "Connected devices:"
 echo "$DEVICES"
 
-# ==========================================================
+# ═══════════════════════════════════════════════════════════
 # 5. INSTALL ON ALL DEVICES
-# ==========================================================
-
+# ═══════════════════════════════════════════════════════════
 for DEVICE in $DEVICES
 do
     echo ""
-    echo "=========================================================="
-    echo "📲 DEVICE: $DEVICE"
-    echo "=========================================================="
+    print_status "📲 DEVICE: $DEVICE"
 
-    # ------------------------------------------------------
-    # Clear logs only for this device
-    # ------------------------------------------------------
-
-    echo "🧹 Clearing old logs..."
+    print_status "🧹 Clearing old logs..."
     adb -s "$DEVICE" logcat -c || true
 
-    # ------------------------------------------------------
-    # Install APK WITHOUT deleting app data
-    # ------------------------------------------------------
-
-    echo "📥 Installing APK..."
-
+    print_status "📥 Installing APK (preserving app data)..."
     adb -s "$DEVICE" install -r "$APK_PATH"
+    print_success "APK installed on $DEVICE."
 
-    echo "✅ APK installed"
-    echo "💾 App data/cache preserved"
-
-    # ------------------------------------------------------
-    # Force stop previous app instance
-    # ------------------------------------------------------
-
-    echo "🛑 Force stopping old app..."
-
+    print_status "🛑 Force stopping old app instance..."
     adb -s "$DEVICE" shell am force-stop "$PACKAGE_NAME" || true
 
-    # ------------------------------------------------------
-    # Resolve launch activity
-    # ------------------------------------------------------
-
-    echo "🔍 Resolving launch activity..."
-
+    print_status "🔍 Resolving launch activity..."
     if [ -z "$MAIN_ACTIVITY" ]; then
-
         LAUNCH_ACTIVITY=$(adb -s "$DEVICE" shell cmd package resolve-activity \
             --brief "$PACKAGE_NAME" | tail -n 1 | tr -d '\r')
-
     else
-
         LAUNCH_ACTIVITY="$PACKAGE_NAME/$MAIN_ACTIVITY"
     fi
 
     if [ -z "$LAUNCH_ACTIVITY" ]; then
-        echo "❌ Failed to resolve activity on $DEVICE"
+        print_error "Failed to resolve activity on $DEVICE"
         continue
     fi
 
-    echo "✅ Launch Activity:"
-    echo "$LAUNCH_ACTIVITY"
+    print_success "Launch Activity resolved: $LAUNCH_ACTIVITY"
 
-    # ------------------------------------------------------
-    # Launch app
-    # ------------------------------------------------------
-
-    echo "🚀 Launching app..."
-
+    print_status "🚀 Launching app..."
     adb -s "$DEVICE" shell am start -n "$LAUNCH_ACTIVITY"
-
-    echo "✅ App launched"
-
+    print_success "App launched on $DEVICE."
 done
 
-# ==========================================================
+# ═══════════════════════════════════════════════════════════
 # 6. LIVE LOGS FOR ALL DEVICES
-# ==========================================================
-
+# ═══════════════════════════════════════════════════════════
 echo ""
-echo "=========================================================="
-echo "📡 LIVE DEFOLD LOGS (ALL DEVICES)"
-echo "💾 App data preserved"
-echo "🛑 Press Ctrl+C to stop"
-echo "=========================================================="
+print_status "📡 LIVE DEFOLD LOGS (ALL DEVICES)"
+print_warning "Press Ctrl+C to stop stream"
 echo ""
 
 for DEVICE in $DEVICES
