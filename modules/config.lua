@@ -129,6 +129,22 @@ M.SUPPORT_WHATSAPP = "256700372678"
 -- How the same number is shown to a human.
 M.SUPPORT_WHATSAPP_DISPLAY = "+256 700 372 678"
 
+-- WHERE CONTACT ACTUALLY GOES.
+--
+-- The lobby's CONTACT button opens a mail composer addressed here, prefilled
+-- with the diagnostic block support needs. Restored after a config edit removed
+-- it while lobby.gui_script was still reading it — `mailto:nil?subject=...` is
+-- a dead link, and the tap does nothing, which is the exact failure the
+-- WhatsApp note above was written about.
+--
+-- The two WhatsApp constants above are now unreferenced. Left in place rather
+-- than deleted: they are somebody else's line and cost nothing, and the note
+-- attached to them is the reason worth keeping — if mailto: turns out to do
+-- nothing on these handsets, the address here is a Gmail one, so a Gmail
+-- web-compose URL (https://mail.google.com/mail/?view=cm&fs=1&to=...) restores
+-- the same escape hatch wa.me was giving us.
+M.SUPPORT_EMAIL = "matatu.league@gmail.com"
+
 M.GAME_STATE_SECRET = "a27a120adfbc9f727c187748fff44547e1ee72f09481c8a965d62ed1c02e6ea3"
 
 M.INITIAL_RECONNECT_DELAY = 1.0
