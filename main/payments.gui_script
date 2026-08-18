@@ -13,6 +13,7 @@ local screen    = require("modules.screen")
 local GameMode  = require("modules.game_mode")
 local app_state = require("modules.app_state")
 local toast     = require("modules.toast")
+local wrules = require("modules.withdraw_rules")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local VISIBLE_W, VISIBLE_H = 1280, 720
@@ -80,10 +81,9 @@ local function calc_fee(method, amount)
 	return 0
 end
 
-local function is_withdraw(m)
-	local t = tostring((type(m) == "table" and m.type) or ""):upper()
-	return t:find("SELL") ~= nil or t:find("WITHDRAW") ~= nil
-end
+-- Shared with the amount floor below, so "is this money going out" is answered
+-- one way. See modules/withdraw_rules.lua.
+local is_withdraw = wrules.is_withdraw
 
 local function methods()
 	local u = ws.current_user_data or {}
@@ -671,14 +671,35 @@ local function handle(self, b)
 			local method = ms[self.method_index] or ms[1]
 			local amount = tonumber(self.amount) or 0
 			local fee = calc_fee(method, amount)
-			if amount >= (tonumber(method.min) or 0) and amount > 0 and self.phone ~= "" and self.phone_status == "ok" then
+			-- THE AMOUNT IS JUDGED BEFORE ANYTHING ELSE, AND OUT LOUD.
+			--
+			-- This read `method.min` straight off the server's payments config.
+			-- When that field is absent it becomes 0 and every amount passes —
+			-- which is how a 1200 withdrawal reached the backend at all, where
+			-- it was met by the win-rate check and cost the player their
+			-- account. wrules.minimum holds the config to the STRICTER of its
+			-- declared minimum and its own fee tiers, so a config missing one
+			-- is still held to the other.
+			--
+			-- And it SAYS SO. Below the minimum this branch used to fall
+			-- through every elseif and do nothing at all: no toast, no message,
+			-- no state change. A button that silently ignores the player reads
+			-- as an app that is broken.
+			local amt_ok, amt_msg = wrules.check(method, amount, commas)
+			if not amt_ok then
+				self._pending_pay = nil
+				self._msg = amt_msg
+				self._msg_ok = false; self._msg_proc = false
+				toast.error(amt_msg)
+				rebuild(self)
+			elseif self.phone ~= "" and self.phone_status == "ok" then
 				self._pending_pay = nil
 				self._msg = "Processing..."; self._msg_ok = true; self._msg_proc = true
 				msg.post("#controller", "submit_payment", {
 					phone = self.phone, amount = amount + fee, ptype = method.type or "",
 				})
 				rebuild(self)
-			elseif self.phone_status == "verifying" and amount >= (tonumber(method.min) or 0) and amount > 0 then
+			elseif self.phone_status == "verifying" then
 				-- Don't just bounce the tap back with a message that forces a
 				-- second manual tap once validation catches up — queue the
 				-- payment and fire it automatically the instant phone_validated
