@@ -71,10 +71,18 @@ local KNOCKOUT_STAKES_BY_GAME = {
 M.KNOCKOUT_STAKES = KNOCKOUT_STAKES_BY_GAME[GameMode.GAME] or KNOCKOUT_STAKES_BY_GAME.MATATU
 
 -- PARTY uses its own flat entry-fee ladder (the stepper just cycles these).
+--
+-- Every rung has to be one the server will actually honour. partyRules.ts puts
+-- the floor at 200 UGX and the ceiling at 500, converted per game by
+-- UGX_CONVERSION_RATES (whot x0.4, kadi x0.04) — so 80..200 in naira and 8..20
+-- in shillings. The old ladders sat mostly OUTSIDE those: a matatu player
+-- picking 100 was silently charged 200, and every whot and kadi rung was below
+-- its floor and clamped up. The stepper showed one number and the balance
+-- moved by another.
 local PARTY_TIERS_BY_GAME = {
-    MATATU = { 100, 200, 500 },
-    WHOT   = { 50,  100, 250 },
-    KADI   = { 5,   10,  25  },
+    MATATU = { 200, 300, 500 },
+    WHOT   = { 80,  120, 200 },
+    KADI   = { 8,   12,  20  },
 }
 M.PARTY_TIERS = PARTY_TIERS_BY_GAME[GameMode.GAME] or PARTY_TIERS_BY_GAME.MATATU
 
@@ -82,11 +90,21 @@ M.PARTY_TIERS = PARTY_TIERS_BY_GAME[GameMode.GAME] or PARTY_TIERS_BY_GAME.MATATU
 M.BATTLE_TYPES = { "NORMAL", "KNOCKOUT", "PARTY" }
 M.BATTLE_TYPE_LABELS = { NORMAL = "BATTLE", KNOCKOUT = "KNOCKOUT", PARTY = "PARTY" }
 
--- Battle types the UI is allowed to SHOW. PARTY is kept out of view again
--- for further improvement before launch — ALL of its code (tiers, is_party
--- branches, resolution, submission, and the server-side Vortex PARTY
--- hosting) is retained. Re-enable it by simply adding "PARTY" back here.
-M.BATTLE_TYPES_VISIBLE = { "NORMAL", "KNOCKOUT" }
+-- Battle types the UI is allowed to SHOW.
+--
+-- PARTY is back. It sits third, below KNOCKOUT, and drives two things from
+-- this one list: the lobby's right-hand battle rows (each with its own INVITE
+-- and EDIT, see the loop further down) and the type picker inside the battle
+-- maker. Everything either of them needs was already here while it was hidden
+-- — PARTY_TIERS, the is_party branches, battle_of_type, the "N PLAYERS" row
+-- detail and the party icon in ui.atlas — so this list is genuinely the whole
+-- switch.
+--
+-- The server side it talks to is the four-seat table in be_matatu
+-- (common/services/partyRules.ts and matatu/websocket/handlers/party.ts):
+-- twenty seconds to fill four chairs, 200 to sit down and 500 the ceiling,
+-- and every entry refunded if the table does not fill.
+M.BATTLE_TYPES_VISIBLE = { "NORMAL", "KNOCKOUT", "PARTY" }
 
 -- Resolve the battle a user holds for a given type T ∈ {NORMAL,KNOCKOUT,PARTY}.
 function M.battle_of_type(u, T)
