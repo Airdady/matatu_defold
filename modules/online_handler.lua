@@ -968,7 +968,39 @@ function M.handle_single_move(self, move_data, new_state, done)
             end)
         end)
     else
-        M.finalize_state_sync(self, new_state, function() done() end)
+        -- MY OWN HAND IS RECONCILED HERE TOO, and until now it was the one
+        -- collection that never was.
+        --
+        -- finalize_state_sync already stamps the DECK, the PILE TOP and the
+        -- OPPONENT'S hand from server truth on every sync. The player's own
+        -- hand was corrected only in the two branches above — an opponent's
+        -- move, and the AI covering our turn — so the one case it was never
+        -- checked in is the echo of OUR OWN move. That is exactly the case
+        -- where it is most likely to be wrong.
+        --
+        -- A draw is optimistic: the client takes what IT believes is the top of
+        -- the deck and puts that card in the hand immediately. When its deck has
+        -- drifted, the server deals a DIFFERENT card and says so —
+        --
+        --   Draw mismatch at index 0: Expected 8H, Got 7D
+        --   [DRAW] client deck drifted (deck was 29, 1 requested) — dealing server cards
+        --
+        -- — and the correction rode home in this very state. Dropped here, the
+        -- phantom card stayed in hand for the rest of the game while the real
+        -- one was still in the deck for somebody to draw and play. That is the
+        -- reported "he played 3 of clubs and I also picked 3 of clubs": two
+        -- copies of one card on the table, one of them fictional.
+        --
+        -- Safe on our own move: play_card removes the played card from
+        -- player_hand synchronously before its animation, so the local hand
+        -- already agrees about that card by the time any echo lands. And
+        -- sync_my_hand reconciles as a MULTISET by identity, so it only touches
+        -- cards that genuinely differ — with { sync = true }, which neither
+        -- consumes the deck nor records a DRAW action to be sent back.
+        M.finalize_state_sync(self, new_state, function()
+            sync_my_hand(self, new_state or {})
+            done()
+        end)
     end
 end
 
