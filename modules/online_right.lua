@@ -86,6 +86,27 @@ local PARTY_TIERS_BY_GAME = {
 }
 M.PARTY_TIERS = PARTY_TIERS_BY_GAME[GameMode.GAME] or PARTY_TIERS_BY_GAME.MATATU
 
+-- HOW A PARTY IS WON. Mirrors PartyMode in be_matatu's partyRules.ts.
+--   NORMAL    play it out; when somebody goes out the rest are counted
+--   SCORECAP  a running total per player, cross the cap and you're out
+M.PARTY_MODES = { "NORMAL", "SCORECAP" }
+
+-- The SAME ladder KNOCKOUT uses, deliberately — see the note on M.KNOCKOUT_CAPS.
+-- Kept as its own name so a future change to one mode cannot silently move the
+-- other, and so this reads as a decision rather than as a coincidence.
+M.PARTY_CAPS = { 100, 200, 250, 300 }
+M.PARTY_DEFAULT_CAP_I = 2 -- 200, matching PARTY_DEFAULT_SCORE_CAP on the server
+
+function M.party_mode_of(bm)
+    return (tostring((bm or {}).pmode or "NORMAL"):upper() == "SCORECAP") and "SCORECAP" or "NORMAL"
+end
+
+function M.party_cap_of(bm)
+    local i = (bm or {}).pcap_i or M.PARTY_DEFAULT_CAP_I
+    if i < 1 then i = 1 elseif i > #M.PARTY_CAPS then i = #M.PARTY_CAPS end
+    return M.PARTY_CAPS[i]
+end
+
 -- The three independent battle types. Internal keys map to display labels.
 M.BATTLE_TYPES = { "NORMAL", "KNOCKOUT", "PARTY" }
 M.BATTLE_TYPE_LABELS = { NORMAL = "BATTLE", KNOCKOUT = "KNOCKOUT", PARTY = "PARTY" }
@@ -251,16 +272,48 @@ local function draw_battle_modal(self, ctx)
     -- FORMAT / PLAYERS / CAP
     local fmt_y = CY - 120
     if is_party then
-        local players = bm.players or "AUTO"
-        track(self, ui.text(vmath.vector3(CX, fmt_y + 46, 0), "PLAYER COUNT", "small", C_NEUTRAL))
-        mkbtn(self, "bm_players_minus", vmath.vector3(CX - step_w/2 - 34, fmt_y, 0), vmath.vector3(52, 52, 0), "-", "secondary_btn")
-        track(self, ui.box(vmath.vector3(CX, fmt_y, 0), vmath.vector3(step_w, 52, 0), ctx.C.COL_NAMEID_BG))
-        local p_txt = (players == "AUTO") and "AUTO" or (tostring(players) .. " PLAYERS")
-        track(self, ui.text(vmath.vector3(CX, fmt_y, 0), p_txt, "body", ctx.C.COL_WHITE))
-        mkbtn(self, "bm_players_plus", vmath.vector3(CX + step_w/2 + 34, fmt_y, 0), vmath.vector3(52, 52, 0), "+", "secondary_btn")
-        track(self, ui.text(vmath.vector3(CX, fmt_y - 42, 0),
-            (players == "AUTO") and "Auto-fill the table as players join" or "Starts once the table is full",
-            "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+        -- NO PLAYER-COUNT PICKER.
+        --
+        -- The table is always AUTO now: it opens, people take chairs for twenty
+        -- seconds, and whoever is seated when the clock runs out plays. A
+        -- number to choose implied the host could hold the table open for a
+        -- fourth who might never come — which is exactly the wait the fixed
+        -- window exists to remove. The count is still sent as "AUTO" on submit,
+        -- so nothing downstream had to change.
+        --
+        -- What the host picks instead is HOW the party is won.
+        local pmode = M.party_mode_of(bm)
+        track(self, ui.text(vmath.vector3(CX, fmt_y + 46, 0), "PLAY MODE", "small", C_NEUTRAL))
+
+        local mode_specs = {
+            { id = "bm_pmode_normal", label = "NORMAL",    on = (pmode == "NORMAL")   },
+            { id = "bm_pmode_cap",    label = "SCORE CAP", on = (pmode == "SCORECAP") },
+        }
+        local mseg_w, mseg_gap = 180, 12
+        for i, m in ipairs(mode_specs) do
+            local mx  = CX + (i - (#mode_specs + 1) / 2) * (mseg_w + mseg_gap)
+            local box = track(self, ui.box(vmath.vector3(mx, fmt_y, 0), vmath.vector3(mseg_w, 52, 0), m.on and C_VICTORY or vmath.vector4(0.16, 0.16, 0.18, 1)))
+            self.buttons[#self.buttons+1] = { node = box, id = m.id }
+            track(self, ui.text(vmath.vector3(mx, fmt_y, 0), m.label, "btn_md", m.on and C_BTN_TEXT or ctx.C.COL_WHITE))
+        end
+
+        if pmode == "SCORECAP" then
+            -- Same ladder and the same wording as a KNOCKOUT chamber, on
+            -- purpose: a player who knows what "cap 200" costs them there
+            -- should not have to learn a second meaning for it here.
+            local pcap = M.party_cap_of(bm)
+            local cap_y = fmt_y - 74
+            track(self, ui.text(vmath.vector3(CX, cap_y + 42, 0), "SCORE CAP", "small", C_NEUTRAL))
+            mkbtn(self, "bm_pcap_minus", vmath.vector3(CX - step_w/2 - 34, cap_y, 0), vmath.vector3(52, 52, 0), "-", "secondary_btn")
+            track(self, ui.box(vmath.vector3(CX, cap_y, 0), vmath.vector3(step_w, 52, 0), ctx.C.COL_NAMEID_BG))
+            track(self, ui.text(vmath.vector3(CX, cap_y, 0), tostring(pcap), "body", ctx.C.COL_WHITE))
+            mkbtn(self, "bm_pcap_plus", vmath.vector3(CX + step_w/2 + 34, cap_y, 0), vmath.vector3(52, 52, 0), "+", "secondary_btn")
+            track(self, ui.text(vmath.vector3(CX, cap_y - 40, 0),
+                "Reach the cap and you're out · last player standing wins", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+        else
+            track(self, ui.text(vmath.vector3(CX, fmt_y - 42, 0),
+                "Play it out · lowest hand when someone goes out wins", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+        end
     elseif is_knock then
         track(self, ui.text(vmath.vector3(CX, fmt_y + 46, 0), "SCORE CAP", "small", C_NEUTRAL))
         mkbtn(self, "bm_cap_minus", vmath.vector3(CX - step_w/2 - 34, fmt_y, 0), vmath.vector3(52, 52, 0), "-", "secondary_btn")
@@ -906,9 +959,15 @@ function M.draw(self, ctx, left_M)
             local amt = battle_amount(b)
             local detail
             if T == "PARTY" then
-                local players = b.players or "AUTO"
-                local pstr    = (type(players) == "table") and tostring(#players) or tostring(players)
-                detail = string.format("%s PLAYERS    %s", pstr, commas(amt))
+                -- The count is always AUTO now, so printing it said "AUTO
+                -- PLAYERS" and told nobody anything. What actually differs
+                -- between two party tables is how they are won.
+                local pmode = tostring(b.partyMode or b.mode or "NORMAL"):upper()
+                if pmode == "SCORECAP" then
+                    detail = string.format("CAP %d    %s", tonumber(b.scoreCap) or 200, commas(amt))
+                else
+                    detail = string.format("UP TO %d    %s", 4, commas(amt))
+                end
             elseif T == "KNOCKOUT" then
                 local cap = tonumber(b.scoreCap) or 200
                 detail = string.format("CAP %d    %s", cap, commas(amt))
@@ -1047,7 +1106,14 @@ function M.bm_submit(self, rebuild_cb)
     local payload = { userId = uid, amount = amount, matchFormat = match_format, rules = "JOKERS",
                       matchType = btype }
     if btype == "KNOCKOUT" then payload.scoreCap = score_cap end
-    if btype == "PARTY" then payload.players = bm.players or "AUTO" end
+    if btype == "PARTY" then
+        -- Always AUTO. The host no longer picks a count: the table fills for
+        -- twenty seconds and plays with whoever is seated. Still SENT, because
+        -- the server and the lobby row both read it.
+        payload.players = "AUTO"
+        payload.mode = M.party_mode_of(bm)
+        if payload.mode == "SCORECAP" then payload.scoreCap = M.party_cap_of(bm) end
+    end
 
     local function on_result(result)
         local cur = self.battle_modal

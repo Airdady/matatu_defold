@@ -963,15 +963,24 @@ function on_input(self, action_id, action)
                 elseif id == "bm_fmt_minus" or id == "bm_fmt_plus" then
                     local bm = self.battle_modal
                     if bm and not bm.submitting then bm.fmt_i = math.max(1, math.min(#right_panel.BATTLE_TIERS[bm.stake_i or 1].formats, (bm.fmt_i or 1) + (id == "bm_fmt_plus" and 1 or -1))); rebuild(self) end
-                elseif id == "bm_players_minus" or id == "bm_players_plus" then
+                -- The AUTO/2/3/4 player-count stepper is gone. A party table
+                -- fills for twenty seconds and plays with whoever is seated, so
+                -- a number to choose only implied the host could hold the table
+                -- open for a fourth who might never come — the exact wait the
+                -- fixed window exists to remove. bm_submit still sends "AUTO".
+                elseif id == "bm_pmode_normal" or id == "bm_pmode_cap" then
                     local bm = self.battle_modal
                     if bm and not bm.submitting then
-                        -- Cycle AUTO ↔ 2 ↔ 3 ↔ 4 (index 1 = AUTO).
-                        local opts = { "AUTO", 2, 3, 4 }
-                        local cur = 1
-                        for j, o in ipairs(opts) do if tostring(o) == tostring(bm.players or "AUTO") then cur = j; break end end
-                        cur = math.max(1, math.min(#opts, cur + (id == "bm_players_plus" and 1 or -1)))
-                        bm.players = opts[cur]; rebuild(self)
+                        bm.pmode = (id == "bm_pmode_cap") and "SCORECAP" or "NORMAL"
+                        rebuild(self)
+                    end
+                elseif id == "bm_pcap_minus" or id == "bm_pcap_plus" then
+                    local bm = self.battle_modal
+                    if bm and not bm.submitting then
+                        local step = (id == "bm_pcap_plus") and 1 or -1
+                        bm.pcap_i = math.max(1, math.min(#right_panel.PARTY_CAPS,
+                            (bm.pcap_i or right_panel.PARTY_DEFAULT_CAP_I) + step))
+                        rebuild(self)
                     end
                 elseif id == "bm_submit" then right_panel.bm_submit(self, function() rebuild(self) end)
 
