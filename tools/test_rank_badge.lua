@@ -35,24 +35,24 @@ local function ok(name, cond, detail)
 end
 
 -- ── the bands, at both ends ─────────────────────────────────────────────────
-check("floor of amateur",      rank.label(0.0),   "AMATEUR")
-check("ceiling of amateur",    rank.label(44.9),  "AMATEUR")
-check("floor of contender",    rank.label(45.0),  "CONTENDER")
-check("ceiling of contender",  rank.label(49.9),  "CONTENDER")
-check("floor of pro",          rank.label(50.0),  "PRO")
-check("ceiling of pro",        rank.label(54.9),  "PRO")
-check("floor of legend",       rank.label(55.0),  "LEGEND")
-check("ceiling of legend",     rank.label(100.0), "LEGEND")
+check("floor of amateur",       rank.label(0.0),   "AMATEUR")
+check("ceiling of amateur",     rank.label(44.9),  "AMATEUR")
+check("floor of pro",           rank.label(45.0),  "PRO")
+check("ceiling of pro",         rank.label(49.9),  "PRO")
+check("floor of master",        rank.label(50.0),  "MASTER")
+check("ceiling of master",      rank.label(54.9),  "MASTER")
+check("floor of grandmaster",   rank.label(55.0),  "GRANDMASTER")
+check("ceiling of grandmaster", rank.label(100.0), "GRANDMASTER")
 
 -- THE GAPS. A tenth of a point between every written band.
-check("44.95 is still an amateur",  rank.label(44.95), "AMATEUR")
-check("49.95 is still a contender", rank.label(49.95), "CONTENDER")
-check("54.95 is still a pro",       rank.label(54.95), "PRO")
+check("44.95 is still an amateur", rank.label(44.95), "AMATEUR")
+check("49.95 is still a pro",      rank.label(49.95), "PRO")
+check("54.95 is still a master",   rank.label(54.95), "MASTER")
 
 -- Off the ends. A rate outside 0-100 is a server bug, not a reason to crash or
 -- to answer nil on a screen that is about to draw the answer.
-check("above 100 is a legend",   rank.label(140),  "LEGEND")
-check("below zero is an amateur", rank.label(-12), "AMATEUR")
+check("above 100 is a grandmaster", rank.label(140),  "GRANDMASTER")
+check("below zero is an amateur",   rank.label(-12), "AMATEUR")
 
 -- ZERO IS A WIN RATE; NIL IS NOT.
 --
@@ -63,14 +63,14 @@ check("below zero is an amateur", rank.label(-12), "AMATEUR")
 check("zero is the bottom tier", rank.label(0), "AMATEUR")
 check("nil is no badge at all",  rank.label(nil), nil)
 check("a non-number is no badge", rank.label({}), nil)
-check("a numeric string still reads", rank.label("62"), "LEGEND")
+check("a numeric string still reads", rank.label("62"), "GRANDMASTER")
 check("nil tier is nil", rank.tier(nil), nil)
 
 -- Keys travel with the labels: the colour table is keyed by them.
-check("key for amateur",   (rank.tier(10)  or {}).key, "amateur")
-check("key for contender", (rank.tier(47)  or {}).key, "contender")
-check("key for pro",       (rank.tier(52)  or {}).key, "pro")
-check("key for legend",    (rank.tier(88)  or {}).key, "legend")
+check("key for amateur",     (rank.tier(10)  or {}).key, "amateur")
+check("key for pro",         (rank.tier(47)  or {}).key, "pro")
+check("key for master",      (rank.tier(52)  or {}).key, "master")
+check("key for grandmaster", (rank.tier(88)  or {}).key, "grandmaster")
 
 -- Every band has a colour pair, and no pill is drawn in the same colour as the
 -- text written on it.
@@ -95,17 +95,26 @@ end
 -- redefine the band for every other screen.
 local t = rank.tier(80)
 t.label = "MUTATED"
-check("tiers are handed out as copies", rank.label(80), "LEGEND")
+check("tiers are handed out as copies", rank.label(80), "GRANDMASTER")
 
 -- ── widths ──────────────────────────────────────────────────────────────────
 -- Nothing in the Defold GUI measures text at build time, so a pill is sized
 -- from its character count. The longest label must fit the rule, and the
 -- shortest must not collapse to nothing.
-check("CONTENDER is the widest label", rank.width("CONTENDER"), 9 * rank.CHAR_W)
-check("PRO takes the floor",           rank.width("PRO"),       rank.MIN_W)
-ok("the floor is wide enough for PRO", rank.MIN_W >= 3 * rank.CHAR_W)
-check("no rate, no width",             rank.badge_width(nil),   0)
-check("a rate gives its label's width", rank.badge_width(47),   rank.width("CONTENDER"))
+-- EVERY pill carries padding on both sides. Without it the word ran to both
+-- edges of its own rectangle, which is what "the badges have no horizontal
+-- padding" was.
+check("GRANDMASTER is the widest label",
+      rank.width("GRANDMASTER"), 11 * rank.CHAR_W + 2 * rank.PAD_X)
+check("PRO takes the floor",            rank.width("PRO"),       rank.MIN_W)
+ok("the floor is wide enough for PRO",  rank.MIN_W >= 3 * rank.CHAR_W + 2 * rank.PAD_X)
+check("no rate, no width",              rank.badge_width(nil),   0)
+check("a rate gives its label's width", rank.badge_width(47),    rank.width("PRO"))
+ok("there is padding at all",           rank.PAD_X > 0)
+for _, t in ipairs(rank.TIERS) do
+  ok("padding survives the floor for " .. t.label,
+     rank.width(t.label) >= #t.label * rank.CHAR_W + 2 * rank.PAD_X)
+end
 
 -- ── every surface asks the one module ───────────────────────────────────────
 local function source(path)
@@ -271,8 +280,8 @@ local function result(my_wr, opp_wr)
 end
 
 result(62, 47)
-check("game-over badges the player",   gui.get_text(S.n_you_rank_tx), "LEGEND")
-check("game-over badges the opponent", gui.get_text(S.n_opp_rank_tx), "CONTENDER")
+check("game-over badges the player",   gui.get_text(S.n_you_rank_tx), "GRANDMASTER")
+check("game-over badges the opponent", gui.get_text(S.n_opp_rank_tx), "PRO")
 ok("the player's pill is shown",   gui.is_enabled(S.n_you_rank_bg))
 ok("the opponent's pill is shown", gui.is_enabled(S.n_opp_rank_bg))
 -- OUTBOARD, both of them: away from the centre line, where the PRIZE / POINTS
@@ -294,7 +303,7 @@ ok("an unrated opponent gets no pill", not gui.is_enabled(S.n_opp_rank_bg))
 -- than the panel staying stuck on whatever the last game left behind.
 result(20, 90)
 check("a later result re-badges the player",   gui.get_text(S.n_you_rank_tx), "AMATEUR")
-check("a later result re-badges the opponent", gui.get_text(S.n_opp_rank_tx), "LEGEND")
+check("a later result re-badges the opponent", gui.get_text(S.n_opp_rank_tx), "GRANDMASTER")
 
 print()
 print(("%d passed, %d failed"):format(pass, fail))

@@ -7,8 +7,8 @@
 -- whether 48 is good. Nobody does that in ten seconds; they read the number,
 -- learn nothing from it, and press ACCEPT anyway.
 --
--- A tier says the same thing in one word and one colour: AMATEUR, CONTENDER,
--- PRO, LEGEND. The bands are fixed, so the same player wears the same badge
+-- A tier says the same thing in one word and one colour: AMATEUR, PRO, MASTER,
+-- GRANDMASTER. The bands are fixed, so the same player wears the same badge
 -- everywhere, and the colour carries the meaning even when the word is too
 -- small to read at arm's length.
 --
@@ -38,11 +38,22 @@ local M = {}
 -- falls in none of them. Selecting by "the highest band whose min it clears"
 -- closes those gaps downward rather than answering nil for a real rate — see
 -- M.tier.
+--
+-- THE NAMES ARE A LADDER, NOT A THESAURUS.
+--
+-- They were AMATEUR / CONTENDER / PRO / LEGEND, which mixes two vocabularies:
+-- CONTENDER is boxing, LEGEND is marketing, and neither tells a player what
+-- comes next. These are the ranks a card player already knows, and each one
+-- plainly outranks the one below it — which is the only job a tier name has.
+--
+-- PRO moves DOWN a band to make room. That is deliberate: a player sitting at
+-- 52% who was PRO yesterday is MASTER today, so nobody is demoted by the
+-- rename.
 M.TIERS = {
-    { key = "amateur",   label = "AMATEUR",   min = 0.0,  max = 44.9  },
-    { key = "contender", label = "CONTENDER", min = 45.0, max = 49.9  },
-    { key = "pro",       label = "PRO",       min = 50.0, max = 54.9  },
-    { key = "legend",    label = "LEGEND",    min = 55.0, max = 100.0 },
+    { key = "amateur",     label = "AMATEUR",     min = 0.0,  max = 44.9  },
+    { key = "pro",         label = "PRO",         min = 45.0, max = 49.9  },
+    { key = "master",      label = "MASTER",      min = 50.0, max = 54.9  },
+    { key = "grandmaster", label = "GRANDMASTER", min = 55.0, max = 100.0 },
 }
 
 -- THE COLOURS, AND WHY THEY ARE NOT A RED-TO-GREEN RAMP.
@@ -58,10 +69,10 @@ M.TIERS = {
 -- it is the only one bright enough that light text on it would not read — and
 -- being the odd one out is the point at the top of a ladder.
 M.COLORS = {
-    amateur   = { bg = { 0.30, 0.34, 0.40, 1.00 }, tx = { 0.84, 0.88, 0.94, 1.00 } },
-    contender = { bg = { 0.16, 0.42, 0.72, 1.00 }, tx = { 0.92, 0.96, 1.00, 1.00 } },
-    pro       = { bg = { 0.06, 0.55, 0.45, 1.00 }, tx = { 0.90, 1.00, 0.97, 1.00 } },
-    legend    = { bg = { 0.95, 0.72, 0.10, 1.00 }, tx = { 0.16, 0.10, 0.00, 1.00 } },
+    amateur     = { bg = { 0.30, 0.34, 0.40, 1.00 }, tx = { 0.84, 0.88, 0.94, 1.00 } },
+    pro         = { bg = { 0.16, 0.42, 0.72, 1.00 }, tx = { 0.92, 0.96, 1.00, 1.00 } },
+    master      = { bg = { 0.06, 0.55, 0.45, 1.00 }, tx = { 0.90, 1.00, 0.97, 1.00 } },
+    grandmaster = { bg = { 0.95, 0.72, 0.10, 1.00 }, tx = { 0.16, 0.10, 0.00, 1.00 } },
 }
 
 --- The tier a win rate falls in, or nil when there is no win rate to read.
@@ -118,11 +129,20 @@ end
 --
 -- The floor is lower than championship's 66 because the shortest label here is
 -- PRO, and a three-letter word in a 66px pill is mostly padding.
+--
+-- PAD_X IS THE BUG THIS FIXES. The width was the character estimate and
+-- nothing else, so the word ran to both edges of its own pill: at 11px a
+-- character the estimate is close enough to the real glyph run that there was
+-- no gap left over, and every badge read as text with a coloured rectangle
+-- jammed against it. The padding is added on both sides, so it is 2 * PAD_X in
+-- total, and the floor still applies underneath — a short label gets the wider
+-- of "its text plus padding" and MIN_W rather than one or the other.
 M.CHAR_W = 11
+M.PAD_X  = 8
 M.MIN_W  = 52
 
 function M.width(label)
-    local w = #tostring(label or "") * M.CHAR_W
+    local w = #tostring(label or "") * M.CHAR_W + 2 * M.PAD_X
     return w > M.MIN_W and w or M.MIN_W
 end
 
