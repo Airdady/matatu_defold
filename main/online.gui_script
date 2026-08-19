@@ -633,6 +633,17 @@ function update(self, dt)
         end
     end
 
+    -- ── Savings promo, typing itself out ─────────────────────────────────
+    -- draw_savings_info works out how much of the copy to show from the wall
+    -- clock, so this only has to ask for the redraws that make it animate —
+    -- and if this loop ever stops running, the card shows its full text
+    -- rather than an empty one. That is the failure it used to have: the
+    -- timer it read was never advanced by anything, so every line rendered
+    -- as the empty string and the promo opened blank.
+    if self.savings_info_open and not self._savings_type_done then
+        need_rebuild = true
+    end
+
     if need_rebuild then rebuild(self); return end
 
     -- Periodic fallback so the standings panel doesn't go stale (request rank quietly every 20s)
@@ -656,6 +667,7 @@ function on_message(self, message_id, message, sender)
         local u = ws.current_user_data or {}
         if u.savingsPromoSeen ~= true then
             self.savings_info_open = true
+            self._savings_type_t0, self._savings_type_done = nil, nil
         end
         refresh_wh(); rebuild(self)
         -- Actively ask for a fresh online-players list every time this
@@ -828,7 +840,11 @@ function on_input(self, action_id, action)
                 elseif id == "nav_tournaments" then msg.post("#controller", "goto_tournaments")
                 elseif id == "nav_support" then msg.post("#controller", "goto_support")
                 elseif id == "nav_account" then msg.post("#controller", "goto_profile")
-                elseif id == "savings_info" then self.savings_info_open = true; rebuild(self)
+                elseif id == "savings_info" then
+                    -- Cleared so the copy types itself out again on a
+                    -- deliberate re-open, not just the first automatic one.
+                    self._savings_type_t0, self._savings_type_done = nil, nil
+                    self.savings_info_open = true; rebuild(self)
                 elseif id == "savings_info_close" or id == "savings_info_block" then
                     mark_savings_promo_seen()
                     self.savings_info_open = false; rebuild(self)

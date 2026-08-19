@@ -471,14 +471,35 @@ local function draw_savings_info(self, ctx)
     local COL_SAVINGS = vmath.vector4(0.20, 0.75, 0.55, 1.0)
 
     -- Type the copy out character by character the first time this dialog is
-    -- shown (self._savings_type_t is ticked in online.gui_script's update())
-    -- so a first-time reader's eye is pulled through it instead of it
+    -- shown, so a first-time reader's eye is pulled through it instead of it
     -- landing as one wall of text. Every typed string here is plain ASCII —
     -- string.sub() slices by byte, and a multi-byte UTF-8 char (✓, —) cut
     -- mid-sequence would render as garbage, so those stay outside the budget.
+    --
+    -- MEASURED FROM THE CLOCK, NOT FROM AN ACCUMULATOR SOMEBODY HAS TO TICK.
+    --
+    -- This read self._savings_type_t, which online.gui_script's update() was
+    -- supposed to advance and did not — nothing anywhere assigned it. So the
+    -- budget was floor(nil/0.015) = 0 on every frame, typed() returned "" for
+    -- every line, and the dialog opened as a coin bundle, two buttons and a
+    -- completely empty card. A promo nobody can read is worse than no promo.
+    --
+    -- Deriving the budget from elapsed wall time removes the whole class of
+    -- failure: the only thing update() is still needed for is asking for a
+    -- redraw, and if that ever stops the text simply appears complete on the
+    -- next draw instead of vanishing.
     local CHAR_INTERVAL = 0.015
+    -- Belt: whatever happens, the card is fully readable this long after it
+    -- opened. Typing is a flourish; the words are the point.
+    local TYPE_GIVE_UP = 3.0
+
+    local now = (socket and socket.gettime and socket.gettime()) or os.time()
+    self._savings_type_t0 = self._savings_type_t0 or now
+    local elapsed = now - self._savings_type_t0
+    if elapsed >= TYPE_GIVE_UP then self._savings_type_done = true end
+
     local typing = not self._savings_type_done
-    local budget = typing and math.floor((self._savings_type_t or 0) / CHAR_INTERVAL) or math.huge
+    local budget = typing and math.floor(elapsed / CHAR_INTERVAL) or math.huge
     local function typed(full)
         if not typing then return full end
         if budget >= #full then
