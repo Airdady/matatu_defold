@@ -17,6 +17,7 @@ local screen = require("modules.screen")
 local app_state = require("modules.app_state")
 local sound = require("modules.sound")
 local confetti_fx = require("modules.confetti_fx")
+local flag_art = require("modules.flag_art")
 
 -- Ranks at/below this threshold get the confetti + popper-sound celebration
 -- on top of the normal results (the same "shout-out" gameover.gui_script
@@ -70,7 +71,29 @@ local function mkbtn(self, id, pos, size, label, style, data, font, text_color)
 end
 
 -- ── Row rendering (leaderboard) ────────────────────────────────────────────
+--
+-- ONE BOARD, ALL THREE GAMES.
+--
+-- This list used to be each game's own players, ranked among themselves —
+-- so a Whot player's "Final Leaderboard" was twenty Whot names. The money it
+-- was reporting never worked that way: the seasonal bonus is paid from a
+-- SINGLE standings table cut across matatu, whot and kadi (see be_matatu's
+-- runPrizeDistributionWithNotifications), converted into each winner's own
+-- currency at credit time. The board showed one competition and the payout
+-- came from another.
+--
+-- So the server now sends the global winners, and each row carries the
+-- winner's country and currency with it. The flag is what makes a mixed
+-- board readable — without it, "+5,000" against a Ugandan name and "+2,000"
+-- against a Nigerian one look like a ranking error rather than two
+-- currencies.
 local ROW_H = 30
+
+-- Flags are drawn, not shipped (modules/flag_art). 16px tall is below
+-- flag_art.DETAIL_MIN_PX, so Uganda's crest and Kenya's shield are skipped
+-- and each flag is its stripes — which is what identifies it at this size
+-- anyway.
+local FLAG_H = 16
 local RANK_TINT = { COL_GOLD, COL_SILVER, COL_BRONZE }
 
 local function draw_row(self, x_left, x_right, y, entry, a, my_id)
@@ -86,8 +109,19 @@ local function draw_row(self, x_left, x_right, y, entry, a, my_id)
     local t_rank = track(self, ui.text(vmath.vector3(x_left + 6, y, 0), "#" .. tostring(rank), "small", with_a(tint, a)))
     gui.set_pivot(t_rank, gui.PIVOT_W)
 
+    -- Country flag. `country` is the server's field; `game` is accepted as a
+    -- fallback because flag_art.code() resolves either, and a payload cached
+    -- before this shipped carries neither — in which case nothing is drawn
+    -- and the row simply looks the way it always did.
+    local code = flag_art.code(entry.country) or flag_art.code(entry.game)
+    if code then
+        for _, n in ipairs(flag_art.draw(vmath.vector3(x_left + 40, y, 0), FLAG_H, code, { alpha = a })) do
+            track(self, n)
+        end
+    end
+
     -- Avatar
-    local av_x = x_left + 54
+    local av_x = x_left + 78
     track(self, ui.pie(vmath.vector3(av_x, y, 0), 13, with_a(COL_AV_BG, a)))
     gui.set_color(track(self, ui.avatar(vmath.vector3(av_x, y, 0), vmath.vector3(22, 22, 0), entry.avatar)), with_a(COL_WHITE, a))
 
@@ -98,11 +132,16 @@ local function draw_row(self, x_left, x_right, y, entry, a, my_id)
     gui.set_pivot(t_name, gui.PIVOT_W)
 
     -- Points
-    local t_pts = track(self, ui.text(vmath.vector3(x_right - 120, y, 0), commas(entry.points) .. " pts", "small", with_a(COL_GOLD, a)))
+    local t_pts = track(self, ui.text(vmath.vector3(x_right - 130, y, 0), commas(entry.points) .. " pts", "small", with_a(COL_GOLD, a)))
     gui.set_pivot(t_pts, gui.PIVOT_E)
 
-    -- Coins
-    local t_coins = track(self, ui.text(vmath.vector3(x_right - 6, y, 0), "+" .. commas(entry.coinsEarned), "small", with_a(COL_GREEN, a)))
+    -- Reward won, in the winner's OWN currency. Three currencies share this
+    -- board now, so an unlabelled number is ambiguous in a way it never was
+    -- when every row was the same country.
+    local cur = tostring(entry.currency or "")
+    local coins_str = "+" .. commas(entry.coinsEarned)
+    if cur ~= "" then coins_str = coins_str .. " " .. cur end
+    local t_coins = track(self, ui.text(vmath.vector3(x_right - 6, y, 0), coins_str, "small", with_a(COL_GREEN, a)))
     gui.set_pivot(t_coins, gui.PIVOT_E)
 end
 
@@ -172,7 +211,13 @@ local function rebuild(self)
         track(self, ui.box(vmath.vector3(px, ry, 0), vmath.vector3(panel_w - 48, 2, 0), with_a(COL_DIM, 0.3 * a)))
         ry = ry - 18
 
-        local lb_title = track(self, ui.text(vmath.vector3(px, ry, 0), "Final Leaderboard (Top Winners highlighted)", "small", with_a(COL_WHITE, a)))
+        -- Labelled for what it actually is. `winnersAreGlobal` is false only
+        -- when the cross-game snapshot was missing or stale and the server
+        -- fell back to this game's own board — in which case saying "all
+        -- games" would be a lie about a list the player can read.
+        local lb_caption = d.winnersAreGlobal and "Season Bonus Winners - All Games"
+                                              or "Final Leaderboard"
+        local lb_title = track(self, ui.text(vmath.vector3(px, ry, 0), lb_caption, "small", with_a(COL_WHITE, a)))
         gui.set_scale(lb_title, vmath.vector3(0.8, 0.8, 1))
         ry = ry - 18
 

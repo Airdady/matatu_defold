@@ -26,8 +26,22 @@
 -- top-winners announcement in getTopPlayersWithPrizes.ts):
 --   **bold text** -> rendered in the bold font
 --   {{a:N}}        -> avatar N rendered inline (avatars atlas, avatar_N)
+--   {{f:UG}}       -> a country flag drawn inline (modules/flag_art)
 -- e.g. "**1.** {{a:5}} **PlayerOne** ~5,000/-   •   **2.** {{a:12}} ..."
 -- Plain messages with no markup render exactly as before.
+--
+-- EMOJI ARE PICTURES HERE, NOT CHARACTERS.
+--
+-- None of fonts/*.font carries an emoji glyph, so Defold falls back to
+-- .notdef, which in these faces draws as "~". The backend used to answer
+-- that by deleting every emoji before it sent one (be_matatu's stripEmoji) —
+-- which also deleted the country flags the winners banner exists to show.
+--
+-- modules/emoji_text now splits the text itself: a flag becomes geometry
+-- (modules/flag_art — Uganda, Nigeria and Kenya are stripes), the eight
+-- faces already in the emojis atlas become sprites, and any emoji we have no
+-- picture for is dropped exactly as the server used to drop it. The worst
+-- case is the old behaviour; there is no case that renders a tilde.
 --
 -- Visual: banner_bg.png (assets/ui/banner_bg.png, in the "ui" atlas) — a
 -- full-width red ribbon, soft-edged fade to transparent at both ends —
@@ -38,6 +52,8 @@ local ws        = require "modules.websocket_manager"
 local F         = require "modules.fonts"
 local ui        = require "modules.ui"
 local app_state = require "modules.app_state"
+local ET        = require "modules.emoji_text"
+local FA        = require "modules.flag_art"
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 
@@ -64,6 +80,14 @@ local AVATAR_SZ  = 22
 -- fast across a message with this many transitions. Skip rendering/measuring
 -- those entirely and advance by this fixed, compact amount instead.
 local WORD_GAP   = 10
+
+-- Inline emoji sizing. A flag is drawn at FLAG_H tall and FA.ASPECT (3:2)
+-- wide; a face sprite is square. Both sit slightly proud of the 18px text so
+-- they read as icons rather than as oversized letters, and both are followed
+-- by WORD_GAP the same way a word is — the marquee's spacing rules do not
+-- get a special case for pictures.
+local FLAG_H     = 18
+local EMOJI_SZ   = 22
 
 local PARKED_Y = LOGICAL_H + PANEL_H + 60 -- fully off-screen above the top edge
 
@@ -136,7 +160,26 @@ local function tokenize(msg)
             pos = a_e + 1
         end
     end
-    return segments
+
+    -- Second pass: every run of plain text is re-split into text and emoji.
+    -- Done AFTER the markup pass, not instead of it, so **bold** still wraps
+    -- a name that happens to sit next to a flag and the emphasis survives
+    -- the emoji being lifted out of the middle of it.
+    local expanded = {}
+    for _, seg in ipairs(segments) do
+        if seg.type == "text" then
+            for _, piece in ipairs(ET.split(seg.value)) do
+                if piece.type == "text" then
+                    expanded[#expanded + 1] = { type = "text", value = piece.value, bold = seg.bold }
+                else
+                    expanded[#expanded + 1] = { type = "emoji", emoji = piece }
+                end
+            end
+        else
+            expanded[#expanded + 1] = seg
+        end
+    end
+    return expanded
 end
 
 -- Builds one copy of the ticker content as children of `holder` (a zero-size
@@ -148,7 +191,33 @@ local function build_row(holder, msg_text)
     local x = 0
     local nodes = {}
     for _, seg in ipairs(tokenize(msg_text)) do
-        if seg.type == "avatar" then
+        if seg.type == "emoji" then
+            local e = seg.emoji
+            if e.kind == "flag" then
+                local w = FLAG_H * FA.ASPECT
+                -- FA.draw positions from the flag's CENTRE; x is a left edge,
+                -- as it is for every other segment here.
+                local made = FA.draw(
+                    vmath.vector3(x + w / 2, 0, 0), FLAG_H, e.code,
+                    { parent = holder })
+                for _, n in ipairs(made) do nodes[#nodes + 1] = n end
+                x = x + w + WORD_GAP
+            else
+                local n = gui.new_box_node(
+                    vmath.vector3(x, 0, 0), vmath.vector3(EMOJI_SZ, EMOJI_SZ, 0))
+                gui.set_pivot(n, gui.PIVOT_W)
+                -- pcall'd for the same reason ui.image is: a sprite that was
+                -- renamed or dropped from the atlas must leave a blank node,
+                -- not kill the whole banner mid-build.
+                pcall(function()
+                    gui.set_texture(n, e.atlas)
+                    gui.play_flipbook(n, hash(e.anim))
+                end)
+                gui.set_parent(n, holder)
+                nodes[#nodes + 1] = n
+                x = x + EMOJI_SZ + WORD_GAP
+            end
+        elseif seg.type == "avatar" then
             local n = ui.avatar(vmath.vector3(x, 0, 0), vmath.vector3(AVATAR_SZ, AVATAR_SZ, 0), seg.value)
             gui.set_pivot(n, gui.PIVOT_W)
             gui.set_parent(n, holder)

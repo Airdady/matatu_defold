@@ -23,6 +23,10 @@ textures {
   name: "avatars"
   texture: "/assets/avatars/avatars.atlas"
 }
+textures {
+  name: "emojis"
+  texture: "/assets/emojis/emojis.atlas"
+}
 background_color {
   x: 0.0
   y: 0.0
@@ -31,4 +35,4 @@ background_color {
 }
 material: "/builtins/materials/gui.material"
 adjust_reference: ADJUST_REFERENCE_PARENT
-max_nodes: 512
+max_nodes: 1024
