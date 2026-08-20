@@ -230,8 +230,23 @@ do
         submit:find("did not stick", 1, true) ~= nil)
 
     -- The lobby row is where a host sees the mode without opening the form.
-    check("the list row names SCORE CAP", SRC:find("SCORE CAP %%d") ~= nil)
-    check("and names the other mode too", SRC:find("PLAY IT OUT", 1, true) ~= nil)
+    -- It says CAP, matching the KNOCKOUT row directly above it — two spellings
+    -- of one idea, a line apart, read as two different things.
+    --
+    -- Only the FORMAT STRINGS are inspected, not the surrounding block: the
+    -- comment beside them names the long form it is deliberately not using,
+    -- and a check that reads comments is checking the wrong thing.
+    local rows = SRC:match('if T == "PARTY" then(.-)elseif T == "KNOCKOUT"') or ""
+    check("the party row was found", #rows > 200, ("%d chars"):format(#rows))
+
+    local formats = {}
+    for fmt in rows:gmatch('detail = string%.format%("([^"]+)"') do formats[#formats + 1] = fmt end
+    check("both party details are built here", #formats == 2, ("found %d"):format(#formats))
+
+    local joined = table.concat(formats, "|")
+    check("the capped row says CAP", joined:find("CAP %d", 1, true) ~= nil, joined)
+    check("and not the long form", joined:find("SCORE CAP", 1, true) == nil, joined)
+    check("the other mode is still named", rows:find("PLAY IT OUT", 1, true) ~= nil)
     check("the row no longer prints the meaningless player count",
         SRC:find("UP TO %%d", 1, true) == nil)
 end

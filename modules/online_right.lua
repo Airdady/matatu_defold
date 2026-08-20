@@ -1064,14 +1064,14 @@ function M.draw(self, ctx, left_M)
                 -- server started storing that (partyRules.ts), this row could
                 -- only ever draw the NORMAL branch, whatever the host had set.
                 --
-                -- The mode is spelled out rather than implied by a bare "CAP
-                -- 200": this is the one place the host sees what their table is
-                -- currently set to without opening the form, so it should say
-                -- so in the same words the form uses.
+                -- "CAP 200", not "SCORE CAP 200". The row is a glance, and the
+                -- KNOCKOUT row directly above it already says CAP for the same
+                -- ladder and the same rule — two spellings of one idea, a line
+                -- apart, read as two different things.
                 local pmode = M.party_mode_of({ pmode = b.partyMode or b.mode })
                 if pmode == "SCORECAP" then
                     local cap = tonumber(b.scoreCap) or M.PARTY_CAPS[M.PARTY_DEFAULT_CAP_I]
-                    detail = string.format("SCORE CAP %d    %s", cap, commas(amt))
+                    detail = string.format("CAP %d    %s", cap, commas(amt))
                 else
                     detail = string.format("PLAY IT OUT    %s", commas(amt))
                 end
