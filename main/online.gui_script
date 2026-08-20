@@ -21,6 +21,7 @@ local champ_banner    = require("modules.champ_banner")
 -- module the two request dialogs and the game-over panel use, so one player
 -- cannot be a PRO on the invite strip and something else on the result screen.
 local rank            = require("modules.rank_badge")
+local season_clock    = require("modules.season_clock")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local VISIBLE_W, VISIBLE_H = 1280, 720
@@ -642,6 +643,26 @@ function update(self, dt)
     -- as the empty string and the promo opened blank.
     if self.savings_info_open and not self._savings_type_done then
         need_rebuild = true
+    end
+
+    -- ── Season Bonuses countdown, ticked in place ─────────────────────────
+    -- Written straight into the node rather than through need_rebuild: this
+    -- changes once a second for the whole time the screen is open, and
+    -- rebuild() tears down and recreates every node on the panel. A once-a-
+    -- second full rebuild for one short string is the most expensive way to
+    -- draw a clock.
+    --
+    -- Re-read from `self` each time because rebuild() DOES destroy it — the
+    -- node this holds after a rebuild is the new one online_left just made,
+    -- and pcall covers the frame in between.
+    self._bonus_clock_t = (self._bonus_clock_t or 0) + dt
+    if self._bonus_clock_t >= season_clock.TICK_SECONDS then
+        self._bonus_clock_t = 0
+        local txt = season_clock.compact(season_clock.remaining(ws.current_season_status))
+        if txt ~= self._bonus_clock_text then
+            self._bonus_clock_text = txt
+            if self.bonus_clock_node then pcall(gui.set_text, self.bonus_clock_node, txt) end
+        end
     end
 
     if need_rebuild then rebuild(self); return end

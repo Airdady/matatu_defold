@@ -5,6 +5,7 @@
 --                      get_layout, constants (all color/spacing locals).
 
 local ws = require("modules.websocket_manager")
+local clock = require("modules.season_clock")
 
 local M = {}
 
@@ -176,6 +177,26 @@ function M.draw(self, ctx)
     cy = cy - pad_top
     local b_title = txtL(self, cx - inner_pw/2 + C.INNER_PAD, cy, "SEASON BONUSES", "body", C.COL_BRIGHT)
     gui.set_scale(b_title, vmath.vector3(0.82, 0.82, 1))
+
+    -- HOW LONG THESE PRIZES ARE STILL WORTH PLAYING FOR, on the far right of
+    -- the same row.
+    --
+    -- The table underneath says what each rank is paid; the one thing it does
+    -- not say is when the ranking closes, and that is the number that decides
+    -- whether a player has time to climb. It used to be available only in the
+    -- lobby header, a screen away from the prizes it applies to.
+    --
+    -- Two units, never three (season_clock.compact): "4D 5H" out at range,
+    -- "5H 3M" inside the last day, "5M 3S" inside the last hour. The pair
+    -- narrows as the deadline approaches, so the row reads more urgent near
+    -- the end without anything having to decide that it is urgent.
+    --
+    -- Kept on `self` because rebuild() destroys every node it made: the tick
+    -- in online.gui_script's update() writes straight into this node rather
+    -- than rebuilding the whole panel once a second, and re-reads it from
+    -- here after each rebuild.
+    self.bonus_clock_node = txtR(self, cx + inner_pw/2 - C.INNER_PAD, cy,
+        clock.compact(clock.remaining(ws.current_season_status)), "small", C.COL_DIM)
 
     -- No availability pill on the title row: season bonuses are live, and the
     -- badge that used to sit here was contradicting the real table beneath it.
