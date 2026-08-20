@@ -5,6 +5,7 @@ local app_state = require("modules.app_state")
 local fbpush    = require("modules.firebase_push")
 local identify_recovery = require("modules.identify_recovery")
 local online_status = require("modules.lobby.online_status")
+local takeover = require("modules.takeover_rules")
 
 local SCREENS = { "lobby", "auth", "profile", "online", "themes", "payments", "tournaments", "team_tournament", "standings", "game" }
 
@@ -900,6 +901,10 @@ function init(self)
         -- directly), so this needs no extra round trip — closing the app
         -- mid-game and reopening it should drop the player straight back
         -- into that game, never onto the lobby waiting for another tap.
+        -- `screen ~= "game"` is doing real work here, not just avoiding a
+        -- redundant navigation: it is what stops this yanking a player out of
+        -- an offline match. takeover_rules says the same thing in full, and
+        -- says it for the two socket events that had no guard at all.
         if self.screen ~= "game" and ws.active_game_state and next(ws.active_game_state or {}) ~= nil then
             app_state.mode = "online"
             show(self, "game")
@@ -930,6 +935,19 @@ function init(self)
 
     table.insert(self.tokens, ws.on("game_start", function(gs)
         if type(gs) == "table" and next(gs) ~= nil then ws.active_game_state = gs end
+        -- AN OFFLINE GAME IN PROGRESS OWNS THE SCREEN — see
+        -- modules/takeover_rules.lua. The state above is still stored, so the
+        -- online game is there to resume the moment the player leaves this
+        -- one; it is the navigation that is refused, and nothing else.
+        --
+        -- Checked BEFORE app_state.mode is written, because writing it is
+        -- itself part of the takeover: an offline game whose mode has been
+        -- flipped to "online" underneath it stops behaving like one.
+        local ok, why = takeover.may_take_over_now(app_state, self.screen)
+        if not ok then
+            print("[TAKEOVER] refusing game_start: " .. tostring(why))
+            return
+        end
         app_state.mode = "online"
         if intercept_for_search(self) then return end
         if self.screen ~= "game" then show(self, "game") else msg.post("#game_logic", "ws_new_game_start") end
@@ -937,6 +955,19 @@ function init(self)
 
     table.insert(self.tokens, ws.on("game_request_accepted", function(gs)
         if type(gs) == "table" and next(gs) ~= nil then ws.active_game_state = gs end
+        -- THIS IS THE ONE THAT WAS KILLING OFFLINE GAMES.
+        --
+        -- Every reconnect runs IDENTIFY, and IDENTIFY's reply carries the
+        -- account's active online game — which websocket_manager emits as
+        -- exactly this event, indistinguishable from a freshly accepted
+        -- invite. A background retry succeeding while the player was mid Quick
+        -- Play tore their offline game down and started the abandoned online
+        -- one in its place. See modules/takeover_rules.lua.
+        local ok, why = takeover.may_take_over_now(app_state, self.screen)
+        if not ok then
+            print("[TAKEOVER] refusing game_request_accepted: " .. tostring(why))
+            return
+        end
         app_state.mode = "online"
         if intercept_for_search(self) then return end
         local is_round_continuation = (self.screen == "game") and app_state.game_active

@@ -1056,14 +1056,24 @@ function M.draw(self, ctx, left_M)
             local amt = battle_amount(b)
             local detail
             if T == "PARTY" then
+                -- THE MODE, NAMED, on the row the host edits and invites from.
+                --
                 -- The count is always AUTO now, so printing it said "AUTO
                 -- PLAYERS" and told nobody anything. What actually differs
-                -- between two party tables is how they are won.
-                local pmode = tostring(b.partyMode or b.mode or "NORMAL"):upper()
+                -- between two party tables is how they are won — and until the
+                -- server started storing that (partyRules.ts), this row could
+                -- only ever draw the NORMAL branch, whatever the host had set.
+                --
+                -- The mode is spelled out rather than implied by a bare "CAP
+                -- 200": this is the one place the host sees what their table is
+                -- currently set to without opening the form, so it should say
+                -- so in the same words the form uses.
+                local pmode = M.party_mode_of({ pmode = b.partyMode or b.mode })
                 if pmode == "SCORECAP" then
-                    detail = string.format("CAP %d    %s", tonumber(b.scoreCap) or 200, commas(amt))
+                    local cap = tonumber(b.scoreCap) or M.PARTY_CAPS[M.PARTY_DEFAULT_CAP_I]
+                    detail = string.format("SCORE CAP %d    %s", cap, commas(amt))
                 else
-                    detail = string.format("UP TO %d    %s", 4, commas(amt))
+                    detail = string.format("PLAY IT OUT    %s", commas(amt))
                 end
             elseif T == "KNOCKOUT" then
                 local cap = tonumber(b.scoreCap) or 200

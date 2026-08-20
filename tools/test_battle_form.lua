@@ -188,6 +188,40 @@ do
         ("%d vs %d"):format(cap_span, stepper_width(step_w, CTRL_H)))
 end
 
+print("\n== the party's mode survives a close and reopen ==")
+do
+    -- Reported as: set a party to SCORE CAP, close the form, open it again —
+    -- NORMAL. The form was fine; nothing was seeding it. The edit branch built
+    -- battle_modal without pmode or pcap_i, so party_mode_of fell through to
+    -- its default every time — and submitting then wrote that default back
+    -- over the host's real choice.
+    --
+    -- (The server was dropping the field too; see be_matatu's partyRules.ts.
+    -- Both halves had to be fixed for either to be visible, which is why this
+    -- checks the client half explicitly rather than trusting a screenshot.)
+    local g = assert(io.open(here .. "/../main/online.gui_script"))
+    local GUI = g:read("*a"); g:close()
+
+    local edit = GUI:match('elseif id == "update_battle" then(.-)elseif id == "bm_type_normal"') or ""
+    check("the edit branch was found", #edit > 200, ("%d chars"):format(#edit))
+
+    check("it reads the stored party mode",
+        edit:find("mb.partyMode", 1, true) ~= nil)
+    -- `partyMode` is what the server stores and sends; `mode` is the name the
+    -- client submits under. Reading both works against a server of either age.
+    check("and the wire name as a fallback", edit:find("mb.mode", 1, true) ~= nil)
+    check("it maps the stored cap onto the ladder",
+        edit:find("PARTY_CAPS", 1, true) ~= nil)
+    check("and seeds both onto the modal",
+        edit:find("pmode = pmode", 1, true) ~= nil and edit:find("pcap_i = pcap_i", 1, true) ~= nil)
+
+    -- The lobby row is where a host sees the mode without opening the form.
+    check("the list row names SCORE CAP", SRC:find("SCORE CAP %%d") ~= nil)
+    check("and names the other mode too", SRC:find("PLAY IT OUT", 1, true) ~= nil)
+    check("the row no longer prints the meaningless player count",
+        SRC:find("UP TO %%d", 1, true) == nil)
+end
+
 print("\n== the form still fits the screen ==")
 do
     local CY = 360 -- LOGICAL_H / 2
