@@ -11,8 +11,9 @@
 --
 -- Three copies of a schedule is three chances for one of them to disagree
 -- with the server about when the money moves. The parsing and the fallback
--- live here now; the formatting comes in two flavours because the two
--- surfaces genuinely want different things (see below).
+-- live here now, and so does the formatting: verbose() is the bare clock the
+-- lobby header has always shown, full() is the same clock with the word LEFT
+-- on it for the Season Bonuses row.
 --
 -- Pure: no `gui`, no `ws`, no Defold anything — the caller passes in the
 -- season status and the current time. tools/test_season_clock.lua runs it
@@ -102,47 +103,38 @@ function M.verbose(seconds)
         math.floor(d / 3600), math.floor((d % 3600) / 60), d % 60)
 end
 
---- The minimal countdown: TWO UNITS, and only the two that matter right now.
+--- The full countdown, with the word LEFT on the end.
 ---
----     4D 5H      more than a day out — minutes are noise at this range
----     5H 3M      inside the last day
----     5M 3S      inside the last hour, where seconds start to matter
----     42S        inside the last minute
----     ENDED      the boundary has passed
+---     4D 05H 12M 07S LEFT
+---     05H 12M 07S LEFT      inside the last day
+---     ENDED                 the boundary has passed
 ---
---- This sits inline with the SEASON BONUSES title, where it is a glance and
---- not a clock. "4D 5H 5M" was the version before this one, and the minutes
---- field there is a digit nobody reads on a four-day countdown while still
---- being wide enough to crowd the title.
+--- Every unit, seconds included. An earlier version of this dropped units as
+--- the deadline came closer — two at a time, "4D 5H" then "5H 3M" — on the
+--- reasoning that minutes are noise on a four-day countdown. On the Season
+--- Bonuses row there is room for the whole thing, and a countdown that
+--- silently changes which fields it shows is harder to read at a glance than
+--- one that always shows the same four.
 ---
---- UNPADDED, unlike verbose(): the string does change width as it counts
---- down, and that is fine on a right-aligned label — but a leading zero on a
---- number this short reads as a stopwatch, which is the opposite of minimal.
+--- The day field still appears only when there IS a day: "0D" is not data,
+--- it is a zero taking up space. Everything below it is padded, so the string
+--- keeps its width as digits drop and the right-aligned label does not
+--- shuffle every second.
 ---
---- The unit pair narrows as the deadline approaches, so the row gets more
---- urgent-looking on its own without anything having to decide that it is
---- urgent.
-function M.compact(seconds)
+--- "LEFT" is what makes it a countdown rather than a timestamp. Beside a
+--- title, a bare "4D 05H 12M 07S" could as easily be how long the season has
+--- been running.
+function M.full(seconds)
     local d = math.max(0, math.floor(tonumber(seconds) or 0))
     if d <= 0 then return "ENDED" end
-
-    local days  = math.floor(d / 86400)
-    local hours = math.floor((d % 86400) / 3600)
-    local mins  = math.floor((d % 3600) / 60)
-    local secs  = d % 60
-
-    if days >= 1 then return string.format("%dD %dH", days, hours) end
-    if hours >= 1 then return string.format("%dH %dM", hours, mins) end
-    if mins >= 1 then return string.format("%dM %dS", mins, secs) end
-    return string.format("%dS", secs)
+    return M.verbose(d) .. " LEFT"
 end
 
 --- How often this string can change, in seconds.
 ---
 --- A caller that repaints the label every frame is repainting an identical
---- string 59 times out of 60 for most of a season. One second is correct at
---- every range — the compact form only shows seconds inside the last hour,
---- but the cost of ticking at 1Hz throughout is one string compare.
+--- string 59 times out of 60. One second is the rate the seconds field
+--- actually changes at, and the cost of checking is one string compare.
 M.TICK_SECONDS = 1
 
 return M

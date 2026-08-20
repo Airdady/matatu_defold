@@ -186,17 +186,19 @@ function M.draw(self, ctx)
     -- whether a player has time to climb. It used to be available only in the
     -- lobby header, a screen away from the prizes it applies to.
     --
-    -- Two units, never three (season_clock.compact): "4D 5H" out at range,
-    -- "5H 3M" inside the last day, "5M 3S" inside the last hour. The pair
-    -- narrows as the deadline approaches, so the row reads more urgent near
-    -- the end without anything having to decide that it is urgent.
+    -- Every unit, down to the second, and the word LEFT: "4D 05H 12M 07S
+    -- LEFT". There is room for the whole thing on this row, and a countdown
+    -- that silently changes which fields it shows is harder to read at a
+    -- glance than one that always shows the same four. LEFT is what makes it
+    -- a countdown rather than a timestamp — a bare clock beside a title could
+    -- as easily be how long the season has been running.
     --
     -- Kept on `self` because rebuild() destroys every node it made: the tick
     -- in online.gui_script's update() writes straight into this node rather
     -- than rebuilding the whole panel once a second, and re-reads it from
     -- here after each rebuild.
     self.bonus_clock_node = txtR(self, cx + inner_pw/2 - C.INNER_PAD, cy,
-        clock.compact(clock.remaining(ws.current_season_status)), "small", C.COL_DIM)
+        clock.full(clock.remaining(ws.current_season_status)), "small", C.COL_DIM)
 
     -- No availability pill on the title row: season bonuses are live, and the
     -- badge that used to sit here was contradicting the real table beneath it.

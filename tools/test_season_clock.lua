@@ -1,4 +1,4 @@
--- TWO UNITS, AND ONLY THE TWO THAT MATTER RIGHT NOW.
+-- THE WHOLE COUNTDOWN, BESIDE THE PRIZES IT APPLIES TO.
 --
 --   Run: lua tools/test_season_clock.lua
 --
@@ -7,23 +7,22 @@
 -- whether a player still has time to climb into a tier. That was available
 -- only in the lobby header, a screen away from the prizes it applies to.
 --
--- It now sits inline with the SEASON BONUSES title, on the far right, and it
--- is deliberately NOT the header's clock. The header's whole job is the
--- countdown, so it ticks every field: "4D 05H 12M 07S". Beside a title, that
--- string is a stopwatch bolted to a heading — and the minutes field on a
--- four-day countdown is a digit nobody reads while still being wide enough to
--- crowd the words next to it.
+-- It now sits inline with the SEASON BONUSES title, on the far right:
 --
--- So the compact form shows two units and narrows as the deadline comes:
+--     4D 05H 12M 07S LEFT
+--     05H 12M 07S LEFT       inside the last day
+--     ENDED                  the boundary has passed
 --
---     4D 5H      out at range — minutes are noise
---     5H 3M      inside the last day
---     5M 3S      inside the last hour, where seconds start to matter
---     42S        inside the last minute
---     ENDED      the boundary has passed
+-- Every unit, seconds included. The first version of this dropped units as
+-- the deadline came closer — "4D 5H", then "5H 3M", then "5M 3S" — on the
+-- reasoning that minutes are noise on a four-day countdown. There is room on
+-- that row for the whole thing, and a countdown that silently changes which
+-- fields it shows is harder to read at a glance than one that always shows
+-- the same four.
 --
--- The row gets more urgent-looking on its own, without anything having to
--- decide that it is urgent.
+-- The day field still appears only when there IS a day, and everything under
+-- it is zero-padded, so the string keeps its width as digits drop and the
+-- right-aligned label does not shuffle every second.
 --
 -- Also checked here: the date arithmetic and the Wednesday-midday /
 -- Saturday-midnight fallback, which THREE surfaces were each carrying their
@@ -50,50 +49,51 @@ local C = require("modules.season_clock")
 
 local MIN, HOUR, DAY = 60, 3600, 86400
 
-print("\n== days out: no minutes ==")
+print("\n== every unit, and the word LEFT ==")
 do
-    check("4D 5H", C.compact(4 * DAY + 5 * HOUR + 5 * MIN + 30), "4D 5H")
-    -- The minutes and seconds in there are deliberately non-zero: the point
-    -- is that they are DROPPED, not that they happened to be zero.
-    check("exactly one day", C.compact(DAY), "1D 0H")
-    check("a day and a minute still reads as a day", C.compact(DAY + MIN), "1D 0H")
-    check("just under two days", C.compact(2 * DAY - 1), "1D 23H")
-    check("no zero padding on the day", C.compact(3 * DAY + 2 * HOUR), "3D 2H")
+    check("days out", C.full(4 * DAY + 5 * HOUR + 12 * MIN + 7), "4D 05H 12M 07S LEFT")
+    check("inside the last day", C.full(5 * HOUR + 3 * MIN + 40), "05H 03M 40S LEFT")
+    check("inside the last hour", C.full(5 * MIN + 3), "00H 05M 03S LEFT")
+    check("inside the last minute", C.full(42), "00H 00M 42S LEFT")
 end
 
-print("\n== inside the last day: hours and minutes ==")
+print("\n== the day field appears only when there is a day ==")
 do
-    check("5H 3M", C.compact(5 * HOUR + 3 * MIN + 40), "5H 3M")
-    -- The boundary itself: one second under a day must switch format.
-    check("one second under a day", C.compact(DAY - 1), "23H 59M")
-    check("exactly one hour", C.compact(HOUR), "1H 0M")
-    check("seconds are dropped at this range", C.compact(2 * HOUR + 59), "2H 0M")
+    -- "0D" is not data, it is a zero taking up space.
+    check("exactly one day", C.full(DAY), "1D 00H 00M 00S LEFT")
+    check("one second under a day drops the day", C.full(DAY - 1), "23H 59M 59S LEFT")
+    check("just under two days", C.full(2 * DAY - 1), "1D 23H 59M 59S LEFT")
 end
 
-print("\n== inside the last hour: minutes and seconds ==")
+print("\n== padding holds the width ==")
 do
-    check("5M 3S", C.compact(5 * MIN + 3), "5M 3S")
-    check("one second under an hour", C.compact(HOUR - 1), "59M 59S")
-    check("exactly one minute", C.compact(MIN), "1M 0S")
+    -- The label is right-aligned and repaints every second. Unpadded, it
+    -- would change width as each digit dropped and shuffle on the row.
+    local a, b = C.full(2 * HOUR + 5 * MIN + 9), C.full(11 * HOUR + 45 * MIN + 59)
+    check("single and double digits are the same length", #a, #b)
+    check("hours are padded", C.full(2 * HOUR), "02H 00M 00S LEFT")
+    -- The day itself is NOT padded: a season is never ten days long, so a
+    -- leading zero there would be padding for a digit that cannot arrive.
+    check("the day is not padded", C.full(3 * DAY), "3D 00H 00M 00S LEFT")
 end
 
-print("\n== the last minute, and past it ==")
+print("\n== past the boundary ==")
 do
-    check("under a minute is seconds alone", C.compact(42), "42S")
-    check("one second", C.compact(1), "1S")
-    check("zero has ended", C.compact(0), "ENDED")
     -- A clock that has run past its boundary must not print a negative
-    -- countdown while it waits for the next SEASON_STATUS to arrive.
-    check("negative has ended", C.compact(-500), "ENDED")
-    check("nil has ended", C.compact(nil), "ENDED")
-    check("nonsense has ended", C.compact("soon"), "ENDED")
+    -- countdown, or the words "LEFT" after a zero, while it waits for the
+    -- next SEASON_STATUS to arrive.
+    check("zero has ended", C.full(0), "ENDED")
+    check("negative has ended", C.full(-500), "ENDED")
+    check("nil has ended", C.full(nil), "ENDED")
+    check("nonsense has ended", C.full("soon"), "ENDED")
 end
 
 print("\n== the header's clock is unchanged ==")
 do
-    -- The verbose form is what the lobby header has always shown, moved here
-    -- rather than rewritten. Padded, because that surface's string must not
-    -- change width every time a digit drops.
+    -- verbose() is what the lobby header has always shown, moved here rather
+    -- than rewritten — full() is this plus the word LEFT. The header says no
+    -- such word because that whole strip is already labelled as the season
+    -- countdown; the Season Bonuses row is not.
     check("verbose over a day", C.verbose(4 * DAY + 5 * HOUR + 5 * MIN + 7), "4D 05H 05M 07S")
     check("verbose inside a day", C.verbose(5 * HOUR + 3 * MIN + 9), "05H 03M 09S")
     check("verbose at zero", C.verbose(0), "00H 00M 00S")
@@ -136,11 +136,11 @@ do
         C.end_epoch({ endDate = "whenever" }, now), fallback)
 
     -- remaining() is clamped: a boundary already passed reads as zero, which
-    -- compact() then renders as ENDED.
+    -- full() then renders as ENDED.
     check("a passed boundary is zero, not negative",
         C.remaining({ endDate = "2026-08-19T00:00:00Z" }, now), 0)
     check("and shows as ENDED",
-        C.compact(C.remaining({ endDate = "2026-08-19T00:00:00Z" }, now)), "ENDED")
+        C.full(C.remaining({ endDate = "2026-08-19T00:00:00Z" }, now)), "ENDED")
 end
 
 print("\n== the fallback cadence ==")
@@ -154,7 +154,7 @@ do
     -- Wednesday 2026-08-19 12:00 EAT == 09:00 UTC.
     check("monday points at wednesday midday",
         target, C.parse_iso_utc("2026-08-19T09:00:00Z"))
-    check("which is two days out", C.compact(target - monday), "2D 0H")
+    check("which is two days out", C.full(target - monday), "2D 00H 00M 00S LEFT")
 
     -- Wednesday afternoon has passed the midday boundary, so the next one is
     -- the end of Saturday: 23:59:59 EAT == 20:59:59 UTC. The last second of

@@ -658,7 +658,7 @@ function update(self, dt)
     self._bonus_clock_t = (self._bonus_clock_t or 0) + dt
     if self._bonus_clock_t >= season_clock.TICK_SECONDS then
         self._bonus_clock_t = 0
-        local txt = season_clock.compact(season_clock.remaining(ws.current_season_status))
+        local txt = season_clock.full(season_clock.remaining(ws.current_season_status))
         if txt ~= self._bonus_clock_text then
             self._bonus_clock_text = txt
             if self.bonus_clock_node then pcall(gui.set_text, self.bonus_clock_node, txt) end
