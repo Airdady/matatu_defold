@@ -225,6 +225,44 @@ local function segments(self, ctx, cx, y, seg_w, seg_gap, specs)
     end
 end
 
+-- A battle row's detail line, in two colours: the RULE, then the STAKE.
+--
+-- Both used to be one dim-grey string four spaces apart — "CAP 200    200" —
+-- so the row read as a single run of digits and its two numbers were easy to
+-- read as each other. The rule is white; the stake is gold, which is already
+-- this UI's "there is money in this" colour (the prize table, the season
+-- deadline, the H2H line).
+--
+-- WHY IT MEASURES.
+--
+-- Nothing in Defold measures text at BUILD time, but this runs at draw time,
+-- where gui.get_text_metrics_from_node does — the announcement marquee lays
+-- its whole ticker out this way. The metric is the UNSCALED font size, so it
+-- is multiplied by the node's own scale before it is used as an advance.
+--
+-- The pcall is not decoration: a failed measurement must leave the two apart,
+-- not stacked on top of each other. The fallback is the same character-count
+-- estimate rank_badge.width uses, which is wide rather than tight — a gap
+-- slightly too big is invisible, and one slightly too small is two strings
+-- printed over one another.
+local DETAIL_GAP = 18
+local DETAIL_FALLBACK_CHAR_W = 9
+
+local function detail_line(self, ctx, x, y, rule, stake)
+    local C = ctx.C
+    local n = ctx.txtL(self, x, y, rule, "small", C.COL_WHITE)
+
+    local w
+    local ok = pcall(function()
+        local m = gui.get_text_metrics_from_node(n)
+        local sc = gui.get_scale(n)
+        w = m.width * sc.x
+    end)
+    if not ok or not w or w <= 0 then w = #rule * DETAIL_FALLBACK_CHAR_W end
+
+    ctx.txtL(self, x + w + DETAIL_GAP, y, stake, "small", C.COL_GOLD)
+end
+
 -- ── Battle Modal Drawing ──────────────────────────────────────────────────────
 -- Reverted to the original pre-"compact card" layout: plain text/steppers
 -- floating directly on the dim backdrop, no bordered container_bg panel.
@@ -1054,7 +1092,15 @@ function M.draw(self, ctx, left_M)
         local b = M.battle_of_type(u, T)
         if b then
             local amt = battle_amount(b)
-            local detail
+            -- TWO VALUES, TWO COLOURS.
+            --
+            -- This line carries a RULE ("CAP 200", "BEST OF 3") and a STAKE,
+            -- and both were the same dim grey four spaces apart — so a row
+            -- read as one run of digits and the two numbers on it were easy to
+            -- mistake for each other. The rule is white; the stake is gold,
+            -- which is already this UI's "there is money in this" colour (the
+            -- prize table, the season deadline, the H2H line).
+            local rule
             if T == "PARTY" then
                 -- THE MODE, NAMED, on the row the host edits and invites from.
                 --
@@ -1071,19 +1117,16 @@ function M.draw(self, ctx, left_M)
                 local pmode = M.party_mode_of({ pmode = b.partyMode or b.mode })
                 if pmode == "SCORECAP" then
                     local cap = tonumber(b.scoreCap) or M.PARTY_CAPS[M.PARTY_DEFAULT_CAP_I]
-                    detail = string.format("CAP %d    %s", cap, commas(amt))
+                    rule = string.format("CAP %d", cap)
                 else
-                    detail = string.format("PLAY IT OUT    %s", commas(amt))
+                    rule = "PLAY IT OUT"
                 end
             elseif T == "KNOCKOUT" then
-                local cap = tonumber(b.scoreCap) or 200
-                detail = string.format("CAP %d    %s", cap, commas(amt))
+                rule = string.format("CAP %d", tonumber(b.scoreCap) or 200)
             else
-                local fmt = tonumber(b.matchFormat) or 3
-                detail = string.format("BEST OF %d    %s", fmt, commas(amt))
+                rule = string.format("BEST OF %d", tonumber(b.matchFormat) or 3)
             end
-            -- Grey, small text without the '~'
-            txtL(self, text_x, row_cy - 14, detail, "small", C.COL_DIM)
+            detail_line(self, ctx, text_x, row_cy - 14, rule, commas(amt))
 
             local edit_bx   = row_r - edit_w/2
             local invite_bx = edit_bx - edit_w/2 - pair_gap - invite_w/2

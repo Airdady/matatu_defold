@@ -240,12 +240,31 @@ do
     check("the party row was found", #rows > 200, ("%d chars"):format(#rows))
 
     local formats = {}
-    for fmt in rows:gmatch('detail = string%.format%("([^"]+)"') do formats[#formats + 1] = fmt end
-    check("both party details are built here", #formats == 2, ("found %d"):format(#formats))
+    for fmt in rows:gmatch('rule = string%.format%("([^"]+)"') do formats[#formats + 1] = fmt end
+    for fmt in rows:gmatch('rule = "([^"]+)"') do formats[#formats + 1] = fmt end
+    check("both party rules are built here", #formats == 2, ("found %d"):format(#formats))
 
     local joined = table.concat(formats, "|")
     check("the capped row says CAP", joined:find("CAP %d", 1, true) ~= nil, joined)
     check("and not the long form", joined:find("SCORE CAP", 1, true) == nil, joined)
+
+    -- THE RULE AND THE STAKE ARE NOT THE SAME COLOUR. They were one dim-grey
+    -- string four spaces apart, so a row read as a single run of digits and
+    -- its two numbers were easy to read as each other.
+    check("the rule no longer carries the stake",
+        joined:find("%%s") == nil, joined)
+    local dl = SRC:match("local function detail_line(.-)\nend") or ""
+    check("detail_line was found", #dl > 100, ("%d chars"):format(#dl))
+    check("the rule is white", dl:find("C.COL_WHITE", 1, true) ~= nil)
+    check("the stake is gold", dl:find("C.COL_GOLD", 1, true) ~= nil)
+    check("it measures the rule to place the stake",
+        dl:find("get_text_metrics_from_node", 1, true) ~= nil)
+    check("and multiplies by the node scale, since the metric is unscaled",
+        dl:find("m.width * sc.x", 1, true) ~= nil)
+    -- A failed measurement must leave the two apart, not stacked.
+    check("a failed measurement still separates them",
+        dl:find("DETAIL_FALLBACK_CHAR_W", 1, true) ~= nil)
+
     check("the other mode is still named", rows:find("PLAY IT OUT", 1, true) ~= nil)
     check("the row no longer prints the meaningless player count",
         SRC:find("UP TO %%d", 1, true) == nil)
