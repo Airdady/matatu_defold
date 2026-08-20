@@ -1229,6 +1229,34 @@ function M.bm_submit(self, rebuild_cb)
         if result.success then
             local data   = result.data or {}
             local battle = data.tournament or data.data or data
+
+            -- DID THE SERVER ACTUALLY KEEP WHAT WE SENT?
+            --
+            -- A party carries two fields — how it is won, and the cap — that a
+            -- server older than them simply drops: strict mongoose schemas
+            -- discard a path they have no field for, and it does so SILENTLY,
+            -- with a 200 and a cheerful "Updated successfully". The client then
+            -- stored that reply over its own correct knowledge, the row went
+            -- back to PLAY IT OUT, and the whole thing was indistinguishable
+            -- from the form having failed to remember.
+            --
+            -- The reply is the evidence, so it is read rather than trusted. If
+            -- what comes back is not what went out, say so and leave the modal
+            -- open — a "saved!" that did not save is worse than an error.
+            if btype == "PARTY" and type(battle) == "table" then
+                local echoed_mode = M.party_mode_of({ pmode = battle.partyMode or battle.mode })
+                local echoed_cap  = tonumber(battle.scoreCap)
+                local want_cap    = tonumber(payload.scoreCap)
+                local lost = (echoed_mode ~= payload.mode)
+                    or (payload.mode == "SCORECAP" and want_cap and echoed_cap ~= want_cap)
+                if lost then
+                    cur.msg, cur.msg_ok =
+                        "Saved, but the play mode did not stick. This server has not been updated yet.", false
+                    if self._active then rebuild_cb() end
+                    return
+                end
+            end
+
             local u      = ws.current_user_data or {}
             u.myBattles = (type(u.myBattles) == "table") and u.myBattles or {}
             u.myBattles[btype] = battle

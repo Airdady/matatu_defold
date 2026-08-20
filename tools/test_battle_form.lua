@@ -215,6 +215,20 @@ do
     check("and seeds both onto the modal",
         edit:find("pmode = pmode", 1, true) ~= nil and edit:find("pcap_i = pcap_i", 1, true) ~= nil)
 
+    -- THE REPLY IS THE EVIDENCE. A server older than the two party fields
+    -- drops them silently — strict mongoose discards a path it has no field
+    -- for — and answers 200 with "Updated successfully". Storing that reply
+    -- over the client's own correct knowledge is what made this look like the
+    -- form forgetting rather than the write being refused.
+    local submit = SRC:match("bm%.submitting = true(.-)local api = require") or ""
+    check("the submit path was found", #submit > 400, ("%d chars"):format(#submit))
+    check("the reply is checked against what was sent",
+        submit:find("battle.partyMode or battle.mode", 1, true) ~= nil)
+    check("the cap is checked too",
+        submit:find("payload.scoreCap", 1, true) ~= nil)
+    check("a dropped field is not reported as success",
+        submit:find("did not stick", 1, true) ~= nil)
+
     -- The lobby row is where a host sees the mode without opening the form.
     check("the list row names SCORE CAP", SRC:find("SCORE CAP %%d") ~= nil)
     check("and names the other mode too", SRC:find("PLAY IT OUT", 1, true) ~= nil)
