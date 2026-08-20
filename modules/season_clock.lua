@@ -130,6 +130,23 @@ function M.full(seconds)
     return M.verbose(d) .. " LEFT"
 end
 
+--- What state the countdown is in, for whatever the caller wants to do about
+--- it — on the Season Bonuses row, that is the colour of the label.
+---
+---   "ended"       the boundary has passed
+---   "final_hour"  under an hour, where the seconds field is the whole point
+---   "normal"      everything above that
+---
+--- Returned as a WORD rather than as a colour, because this module has no
+--- vmath and no palette — the same reason championship.lua and rank_badge.lua
+--- keep their rules out of the gui_scripts that draw them.
+function M.urgency(seconds)
+    local d = math.max(0, math.floor(tonumber(seconds) or 0))
+    if d <= 0 then return "ended" end
+    if d <= 3600 then return "final_hour" end
+    return "normal"
+end
+
 --- How often this string can change, in seconds.
 ---
 --- A caller that repaints the label every frame is repainting an identical

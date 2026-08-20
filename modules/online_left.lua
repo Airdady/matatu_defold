@@ -68,6 +68,34 @@ function M.prize_for_position(prizes, pos, commas_fn)
     return ""
 end
 
+-- WHAT COLOUR THE SEASON DEADLINE IS.
+--
+-- GOLD by default. This is the one number on the panel that is not a prize
+-- and not a rank, and in dim grey it read as a caption on the title rather
+-- than as a thing worth acting on. Gold is already this UI's "there is money
+-- in this" colour — the prize amounts in the table below it are gold, and so
+-- is the H2H line on the invite strip — so a gold deadline says plainly that
+-- it belongs to the prizes beside it.
+--
+-- RED in the final hour, where the seconds field stops being decoration. A
+-- countdown that looks identical at four days and at forty seconds is wasting
+-- the one moment it actually matters.
+--
+-- DIM once it has passed: ENDED is not urgent, it is over, and leaving it red
+-- would keep shouting about a deadline nobody can still make.
+--
+-- Lives here rather than at each call site because there are two — the build
+-- in M.draw below, and the once-a-second tick in online.gui_script that
+-- repaints the same node — and a colour rule that disagrees between them
+-- would show up as a label that changes colour only when the panel happens
+-- to rebuild.
+function M.clock_color(C, seconds)
+    local state = clock.urgency(seconds)
+    if state == "ended" then return C.COL_DIM end
+    if state == "final_hour" then return C.COL_RED end
+    return C.COL_GOLD
+end
+
 -- ── draw ─────────────────────────────────────────────────────────────────────
 
 function M.draw(self, ctx)
@@ -193,12 +221,15 @@ function M.draw(self, ctx)
     -- a countdown rather than a timestamp — a bare clock beside a title could
     -- as easily be how long the season has been running.
     --
+    -- Gold, and red in the last hour — see M.clock_color above.
+    --
     -- Kept on `self` because rebuild() destroys every node it made: the tick
     -- in online.gui_script's update() writes straight into this node rather
     -- than rebuilding the whole panel once a second, and re-reads it from
     -- here after each rebuild.
+    local secs_left = clock.remaining(ws.current_season_status)
     self.bonus_clock_node = txtR(self, cx + inner_pw/2 - C.INNER_PAD, cy,
-        clock.full(clock.remaining(ws.current_season_status)), "small", C.COL_DIM)
+        clock.full(secs_left), "small", M.clock_color(C, secs_left))
 
     -- No availability pill on the title row: season bonuses are live, and the
     -- badge that used to sit here was contradicting the real table beneath it.

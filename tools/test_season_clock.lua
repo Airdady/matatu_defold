@@ -88,6 +88,32 @@ do
     check("nonsense has ended", C.full("soon"), "ENDED")
 end
 
+print("\n== urgency, which decides the colour ==")
+do
+    -- The label is GOLD on the Season Bonuses row — this UI's "there is money
+    -- in this" colour, the same one the prize amounts under it use — and turns
+    -- RED for the last hour, where the seconds field stops being decoration.
+    -- A countdown that looks identical at four days and at forty seconds is
+    -- wasting the one moment it matters.
+    check("days out is normal", C.urgency(4 * DAY), "normal")
+    check("two hours is still normal", C.urgency(2 * HOUR), "normal")
+    check("just over an hour is normal", C.urgency(HOUR + 1), "normal")
+    check("exactly an hour is the final hour", C.urgency(HOUR), "final_hour")
+    check("a minute is the final hour", C.urgency(MIN), "final_hour")
+    check("one second is the final hour", C.urgency(1), "final_hour")
+
+    -- ENDED is not urgent, it is over. Leaving it red would keep shouting
+    -- about a deadline nobody can still make.
+    check("zero has ended", C.urgency(0), "ended")
+    check("negative has ended", C.urgency(-1), "ended")
+    check("nil has ended", C.urgency(nil), "ended")
+
+    -- The two must agree about the boundary: the string that says ENDED is
+    -- the same one that must not be painted red.
+    check("ENDED and ended line up",
+        C.full(0) == "ENDED" and C.urgency(0) == "ended", true)
+end
+
 print("\n== the header's clock is unchanged ==")
 do
     -- verbose() is what the lobby header has always shown, moved here rather

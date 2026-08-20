@@ -658,10 +658,21 @@ function update(self, dt)
     self._bonus_clock_t = (self._bonus_clock_t or 0) + dt
     if self._bonus_clock_t >= season_clock.TICK_SECONDS then
         self._bonus_clock_t = 0
-        local txt = season_clock.full(season_clock.remaining(ws.current_season_status))
+        local secs = season_clock.remaining(ws.current_season_status)
+        local txt = season_clock.full(secs)
         if txt ~= self._bonus_clock_text then
             self._bonus_clock_text = txt
-            if self.bonus_clock_node then pcall(gui.set_text, self.bonus_clock_node, txt) end
+            if self.bonus_clock_node then
+                pcall(gui.set_text, self.bonus_clock_node, txt)
+                -- Repainted alongside the text, from the same rule the panel
+                -- built it with (left_panel.clock_color): gold, red in the
+                -- final hour, dim once it has passed. Set here rather than
+                -- only at build time, or the label would keep its colour
+                -- until something else happened to rebuild the panel — and
+                -- the whole point of the red is that it arrives exactly when
+                -- the deadline does.
+                pcall(gui.set_color, self.bonus_clock_node, left_panel.clock_color(C, secs))
+            end
         end
     end
 
