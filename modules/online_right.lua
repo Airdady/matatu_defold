@@ -164,6 +164,66 @@ local C_VICTORY  = vmath.vector4(0.000, 0.722, 0.831, 1.0) -- Cyan
 local C_CHAMPION = vmath.vector4(1.000, 0.843, 0.000, 1.0) -- Gold
 local C_BTN_TEXT = vmath.vector4(0.020, 0.090, 0.110, 1.0) -- Dark Cyan
 local C_NEUTRAL  = vmath.vector4(0.812, 0.847, 0.863, 1.0) -- Light Grey
+local C_HINT     = vmath.vector4(0.600, 0.600, 0.600, 1.0) -- hint line under a control
+local C_SEG_OFF  = vmath.vector4(0.160, 0.160, 0.180, 1.0) -- unselected segment
+
+-- ── Battle modal layout ──────────────────────────────────────────────────────
+--
+-- ONE VERTICAL RHYTHM, AND IT USED TO HAVE THREE.
+--
+-- Every row of this form is the same three things — a small label, a control,
+-- and a hint line — and each was positioned by its own hand-picked offset.
+-- BATTLE TYPE sat 140px above ENTRY FEE while ENTRY FEE sat 130 above the row
+-- under it, so the form read as a stack of unrelated widgets rather than as
+-- one thing to fill in. Worse, a PARTY set to SCORE CAP grew a FOURTH row that
+-- nothing had left room for: its hint landed on the error line and crowded the
+-- submit button.
+--
+-- The offsets are named constants now, applied identically to every row.
+-- Both offsets are measured from the control's CENTRE, and a control is
+-- CTRL_H tall, so the real clearance either side is the offset minus 26 minus
+-- half a line of "small" text — about 7px at these numbers. Shrink either one
+-- and the caption starts touching the box it belongs to.
+local ROW_LABEL_DY = 42  -- label sits this far above its control
+local ROW_HINT_DY  = 42  -- hint sits this far below it
+local CTRL_H       = 52  -- every control on this form is this tall
+
+-- A [-] [ value ] [+] stepper, centred on `cx`.
+--
+-- There were four copies of this inline — entry fee, knockout cap, party cap,
+-- game format — identical apart from the two button ids and the value they
+-- showed. Four copies is why the party cap ended up as the only one drawn at a
+-- different size than its neighbours: nothing tied them together.
+--
+-- `box_w` is the value field alone; the stepper's real footprint is that plus
+-- a button on each side, which stepper_width() answers for a caller laying two
+-- controls out side by side.
+local function stepper_width(box_w, btn)
+    btn = btn or CTRL_H
+    return box_w + 2 * (btn + 8)
+end
+
+local function stepper(self, ctx, cx, y, box_w, value, value_color, id_minus, id_plus, btn)
+    btn = btn or CTRL_H
+    local gap = box_w / 2 + btn / 2 + 8
+    ctx.mkbtn(self, id_minus, vmath.vector3(cx - gap, y, 0), vmath.vector3(btn, btn, 0), "-", "secondary_btn")
+    ctx.track(self, ctx.ui.box(vmath.vector3(cx, y, 0), vmath.vector3(box_w, CTRL_H, 0), ctx.C.COL_NAMEID_BG))
+    ctx.track(self, ctx.ui.text(vmath.vector3(cx, y, 0), value, "body", value_color))
+    ctx.mkbtn(self, id_plus, vmath.vector3(cx + gap, y, 0), vmath.vector3(btn, btn, 0), "+", "secondary_btn")
+end
+
+-- A row of mutually-exclusive segments, centred on `cx`.
+local function segments(self, ctx, cx, y, seg_w, seg_gap, specs)
+    local n = #specs
+    for i, sp in ipairs(specs) do
+        local sx  = cx + (i - (n + 1) / 2) * (seg_w + seg_gap)
+        local box = ctx.track(self, ctx.ui.box(vmath.vector3(sx, y, 0), vmath.vector3(seg_w, CTRL_H, 0),
+            sp.on and C_VICTORY or C_SEG_OFF))
+        self.buttons[#self.buttons + 1] = { node = box, id = sp.id }
+        ctx.track(self, ctx.ui.text(vmath.vector3(sx, y, 0), sp.label, "btn_md",
+            sp.on and C_BTN_TEXT or ctx.C.COL_WHITE))
+    end
+end
 
 -- ── Battle Modal Drawing ──────────────────────────────────────────────────────
 -- Reverted to the original pre-"compact card" layout: plain text/steppers
@@ -196,14 +256,31 @@ local function draw_battle_modal(self, ctx)
     local type_word = M.BATTLE_TYPE_LABELS[btype] or "BATTLE"
     local title     = (bm.editing and "UPDATE " or "CREATE ") .. type_word
 
-    track(self, ui.text(vmath.vector3(CX, CY + 260, 0), title, "title", ctx.C.COL_WHITE))
-    mkbtn(self, "bm_close", vmath.vector3(CX + 340, CY + 260, 0), vmath.vector3(56, 56, 0), "X", "secondary_btn")
+    track(self, ui.text(vmath.vector3(CX, CY + 252, 0), title, "title", ctx.C.COL_WHITE))
+    mkbtn(self, "bm_close", vmath.vector3(CX + 340, CY + 252, 0), vmath.vector3(56, 56, 0), "X", "secondary_btn")
+
+    -- ── The rows ─────────────────────────────────────────────────────────
+    -- Four y positions, and every row places its label and hint from the same
+    -- two offsets. The form used to grow a fourth row for PARTY + SCORE CAP
+    -- that nothing had reserved space for; that row is now laid out INLINE
+    -- beside PLAY MODE instead, which is what the horizontal space here was
+    -- always for.
+    local type_y = CY + 160
+    local fee_y  = CY + 50
+    local opt_y  = CY - 76
+    local msg_y  = CY - 160
+    local sub_y  = CY - 230
+
+    -- A row's small caption, and the grey line that explains it.
+    local function label(cx, y, str)
+        track(self, ui.text(vmath.vector3(cx, y + ROW_LABEL_DY, 0), str, "small", C_NEUTRAL))
+    end
+    local function hint(y, str, cx)
+        track(self, ui.text(vmath.vector3(cx or CX, y - ROW_HINT_DY, 0), str, "small", C_HINT))
+    end
 
     -- BATTLE TYPE
-    local type_y  = CY + 150
-    track(self, ui.text(vmath.vector3(CX, type_y + 46, 0), "BATTLE TYPE", "small", C_NEUTRAL))
-    local seg_w   = 170
-    local seg_gap = 14
+    label(CX, type_y, "BATTLE TYPE")
     local SEG_META = {
         NORMAL   = { id = "bm_type_normal", label = "BATTLE"   },
         KNOCKOUT = { id = "bm_type_knock",  label = "KNOCKOUT" },
@@ -214,14 +291,7 @@ local function draw_battle_modal(self, ctx)
         local meta = SEG_META[T]
         if meta then seg_specs[#seg_specs+1] = { id = meta.id, label = meta.label, on = (btype == T) } end
     end
-    local UNSEL_C = vmath.vector4(0.16, 0.16, 0.18, 1)
-    local seg_n = #seg_specs
-    for i, s in ipairs(seg_specs) do
-        local sx  = CX + (i - (seg_n + 1) / 2) * (seg_w + seg_gap)
-        local box = track(self, ui.box(vmath.vector3(sx, type_y, 0), vmath.vector3(seg_w, 52, 0), s.on and C_VICTORY or UNSEL_C))
-        self.buttons[#self.buttons+1] = { node = box, id = s.id }
-        track(self, ui.text(vmath.vector3(sx, type_y, 0), s.label, "btn_md", s.on and C_BTN_TEXT or ctx.C.COL_WHITE))
-    end
+    segments(self, ctx, CX, type_y, 170, 14, seg_specs)
 
     -- DATA GATHERING
     local amount, fmt, winner_takes, estake, cap
@@ -249,28 +319,21 @@ local function draw_battle_modal(self, ctx)
     end
 
     -- ENTRY FEE / STAKE
-    local fee_y = CY + 10
-    track(self, ui.text(vmath.vector3(CX, fee_y + 46, 0), is_knock and "STAKE" or "ENTRY FEE", "small", C_NEUTRAL))
-    local step_w = 280
-    mkbtn(self, "bm_fee_minus", vmath.vector3(CX - step_w/2 - 34, fee_y, 0), vmath.vector3(52, 52, 0), "-", "secondary_btn")
-    track(self, ui.box(vmath.vector3(CX, fee_y, 0), vmath.vector3(step_w, 52, 0), ctx.C.COL_NAMEID_BG))
-    track(self, ui.text(vmath.vector3(CX, fee_y, 0),
-        is_knock and (commas(estake) .. " COINS") or (commas(amount) .. " COINS"), "body", C_CHAMPION))
-    mkbtn(self, "bm_fee_plus", vmath.vector3(CX + step_w/2 + 34, fee_y, 0), vmath.vector3(52, 52, 0), "+", "secondary_btn")
+    local STEP_W = 280
+    label(CX, fee_y, is_knock and "STAKE" or "ENTRY FEE")
+    stepper(self, ctx, CX, fee_y, STEP_W,
+        commas(is_knock and estake or amount) .. " COINS", C_CHAMPION,
+        "bm_fee_minus", "bm_fee_plus")
 
     if is_norm then
-        track(self, ui.text(vmath.vector3(CX, fee_y - 42, 0),
-            string.format("Winner Takes: %s + %d Pts", commas(winner_takes), fmt.points), "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+        hint(fee_y, string.format("Winner Takes: %s + %d Pts", commas(winner_takes), fmt.points))
     elseif is_party then
-        track(self, ui.text(vmath.vector3(CX, fee_y - 42, 0),
-            "Pooled prize · last player standing wins", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+        hint(fee_y, "Pooled prize · last player standing wins")
     else
-        track(self, ui.text(vmath.vector3(CX, fee_y - 42, 0),
-            "Staked score chamber · charge from the cap", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+        hint(fee_y, "Staked score chamber · charge from the cap")
     end
 
-    -- FORMAT / PLAYERS / CAP
-    local fmt_y = CY - 120
+    -- FORMAT / PLAY MODE / CAP
     if is_party then
         -- NO PLAYER-COUNT PICKER.
         --
@@ -281,67 +344,80 @@ local function draw_battle_modal(self, ctx)
         -- window exists to remove. The count is still sent as "AUTO" on submit,
         -- so nothing downstream had to change.
         --
-        -- What the host picks instead is HOW the party is won.
+        -- What the host picks instead is HOW the party is won — and, when that
+        -- is SCORE CAP, what the cap is. Those are ONE ROW, side by side.
+        -- Stacked, the cap was a fourth row on a form built for three: its hint
+        -- landed on the error line and pushed the submit button into the bottom
+        -- of the screen. Side by side it costs no height at all, and the two
+        -- controls belong together anyway — the second only exists because of
+        -- what the first is set to.
         local pmode = M.party_mode_of(bm)
-        track(self, ui.text(vmath.vector3(CX, fmt_y + 46, 0), "PLAY MODE", "small", C_NEUTRAL))
+        local capped = (pmode == "SCORECAP")
 
-        local mode_specs = {
-            { id = "bm_pmode_normal", label = "NORMAL",    on = (pmode == "NORMAL")   },
-            { id = "bm_pmode_cap",    label = "SCORE CAP", on = (pmode == "SCORECAP") },
-        }
-        local mseg_w, mseg_gap = 180, 12
-        for i, m in ipairs(mode_specs) do
-            local mx  = CX + (i - (#mode_specs + 1) / 2) * (mseg_w + mseg_gap)
-            local box = track(self, ui.box(vmath.vector3(mx, fmt_y, 0), vmath.vector3(mseg_w, 52, 0), m.on and C_VICTORY or vmath.vector4(0.16, 0.16, 0.18, 1)))
-            self.buttons[#self.buttons+1] = { node = box, id = m.id }
-            track(self, ui.text(vmath.vector3(mx, fmt_y, 0), m.label, "btn_md", m.on and C_BTN_TEXT or ctx.C.COL_WHITE))
+        -- COLUMN CENTRES, MEASURED RATHER THAN GUESSED.
+        --
+        -- Both columns are laid out from what their controls actually span, so
+        -- widening either one cannot silently slide it under the other. Hand-
+        -- picked centres are exactly how the old fourth row ended up sitting on
+        -- top of the error line.
+        --
+        -- When there is no cap to show, PLAY MODE keeps the middle to itself
+        -- rather than sitting off to one side of an empty half — a lone control
+        -- pushed left reads as something having failed to draw.
+        local mode_w, mode_gap = capped and 150 or 180, 12
+        local mode_span = 2 * mode_w + mode_gap
+        local cap_box, cap_btn = 150, 44
+        local cap_span = stepper_width(cap_box, cap_btn)
+        local col_gap = 60
+
+        local mode_cx, cap_cx = CX, CX
+        if capped then
+            local left = CX - (mode_span + col_gap + cap_span) / 2
+            mode_cx = left + mode_span / 2
+            cap_cx  = left + mode_span + col_gap + cap_span / 2
         end
 
-        if pmode == "SCORECAP" then
+        label(mode_cx, opt_y, "PLAY MODE")
+        segments(self, ctx, mode_cx, opt_y, mode_w, mode_gap, {
+            { id = "bm_pmode_normal", label = "NORMAL",    on = not capped },
+            { id = "bm_pmode_cap",    label = "SCORE CAP", on = capped     },
+        })
+
+        if capped then
             -- Same ladder and the same wording as a KNOCKOUT chamber, on
             -- purpose: a player who knows what "cap 200" costs them there
             -- should not have to learn a second meaning for it here.
-            local pcap = M.party_cap_of(bm)
-            local cap_y = fmt_y - 74
-            track(self, ui.text(vmath.vector3(CX, cap_y + 42, 0), "SCORE CAP", "small", C_NEUTRAL))
-            mkbtn(self, "bm_pcap_minus", vmath.vector3(CX - step_w/2 - 34, cap_y, 0), vmath.vector3(52, 52, 0), "-", "secondary_btn")
-            track(self, ui.box(vmath.vector3(CX, cap_y, 0), vmath.vector3(step_w, 52, 0), ctx.C.COL_NAMEID_BG))
-            track(self, ui.text(vmath.vector3(CX, cap_y, 0), tostring(pcap), "body", ctx.C.COL_WHITE))
-            mkbtn(self, "bm_pcap_plus", vmath.vector3(CX + step_w/2 + 34, cap_y, 0), vmath.vector3(52, 52, 0), "+", "secondary_btn")
-            track(self, ui.text(vmath.vector3(CX, cap_y - 40, 0),
-                "Reach the cap and you're out · last player standing wins", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+            --
+            -- Narrower than the fee stepper above it because it shares the
+            -- row: 254px against that one's 400.
+            label(cap_cx, opt_y, "SCORE CAP")
+            stepper(self, ctx, cap_cx, opt_y, cap_box, tostring(M.party_cap_of(bm)),
+                ctx.C.COL_WHITE, "bm_pcap_minus", "bm_pcap_plus", cap_btn)
+            hint(opt_y, "Reach the cap and you're out · last player standing wins")
         else
-            track(self, ui.text(vmath.vector3(CX, fmt_y - 42, 0),
-                "Play it out · lowest hand when someone goes out wins", "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+            hint(opt_y, "Play it out · lowest hand when someone goes out wins")
         end
     elseif is_knock then
-        track(self, ui.text(vmath.vector3(CX, fmt_y + 46, 0), "SCORE CAP", "small", C_NEUTRAL))
-        mkbtn(self, "bm_cap_minus", vmath.vector3(CX - step_w/2 - 34, fmt_y, 0), vmath.vector3(52, 52, 0), "-", "secondary_btn")
-        track(self, ui.box(vmath.vector3(CX, fmt_y, 0), vmath.vector3(step_w, 52, 0), ctx.C.COL_NAMEID_BG))
-        track(self, ui.text(vmath.vector3(CX, fmt_y, 0), tostring(cap), "body", ctx.C.COL_WHITE))
-        mkbtn(self, "bm_cap_plus", vmath.vector3(CX + step_w/2 + 34, fmt_y, 0), vmath.vector3(52, 52, 0), "+", "secondary_btn")
-        track(self, ui.text(vmath.vector3(CX, fmt_y - 42, 0),
-            -- From the shared table, NOT math.floor(cap/2): the two agree only
-            -- on the first two rungs, so a 250 chamber would have advertised a
-            -- charge of 125 here while the server billed 150.
-            string.format("Charge: %d  ·  reach the cap and you're out", M.knockout_charge(cap)), "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+        label(CX, opt_y, "SCORE CAP")
+        stepper(self, ctx, CX, opt_y, STEP_W, tostring(cap), ctx.C.COL_WHITE,
+            "bm_cap_minus", "bm_cap_plus")
+        -- From the shared table, NOT math.floor(cap/2): the two agree only on
+        -- the first two rungs, so a 250 chamber would have advertised a charge
+        -- of 125 here while the server billed 150.
+        hint(opt_y, string.format("Charge: %d  ·  reach the cap and you're out", M.knockout_charge(cap)))
     else
-        track(self, ui.text(vmath.vector3(CX, fmt_y + 46, 0), "GAME FORMAT", "small", C_NEUTRAL))
-        mkbtn(self, "bm_fmt_minus", vmath.vector3(CX - step_w/2 - 34, fmt_y, 0), vmath.vector3(52, 52, 0), "-", "secondary_btn")
-        track(self, ui.box(vmath.vector3(CX, fmt_y, 0), vmath.vector3(step_w, 52, 0), ctx.C.COL_NAMEID_BG))
-        track(self, ui.text(vmath.vector3(CX, fmt_y, 0), "BEST OF " .. fmt.games, "body", ctx.C.COL_WHITE))
-        mkbtn(self, "bm_fmt_plus", vmath.vector3(CX + step_w/2 + 34, fmt_y, 0), vmath.vector3(52, 52, 0), "+", "secondary_btn")
-        track(self, ui.text(vmath.vector3(CX, fmt_y - 42, 0),
-            string.format("Charge: %s  ·  %d Pts to the winner", commas(fmt.charge), fmt.points), "small", vmath.vector4(0.6, 0.6, 0.6, 1)))
+        label(CX, opt_y, "GAME FORMAT")
+        stepper(self, ctx, CX, opt_y, STEP_W, "BEST OF " .. fmt.games, ctx.C.COL_WHITE,
+            "bm_fmt_minus", "bm_fmt_plus")
+        hint(opt_y, string.format("Charge: %s  ·  %d Pts to the winner", commas(fmt.charge), fmt.points))
     end
 
     if bm.msg then
-        track(self, ui.text(vmath.vector3(CX, CY - 200, 0), bm.msg, "small",
+        track(self, ui.text(vmath.vector3(CX, msg_y, 0), bm.msg, "small",
             bm.msg_ok and vmath.vector4(0.3, 1.0, 0.3, 1) or vmath.vector4(1, 0.3, 0.3, 1)))
     end
 
     local sub_label = bm.submitting and "WAITING..." or title
-    local sub_y = CY - 260
     local s_btn = track(self, ui.box(vmath.vector3(CX, sub_y, 0), vmath.vector3(380, 68, 0), C_VICTORY))
     self.buttons[#self.buttons+1] = { node = s_btn, id = "bm_submit" }
     track(self, ui.text(vmath.vector3(CX, sub_y, 0), sub_label, "btn_lg", C_BTN_TEXT))
