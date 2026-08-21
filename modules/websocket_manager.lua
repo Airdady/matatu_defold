@@ -625,6 +625,26 @@ local function parse_message(json_string)
     -- Dropping it here would silently delete the entire recruiting path.
     M.last_game_request = { user = d.user or {}, stake = d.stake or {}, requestId = d.requestId or "", raw = d }
     emit("game_request", d.user or {}, d.stake or {}, d.requestId or "", d)
+  elseif t == "GAME_SEARCH_STARTED" then
+    -- HOW LONG THE SEARCH ACTUALLY RUNS — the server's number, not ours.
+    --
+    -- The search dialog counted down a hardcoded ten seconds and failed itself
+    -- at zero. The real window is twelve seconds for a championship ladder and
+    -- eight for a battle or a chamber (be_matatu's settleAfterMs), so on a
+    -- ladder the dialog gave up two seconds BEFORE the server picked an
+    -- opponent — and told the player nobody was available while a match was
+    -- being made for them.
+    --
+    -- The last seconds of the window are a grace for answers already in
+    -- flight, which is why zero on the ring means "choosing", not "nobody
+    -- came": the decision lands after it.
+    M.last_search_window = {
+      settle_ms = tonumber(d.settleInMs) or 0,
+      grace_ms  = tonumber(d.graceMs) or 0,
+      invited   = tonumber(d.invited) or 0,
+      at        = socket.gettime(),
+    }
+    emit("search_window", M.last_search_window)
   elseif t == "GAME_REQUEST_CANCELLED" then
     emit("game_request_cancelled", d.requestId or d.id or "")
   elseif t == "GAME_REQUEST_DECLINED" then

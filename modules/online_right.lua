@@ -6,6 +6,22 @@ local toast         = require("modules.toast")
 
 local M = {}
 
+-- HOW LONG A SEARCH RUNS WHEN THE SERVER HAS NOT SAID YET.
+--
+-- The real figure arrives on GAME_SEARCH_STARTED (be_matatu's settleAfterMs:
+-- twelve seconds for a championship ladder, eight for a battle or a chamber).
+-- This is only what the dialog opens with in the moment before that lands, and
+-- it is the LONGEST of them deliberately — a countdown that is too long merely
+-- waits, while one that is too short tells a player nobody wanted to play them
+-- while the server is still choosing.
+M.SEARCH_WINDOW_FALLBACK = 12
+
+-- How far past the window the local give-up sits. The window already contains
+-- its own grace for answers in flight; this is the separate allowance for the
+-- server never answering at all.
+M.SEARCH_FAILSAFE_GRACE = 3
+
+
 -- Battle/Knockout/Party stake ladders, per game's own local currency
 -- (UGX/NGN/KES) — mirrors modules/config.lua's STAKE_LEVELS_BY_GAME
 -- conversion ratio (NGN ~= UGX * 0.5, KES ~= UGX * 0.05, rounded to clean
@@ -1421,6 +1437,13 @@ function M.start_invite_search(self, app_state, rebuild_cb, battle_type)
 
     self.invite_search = {
         active = true, t = 0, reel_ix = math.random(INVITE_AVATAR_MAX), spin_t = 0, stake = stake,
+        -- A PLACEHOLDER UNTIL THE SERVER SAYS. GAME_SEARCH_STARTED arrives a
+        -- moment later with the real window — eight seconds for a battle or a
+        -- chamber, twelve for a ladder — and replaces this. Twelve rather than
+        -- the ten the dialog used to default to, so even if that message never
+        -- lands the countdown outlives the longest window the server runs
+        -- instead of failing while a match is being made.
+        max_time = M.SEARCH_WINDOW_FALLBACK,
         -- No cancel_id: the backend has no way to actually withdraw a game
         -- request once sent, so a Cancel button here would lie — the opponent
         -- could still accept it after the player "cancelled".
@@ -1435,11 +1458,19 @@ function M.start_invite_search(self, app_state, rebuild_cb, battle_type)
         matchType    = (tostring(mb.matchType or battle_type or "NORMAL"):upper()),
     })
 
-    self.invite_search.timer_handle = timer.delay(10, false, function()
-        if self.invite_search and not self.invite_search.found then
-            M.fail_invite_search(self, app_state, rebuild_cb, "No one accepted your invite")
-        end
-    end)
+    -- THE GIVE-UP OUTLIVES THE WINDOW, IT DOES NOT MATCH IT.
+    --
+    -- Ten seconds flat, while the server's window is twelve for a ladder: the
+    -- dialog told the player nobody accepted their invite two seconds before
+    -- the server picked one of the people who had. This is a backstop for a
+    -- server that never answers at all, so it sits beyond the window;
+    -- ws_search_window re-arms it against the real figure the moment it lands.
+    self.invite_search.timer_handle = timer.delay(
+        M.SEARCH_WINDOW_FALLBACK + M.SEARCH_FAILSAFE_GRACE, false, function()
+            if self.invite_search and not self.invite_search.found then
+                M.fail_invite_search(self, app_state, rebuild_cb, "No one accepted your invite")
+            end
+        end)
 
     rebuild_cb()
     return true

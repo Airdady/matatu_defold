@@ -716,6 +716,27 @@ function on_message(self, message_id, message, sender)
         -- distinct "found" sting.
         stop_snd("snd_suspense"); stop_snd("snd_notify"); play_snd("snd_found")
         rebuild(self)
+    elseif message_id == hash("ws_search_window") and self.invite_search then
+        -- The server has opened the window and said how long it runs. Adopt it:
+        -- the ring defaulted to ten seconds and a ladder's window is twelve, so
+        -- the dialog used to give up while the server was still choosing.
+        local sr = self.invite_search
+        local secs = (tonumber(message and message.settle_ms) or 0) / 1000
+        if not sr.found and not sr.failed and secs > 0 then
+            sr.max_time = secs
+            sr.grace_time = (tonumber(message.grace_ms) or 0) / 1000
+            sr.invited = tonumber(message.invited) or 0
+            if sr.timer_handle then pcall(timer.cancel, sr.timer_handle) end
+            sr.timer_handle = timer.delay(
+                math.max(0, secs - (sr.t or 0)) + right_panel.SEARCH_FAILSAFE_GRACE, false,
+                function()
+                    if self.invite_search == sr and not sr.found then
+                        right_panel.fail_invite_search(self, app_state, function() rebuild(self) end,
+                            "No one accepted your invite")
+                    end
+                end)
+            rebuild(self)
+        end
     elseif message_id == hash("ws_search_failed") and self.invite_search then
         -- No opponent found / declined: play the playful miss transition on the
         -- reel, then close the overlay (fail_invite_search handles the timing).

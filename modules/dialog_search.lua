@@ -20,7 +20,14 @@
 --                opp_name   matched opponent name (when found)
 --                fail_msg   failure reason (when failed)
 --                stake      { amount = n } -> when amount > 0 a coin pot is shown
---                max_time   countdown length, seconds (default 10)
+--                max_time   countdown length, seconds (default 12 — the
+--                           server states it on GAME_SEARCH_STARTED)
+--                grace_time the tail of max_time that is the server's grace for
+--                           answers already in flight. The ring counts down to
+--                           the START of it and then says CHOOSING, so the
+--                           number on screen is only ever time somebody can
+--                           still be joining in.
+--                invited    how many players the invite went out to
 --                subtitle   searching subtitle (default battle-invite wording)
 --                cancel_id  when set, a Cancel button with this id is drawn
 --                modal      when true the scrim swallows taps (blocks behind UI)
@@ -41,7 +48,18 @@ function M.draw(self, ctx, sr, reel_key)
 
     local amt        = tonumber((sr.stake or {}).amount) or 0
     local show_coins = amt > 0
-    local max_time   = sr.max_time or 10
+    -- Twelve, not ten. The server's window is twelve seconds for a
+    -- championship ladder and eight for a battle, and it says which on
+    -- GAME_SEARCH_STARTED — this is only what is drawn in the moment before
+    -- that lands, so it is the longest of them rather than the shortest.
+    local max_time   = sr.max_time or 12
+    -- The tail of the window is the server's grace for answers in flight. The
+    -- ring runs down to the start of it; the seconds after that are spent
+    -- choosing between the people who accepted, which is not a countdown the
+    -- player can act on.
+    local grace_time = math.max(0, math.min(tonumber(sr.grace_time) or 0, max_time - 1))
+    local elapsed    = sr.t or 0
+    local choosing   = (not sr.found) and (not sr.failed) and elapsed >= (max_time - grace_time)
 
     -- Scrim + soft gradient backdrop.
     local scrim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W * 2, ctx.LOGICAL_H * 2, 0), vmath.vector4(0, 0, 0, 0.78)))
@@ -49,7 +67,9 @@ function M.draw(self, ctx, sr, reel_key)
     track(self, ui.grad_backdrop(ctx.LOGICAL_W, ctx.LOGICAL_H))
 
     -- Title + status line.
-    local title = sr.found and "OPPONENT FOUND!" or (sr.failed and "NO OPPONENT FOUND" or "SEARCHING FOR OPPONENT")
+    local title = sr.found and "OPPONENT FOUND!"
+        or (sr.failed and "NO OPPONENT FOUND"
+        or (choosing and "CHOOSING YOUR OPPONENT" or "SEARCHING FOR OPPONENT"))
     local t_col = sr.found and vmath.vector4(0.15, 0.85, 0.35, 1) or (sr.failed and C.COL_GOLD or C.COL_WHITE)
     track(self, ui.text(vmath.vector3(CX, CY + 130, 0), title, "title", t_col))
 
@@ -57,7 +77,20 @@ function M.draw(self, ctx, sr, reel_key)
         track(self, ui.text(vmath.vector3(CX, CY + 96, 0), sr.fail_msg or "No one accepted your invite", "small", C.COL_DIM))
     elseif not sr.found then
         local dots = string.rep(".", 1 + (math.floor((sr.t or 0) * 2) % 3))
-        track(self, ui.text(vmath.vector3(CX, CY + 96, 0), (sr.subtitle or "inviting a player to your battle") .. dots, "small", C.COL_DIM))
+        -- WHAT ZERO ON THE RING MEANS.
+        --
+        -- It used to mean the search had failed — the dialog announced "no
+        -- opponent" the instant the countdown emptied, which on a ladder was
+        -- two seconds before the server had finished picking between the
+        -- players who accepted. Zero is the shortlist closing, not the search
+        -- giving up, and the line says so.
+        local line = choosing
+            and ((sr.invited or 0) > 0
+                and ("shortlisting from " .. tostring(sr.invited) .. " player"
+                     .. ((sr.invited == 1) and "" or "s"))
+                or "picking the best match")
+            or (sr.subtitle or "inviting a player to your battle")
+        track(self, ui.text(vmath.vector3(CX, CY + 96, 0), line .. dots, "small", C.COL_DIM))
     else
         track(self, ui.text(vmath.vector3(CX, CY + 96, 0), "get ready…", "small", C.COL_DIM))
     end
@@ -124,9 +157,12 @@ function M.draw(self, ctx, sr, reel_key)
         end
         gui.set_color(frame, vmath.vector4(0.85, 0.25, 0.25, 0.6))
     else
-        -- Native, fully smooth countdown ring (animates independent of redraw cycle).
-        local time_left = math.max(0, max_time - (sr.t or 0))
-        local frac = time_left / max_time
+        -- Native, fully smooth countdown ring (animates independent of redraw
+        -- cycle). It runs to the START of the grace, so it empties exactly when
+        -- new answers stop being accepted rather than when the dialog closes.
+        local window    = math.max(1, max_time - grace_time)
+        local time_left = math.max(0, window - elapsed)
+        local frac = time_left / window
         local R = 34
 
         local bg = track(self, gui.new_pie_node(vmath.vector3(CX, CY - 140, 0), vmath.vector3(R*2, R*2, 0)))

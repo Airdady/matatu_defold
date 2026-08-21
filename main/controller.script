@@ -1090,6 +1090,31 @@ function init(self)
         end
     end))
 
+    -- THE SEARCH WINDOW IS THE SERVER'S NUMBER.
+    --
+    -- The dialogs counted down a hardcoded ten seconds and failed themselves at
+    -- zero. The server's window is twelve seconds for a championship ladder and
+    -- eight for a battle or a chamber, so on a ladder the dialog announced "no
+    -- opponents" two seconds BEFORE the server had finished choosing between
+    -- the players who accepted.
+    --
+    -- Forwarded to whichever dialog is open. Both read it the same way: the
+    -- ring runs the real window, zero on it means "choosing" rather than
+    -- "nobody came", and the local give-up sits a few seconds beyond it as a
+    -- backstop for a server that never answers at all.
+    table.insert(self.tokens, ws.on("search_window", function(w)
+        local payload = {
+            settle_ms = (type(w) == "table" and tonumber(w.settle_ms)) or 0,
+            grace_ms  = (type(w) == "table" and tonumber(w.grace_ms)) or 0,
+            invited   = (type(w) == "table" and tonumber(w.invited)) or 0,
+        }
+        if app_state.searching_invite then
+            msg.post("#online", "ws_search_window", payload)
+        else
+            msg.post("#tournaments", "ws_search_window", payload)
+        end
+    end))
+
     table.insert(self.tokens, ws.on("tournament_no_opponents", function(d)
         pcall(msg.post, "#snd_suspense", "stop_sound")
         pcall(msg.post, "#snd_fail", "play_sound")
