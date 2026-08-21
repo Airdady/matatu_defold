@@ -70,11 +70,19 @@ check("a missing state table refuses rather than throws", TL.may_touch_deck(nil)
 ----------------------------------------------------------------------
 check("a turn nobody has used yet may be re-opened",
       TL.may_reopen_kept_turn({ has_drawn = false, animating = false }), true)
-check("NOT after the player has already drawn",
-      TL.may_reopen_kept_turn({ has_drawn = true, animating = false }), false)
+-- HAVING DRAWN IS NOT A REASON TO REFUSE, and treating it as one broke the
+-- most ordinary turn there is: draw a card, it happens to be an 8, play it.
+-- The skip keeps the turn, so this gate has to re-arm the player — and
+-- has_drawn is true at that moment for the perfectly good reason that they
+-- just drew. Refused, the deck stayed locked, the player could not take the
+-- card the skip entitles them to, and the action list flushed as
+-- [DRAW 8H, PLAY 8H] — a skip with nothing after it, which the server refuses
+-- outright and answers with a full RESYNC.
+check("a player who just drew an 8 and played it gets their turn back",
+      TL.may_reopen_kept_turn({ has_drawn = true, animating = false }), true)
 check("NOT while their card is still in flight",
       TL.may_reopen_kept_turn({ has_drawn = false, animating = true }), false)
-check("NOT in the state the second tap arrived in",
+check("in flight still refuses, drawn or not",
       TL.may_reopen_kept_turn({ has_drawn = true, animating = true }), false)
 check("a missing state table refuses rather than throws",
       TL.may_reopen_kept_turn(nil), true) -- nothing known to undo
@@ -111,16 +119,26 @@ check("t+0.42 the late re-open is refused while the draw is live",
 check("t+0.45 the second tap still finds the deck closed",
       TL.board_may_touch_deck(board), false)
 
--- ...and once the draw actually lands, the turn behaves normally again. This is
--- the half that matters for not over-fixing: check_post_draw re-opens input
--- when the drawn card left something playable, and a CARD is playable again —
--- it is only a second DRAW that is refused, by has_drawn, as it always was.
+-- ...and once the draw actually lands, the turn behaves normally again.
+-- check_post_draw re-opens input when the drawn card left something playable,
+-- and a CARD is playable again.
 board.is_animating = false
 board.is_local_action_locked = false
-check("after the draw lands, a second draw is still refused",
-      board.player_has_drawn, true)
-check("...and the late re-open would still decline to clear that",
+check("the draw is still recorded on the board", board.player_has_drawn, true)
+
+-- THE TURN THAT WAS BEING REFUSED. The drawn card was a skip, it has been
+-- played, and the player is owed the rest of their turn. Nothing is in flight,
+-- so nothing may stand in the way — least of all the record that they drew.
+check("and the skip they just played re-opens the turn",
+      TL.board_may_reopen_kept_turn(board), true)
+
+-- Staleness is ORDERING, not draw state: after_play_settled drops a
+-- superseded callback on its play ticket before this gate is ever consulted.
+-- A card genuinely in the air is the one thing left for this to refuse.
+board.is_animating = true
+check("a card still in the air is the one thing that holds it",
       TL.board_may_reopen_kept_turn(board), false)
+board.is_animating = false
 
 ----------------------------------------------------------------------
 -- what must NOT change: a legitimate rapid chain
