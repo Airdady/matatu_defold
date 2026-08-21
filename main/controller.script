@@ -911,14 +911,52 @@ function init(self)
         end
     end))
 
-    local function intercept_for_search(self_)
+    -- THE POT ON THE BOARD IS THE ONLY PLACE THE STAKE IS SHOWN.
+    --
+    -- overlay_ui's static stake chip is gone; what a player sees is the coin
+    -- bundle this raises, sitting beside the scoreboard for the whole game. So
+    -- a client that never posts this is a client whose player cannot see what
+    -- the game is worth.
+    --
+    -- It used to live inline in the game_request_accepted handler, BELOW the
+    -- intercept_for_search early return — so the player who is sitting in the
+    -- search dialog (the one who tapped invite, or who is searching a
+    -- tournament) took the early return and never raised it, while the
+    -- opponent, who came to the same game without searching, did. That is one
+    -- player seeing the stake and the other not, in the same match.
+    --
+    -- The searching player's board does not exist yet — the dialog holds the
+    -- screen for another 1.8s — so theirs is raised when the screen actually
+    -- changes, not now.
+    local function raise_stake_pot(gs)
+        -- No fabricated default. This read `or 500`, which quietly invented a
+        -- 1,000-coin pot out of a payload that had no stake on it; a wrong
+        -- number about money is worse than no bundle.
+        local stake = (type(gs) == "table" and type(gs.stake) == "table" and tonumber(gs.stake.amount)) or 0
+        -- A zero-stake game (AI trial battle, free match) has no real pot to
+        -- show — skip the bundle entirely instead of sitting a "0 coins"
+        -- bundle on screen for the whole game.
+        if stake <= 0 then return end
+        pcall(msg.post, "#coins", "coin_collect_pot", {
+            amount  = stake * 2,
+            sources = { { x = 150, y = 64 }, { x = 150, y = 656 } },
+            center  = { x = 640, y = 360 },
+        })
+        -- Keep in sync with main/coins.gui_script's POT_REST_X.
+        pcall(msg.post, "#coins", "coin_pot_to", { x = 220, y = 360 })
+    end
+
+    local function intercept_for_search(self_, gs)
         if app_state.searching_tournament and self_.screen == "tournaments" then
             app_state.searching_tournament = false
             pcall(msg.post, "#snd_suspense", "stop_sound")
             pcall(msg.post, "#snd_found", "play_sound")
             msg.post("#tournaments", "ws_match_found")
             timer.delay(1.8, false, function()
-                if self_.screen == "tournaments" then show(self_, "game") end
+                if self_.screen == "tournaments" then
+                    show(self_, "game")
+                    raise_stake_pot(gs)
+                end
             end)
             return true
         end
@@ -926,7 +964,10 @@ function init(self)
             app_state.searching_invite = false
             msg.post("#online", "ws_match_found")
             timer.delay(1.8, false, function()
-                if self_.screen == "online" then show(self_, "game") end
+                if self_.screen == "online" then
+                    show(self_, "game")
+                    raise_stake_pot(gs)
+                end
             end)
             return true
         end
@@ -949,8 +990,13 @@ function init(self)
             return
         end
         app_state.mode = "online"
-        if intercept_for_search(self) then return end
-        if self.screen ~= "game" then show(self, "game") else msg.post("#game_logic", "ws_new_game_start") end
+        if intercept_for_search(self, gs) then return end
+        local arriving = self.screen ~= "game"
+        if arriving then show(self, "game") else msg.post("#game_logic", "ws_new_game_start") end
+        -- A START that lands on a player who never saw GAME_REQUEST_ACCEPTED
+        -- (handlePlayerReady broadcasts it to both sides, and a reconnect can
+        -- deliver this one alone) still has to put the stake on their board.
+        if arriving then raise_stake_pot(gs) end
     end))
 
     table.insert(self.tokens, ws.on("game_request_accepted", function(gs)
@@ -969,24 +1015,13 @@ function init(self)
             return
         end
         app_state.mode = "online"
-        if intercept_for_search(self) then return end
+        if intercept_for_search(self, gs) then return end
+        -- Between two ROUNDS of one match the pot is already on screen and
+        -- still holds the stake — raising it again would replay the whole
+        -- collection animation over a bundle that never left.
         local is_round_continuation = (self.screen == "game") and app_state.game_active
         if self.screen ~= "game" then show(self, "game") else msg.post("#game_logic", "ws_new_game_start") end
-        if not is_round_continuation then
-            local stake = (type(gs) == "table" and type(gs.stake) == "table" and tonumber(gs.stake.amount)) or 500
-            -- A zero-stake game (AI trial battle, free match) has no real pot
-            -- to show — skip the bundle entirely instead of sitting a "0
-            -- coins" bundle on screen for the whole game.
-            if stake > 0 then
-                pcall(msg.post, "#coins", "coin_collect_pot", {
-                    amount  = stake * 2,
-                    sources = { { x = 150, y = 64 }, { x = 150, y = 656 } },
-                    center  = { x = 640, y = 360 },
-                })
-                -- Keep in sync with main/coins.gui_script's POT_REST_X.
-                pcall(msg.post, "#coins", "coin_pot_to", { x = 220, y = 360 })
-            end
-        end
+        if not is_round_continuation then raise_stake_pot(gs) end
     end))
 
     local function broadcast(evt)
