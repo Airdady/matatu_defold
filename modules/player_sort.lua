@@ -16,6 +16,24 @@
 --                      online_center: no challenge button on a playing row), so
 --                      it belongs at the bottom whatever its stake.
 --
+-- AND WITHIN A RUNG, THE CLOSEST OPPONENT.
+--
+-- Every rung can hold a lot of people, and until now their order inside it was
+-- just the order the server sent. Players of my own SKILL TIER come first now,
+-- then the immediate neighbouring tier, then further out — the same ladder the
+-- rank badge already draws on the row (AMATEUR, PRO, MASTER, GRANDMASTER), so
+-- what a player sees and what the list sorts by are one fact.
+--
+-- It is a tiebreak, never an override: a GRANDMASTER at my stake still ranks
+-- above an AMATEUR who is mid-game. Rung first, tier second — being able to
+-- play someone at all beats playing someone well matched.
+--
+-- The tier is SENT, not computed here. broadcastOnlineUsers attaches
+-- `skillTier` to every row (be_matatu's services/playerTier.ts), because "my
+-- own tier first" is viewer-relative and that list is built once for
+-- everybody — so the ordering has to happen on this side, and the fact has to
+-- come from that one.
+--
 -- AND THE THIRD RULE FALLS OUT OF THE FIRST TWO.
 --
 -- "When the player cannot afford any stake, show free players first, then other
@@ -94,6 +112,37 @@ function M.pivot_stake(selected, balance, levels)
 end
 
 --- Which rung a row sits on. Lower sorts first.
+-- THE SKILL LADDER, weakest to strongest. Index is ladder position, which is
+-- what makes "one tier away" a subtraction. Mirrors be_matatu's SKILL_TIERS
+-- and modules/rank_badge.lua's own bands — if this changes, all three change.
+M.TIERS = { "AMATEUR", "PRO", "MASTER", "GRANDMASTER" }
+
+local TIER_INDEX = {}
+for i, t in ipairs(M.TIERS) do TIER_INDEX[t] = i end
+
+--- Where a row's tier sits on the ladder, or nil when it has none.
+--
+-- nil rather than a default: a server that does not send skillTier yet, or an
+-- AI row that has no record, must not be treated as AMATEUR and dragged to one
+-- end of every rung. Unknown sorts LAST within its rung and nothing else
+-- changes — which is exactly how this behaved before the field existed.
+function M.tier_index(pu)
+    if type(pu) ~= "table" then return nil end
+    local t = pu.skillTier or pu.skill_tier
+    if type(t) ~= "string" then return nil end
+    return TIER_INDEX[t:upper()]
+end
+
+--- How far a row is from `mine` on the ladder. Lower is a better match.
+--
+-- Returns a number ABOVE any real distance when either side is unknown, so an
+-- unplaceable row falls to the back of its rung rather than to the front.
+function M.tier_gap(pu, mine)
+    local theirs = M.tier_index(pu)
+    if not theirs or not mine then return #M.TIERS end
+    return math.abs(theirs - mine)
+end
+
 function M.rank(pu, pivot)
     if M.is_playing(pu) then return 4 end
     local s = M.row_stake(pu)
@@ -104,7 +153,11 @@ end
 
 --- Order a list of rows in place, and return it.
 --
--- `opts = { selected_stake, balance, levels }`.
+-- `opts = { selected_stake, balance, levels, my_tier }`.
+--
+-- `my_tier` is the VIEWER's own skillTier. Omit it and the tier tiebreak is
+-- skipped entirely and the order is exactly what it was before — which is what
+-- a client talking to a server that does not send the field yet will get.
 --
 -- STABLE, which table.sort is not: rows that share a rung keep the order the
 -- server sent them in, so whatever the server already sorts by — rank,
@@ -120,13 +173,22 @@ function M.sort(rows, opts)
     -- looked up from the row itself: the Battles tab puts the SAME player table
     -- on the list more than once (one row per battle type it hosts), so keying
     -- anything by row identity collapses those two into one position.
+    local mine = TIER_INDEX[tostring(opts.my_tier or ""):upper()]
+
     local decorated = {}
     for i, pu in ipairs(rows) do
-        decorated[i] = { pu = pu, i = i, r = M.rank(pu, pivot) }
+        decorated[i] = {
+            pu = pu, i = i,
+            r = M.rank(pu, pivot),
+            -- 0 when the viewer's tier is unknown, so every row ties on it and
+            -- the arrival index decides — the old behaviour, exactly.
+            g = mine and M.tier_gap(pu, mine) or 0,
+        }
     end
 
     table.sort(decorated, function(a, b)
         if a.r ~= b.r then return a.r < b.r end
+        if a.g ~= b.g then return a.g < b.g end
         return a.i < b.i
     end)
 

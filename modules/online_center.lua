@@ -254,10 +254,14 @@ function M.draw(self, ctx)
     -- that is the one the socket has actually been told about (ws.update_stake
     -- writes both together), so the list is ordered by the stake a challenge
     -- would really go out at.
+    -- my_tier is the VIEWER's own skill tier, and it is what makes "players
+    -- like me first" possible at all: the server builds ONE online list for
+    -- everybody, so a viewer-relative order can only happen here.
     psort.sort(rows, {
         selected_stake = app_state.selected_stake,
         balance = (ws.current_user_data or {}).balance,
         levels = config.STAKE_LEVELS,
+        my_tier = (ws.current_user_data or {}).skillTier,
     })
 
     local content_h  = #rows * step

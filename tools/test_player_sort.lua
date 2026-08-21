@@ -162,5 +162,61 @@ check("no options at all is fine", #ps.sort({ p("x", 200) }, nil), 1)
 check("a non-list is returned untouched", ps.sort(nil, {}), nil)
 
 ----------------------------------------------------------------------
+-- WITHIN A RUNG, THE CLOSEST TIER FIRST
+----------------------------------------------------------------------
+-- The tier is a TIEBREAK, never an override: being able to play someone at
+-- all beats playing someone well matched. Everything below shares one rung so
+-- the tier is the only thing left to decide, except where the rung is checked
+-- against it explicitly.
+local function trow(name, tier, stake, playing)
+  return { username = name, skillTier = tier,
+           stake = { amount = stake or 200 },
+           -- is_playing reads gameId, the same field online_center checks
+           -- before it attaches a challenge button.
+           gameId = playing and "g1" or nil }
+end
+local function tnames(rows)
+  local out = {}
+  for _, r in ipairs(rows) do out[#out + 1] = r.username end
+  return table.concat(out, ",")
+end
+
+local topts = { selected_stake = 200, balance = 10000,
+                levels = { { amount = 0 }, { amount = 200 } }, my_tier = "PRO" }
+
+check("my own tier comes first",
+  tnames(ps.sort({ trow("gm", "GRANDMASTER"), trow("pro", "PRO") }, topts)), "pro,gm")
+
+-- PRO(0), then AMATEUR and MASTER both one step away — arrival order decides
+-- between them — then GRANDMASTER at two.
+check("then the immediate neighbour, in either direction",
+  tnames(ps.sort({
+    trow("gm", "GRANDMASTER"), trow("am", "AMATEUR"),
+    trow("ma", "MASTER"), trow("pro", "PRO"),
+  }, topts)), "pro,am,ma,gm")
+
+check("a row with no tier falls to the BACK of its rung, not the front",
+  tnames(ps.sort({ trow("none", nil), trow("pro", "PRO") }, topts)), "pro,none")
+
+check("a perfect tier match who is mid-game still ranks below a playable stranger",
+  tnames(ps.sort({ trow("pro_busy", "PRO", 200, true), trow("am_free", "AMATEUR", 200) }, topts)),
+  "am_free,pro_busy")
+
+check("and a matching stake beats a matching tier",
+  tnames(ps.sort({ trow("pro_other", "PRO", 500), trow("am_mine", "AMATEUR", 200) }, topts)),
+  "am_mine,pro_other")
+
+-- A SERVER THAT DOES NOT SEND THE FIELD MUST CHANGE NOTHING. This is the old
+-- behaviour exactly, and it is what an un-deployed backend gets.
+local no_tier = { selected_stake = 200, balance = 10000,
+                  levels = { { amount = 0 }, { amount = 200 } } }
+check("without my_tier the order is arrival order",
+  tnames(ps.sort({ trow("b", "GRANDMASTER"), trow("a", "PRO") }, no_tier)), "b,a")
+
+check("an unknown tier name reads as no index", ps.tier_index(trow("x", "WIZARD")), nil)
+check("distance is symmetric across the ladder",
+  ps.tier_gap(trow("x", "AMATEUR"), 4), ps.tier_gap(trow("y", "GRANDMASTER"), 1))
+
+----------------------------------------------------------------------
 print(("\n%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)
