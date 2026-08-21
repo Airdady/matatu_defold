@@ -28,6 +28,11 @@
 --                           number on screen is only ever time somebody can
 --                           still be joining in.
 --                invited    how many players the invite went out to
+--                roster     { {userId, username, avatar, skillTier}, … } — the
+--                           players who have ACCEPTED so far, pushed by the
+--                           server as each one lands (GAME_REQUEST_ROSTER)
+--                chosen_id  set on the last roster push only: the opponent the
+--                           window actually awarded the match to
 --                subtitle   searching subtitle (default battle-invite wording)
 --                cancel_id  when set, a Cancel button with this id is drawn
 --                modal      when true the scrim swallows taps (blocks behind UI)
@@ -67,9 +72,18 @@ function M.draw(self, ctx, sr, reel_key)
     track(self, ui.grad_backdrop(ctx.LOGICAL_W, ctx.LOGICAL_H))
 
     -- Title + status line.
+    -- WHO HAS TURNED UP, AND WHETHER ONE OF THEM IS YOURS YET.
+    --
+    -- An arrival is not a match. Somebody accepting means the search is
+    -- working; the opponent is chosen when the window closes, and titling the
+    -- first arrival "OPPONENT FOUND" would be the first-to-tap rule again,
+    -- drawn rather than enforced.
+    local roster    = (type(sr.roster) == "table") and sr.roster or {}
+    local joined    = #roster
     local title = sr.found and "OPPONENT FOUND!"
         or (sr.failed and "NO OPPONENT FOUND"
-        or (choosing and "CHOOSING YOUR OPPONENT" or "SEARCHING FOR OPPONENT"))
+        or (choosing and "ASSESSING THE BEST CANDIDATE"
+        or (joined > 0 and "OPPONENTS FOUND" or "SEARCHING FOR OPPONENT")))
     local t_col = sr.found and vmath.vector4(0.15, 0.85, 0.35, 1) or (sr.failed and C.COL_GOLD or C.COL_WHITE)
     track(self, ui.text(vmath.vector3(CX, CY + 130, 0), title, "title", t_col))
 
@@ -84,12 +98,22 @@ function M.draw(self, ctx, sr, reel_key)
         -- two seconds before the server had finished picking between the
         -- players who accepted. Zero is the shortlist closing, not the search
         -- giving up, and the line says so.
-        local line = choosing
-            and ((sr.invited or 0) > 0
-                and ("shortlisting from " .. tostring(sr.invited) .. " player"
-                     .. ((sr.invited == 1) and "" or "s"))
-                or "picking the best match")
-            or (sr.subtitle or "inviting a player to your battle")
+        local plural = function(n, word)
+            return tostring(n) .. " " .. word .. ((n == 1) and "" or "s")
+        end
+        local line
+        if choosing then
+            line = joined > 0
+                and ("assessing " .. plural(joined, "candidate"))
+                or "picking the best match"
+        elseif joined > 0 then
+            -- The reassurance the old spinner never gave: somebody IS there,
+            -- and the search keeps running because a better match may still
+            -- answer inside the window.
+            line = plural(joined, "player") .. " joined, still searching"
+        else
+            line = sr.subtitle or "inviting a player to your battle"
+        end
         track(self, ui.text(vmath.vector3(CX, CY + 96, 0), line .. dots, "small", C.COL_DIM))
     else
         track(self, ui.text(vmath.vector3(CX, CY + 96, 0), "get ready…", "small", C.COL_DIM))
@@ -137,8 +161,52 @@ function M.draw(self, ctx, sr, reel_key)
         gui.set_color(reel, vmath.vector4(0.55, 0.55, 0.55, 1))
         self[reel_key] = nil
     end
-    local who = sr.found and (sr.opp_name or "PLAYER") or (sr.failed and "—" or "? ? ?")
-    track(self, ui.text(vmath.vector3(bx, ay - 86, 0), who, "body", sr.found and C.COL_WHITE or C.COL_DIM))
+    -- WHO THE SLOT IS SHOWING.
+    --
+    -- Once somebody has accepted, the reel stops being an unknown: it shows
+    -- the latest player to join, and the chosen one the moment the window
+    -- names them. It only reads "? ? ?" while nobody has answered at all,
+    -- which is the one time that is actually true.
+    local chosen
+    if sr.chosen_id then
+        for _, r in ipairs(roster) do
+            if r.userId == sr.chosen_id then chosen = r end
+        end
+    end
+    local latest = roster[#roster]
+    if not sr.found and not sr.failed and (chosen or latest) then
+        local show = chosen or latest
+        self[reel_key] = nil -- stop the host cycling it; this is a real player
+        pcall(gui.play_flipbook, reel, "avatar_" .. tostring(show.avatar or 1))
+    end
+
+    local who = sr.found and (sr.opp_name or "PLAYER")
+        or (sr.failed and "—"
+        or (chosen and string.upper(chosen.username or "PLAYER")
+        or (latest and string.upper(latest.username or "PLAYER") or "? ? ?")))
+    local who_col = (sr.found or chosen) and C.COL_WHITE or C.COL_DIM
+    track(self, ui.text(vmath.vector3(bx, ay - 86, 0), who, "body", who_col))
+
+    -- THE SHORTLIST, UNDER THE SLOT.
+    --
+    -- Every player who has accepted, in the order they arrived, so the
+    -- requester can see the search working rather than trusting a spinner. The
+    -- chosen one is marked once the window has closed on them.
+    if joined > 0 and not sr.failed then
+        local SZ, GAP = 34, 8
+        local row_w = joined * SZ + (joined - 1) * GAP
+        local x0 = CX - row_w / 2 + SZ / 2
+        local ry = ay - 132
+        track(self, ui.text(vmath.vector3(CX, ry + 30, 0),
+            chosen and "MATCHED" or "JOINED", "small", C.COL_DIM))
+        for i, r in ipairs(roster) do
+            local rx = x0 + (i - 1) * (SZ + GAP)
+            local is_won = chosen and (r.userId == chosen.userId)
+            track(self, ui.box(vmath.vector3(rx, ry, 0), vmath.vector3(SZ + 4, SZ + 4, 0),
+                is_won and vmath.vector4(0.15, 0.85, 0.35, 1) or vmath.vector4(0.25, 0.25, 0.30, 1)))
+            track(self, ui.avatar(vmath.vector3(rx, ry, 0), vmath.vector3(SZ, SZ, 0), r.avatar or 1))
+        end
+    end
 
     if sr.found then
         gui.set_scale(frame, vmath.vector3(0.9, 0.9, 1))

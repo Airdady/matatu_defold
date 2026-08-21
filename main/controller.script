@@ -1115,6 +1115,21 @@ function init(self)
         end
     end))
 
+    -- THE SHORTLIST, AS IT FILLS.
+    --
+    -- Forwarded to whichever search dialog is open so the requester watches
+    -- opponents arrive rather than a spinner. The payload travels on the
+    -- socket module (msg.post serialises into a small fixed buffer and a
+    -- roster is a list of tables — the same constraint the announcement
+    -- banner hit); only a wake signal goes through the message.
+    table.insert(self.tokens, ws.on("search_roster", function()
+        if app_state.searching_invite then
+            msg.post("#online", "ws_search_roster")
+        else
+            msg.post("#tournaments", "ws_search_roster")
+        end
+    end))
+
     table.insert(self.tokens, ws.on("tournament_no_opponents", function(d)
         pcall(msg.post, "#snd_suspense", "stop_sound")
         pcall(msg.post, "#snd_fail", "play_sound")

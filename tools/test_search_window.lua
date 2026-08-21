@@ -92,14 +92,59 @@ print("ZERO IS THE SHORTLIST CLOSING, NOT THE SEARCH FAILING")
 -- twelve-second window — and the two seconds after it are the server choosing.
 local closing = draw(ladder(10.5))
 ok("the ring has emptied", shows(closing, "0"))
-ok("but the dialog says it is CHOOSING", shows(closing, "CHOOSING YOUR OPPONENT"))
+ok("but the dialog says it is assessing", shows(closing, "ASSESSING THE BEST CANDIDATE"))
 ok("...not that nobody came", not shows(closing, "NO OPPONENT FOUND"))
-ok("and says how many it is choosing between", shows(closing, "shortlisting from 6 players"))
+ok("with nobody in yet it says what it is doing rather than a count",
+   shows(closing, "picking the best match"))
 
-local one = draw({ active = true, t = 7, max_time = 8, grace_time = 2, invited = 1 })
-ok("one acceptance is not pluralised", shows(one, "shortlisting from 1 player"))
-ok("a battle's window is eight, so seven seconds in it is already choosing",
-   shows(one, "CHOOSING YOUR OPPONENT"))
+local one = draw({ active = true, t = 7, max_time = 8, grace_time = 2, invited = 1,
+                   roster = { { userId = "u1", username = "Ada", avatar = 3 } } })
+ok("one candidate is not pluralised", shows(one, "assessing 1 candidate"))
+ok("a battle's window is eight, so seven seconds in it is already assessing",
+   shows(one, "ASSESSING THE BEST CANDIDATE"))
+
+----------------------------------------------------------------------
+print("")
+print("OPPONENTS ARRIVING, SHOWN AS THEY LAND")
+----------------------------------------------------------------------
+-- A search used to be a spinner and then a board. Everything in between —
+-- somebody accepting, somebody else accepting — happened silently, so on a
+-- twelve-second window the player was told nothing for twelve seconds.
+--
+-- An arrival is NOT a match, though: the opponent is chosen when the window
+-- closes, and titling the first arrival "OPPONENT FOUND" would be the
+-- first-to-tap rule again, drawn rather than enforced.
+local function withRoster(t, list, chosen)
+    return { active = true, t = t, max_time = 12, grace_time = 2, invited = 6,
+             roster = list, chosen_id = chosen }
+end
+
+local ada = { userId = "u1", username = "Ada", avatar = 3 }
+local bem = { userId = "u2", username = "Bem", avatar = 7 }
+
+local one_in = draw(withRoster(4, { ada }))
+ok("the title says somebody is here", shows(one_in, "OPPONENTS FOUND"))
+ok("...and NOT that the opponent is settled", not shows(one_in, "OPPONENT FOUND!"))
+ok("the count is shown", shows(one_in, "1 player joined, still searching"))
+ok("the slot names the player who joined", shows(one_in, "ADA"))
+ok("...instead of the unknown placeholder", not shows(one_in, "? ? ?"))
+ok("and the shortlist is labelled", shows(one_in, "JOINED"))
+
+local two_in = draw(withRoster(6, { ada, bem }))
+ok("a second arrival is counted", shows(two_in, "2 players joined, still searching"))
+ok("...and the slot follows the latest", shows(two_in, "BEM"))
+
+local assessing = draw(withRoster(10.5, { ada, bem }))
+ok("once the ring empties it is assessing", shows(assessing, "ASSESSING THE BEST CANDIDATE"))
+ok("...over the candidates it has", shows(assessing, "assessing 2 candidates"))
+
+local matched = draw(withRoster(11.5, { ada, bem }, "u1"))
+ok("the winner is named at the end", shows(matched, "ADA"))
+ok("...and the shortlist says so", shows(matched, "MATCHED"))
+
+local nobody = draw(withRoster(3, {}))
+ok("with nobody yet it still reads as searching", shows(nobody, "SEARCHING FOR OPPONENT"))
+ok("...and the slot is honestly unknown", shows(nobody, "? ? ?"))
 
 ----------------------------------------------------------------------
 print("")
@@ -139,6 +184,16 @@ ok("...and no longer opens on a hardcoded ten", tour:find("max_time = 10", 1, tr
 
 local onl = source("main/online.gui_script")
 ok("the invite dialog adopts it too", onl:find('hash("ws_search_window")', 1, true) ~= nil)
+
+ok("the socket understands GAME_REQUEST_ROSTER", wsm:find('GAME_REQUEST_ROSTER', 1, true) ~= nil)
+ok("...and emits it", wsm:find('emit("search_roster"', 1, true) ~= nil)
+ok("the controller forwards the roster to the open dialog",
+   ctrl:find('ws.on("search_roster"', 1, true) ~= nil)
+ok("both dialogs take it", tour:find('hash("ws_search_roster")', 1, true) ~= nil
+   and onl:find('hash("ws_search_roster")', 1, true) ~= nil)
+ok("and neither closes on an arrival — only ws_match_found does that",
+   tour:find('hash("ws_search_roster")', 1, true) ~= nil
+   and not tour:match('ws_search_roster"%)[^\n]*\n[^\n]*stop_search'))
 
 local rp = source("modules/online_right.lua")
 ok("and its give-up is no longer a flat ten seconds",

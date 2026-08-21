@@ -645,6 +645,31 @@ local function parse_message(json_string)
       at        = socket.gettime(),
     }
     emit("search_window", M.last_search_window)
+  elseif t == "GAME_REQUEST_ROSTER" then
+    -- WHO HAS JOINED THE SEARCH SO FAR.
+    --
+    -- Pushed to the requester as each invitee accepts, so the dialog can show
+    -- the shortlist filling up instead of a spinner that says nothing until a
+    -- board appears. `chosenId` is null on every push but the last: FINDING
+    -- somebody is not CHOOSING them, and naming the first arrival as the
+    -- opponent would be the first-to-tap rule again, just drawn rather than
+    -- enforced.
+    local accepted = {}
+    for _, a in ipairs((type(d) == "table" and d.accepted) or {}) do
+      accepted[#accepted + 1] = {
+        userId    = tostring(a.userId or ""),
+        username  = tostring(a.username or "Player"),
+        avatar    = tonumber(a.avatar) or 1,
+        skillTier = a.skillTier and tostring(a.skillTier) or nil,
+      }
+    end
+    M.last_search_roster = {
+      accepted     = accepted,
+      count        = tonumber(d.count) or #accepted,
+      remaining_ms = tonumber(d.remainingMs) or 0,
+      chosen_id    = (d.chosenId ~= nil and tostring(d.chosenId) ~= "") and tostring(d.chosenId) or nil,
+    }
+    emit("search_roster", M.last_search_roster)
   elseif t == "GAME_REQUEST_CANCELLED" then
     emit("game_request_cancelled", d.requestId or d.id or "")
   elseif t == "GAME_REQUEST_DECLINED" then

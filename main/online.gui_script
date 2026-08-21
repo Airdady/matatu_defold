@@ -737,6 +737,18 @@ function on_message(self, message_id, message, sender)
                 end)
             rebuild(self)
         end
+    elseif message_id == hash("ws_search_roster") and self.invite_search then
+        -- Somebody accepted. Show them arriving; do NOT close — the window is
+        -- still running and the opponent is chosen at the end of it.
+        local sr = self.invite_search
+        local roster = ws.last_search_roster
+        if not sr.failed and type(roster) == "table" then
+            local was = #(sr.roster or {})
+            sr.roster = roster.accepted or {}
+            sr.chosen_id = roster.chosen_id
+            if was == 0 and #sr.roster > 0 then play_snd("snd_found") end
+            rebuild(self)
+        end
     elseif message_id == hash("ws_search_failed") and self.invite_search then
         -- No opponent found / declined: play the playful miss transition on the
         -- reel, then close the overlay (fail_invite_search handles the timing).

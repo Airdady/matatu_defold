@@ -1023,6 +1023,22 @@ function on_message(self, message_id, message, sender)
                 end)
             if self._active then rebuild(self) end
         end
+    elseif message_id == hash("ws_search_roster") then
+        -- Somebody accepted. Show them arriving; do NOT close — the window is
+        -- still running and the opponent is chosen at the end of it, not by
+        -- whoever answered first.
+        local sr = self.search
+        local roster = ws.last_search_roster
+        if sr and not sr.failed and type(roster) == "table" then
+            local was = #(sr.roster or {})
+            sr.roster = roster.accepted or {}
+            sr.chosen_id = roster.chosen_id
+            -- The found sting on the FIRST arrival only: one cue for "somebody
+            -- is here", not one per acceptance, which on a busy championship
+            -- would be a rattle.
+            if was == 0 and #sr.roster > 0 then pcall(msg.post, "#snd_found", "play_sound") end
+            if self._active then rebuild(self) end
+        end
     elseif message_id == hash("ws_search_failed") then
         -- Backend reported no eligible opponents — close immediately even if
         -- the countdown hasn't finished yet.
