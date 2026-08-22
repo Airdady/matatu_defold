@@ -220,7 +220,17 @@ _G.factory = {
 }
 
 _G.sprite = { play_flipbook = function() end }
-_G.window = { get_size = function() return 2400, 1080 end }
+-- window.set_listener is what controller.script uses to learn the app has come
+-- back to the foreground (a sign-in retry, and the isForeground flag push
+-- notifications read). A headless run never changes focus, so the listener is
+-- accepted and never called — the point here is only that registering one does
+-- not error out of init and take the whole suite with it.
+_G.window = {
+  get_size = function() return 2400, 1080 end,
+  set_listener = function() end,
+  DIMMING_ON = 1, DIMMING_OFF = 0,
+  set_dim_mode = function() end,
+}
 _G.sys = {
   get_save_file = function() return "/tmp/sim_save" end,
   save = function() return false end,

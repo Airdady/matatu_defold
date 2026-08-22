@@ -789,6 +789,10 @@ local function rebuild_body(self)
         local n_node = track(self, ui.text(vmath.vector3(text_start_x, name_y, 0), (lv.name or ("Level " .. i)), "body", name_col))
         gui.set_pivot(n_node, gui.PIVOT_W)
 
+        -- Reward on the middle line, score on the bottom one, both placed
+        -- from line_gap above rather than from fixed offsets — see the
+        -- spacing note above. When there is no reward the middle slot is
+        -- skipped and the two remaining lines close up around the centre.
         if is_final and grand > 0 then
             local p_node = track(self, ui.text(vmath.vector3(text_start_x, mid_y, 0), "Prize: " .. commas(grand) .. " Coins", "small", vmath.vector4(1, 0.84, 0, 1)))
             gui.set_pivot(p_node, gui.PIVOT_W)

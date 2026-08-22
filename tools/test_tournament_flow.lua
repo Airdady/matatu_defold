@@ -28,6 +28,9 @@ package.preload["modules.api_service"] = function()
     save_session = function() end,
     load_session = function() return nil end,
     device_login = function(cb) cb({ success = false }) end,
+    -- The controller asks this to tell an unknown device (sign up) apart
+    -- from a transient failure (retry). The stub always fails transiently.
+    is_device_unknown = function() return false end,
     send_otp = function(_, _, cb) cb({ success = false }) end,
     verify_otp = function(_, _, cb) cb({ success = false }) end,
     update_profile = function(_, _, cb) cb({ success = false }) end,

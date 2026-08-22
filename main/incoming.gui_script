@@ -711,6 +711,11 @@ function on_message(self, message_id, message)
             desc = champ.format_text(tourney, kind)
                 .. "   -   " .. (amount > 0 and (commas(amount) .. " Coins") or "Practice Mode")
             disp_name = (type(raw) == "table" and (raw.tournamentName or raw.name)) or "Tournament Match"
+
+            -- A BATTLE is never the championship however many levels its
+            -- document happens to carry — checking levels alone would badge
+            -- knockouts that share the same shape.
+            championship = kind == "TOURNAMENT" and is_championship(tourney)
         end
 
         open_dialog(self, {

@@ -15,6 +15,9 @@ package.preload["modules.api_service"] = function()
     set_auth_token = function() end, save_session = function() end,
     load_session = function() return nil end,
     device_login = function(cb) cb({ success = false }) end,
+    -- The controller asks this to tell an unknown device (sign up) apart
+    -- from a transient failure (retry). The stub always fails transiently.
+    is_device_unknown = function() return false end,
     send_otp = function(_, _, cb) cb({ success = false }) end,
     verify_otp = function(_, _, cb) cb({ success = false }) end,
     update_profile = function(_, _, cb) cb({ success = false }) end,
@@ -28,6 +31,10 @@ package.preload["modules.emoji_popover"] = function()
   return {
     init = function() end, close = function() end, reset = function() end,
     on_message = function() end, on_input = function() return false end,
+    -- Re-raises the popover above whatever the board just drew. Nothing here
+    -- has a z-order to disturb, but game.gui_script calls it on every rebuild
+    -- and a missing field aborts that rebuild mid-way.
+    bring_to_front = function() end,
   }
 end
 

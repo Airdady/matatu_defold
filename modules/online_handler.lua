@@ -664,6 +664,22 @@ function M.finalize_state_sync(self, state, on_complete)
 
         local function settle()
             stamp_ai_hand(self, real_hand)
+            -- self.game_state, NOT the closure-captured `state`. A reshuffle
+            -- animation defers this settle() by ~1.5-2.6s (see
+            -- M.reshuffle_deck below); if a newer MOVE/game_start arrives
+            -- while it's in flight, that newer call runs synchronously up to
+            -- `self.game_state = state` (above) and, finding
+            -- self._online_reshuffling already true, calls do_sync()
+            -- immediately with the CORRECT state. This older settle() then
+            -- fires later and used to reapply its own stale `state` on top —
+            -- silently reverting currentTurn/activePenaltyCount to the
+            -- pre-reshuffle values. Every self-healing watchdog is gated on
+            -- is_player_turn(), so a wrong currentTurn here permanently
+            -- locks the turn (and, for the same reason, the draw pile on a
+            -- penalty) with nothing left to re-sync until the app restarts.
+            -- self.game_state is always whatever the most recent call set it
+            -- to, so re-applying it here is a no-op in the common case and
+            -- the fix in the race.
             M.sync_timers(self, self.game_state)
             if on_complete then on_complete() end
         end
