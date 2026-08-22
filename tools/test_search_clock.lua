@@ -164,7 +164,7 @@ end
 
 print("\n== arrivals get a moment of their own ==")
 do
-    local sr = { t = 0 }
+    local sr = { anim_t = 0 }
     local one = { { userId = "a", username = "Ada", avatar = 2 } }
     check("the first player is new", SC.note_arrivals(sr, one), 1)
     check("and is on the roster", #sr.roster, 1)
@@ -174,7 +174,7 @@ do
     -- THE SERVER RE-SENDS THE WHOLE ROSTER EVERY PUSH. A handler that counted
     -- the list rather than the difference would re-announce everybody who was
     -- already there, once per push.
-    sr.t = 4
+    sr.anim_t = 4
     check("the same player again is not new", SC.note_arrivals(sr, one), 0)
     check("and keeps their original arrival time", sr.roster[1].arrived_at, 0)
 
@@ -186,27 +186,27 @@ end
 
 print("\n== the pop and the glow fade on their own ==")
 do
-    local sr = { t = 0, roster = {} }
+    local sr = { anim_t = 0, roster = {} }
     SC.note_arrivals(sr, { { userId = "a" } })
     local e = sr.roster[1]
 
     check("arrives oversized", SC.arrival_scale(sr, e) > 1.5, true)
     check("and fully green", SC.arrival_glow(sr, e), 1)
 
-    sr.t = SC.ARRIVE_POP / 2
+    sr.anim_t = SC.ARRIVE_POP / 2
     local mid = SC.arrival_scale(sr, e)
     check("shrinking", mid < 1.6 and mid > 1.0, true)
 
-    sr.t = SC.ARRIVE_POP
+    sr.anim_t = SC.ARRIVE_POP
     check("settles to normal size exactly at the end", SC.arrival_scale(sr, e), 1)
-    sr.t = 99
+    sr.anim_t = 99
     check("and stays there", SC.arrival_scale(sr, e), 1)
     check("with no green left", SC.arrival_glow(sr, e), 0)
     check("and no flash", SC.flash(sr), 0)
 
     -- One light for the dialog, not one per player: two people accepting half
     -- a second apart should read as the search working, not as two alarms.
-    sr.t = 10
+    sr.anim_t = 10
     SC.note_arrivals(sr, { { userId = "a" }, { userId = "b" }, { userId = "c" } })
     check("a burst of arrivals is one flash", SC.flash(sr), 1)
 
@@ -253,6 +253,167 @@ do
     approx("and lands empty", prev, 0, 0.001)
 
     check("a non-table does not throw", SC.arc(nil), 0)
+end
+
+print("\n== the ring never jumps and never stutters ==")
+do
+    -- THE ONE THE PREVIOUS TWO FIXES BOTH MISSED, and it only bites when the
+    -- guess and the truth genuinely DISAGREE. Four seconds into a twelve-second
+    -- guess there are eight left, and a server saying "eight" agrees exactly —
+    -- which is why a broken implementation can still look fine there. Two
+    -- seconds in, the ring is showing ten and the truth is eight, and that gap
+    -- has to go somewhere: into the position (a jump), into the speed (a burst
+    -- then a brake), or into the rate, once (nothing to see).
+    local DT = 1 / 60
+    local function sweep(sr, secs, out)
+        local prev = SC.arc(sr)
+        for _ = 1, math.floor(secs / DT) do
+            SC.tick(sr, DT)
+            local v = SC.arc(sr)
+            out[#out + 1] = prev - v
+            prev = v
+        end
+        return prev
+    end
+    local function spread(list)
+        local lo, hi = math.huge, -math.huge
+        for _, v in ipairs(list) do lo = math.min(lo, v); hi = math.max(hi, v) end
+        return hi - lo, hi
+    end
+
+    local sr, d = {}, {}
+    SC.tick(sr, 0)
+    local before = sweep(sr, 2, d)
+    approx("two seconds into the guessed window", before, 10 / 12, 0.01)
+
+    -- The correction the player actually sees: a battle's eight-second window
+    -- landing while the ring is still drawn against a twelve-second guess.
+    SC.adopt(sr, 8000, 2000)
+    approx("the ring does not move when it lands", SC.arc(sr), before, 0.0005)
+
+    local d_after = {}
+    local last = sweep(sr, 8, d_after)
+    approx("and still empties exactly at the settle", last, 0, 0.01)
+
+    local sp1, r1 = spread(d)
+    local sp2, r2 = spread(d_after)
+    approx("one steady rate before the correction", sp1, 0, 0.0002)
+    approx("one steady rate after it", sp2, 0, 0.0002)
+
+    -- Absorbed as a small permanent change of rate. A quarter faster is
+    -- invisible; the 3x burst the smoothed number produced was not.
+    approx("a quarter faster for the rest of the way", r2 / r1, 1.25, 0.02)
+    check("nowhere near the 3x burst that read as junk", r2 / r1 < 1.5, true)
+
+    check("the digits are still free to converge quickly",
+        sr.shown <= SC.target(sr) + 0.001, true)
+end
+
+print("\n== a correction that agrees costs nothing at all ==")
+do
+    -- Four seconds into the twelve-second guess with an eight-second window:
+    -- both say eight left, so there is no gap and the rate does not budge.
+    local DT = 1 / 60
+    local sr = {}
+    SC.tick(sr, 0)
+    local prev, r1 = SC.arc(sr), nil
+    for _ = 1, 60 * 4 do
+        SC.tick(sr, DT)
+        local v = SC.arc(sr); r1 = prev - v; prev = v
+    end
+    SC.adopt(sr, 8000, 2000)
+    approx("the ring does not move", SC.arc(sr), prev, 0.0005)
+    SC.tick(sr, DT)
+    approx("and neither does its speed", (prev - SC.arc(sr)) / r1, 1, 0.01)
+end
+
+print("\n== an entrance survives the window being corrected ==")
+do
+    -- adopt() rewinds the countdown clock to zero, because the server states a
+    -- DURATION and "eight seconds" means eight from now. Anything stamped
+    -- against that clock is dated in the FUTURE the instant it happens, so an
+    -- arrival mid-entrance would replay it or freeze halfway through. The
+    -- animation clock never rewinds, which is the whole reason it exists.
+    local sr = {}
+    SC.tick(sr, 4)
+    SC.note_arrivals(sr, { { userId = "a" } })
+    local e = sr.roster[1]
+    check("stamped on the animation clock", e.arrived_at, 4)
+
+    SC.tick(sr, 0.2)
+    check("mid-entrance", SC.arrival_stage(sr, e), "hold")
+
+    SC.adopt(sr, 8000, 2000)
+    check("the countdown clock restarted", sr.t, 0)
+    check("the animation clock did not", sr.anim_t > 4, true)
+
+    SC.tick(sr, 0.2)
+    local s2, p2 = SC.arrival_stage(sr, e)
+    check("the entrance carries straight on", s2, "hold")
+    check("and has not rewound", p2 > 0.5, true)
+end
+
+print("\n== the acceptance story plays in three beats ==")
+do
+    local sr = { anim_t = 0, roster = {} }
+    SC.note_arrivals(sr, { { userId = "a", username = "Ada" } })
+    local a = sr.roster[1]
+
+    local st, p = SC.arrival_stage(sr, a)
+    check("they take the slot first", st, "hold")
+    approx("at the very start of it", p, 0)
+    check("and the slot is theirs", (SC.spotlight(sr) or {}).userId, "a")
+
+    sr.anim_t = SC.ARRIVE_HOLD + SC.ARRIVE_FLY / 2
+    st, p = SC.arrival_stage(sr, a)
+    check("then they travel out to the rail", st, "fly")
+    approx("halfway there", p, 0.5)
+    check("still holding the slot while in flight", (SC.spotlight(sr) or {}).userId, "a")
+
+    sr.anim_t = SC.arrival_span() + 0.01
+    check("and take their seat", SC.arrival_stage(sr, a), "rest")
+    check("freeing the slot to keep hunting", SC.spotlight(sr), nil)
+
+    -- Two people accepting close together: the newer one takes the slot and
+    -- the older goes to its seat. Overlapping entrances read as a glitch.
+    sr.anim_t = 10
+    SC.note_arrivals(sr, { { userId = "a" }, { userId = "b" } })
+    check("the newest arrival owns the slot", (SC.spotlight(sr) or {}).userId, "b")
+
+    check("nothing throws on rubbish",
+        SC.spotlight(nil) == nil and SC.arrival_stage(nil, nil) == "rest", true)
+end
+
+print("\n== the chosen player comes home ==")
+do
+    local sr = { anim_t = 0, roster = {} }
+    SC.note_arrivals(sr, { { userId = "a" }, { userId = "b" } })
+    sr.anim_t = 20
+
+    approx("nobody is coming home before a winner is named", SC.return_progress(sr), 0)
+    check("and nothing is pulsing", SC.pulse(sr), 0)
+
+    sr.chosen_id = "b"
+    approx("the flight starts where they were kept", SC.return_progress(sr), 0)
+    check("timed from the announcement, not the next redraw", sr.chosen_at, 20)
+
+    sr.anim_t = 20 + SC.RETURN_FLY / 2
+    approx("halfway home", SC.return_progress(sr), 0.5)
+    check("not pulsing while still in flight", SC.pulse(sr), 0)
+
+    sr.anim_t = 20 + SC.RETURN_FLY
+    approx("home", SC.return_progress(sr), 1)
+    sr.anim_t = 200
+    approx("and stays home", SC.return_progress(sr), 1)
+
+    local lo, hi = 2, -1
+    for i = 0, 200 do
+        sr.anim_t = 100 + i * 0.01
+        local v = SC.pulse(sr)
+        lo = math.min(lo, v); hi = math.max(hi, v)
+    end
+    check("the pulse breathes across the full range", lo < 0.05 and hi > 0.95, true)
+    check("nothing throws on rubbish", SC.return_progress(nil) == 0 and SC.pulse(nil) == 0, true)
 end
 
 print("\n== a search with a shortlist has not failed ==")

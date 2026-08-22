@@ -13,7 +13,13 @@
 --   self     : host gui_script state (needs self.nodes / self.buttons via ctx)
 --   ctx      : shared draw context { track, ui, C, commas, CX, CY, LOGICAL_W, LOGICAL_H }
 --   sr       : the live search record. Recognised fields:
---                t          elapsed seconds (host increments each frame)
+--                t          elapsed seconds against the CURRENT window. Reset
+--                           to zero whenever the server names a window, since
+--                           it names a duration ("eight seconds from now").
+--                anim_t     elapsed seconds that never reset. Every animation
+--                           is measured against this one, so a beat that
+--                           started before a correction finishes after it.
+--                           Both are advanced by search_clock.tick.
 --                reel_ix    current reel avatar index (host spins it)
 --                found      an opponent was matched
 --                failed     the search failed / timed out
@@ -30,7 +36,9 @@
 --                invited    how many players the invite went out to
 --                roster     { {userId, username, avatar, skillTier}, … } — the
 --                           players who have ACCEPTED so far, pushed by the
---                           server as each one lands (GAME_REQUEST_ROSTER)
+--                           server as each one lands (GAME_REQUEST_ROSTER).
+--                           Each carries an arrived_at stamp, which is what
+--                           drives the entrance choreography below.
 --                chosen_id  set on the last roster push only: the opponent the
 --                           window actually awarded the match to
 --                subtitle   searching subtitle (default battle-invite wording)
@@ -40,6 +48,7 @@
 --              update loop can spin it (default "search_reel_node").
 local ws = require("modules.websocket_manager")
 local search_clock = require("modules.search_clock")
+local rank_badge   = require("modules.rank_badge")
 
 local M = {}
 
@@ -153,34 +162,113 @@ function M.draw(self, ctx, sr, reel_key)
         track(self, ui.text(vmath.vector3(CX, ay, 0), "VS", "title", vmath.vector4(1, 0.4, 0.4, 1)))
     end
 
-    -- Opponent reel (right column).
-    local frame_col = sr.found and vmath.vector4(0.15, 0.85, 0.35, 1)
-        or (sr.failed and vmath.vector4(0.85, 0.25, 0.25, 1) or vmath.vector4(0.25, 0.25, 0.30, 1))
-    local frame = track(self, ui.box(vmath.vector3(bx, ay, 0), vmath.vector3(124, 124, 0), frame_col))
-    local reel  = track(self, ui.avatar(vmath.vector3(bx, ay, 0), vmath.vector3(108, 108, 0), sr.reel_ix or 1))
-    self[reel_key] = reel
-    if sr.failed then
-        -- Freeze + dim the slot and drop the reel handle so the host stops cycling it.
-        gui.set_color(reel, vmath.vector4(0.55, 0.55, 0.55, 1))
-        self[reel_key] = nil
-    end
-    -- WHO THE SLOT IS SHOWING.
+    -- =====================================================================
+    -- THE OPPONENT SLOT, AND THE STORY OF WHO PASSES THROUGH IT
     --
-    -- Once somebody has accepted, the reel stops being an unknown: it shows
-    -- the latest player to join, and the chosen one the moment the window
-    -- names them. It only reads "? ? ?" while nobody has answered at all,
-    -- which is the one time that is actually true.
+    -- The slot used to be a spinning reel that stayed a spinning reel, while
+    -- everybody who accepted appeared as a small silent avatar in a row
+    -- underneath. The single most interesting event in these twelve seconds —
+    -- a real person agreeing to play you for money — had exactly the presence
+    -- of a list item, and the slot went on asking a question that had already
+    -- been answered.
+    --
+    -- It now tells the search as a story, in beats (timings in search_clock):
+    --
+    --   HOLD    the new arrival TAKES the slot. Full size, named, their tier
+    --           under them. "Somebody is here."
+    --   FLY     they travel out of the slot to a seat on the rail below,
+    --           shrinking as they go. "And they are being kept." The reason
+    --           the search does not simply stop, shown rather than explained.
+    --   REST    they sit on the rail with name and tier while the slot goes
+    --           back to hunting. The search visibly continues WITH them held.
+    --   RETURN  when the window closes the chosen one flies back out of the
+    --           rail into the slot and pulses green. The match arrives from
+    --           where the candidates were kept, so it reads as the ANSWER to
+    --           the search rather than as something that just appeared.
+    -- =====================================================================
+    local GREEN = vmath.vector4(0.15, 0.85, 0.35, 1)
+    local SLOT  = 108           -- avatar size in the opponent slot
+    local SEAT  = 44            -- avatar size on the shortlist rail
+    local ry    = ay - 155      -- the rail's line
+
     local chosen
     if sr.chosen_id then
         for _, r in ipairs(roster) do
             if r.userId == sr.chosen_id then chosen = r end
         end
     end
-    local latest = roster[#roster]
-    if not sr.found and not sr.failed and (chosen or latest) then
-        local show = chosen or latest
-        self[reel_key] = nil -- stop the host cycling it; this is a real player
-        pcall(gui.play_flipbook, reel, "avatar_" .. tostring(show.avatar or 1))
+
+    -- Where each candidate's seat on the rail is. Seats are laid out for the
+    -- whole roster at once, so a player who is still flying is heading for the
+    -- place they will actually land rather than for wherever the row happened
+    -- to end when they left.
+    local CARD_W, CARD_GAP = 86, 8
+    local function seat_x(i)
+        local row_w = joined * CARD_W + math.max(0, joined - 1) * CARD_GAP
+        return CX - row_w / 2 + CARD_W / 2 + (i - 1) * (CARD_W + CARD_GAP)
+    end
+
+    local function tier_colors(entry)
+        local key = string.lower(tostring((entry or {}).skillTier or ""))
+        local c = rank_badge.COLORS[key]
+        if not c then return nil end
+        return vmath.vector4(c.bg[1], c.bg[2], c.bg[3], c.bg[4]),
+               vmath.vector4(c.tx[1], c.tx[2], c.tx[3], c.tx[4])
+    end
+
+    -- One candidate, drawn anywhere between the slot and their seat. `k` is 0
+    -- at the seat and 1 at the slot, so the entrance (1 -> 0) and the winner's
+    -- return (0 -> 1) are the same drawing code run in opposite directions.
+    local function draw_candidate(entry, i, k, border, dim, pop)
+        local sx, sy = seat_x(i), ry
+        local x = sx + (bx - sx) * k
+        local y = sy + (ay - sy) * k
+        local size = (SEAT + (SLOT - SEAT) * k) * (pop or 1)
+        local pad  = 8 + 8 * k
+
+        track(self, ui.box(vmath.vector3(x, y, 0),
+            vmath.vector3(size + pad, size + pad, 0), border))
+        track(self, ui.avatar(vmath.vector3(x, y, 0),
+            vmath.vector3(size, size, 0), entry.avatar or 1))
+
+        -- Name and tier ride along, fading in as they reach the slot so the
+        -- rail stays legible when four of them are sitting side by side.
+        local name_font = (k > 0.5) and "body" or "small"
+        local name_col  = dim and C.COL_DIM or C.COL_WHITE
+        track(self, ui.text(vmath.vector3(x, y - size / 2 - 16, 0),
+            string.upper(entry.username or "PLAYER"), name_font, name_col))
+
+        local tbg, ttx = tier_colors(entry)
+        if tbg then
+            local ty = y - size / 2 - 34
+            local tw = 62 + 20 * k
+            track(self, ui.box(vmath.vector3(x, ty, 0), vmath.vector3(tw, 15 + 4 * k, 0), tbg))
+            track(self, ui.text(vmath.vector3(x, ty, 0),
+                string.upper(tostring(entry.skillTier)), "small", ttx))
+        end
+    end
+
+    -- --- the slot itself --------------------------------------------------
+    local frame_col = sr.found and GREEN
+        or (sr.failed and vmath.vector4(0.85, 0.25, 0.25, 1) or vmath.vector4(0.25, 0.25, 0.30, 1))
+    local frame = track(self, ui.box(vmath.vector3(bx, ay, 0), vmath.vector3(124, 124, 0), frame_col))
+
+    local spot = (not sr.found and not sr.failed) and search_clock.spotlight(sr) or nil
+    local ret  = chosen and search_clock.return_progress(sr) or 0
+    local slot_taken = (spot ~= nil) or (chosen ~= nil)
+
+    -- The reel keeps hunting whenever nobody is standing in the slot. That is
+    -- the point of the whole rearrangement: an acceptance no longer stops the
+    -- search, it steps through the slot and moves aside, and the hunt visibly
+    -- carries on behind it.
+    local reel = track(self, ui.avatar(vmath.vector3(bx, ay, 0), vmath.vector3(SLOT, SLOT, 0), sr.reel_ix or 1))
+    self[reel_key] = reel
+    if slot_taken then
+        gui.set_color(reel, vmath.vector4(1, 1, 1, 0))   -- hidden, not deleted
+        self[reel_key] = nil
+    elseif sr.failed then
+        gui.set_color(reel, vmath.vector4(0.55, 0.55, 0.55, 1))
+        self[reel_key] = nil
     end
 
     -- THE GREEN LIGHT. One pulse for the dialog each time somebody joins —
@@ -195,55 +283,69 @@ function M.draw(self, ctx, sr, reel_key)
         pcall(gui.play_flipbook, n, hash("circle"))
     end
 
-    local who = sr.found and (sr.opp_name or "PLAYER")
-        or (sr.failed and "—"
-        or (chosen and string.upper(chosen.username or "PLAYER")
-        or (latest and string.upper(latest.username or "PLAYER") or "? ? ?")))
-    local who_col = (sr.found or chosen) and C.COL_WHITE or C.COL_DIM
-    track(self, ui.text(vmath.vector3(bx, ay - 86, 0), who, "body", who_col))
-
-    -- THE SHORTLIST, UNDER THE SLOT.
-    --
-    -- Every player who has accepted, in the order they arrived, so the
-    -- requester can see the search working rather than trusting a spinner. The
-    -- chosen one is marked once the window has closed on them.
+    -- --- the shortlist rail, and everybody on their way to it -------------
     if joined > 0 and not sr.failed then
-        local SZ, GAP = 34, 8
-        local row_w = joined * SZ + (joined - 1) * GAP
-        local x0 = CX - row_w / 2 + SZ / 2
-        local ry = ay - 132
-        track(self, ui.text(vmath.vector3(CX, ry + 30, 0),
-            chosen and "MATCHED" or "JOINED", "small", C.COL_DIM))
-        for i, r in ipairs(roster) do
-            local rx = x0 + (i - 1) * (SZ + GAP)
-            local is_won = chosen and (r.userId == chosen.userId)
+        track(self, ui.text(vmath.vector3(CX, ry + SEAT / 2 + 22, 0),
+            chosen and "MATCHED" or "HELD FOR YOU", "small",
+            chosen and GREEN or C.COL_DIM))
 
-            -- ARRIVING. A player who has just accepted pops in oversized and
-            -- green, and settles into the row over a third of a second. It is
-            -- the most interesting thing that happens in these twelve seconds
-            -- and it used to appear silently, whenever a redraw happened to
-            -- land. Timings come from search_clock so both dialogs play the
-            -- same beat.
-            local pop  = search_clock.arrival_scale(sr, r)
-            local glow = search_clock.arrival_glow(sr, r)
+        for i, r in ipairs(roster) do
+            local is_won  = chosen and (r.userId == chosen.userId)
+            local stage, p = search_clock.arrival_stage(sr, r)
+
+            -- Where they are: 1 is the slot, 0 is their seat.
+            local k
+            if is_won then
+                -- Coming home. Eased so it arrives softly rather than at speed.
+                local e = 1 - (1 - ret) * (1 - ret)
+                k = e
+            elseif chosen then
+                k = 0                       -- everybody else stays seated
+            elseif spot and r.userId ~= spot.userId then
+                -- ONLY ONE PLAYER CAN HOLD THE SLOT. When two accept close
+                -- together the newer one takes it and the older goes straight
+                -- to its seat — two entrances overlapping in the same 108px
+                -- box reads as a glitch, and the seat is where the older one
+                -- was heading anyway.
+                k = 0
+            elseif stage == "hold" then
+                k = 1
+            elseif stage == "fly" then
+                k = 1 - p                   -- linear: they are travelling
+            else
+                k = 0
+            end
 
             -- The green of a fresh arrival fades into the neutral border; the
-            -- chosen player keeps it for good.
+            -- chosen player keeps it, and breathes once they are home.
             local border
             if is_won then
-                border = vmath.vector4(0.15, 0.85, 0.35, 1)
+                local pulse = search_clock.pulse(sr)
+                border = vmath.vector4(0.15, 0.85 - 0.15 * pulse, 0.35, 1)
             else
+                local glow = search_clock.arrival_glow(sr, r)
                 border = vmath.vector4(
                     0.25 + (0.15 - 0.25) * glow,
                     0.25 + (0.85 - 0.25) * glow,
                     0.30 + (0.35 - 0.30) * glow, 1)
             end
 
-            local bs = (SZ + 4) * pop
-            track(self, ui.box(vmath.vector3(rx, ry, 0), vmath.vector3(bs, bs, 0), border))
-            track(self, ui.avatar(vmath.vector3(rx, ry, 0),
-                vmath.vector3(SZ * pop, SZ * pop, 0), r.avatar or 1))
+            -- The overshoot on the way in. It settles halfway through the
+            -- hold, so the punch is over before they start travelling.
+            local pop = (stage == "hold" and not chosen)
+                and search_clock.arrival_scale(sr, r) or 1
+
+            draw_candidate(r, i, k, border, chosen and not is_won, pop)
         end
+    end
+
+    -- The name under the slot is only drawn when NOBODY is standing in it —
+    -- a candidate carries their own name, and a second one underneath would
+    -- be the same fact twice.
+    if not slot_taken then
+        local who = sr.found and (sr.opp_name or "PLAYER") or (sr.failed and "\226\128\148" or "? ? ?")
+        track(self, ui.text(vmath.vector3(bx, ay - 86, 0), who, "body",
+            sr.found and C.COL_WHITE or C.COL_DIM))
     end
 
     if sr.found then
@@ -273,31 +375,49 @@ function M.draw(self, ctx, sr, reel_key)
         -- fraction — which refilled the ring mid-count. See M.arc.
         local time_left = time_shown
         local frac = search_clock.arc(sr)
-        local R = 34
+        local sweep = search_clock.arc_secs(sr)
+        -- ABOVE THE TITLE, not under the avatars.
+        --
+        -- It used to sit dead centre below the pot, which is exactly where the
+        -- shortlist rail now lives — and the rail is the more important thing,
+        -- because it is the part that tells the player the search is working.
+        --
+        -- Above the heading rather than beside it: "ASSESSING THE BEST
+        -- CANDIDATE" is twenty-eight characters of title font and there is no
+        -- room to its right that a shorter status would not leave looking
+        -- lopsided. Centred over the whole dialog, it reads as the clock on
+        -- all of it.
+        local RX, RY = CX, CY + 190
+        local R = 30
 
-        local bg = track(self, gui.new_pie_node(vmath.vector3(CX, CY - 140, 0), vmath.vector3(R*2, R*2, 0)))
+        local bg = track(self, gui.new_pie_node(vmath.vector3(RX, RY, 0), vmath.vector3(R*2, R*2, 0)))
         gui.set_perimeter_vertices(bg, 48)
         pcall(gui.set_inner_radius, bg, R * 0.80)
         gui.set_color(bg, vmath.vector4(0.25, 0.25, 0.25, 0.45))
 
         local col = time_left <= 3 and C.COL_RED or C.COL_CYAN
-        local fg = track(self, gui.new_pie_node(vmath.vector3(CX, CY - 140, 0), vmath.vector3(R*2, R*2, 0)))
+        local fg = track(self, gui.new_pie_node(vmath.vector3(RX, RY, 0), vmath.vector3(R*2, R*2, 0)))
         gui.set_perimeter_vertices(fg, 48)
         pcall(gui.set_inner_radius, fg, R * 0.80)
         gui.set_rotation(fg, vmath.vector3(0, 0, 90))
         gui.set_fill_angle(fg, frac * 360)
         gui.set_color(fg, col)
-        if time_left > 0 then
-            pcall(gui.animate, fg, "fill_angle", 0, gui.EASING_LINEAR, time_left)
+        -- Animated over the RING's own remaining time, not the number's. The
+        -- angle it starts from comes from the anchor in search_clock, so the
+        -- duration has to as well — hand it the smoothed number instead and
+        -- the animation and the next redraw's recomputation disagree, which
+        -- the node visibly jumps to resolve on every single redraw.
+        if sweep > 0 then
+            pcall(gui.animate, fg, "fill_angle", 0, gui.EASING_LINEAR, sweep)
         end
 
-        track(self, ui.text(vmath.vector3(CX, CY - 140, 0), tostring(math.ceil(time_left)), "title", col))
+        track(self, ui.text(vmath.vector3(RX, RY, 0), tostring(math.ceil(time_left)), "body", col))
     end
 
     -- Optional cancel button (host owns the matching button id).
     if sr.cancel_id and not sr.found and not sr.failed then
-        local cb = track(self, ui.btn9(vmath.vector3(CX, CY - 210, 0), vmath.vector3(170, 48, 0), "secondary_btn"))
-        track(self, ui.text(vmath.vector3(CX, CY - 210, 0), "Cancel", "btn_md", vmath.vector4(1, 1, 1, 1)))
+        local cb = track(self, ui.btn9(vmath.vector3(CX, CY - 270, 0), vmath.vector3(170, 48, 0), "secondary_btn"))
+        track(self, ui.text(vmath.vector3(CX, CY - 270, 0), "Cancel", "btn_md", vmath.vector4(1, 1, 1, 1)))
         self.buttons[#self.buttons + 1] = { node = cb, id = sr.cancel_id }
     end
 end

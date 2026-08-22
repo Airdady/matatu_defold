@@ -97,6 +97,12 @@ function M.tick(sr, dt)
     if type(sr) ~= "table" then return 0 end
     local step = math.max(0, tonumber(dt) or 0)
     sr.t = math.max(0, (tonumber(sr.t) or 0) + step)
+    -- The animation clock is NOT the countdown clock. `t` is restarted every
+    -- time the server names a window, and anything stamped against it — an
+    -- arrival, a flash — would find itself in the future the moment that
+    -- happened, replaying or freezing halfway. `anim_t` only ever goes
+    -- forward, so a beat that started before the correction finishes after it.
+    sr.anim_t = math.max(0, (tonumber(sr.anim_t) or 0) + step)
 
     local target = M.target(sr)
     local shown = tonumber(sr.shown)
@@ -130,12 +136,21 @@ function M.adopt(sr, settle_ms, grace_ms, invited)
     local secs = (tonumber(settle_ms) or 0) / 1000
     if secs <= 0 then return false end
 
+    -- RE-ANCHOR THE RING BEFORE MOVING THE CLOCK OUT FROM UNDER IT.
+    --
+    -- Where it is now is read first, then re-aimed at zero over the real time
+    -- remaining. That is what makes the correction invisible: the ring carries
+    -- on from exactly where it was, and absorbs the difference as a small
+    -- permanent change of rate instead of a jump or a burst of speed. See the
+    -- long note on M.arc.
+    local was = M.arc(sr)
+
     sr.max_time = secs
     sr.grace_time = (tonumber(grace_ms) or 0) / 1000
-    -- arc_window is deliberately NOT reset: it is the denominator the ring is
-    -- already drawn against, and resetting it here would reintroduce the very
-    -- refill this exists to stop. It is per-search state, cleared when a new
-    -- search object is made.
+
+    sr.arc_from = was
+    sr.arc_secs = math.max(0.001, secs)
+    sr.arc_t0   = tonumber(sr.anim_t) or 0
     if invited ~= nil then sr.invited = tonumber(invited) or 0 end
     sr.t = 0
     return true
@@ -164,55 +179,117 @@ end
 
 --- How full the ring should be, 1 at the start down to 0 at the settle.
 --
--- THE ARC HAS ITS OWN DENOMINATOR, AND THAT IS WHAT KEPT REFILLING.
+-- THREE THINGS WENT WRONG HERE, EACH ONE ONLY VISIBLE ONCE THE LAST WAS FIXED.
 --
--- Smoothing the NUMBER was not enough, because the ring is not the number: it
--- is the number divided by the window. The window is corrected the moment the
--- server speaks — twelve down to eight — and dividing by a smaller denominator
--- makes the SAME remaining time a BIGGER fraction:
+-- 1. THE DENOMINATOR. The ring is not the number, it is the number divided by
+--    the window — and the window is corrected the moment the server speaks.
+--    Dividing the SAME remaining time by a SMALLER denominator makes it a
+--    BIGGER fraction, so the ring refilled at exactly the value where the two
+--    met. "At 8 it starts afresh."
 --
---   just before   shown 8, window 12   ->  0.67 of the ring
---   just after    shown 8, window  8   ->  1.00 of the ring, full again
+-- 2. THE SPEED. Fixing that left the ring driven off `shown`, the smoothed
+--    number — and `shown` does not descend at one second per second. While it
+--    converges on a correction it falls at CATCHUP_RATE, three times as fast,
+--    then brakes back to one. Digits survive that; three-times speed just skips
+--    a number. A ring does not, because angular velocity IS what the eye reads
+--    on a ring. "From 12 to 8 junky, from 8 to zero a good flow" is precisely
+--    the catch-up phase against the settled phase.
 --
--- which is exactly "at 8 it starts afresh". The number was continuous the
--- whole time; the arc jumped behind it.
+-- 3. AND YOU CANNOT SIMPLY USE THE REAL TIME INSTEAD. If the server's message
+--    is late — the ring showing 10 while the truth is 8 — then something has
+--    to give, and the choice is only ever WHERE:
 --
--- So the denominator only ever GROWS. Once the ring has drawn against a
--- twelve-second window it keeps using twelve, and a correction to eight simply
--- means the arc is already two thirds down — continuous with where it was, and
--- still reaching zero exactly when the countdown does, because both are driven
--- by the same `shown`.
+--      into the position   the ring steps back. A visible jump.
+--      into the speed      the ring races, then brakes. A visible stutter.
+--      into the RATE, once the ring keeps going from exactly where it is and
+--                          covers what is left slightly faster, forever.
 --
--- `shown` is folded into the maximum as well: while a correction is still
--- converging, the smoothed value can briefly exceed the new window, and
--- without this the fraction would clamp at 1 and the ring would sit full.
+--    The third is the only one with nothing to see, so that is what this does.
+--
+-- THE ANCHOR
+--
+-- The ring is a straight line from a remembered fraction to zero over a
+-- remembered duration. `adopt` re-anchors it: it reads where the ring is right
+-- now, and re-aims THAT at zero over the real time remaining. Position is
+-- continuous by construction, the rate is constant between anchors, and there
+-- is only ever one anchor — the moment the server speaks.
+--
+-- When the message arrives promptly, remaining and window agree and the rate
+-- does not change at all. When it is four seconds late the ring covers the
+-- last two thirds about a quarter faster. Nobody has ever noticed a countdown
+-- ring running 25% quick; everybody notices one that jumps or stutters.
+--
+-- Measured on `anim_t`, the clock that never rewinds — `t` is reset by the very
+-- correction being absorbed here.
 function M.arc(sr)
     if type(sr) ~= "table" then return 0 end
-    local _, window = M.target(sr)
-    local shown = tonumber(sr.shown)
-    if shown == nil then shown = M.target(sr) end
+    local now = tonumber(sr.anim_t) or 0
 
-    local denom = math.max(tonumber(sr.arc_window) or 0, window, shown)
-    sr.arc_window = denom
-    if denom <= 0 then return 0 end
-    return math.max(0, math.min(1, shown / denom))
+    if sr.arc_from == nil then
+        -- First anchor: full ring, aimed at zero over the whole window. Backs
+        -- `t0` off by however much has already elapsed, so a dialog whose first
+        -- draw lands a few frames late starts from the right place rather than
+        -- from full.
+        local left, window = M.target(sr)
+        sr.arc_from = 1
+        sr.arc_secs = math.max(0.001, window)
+        sr.arc_t0   = now - math.max(0, window - left)
+    end
+
+    local span = tonumber(sr.arc_secs) or 0
+    if span <= 0 then return 0 end
+    local p = (now - (tonumber(sr.arc_t0) or 0)) / span
+    return math.max(0, math.min(1, (tonumber(sr.arc_from) or 1) * (1 - p)))
+end
+
+--- How long the ring has left, in real seconds.
+--
+-- The duration to hand a native fill_angle animation. It has to come from the
+-- same anchor the angle does, or the animation and the next recomputation
+-- disagree and the ring visibly jumps every time the dialog redraws.
+function M.arc_secs(sr)
+    if type(sr) ~= "table" then return 0 end
+    M.arc(sr)
+    local now  = tonumber(sr.anim_t) or 0
+    local span = tonumber(sr.arc_secs) or 0
+    return math.max(0, span - (now - (tonumber(sr.arc_t0) or 0)))
 end
 
 -- ---------------------------------------------------------------------------
--- ARRIVALS: what a player joining the search looks like
--- ---------------------------------------------------------------------------
+-- THE STORY OF AN ACCEPTANCE
 --
--- The roster used to appear all at once, silently, as a row of avatars that
--- grew when a redraw happened to land. Somebody accepting a staked invite is
--- the single most interesting thing that happens during those twelve seconds
--- and it went by without a sound or a movement.
+-- What used to happen when somebody accepted: a small avatar silently appeared
+-- in a row of small avatars. The single most interesting event in these twelve
+-- seconds — a real person, somewhere, agreeing to play you for money — had no
+-- more presence than a list item, and the empty question-mark slot kept
+-- spinning as though nothing had happened.
 --
--- Each arrival now has a moment of its own: it pops in at the slot, the ring
--- flashes green, and it settles into the shortlist beside the ones before it.
--- The timings live here rather than in the drawing code so both dialogs play
--- the same beat, and so they can be reasoned about without a screen.
+-- It has three beats now, and every one of them is a real thing being said:
+--
+--   HOLD    they take the opponent slot. Full size, named, their skill badge
+--           under them. This is "somebody is here" — the slot answers its own
+--           question for a moment.
+--   FLY     they travel out of the slot to their seat on the shortlist rail,
+--           shrinking as they go. This is "and they are waiting" — the reason
+--           the search does not simply stop, drawn rather than explained.
+--   REST    they sit on the rail with their name and tier while the slot goes
+--           back to hunting. The search visibly continues WITH them held.
+--
+-- and then, when the window closes:
+--
+--   RETURN  the chosen one flies back out of the rail into the slot and pulses
+--           green. The match is the answer to the search, so it arrives from
+--           where the candidates were kept rather than materialising.
+--
+-- Only ONE player can hold the slot at a time. When two accept close together
+-- the newer one takes it and the older snaps to its seat — overlapping
+-- entrances would read as a glitch, and the rail is where the older one was
+-- going anyway.
+--
+-- Durations are here, not in the drawing code, so both dialogs play the same
+-- beat and so the whole choreography can be reasoned about without a screen.
 
---- How long a newly arrived player takes to settle into the shortlist.
+--- How long a newly arrived player takes to settle to its normal size.
 M.ARRIVE_POP = 0.35
 
 --- How long the green stays on them, and on the ring behind the slot.
@@ -225,12 +302,14 @@ M.ARRIVE_GLOW = 0.9
 -- the whole roster every time and a naive handler would re-announce everybody
 -- who was already there.
 --
--- `arrived_at` is stamped from sr.t, the same clock the animation is measured
--- against, so an arrival cannot be timed against one clock and drawn against
--- another.
+-- `arrived_at` is stamped from sr.anim_t — the clock that never restarts —
+-- rather than from sr.t, which adopt() rewinds to zero the moment the server
+-- names its window. Stamped against the countdown clock, a player who arrived
+-- before that correction would be dated in the FUTURE after it, and their whole
+-- entrance would replay or freeze halfway through it.
 function M.note_arrivals(sr, incoming)
     if type(sr) ~= "table" then return 0 end
-    local now = tonumber(sr.t) or 0
+    local now = tonumber(sr.anim_t) or 0
     local seen = {}
     for _, r in ipairs(sr.roster or {}) do
         if r.userId then seen[r.userId] = r.arrived_at or now end
@@ -260,7 +339,7 @@ end
 -- without an animation system.
 function M.arrival_scale(sr, entry)
     if type(sr) ~= "table" or type(entry) ~= "table" then return 1 end
-    local age = (tonumber(sr.t) or 0) - (tonumber(entry.arrived_at) or 0)
+    local age = (tonumber(sr.anim_t) or 0) - (tonumber(entry.arrived_at) or 0)
     if age < 0 or age >= M.ARRIVE_POP then return 1 end
     local k = 1 - (age / M.ARRIVE_POP)
     -- Cubed so it lands softly rather than arriving at full speed.
@@ -270,7 +349,7 @@ end
 --- How green a just-arrived avatar still is, 1 at arrival down to 0.
 function M.arrival_glow(sr, entry)
     if type(sr) ~= "table" or type(entry) ~= "table" then return 0 end
-    local age = (tonumber(sr.t) or 0) - (tonumber(entry.arrived_at) or 0)
+    local age = (tonumber(sr.anim_t) or 0) - (tonumber(entry.arrived_at) or 0)
     if age < 0 or age >= M.ARRIVE_GLOW then return 0 end
     return 1 - (age / M.ARRIVE_GLOW)
 end
@@ -284,9 +363,92 @@ function M.flash(sr)
     if type(sr) ~= "table" then return 0 end
     local at = tonumber(sr.flash_at)
     if at == nil then return 0 end
-    local age = (tonumber(sr.t) or 0) - at
+    local age = (tonumber(sr.anim_t) or 0) - at
     if age < 0 or age >= M.ARRIVE_GLOW then return 0 end
     return 1 - (age / M.ARRIVE_GLOW)
+end
+
+--- Centre-stage: how long a new arrival holds the opponent slot.
+M.ARRIVE_HOLD = 0.7
+
+--- How long they take to travel from the slot out to their seat on the rail.
+M.ARRIVE_FLY = 0.45
+
+--- How long the chosen player takes to fly back into the slot at the end.
+M.RETURN_FLY = 0.5
+
+--- The whole entrance, slot to seat.
+function M.arrival_span()
+    return M.ARRIVE_HOLD + M.ARRIVE_FLY
+end
+
+--- Where one player is in their entrance right now.
+--
+-- Returns a stage and a progress within it:
+--
+--   "hold", p   p running 0 -> 1 across their moment in the slot
+--   "fly",  p   p running 0 (at the slot) -> 1 (at their seat)
+--   "rest", 1   seated
+--
+-- Progress is eased by the caller if it wants easing; this stays linear so the
+-- tests can state positions exactly.
+function M.arrival_stage(sr, entry)
+    if type(sr) ~= "table" or type(entry) ~= "table" then return "rest", 1 end
+    local age = (tonumber(sr.anim_t) or 0) - (tonumber(entry.arrived_at) or 0)
+    if age < 0 then return "rest", 1 end
+    if age < M.ARRIVE_HOLD then
+        return "hold", (M.ARRIVE_HOLD > 0) and (age / M.ARRIVE_HOLD) or 1
+    end
+    local f = age - M.ARRIVE_HOLD
+    if f < M.ARRIVE_FLY then
+        return "fly", (M.ARRIVE_FLY > 0) and (f / M.ARRIVE_FLY) or 1
+    end
+    return "rest", 1
+end
+
+--- Which player owns the opponent slot right now, if any.
+--
+-- The most recent arrival still inside its entrance. Nil means the slot is
+-- free to go back to hunting, which is the normal state between acceptances —
+-- the search does not stop just because somebody turned up.
+function M.spotlight(sr)
+    if type(sr) ~= "table" then return nil end
+    local roster = (type(sr.roster) == "table") and sr.roster or {}
+    local best, best_at
+    for _, r in ipairs(roster) do
+        local stage = M.arrival_stage(sr, r)
+        if stage ~= "rest" then
+            local at = tonumber(r.arrived_at) or 0
+            if best_at == nil or at >= best_at then best, best_at = r, at end
+        end
+    end
+    return best
+end
+
+--- The chosen player's flight back into the slot, 0 at the rail to 1 home.
+--
+-- Stamped the first time a winner is named so the flight is measured from the
+-- announcement rather than from whenever the dialog next happened to redraw.
+function M.return_progress(sr)
+    if type(sr) ~= "table" then return 0 end
+    if not sr.chosen_id or tostring(sr.chosen_id) == "" then return 0 end
+    local now = tonumber(sr.anim_t) or 0
+    if sr.chosen_at == nil then sr.chosen_at = now end
+    if M.RETURN_FLY <= 0 then return 1 end
+    return math.max(0, math.min(1, (now - sr.chosen_at) / M.RETURN_FLY))
+end
+
+--- A slow breathing pulse, 0 to 1 and back, for the matched player.
+--
+-- Only once they are home. A card that pulses while it is still flying reads
+-- as two animations fighting rather than as one arrival.
+function M.pulse(sr, period)
+    if type(sr) ~= "table" then return 0 end
+    if M.return_progress(sr) < 1 then return 0 end
+    local p = tonumber(period) or 1.1
+    if p <= 0 then return 0 end
+    local now = tonumber(sr.anim_t) or 0
+    return 0.5 - 0.5 * math.cos((now / p) * 2 * math.pi)
 end
 
 --- Has anybody actually accepted?
