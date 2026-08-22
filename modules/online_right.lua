@@ -1162,23 +1162,17 @@ function M.draw(self, ctx, left_M)
     end
     cy = cy - battle_h - (C.BLOCK_GAP + 8)
 
-    -- ── Tournaments panel (Taller button) ─────────────────────────────────
-    local t_h  = 72
-    local tcy2 = cy - t_h/2
-    track(self, ui.box(vmath.vector3(cx, tcy2, 0), vmath.vector3(pw, t_h, 0), C.COL_BG))
-    mkbtn(self, "nav_tournaments", vmath.vector3(cx, tcy2, 0), vmath.vector3(pw, t_h, 0), nil, "container_bg")
-    
-    local icon_x = cx - 80
-    local t_icon = track(self, ui.image(vmath.vector3(icon_x, tcy2, 0), vmath.vector3(32, 32, 0), "tournament_icon"))
-    gui.set_color(t_icon, C.COL_WHITE)
-    txtL(self, icon_x + 28, tcy2, "TOURNAMENTS", "btn_lg", C.COL_WHITE)
-
-    local nx = cx + pw/2 - 40
-    local ny = tcy2
-    track(self, ui.box(vmath.vector3(nx, ny, 0), vmath.vector3(48, 22, 0), vmath.vector4(0.15, 0.8, 0.25, 1.0)))
-    track(self, ui.box(vmath.vector3(nx, ny + 11, 0), vmath.vector3(48, 1, 0), C.COL_WHITE))
-    track(self, ui.text(vmath.vector3(nx, ny, 0), "NEW", "btn_sm", C.COL_WHITE))
-    cy = cy - t_h - C.BLOCK_GAP
+    -- ── Tournaments: MOVED TO THE LOBBY ──────────────────────────────────
+    --
+    -- This panel used to be the only way in, which put the mode carrying the
+    -- championship ladder and the season prize table one tap deeper than the
+    -- offline modes on the front screen. It is a headline mode, so it now
+    -- sits beside PLAY ONLINE in the lobby's top row (main/lobby.gui_script,
+    -- the nav_tournaments_lobby tile) and this row comes out.
+    --
+    -- The `nav_tournaments` handler in online.gui_script is deliberately left
+    -- in place: nothing routes to it from here any more, but it costs one
+    -- branch and it is what a stale build or a deep link would still land on.
 
     -- ── Team Tournaments panel — only shown once this account has actually
     -- created or joined one (tracked client-side since last create/join —

@@ -57,14 +57,17 @@ function M.draw(self, ctx, sr, reel_key)
     -- championship ladder and eight for a battle, and it says which on
     -- GAME_SEARCH_STARTED — this is only what is drawn in the moment before
     -- that lands, so it is the longest of them rather than the shortest.
-    local max_time   = sr.max_time or 12
-    -- The tail of the window is the server's grace for answers in flight. The
-    -- ring runs down to the start of it; the seconds after that are spent
-    -- choosing between the people who accepted, which is not a countdown the
-    -- player can act on.
-    local grace_time = math.max(0, math.min(tonumber(sr.grace_time) or 0, max_time - 1))
-    local elapsed    = sr.t or 0
-    local choosing   = (not sr.found) and (not sr.failed) and elapsed >= (max_time - grace_time)
+    -- THE NUMBER ON SCREEN IS THE SMOOTHED ONE, not the raw arithmetic.
+    --
+    -- The dialog opens before the server has said how long the window is, so
+    -- the first seconds are a guess — and replacing a guess with the truth is
+    -- a jump. modules/search_clock keeps the two apart: `t` is the real
+    -- elapsed time and may be corrected at any moment, `shown` is what a
+    -- player watches and only ever descends. See the long note there.
+    local search_clock = require("modules.search_clock")
+    local target, window_len = search_clock.target(sr)
+    local time_shown = tonumber(sr.shown) or target
+    local choosing   = search_clock.is_choosing(sr)
 
     -- Scrim + soft gradient backdrop.
     local scrim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W * 2, ctx.LOGICAL_H * 2, 0), vmath.vector4(0, 0, 0, 0.78)))
@@ -228,9 +231,9 @@ function M.draw(self, ctx, sr, reel_key)
         -- Native, fully smooth countdown ring (animates independent of redraw
         -- cycle). It runs to the START of the grace, so it empties exactly when
         -- new answers stop being accepted rather than when the dialog closes.
-        local window    = math.max(1, max_time - grace_time)
-        local time_left = math.max(0, window - elapsed)
-        local frac = time_left / window
+        local window    = window_len
+        local time_left = time_shown
+        local frac = math.max(0, math.min(1, time_left / window))
         local R = 34
 
         local bg = track(self, gui.new_pie_node(vmath.vector3(CX, CY - 140, 0), vmath.vector3(R*2, R*2, 0)))
