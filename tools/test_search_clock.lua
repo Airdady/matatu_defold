@@ -54,10 +54,10 @@ do
     -- carrying the 8 seconds it has left.
     local sr = {}
     SC.tick(sr, 0)
-    approx("opens on the guess", sr.shown, 10)
+    approx("opens on the guess", sr.shown, 12)
 
-    second(sr, 1); approx("one second in", sr.shown, 9, 0.05)
-    second(sr, 1); approx("two seconds in", sr.shown, 8, 0.05)
+    second(sr, 1); approx("one second in", sr.shown, 11, 0.05)
+    second(sr, 1); approx("two seconds in", sr.shown, 10, 0.05)
 
     local before = sr.shown
     SC.adopt(sr, 8000, 2000, 5)   -- an old server: 8s left, 2s of it grace
@@ -107,21 +107,28 @@ print("\n== the target the server's numbers imply ==")
 do
     -- The visible ring runs to the START of the grace: once it empties the
     -- dialog is choosing, not waiting for more answers.
-    local left, window = SC.target({ max_time = 12, grace_time = 2, t = 0 })
-    check("a 12s window with a 2s grace shows 10", left, 10)
-    check("and its window is 10", window, 10)
+    -- THE RING RUNS THE WHOLE WINDOW, assessment included. It used to stop at
+    -- the start of the grace, so the last seconds were an empty ring beside
+    -- the word "assessing" — and a clock that has stopped reads as a clock
+    -- that has failed, at exactly the moment the match is being decided.
+    local left, window, grace = SC.target({ max_time = 12, grace_time = 2, t = 0 })
+    check("a 12s window counts twelve", left, 12)
+    check("and its window is the whole twelve", window, 12)
+    check("the grace comes back as the phase boundary", grace, 2)
 
-    check("elapsed is subtracted", (SC.target({ max_time = 12, grace_time = 2, t = 4 })), 6)
+    check("elapsed is subtracted", (SC.target({ max_time = 12, grace_time = 2, t = 4 })), 8)
     check("never negative", (SC.target({ max_time = 12, grace_time = 2, t = 99 })), 0)
 
-    -- A grace as long as the window would leave nothing to draw.
-    check("a grace cannot eat the whole window",
-        (SC.target({ max_time = 5, grace_time = 99, t = 0 })), 1)
+    -- A grace longer than the window would make every second an assessment.
+    local _, _, clamped = SC.target({ max_time = 5, grace_time = 99, t = 0 })
+    check("a grace cannot eat the whole window", clamped, 4)
+    check("and the ring still runs the full window",
+        (SC.target({ max_time = 5, grace_time = 99, t = 0 })), 5)
 
     -- Nothing known yet: the longest window the server uses, so the common
     -- correction is downward — which converges smoothly — rather than upward.
     check("with nothing known it guesses the longest window",
-        (SC.target({})), SC.FALLBACK_WINDOW - SC.FALLBACK_GRACE)
+        (SC.target({})), SC.FALLBACK_WINDOW)
 end
 
 print("\n== adopting a duration means 'from now' ==")
@@ -143,11 +150,68 @@ print("\n== choosing is read off the number on screen ==")
 do
     -- Not off the real elapsed time: "choosing" appearing while a number is
     -- still ticking is the same class of glitch as the jump.
-    check("not while the ring still has time", SC.is_choosing({ shown = 2 }), false)
-    check("once it empties", SC.is_choosing({ shown = 0 }), true)
+    -- Assessing is the LAST `grace` seconds, and the number keeps moving
+    -- through them: a phase of the countdown, not a state after it.
+    check("not while there is more than the grace left",
+        SC.is_choosing({ shown = 5, max_time = 12, grace_time = 2 }), false)
+    check("yes once inside the grace, with time still on the clock",
+        SC.is_choosing({ shown = 2, max_time = 12, grace_time = 2 }), true)
+    check("and still at zero", SC.is_choosing({ shown = 0, max_time = 12, grace_time = 2 }), true)
     check("never after an opponent was found", SC.is_choosing({ shown = 0, found = true }), false)
     check("never after a failure", SC.is_choosing({ shown = 0, failed = true }), false)
     check("not before the first frame", SC.is_choosing({}), false)
+end
+
+print("\n== arrivals get a moment of their own ==")
+do
+    local sr = { t = 0 }
+    local one = { { userId = "a", username = "Ada", avatar = 2 } }
+    check("the first player is new", SC.note_arrivals(sr, one), 1)
+    check("and is on the roster", #sr.roster, 1)
+    check("stamped with when they arrived", sr.roster[1].arrived_at, 0)
+    check("which also lights the flash", sr.flash_at, 0)
+
+    -- THE SERVER RE-SENDS THE WHOLE ROSTER EVERY PUSH. A handler that counted
+    -- the list rather than the difference would re-announce everybody who was
+    -- already there, once per push.
+    sr.t = 4
+    check("the same player again is not new", SC.note_arrivals(sr, one), 0)
+    check("and keeps their original arrival time", sr.roster[1].arrived_at, 0)
+
+    local two = { one[1], { userId = "b", username = "Bo", avatar = 3 } }
+    check("only the second one counts as new", SC.note_arrivals(sr, two), 1)
+    check("stamped at the moment they landed", sr.roster[2].arrived_at, 4)
+    check("and the flash relights", sr.flash_at, 4)
+end
+
+print("\n== the pop and the glow fade on their own ==")
+do
+    local sr = { t = 0, roster = {} }
+    SC.note_arrivals(sr, { { userId = "a" } })
+    local e = sr.roster[1]
+
+    check("arrives oversized", SC.arrival_scale(sr, e) > 1.5, true)
+    check("and fully green", SC.arrival_glow(sr, e), 1)
+
+    sr.t = SC.ARRIVE_POP / 2
+    local mid = SC.arrival_scale(sr, e)
+    check("shrinking", mid < 1.6 and mid > 1.0, true)
+
+    sr.t = SC.ARRIVE_POP
+    check("settles to normal size exactly at the end", SC.arrival_scale(sr, e), 1)
+    sr.t = 99
+    check("and stays there", SC.arrival_scale(sr, e), 1)
+    check("with no green left", SC.arrival_glow(sr, e), 0)
+    check("and no flash", SC.flash(sr), 0)
+
+    -- One light for the dialog, not one per player: two people accepting half
+    -- a second apart should read as the search working, not as two alarms.
+    sr.t = 10
+    SC.note_arrivals(sr, { { userId = "a" }, { userId = "b" }, { userId = "c" } })
+    check("a burst of arrivals is one flash", SC.flash(sr), 1)
+
+    check("nothing throws on rubbish",
+        SC.arrival_scale(nil, nil) == 1 and SC.arrival_glow(nil, nil) == 0 and SC.flash(nil) == 0, true)
 end
 
 print("\n== the backstop is measured from now ==")

@@ -78,20 +78,28 @@ local ladder = function(t) return { active = true, t = t, max_time = 12, grace_t
 
 local early = draw(ladder(1))
 ok("early on it is searching", shows(early, "SEARCHING FOR OPPONENT"))
-ok("...and counts the window down, not ten seconds", shows(early, "9"))
+ok("...and counts the WHOLE window down, assessment included", shows(early, "11"))
 
 local mid = draw(ladder(5))
 ok("halfway it is still searching", shows(mid, "SEARCHING FOR OPPONENT"))
-ok("...still counting", shows(mid, "5"))
+ok("...still counting", shows(mid, "7"))
 
 ----------------------------------------------------------------------
 print("")
-print("ZERO IS THE SHORTLIST CLOSING, NOT THE SEARCH FAILING")
+print("THE CLOCK KEEPS RUNNING WHILE THE BEST CANDIDATE IS PICKED")
 ----------------------------------------------------------------------
--- The ring empties when answers stop being accepted — at ten seconds of a
--- twelve-second window — and the two seconds after it are the server choosing.
+-- The last two seconds of a twelve-second window are the server's grace for
+-- answers already in flight. The ring USED to stop dead at ten and sit on
+-- zero through them — and a clock that has stopped reads as a clock that has
+-- failed, at exactly the moment the match is being decided.
+--
+-- It counts through them now. Assessing is a PHASE of the countdown, not a
+-- state after it: the label changes, the number keeps moving, and zero lands
+-- where the server actually settles.
 local closing = draw(ladder(10.5))
-ok("the ring has emptied", shows(closing, "0"))
+-- 12 - 10.5 = 1.5, and the ring rounds UP so a part-second still reads as
+-- time on the clock rather than as none.
+ok("the clock is still running, not stuck on zero", shows(closing, "2"))
 ok("but the dialog says it is assessing", shows(closing, "ASSESSING THE BEST CANDIDATE"))
 ok("...not that nobody came", not shows(closing, "NO OPPONENT FOUND"))
 ok("with nobody in yet it says what it is doing rather than a count",

@@ -1042,13 +1042,14 @@ function on_message(self, message_id, message, sender)
         local sr = self.search
         local roster = ws.last_search_roster
         if sr and not sr.failed and type(roster) == "table" then
-            local was = #(sr.roster or {})
-            sr.roster = roster.accepted or {}
+            -- ONE SOUND PER PLAYER, not one per message. The server re-sends
+            -- the WHOLE roster on every push, so counting the list rather than
+            -- the difference re-announces everybody already in it. Same module
+            -- the online screen uses — two dialogs telling one story have to
+            -- tell it the same way.
+            local fresh = search_clock.note_arrivals(sr, roster.accepted or {})
             sr.chosen_id = roster.chosen_id
-            -- The found sting on the FIRST arrival only: one cue for "somebody
-            -- is here", not one per acceptance, which on a busy championship
-            -- would be a rattle.
-            if was == 0 and #sr.roster > 0 then pcall(msg.post, "#snd_found", "play_sound") end
+            if fresh > 0 then pcall(msg.post, "#snd_found", "play_sound") end
             if self._active then rebuild(self) end
         end
     elseif message_id == hash("ws_search_failed") then

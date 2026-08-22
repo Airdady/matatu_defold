@@ -767,10 +767,16 @@ function on_message(self, message_id, message, sender)
         local sr = self.invite_search
         local roster = ws.last_search_roster
         if not sr.failed and type(roster) == "table" then
-            local was = #(sr.roster or {})
-            sr.roster = roster.accepted or {}
+            -- ONE SOUND PER PLAYER, not one per message.
+            --
+            -- The server re-sends the WHOLE roster on every push, so counting
+            -- the list rather than the difference would re-announce everybody
+            -- already in it, once per arrival. note_arrivals returns only what
+            -- is genuinely new, and stamps each entry with the moment it
+            -- landed so the dialog can pop it in.
+            local fresh = search_clock.note_arrivals(sr, roster.accepted or {})
             sr.chosen_id = roster.chosen_id
-            if was == 0 and #sr.roster > 0 then play_snd("snd_found") end
+            if fresh > 0 then play_snd("snd_found") end
             rebuild(self)
         end
     elseif message_id == hash("ws_search_failed") and self.invite_search then
