@@ -84,6 +84,40 @@ M.COLORS = {
     grandmaster = { bg = { 0.95, 0.72, 0.10, 1.00 }, tx = { 0.16, 0.10, 0.00, 1.00 } },
 }
 
+--- The colours for a tier named by WORD, as the server sends it.
+--
+-- WHY THIS EXISTS AND IS NOT JUST A TABLE LOOKUP.
+--
+-- The bands above are keyed the way the CLIENT names them, and the client
+-- renamed its bottom band to BEGINNER. The SERVER's enum did not move with it:
+-- services/playerTier.ts still stores and sends AMATEUR, and it is the word
+-- that arrives on every online-list row and every search-roster entry.
+--
+-- A plain COLORS[word:lower()] therefore returns nil for the single most
+-- common tier there is, and the badge silently vanishes for most players —
+-- the exact drift playerTier.ts's own header warns about, arriving from the
+-- one direction it did not think to guard.
+--
+-- So the old name is accepted as an alias. Aliasing rather than renaming
+-- either end is deliberate: the server's value is already stored on live
+-- accounts, and a client that only understood the new word would badge
+-- nobody until every one of them was rewritten.
+--
+-- nil in, nil out, and nil for a word from neither vocabulary — callers draw
+-- nothing rather than guessing, the same rule M.tier follows.
+M.ALIASES = {
+    amateur = "beginner",   -- be_matatu services/playerTier.ts SkillTier
+}
+
+function M.colors_for(tier_word)
+    if tier_word == nil then return nil end
+    local key = string.lower(tostring(tier_word))
+    key = M.ALIASES[key] or key
+    local c = M.COLORS[key]
+    if not c then return nil end
+    return { key = key, bg = c.bg, tx = c.tx }
+end
+
 --- The tier a win rate falls in, or nil when there is no win rate to read.
 --
 -- nil in, nil out — and the callers all draw nothing for nil rather than

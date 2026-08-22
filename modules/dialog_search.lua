@@ -208,9 +208,11 @@ function M.draw(self, ctx, sr, reel_key)
         return CX - row_w / 2 + CARD_W / 2 + (i - 1) * (CARD_W + CARD_GAP)
     end
 
+    -- The server sends the tier as a WORD, and the two ends do not spell the
+    -- bottom one the same way (AMATEUR there, BEGINNER here). rank_badge owns
+    -- that translation so every surface reading a server tier gets it.
     local function tier_colors(entry)
-        local key = string.lower(tostring((entry or {}).skillTier or ""))
-        local c = rank_badge.COLORS[key]
+        local c = rank_badge.colors_for((entry or {}).skillTier)
         if not c then return nil end
         return vmath.vector4(c.bg[1], c.bg[2], c.bg[3], c.bg[4]),
                vmath.vector4(c.tx[1], c.tx[2], c.tx[3], c.tx[4])
