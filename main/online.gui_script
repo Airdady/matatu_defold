@@ -717,18 +717,39 @@ function on_message(self, message_id, message, sender)
         stop_snd("snd_suspense"); stop_snd("snd_notify"); play_snd("snd_found")
         rebuild(self)
     elseif message_id == hash("ws_search_window") and self.invite_search then
-        -- The server has opened the window and said how long it runs. Adopt it:
-        -- the ring defaulted to ten seconds and a ladder's window is twelve, so
-        -- the dialog used to give up while the server was still choosing.
+        -- THE SERVER'S WINDOW, MEASURED FROM WHEN IT ARRIVES.
+        --
+        -- settle_ms is a DURATION, and a duration means "this long from now".
+        -- It used to be adopted as `max_time` while sr.t kept running from
+        -- when the dialog opened, so the ring drew (max_time - grace) minus an
+        -- elapsed time the new number knew nothing about. If the message was
+        -- late — and it can be: the server builds an invite per opponent, each
+        -- waiting on a head-to-head lookup — it also carried what was LEFT of
+        -- the window rather than the whole of it, and the two errors compounded:
+        --
+        --   fallback 12, grace 0, elapsed 0..2   ->  12, 11, 10
+        --   then 8 left, grace 2, elapsed ~2     ->  4
+        --
+        -- which is the reported jump, and the same arithmetic made the failsafe
+        -- fire at ~11s while the server settled at 12 — the dialog closing and
+        -- THEN the game opening.
+        --
+        -- Restarting the clock here fixes both without needing the server to be
+        -- punctual: whatever arrives is counted from now, so the ring can only
+        -- ever run down. A late message makes the countdown longer, never
+        -- shorter, and never jumps backwards.
         local sr = self.invite_search
         local secs = (tonumber(message and message.settle_ms) or 0) / 1000
         if not sr.found and not sr.failed and secs > 0 then
             sr.max_time = secs
             sr.grace_time = (tonumber(message.grace_ms) or 0) / 1000
             sr.invited = tonumber(message.invited) or 0
+            -- The anchor the duration is measured from. Every other clock on
+            -- this dialog (the reel, the dots) keeps its own and is untouched.
+            sr.t = 0
             if sr.timer_handle then pcall(timer.cancel, sr.timer_handle) end
             sr.timer_handle = timer.delay(
-                math.max(0, secs - (sr.t or 0)) + right_panel.SEARCH_FAILSAFE_GRACE, false,
+                secs + right_panel.SEARCH_FAILSAFE_GRACE, false,
                 function()
                     if self.invite_search == sr and not sr.found then
                         right_panel.fail_invite_search(self, app_state, function() rebuild(self) end,

@@ -1013,11 +1013,16 @@ function on_message(self, message_id, message, sender)
             -- part a player can still be joining during.
             sr.grace_time = (tonumber(message.grace_ms) or 0) / 1000
             sr.invited = tonumber(message.invited) or 0
+            -- MEASURED FROM NOW, like the online screen's copy of this — see
+            -- the long note there. settle_ms is a duration, and adopting one
+            -- while an older clock keeps running is what made the ring jump
+            -- backwards and the backstop fire before the server had chosen.
+            sr.t = 0
             -- Re-arm the backstop against the real window rather than the
             -- placeholder it was armed with.
             if sr.timeout_handle then pcall(timer.cancel, sr.timeout_handle) end
             sr.timeout_handle = timer.delay(
-                math.max(0, secs - (sr.t or 0)) + SEARCH_FAILSAFE_GRACE, false,
+                secs + SEARCH_FAILSAFE_GRACE, false,
                 function()
                     if self.search == sr then fail_search(self, "No opponents available right now") end
                 end)
