@@ -7,7 +7,7 @@
 -- whether 48 is good. Nobody does that in ten seconds; they read the number,
 -- learn nothing from it, and press ACCEPT anyway.
 --
--- A tier says the same thing in one word and one colour: AMATEUR, PRO, MASTER,
+-- A tier says the same thing in one word and one colour: BEGINNER, PRO, MASTER,
 -- GRANDMASTER. The bands are fixed, so the same player wears the same badge
 -- everywhere, and the colour carries the meaning even when the word is too
 -- small to read at arm's length.
@@ -46,11 +46,20 @@ local M = {}
 -- comes next. These are the ranks a card player already knows, and each one
 -- plainly outranks the one below it — which is the only job a tier name has.
 --
--- PRO moves DOWN a band to make room. That is deliberate: a player sitting at
--- 52% who was PRO yesterday is MASTER today, so nobody is demoted by the
+-- PRO moved DOWN a band to make room. That is deliberate: a player sitting at
+-- 52% who was PRO yesterday is MASTER today, so nobody was demoted by the
 -- rename.
+--
+-- The floor is BEGINNER rather than AMATEUR. Same band, same colour, same
+-- players — but AMATEUR is a judgement about somebody who may simply be new,
+-- and this is the badge a player wears for their first several games. BEGINNER
+-- says where they are on the ladder instead of how good they are not.
+--
+-- The word is only half the change: the server stores this tier as a column
+-- (services/playerTier.ts), so accounts written before the rename still say
+-- AMATEUR until User.ts's ensureSkillTierRenamed sweeps them at boot.
 M.TIERS = {
-    { key = "amateur",     label = "AMATEUR",     min = 0.0,  max = 44.9  },
+    { key = "beginner",    label = "BEGINNER",    min = 0.0,  max = 44.9  },
     { key = "pro",         label = "PRO",         min = 45.0, max = 49.9  },
     { key = "master",      label = "MASTER",      min = 50.0, max = 54.9  },
     { key = "grandmaster", label = "GRANDMASTER", min = 55.0, max = 100.0 },
@@ -69,7 +78,7 @@ M.TIERS = {
 -- it is the only one bright enough that light text on it would not read — and
 -- being the odd one out is the point at the top of a ladder.
 M.COLORS = {
-    amateur     = { bg = { 0.30, 0.34, 0.40, 1.00 }, tx = { 0.84, 0.88, 0.94, 1.00 } },
+    beginner     = { bg = { 0.30, 0.34, 0.40, 1.00 }, tx = { 0.84, 0.88, 0.94, 1.00 } },
     pro         = { bg = { 0.16, 0.42, 0.72, 1.00 }, tx = { 0.92, 0.96, 1.00, 1.00 } },
     master      = { bg = { 0.06, 0.55, 0.45, 1.00 }, tx = { 0.90, 1.00, 0.97, 1.00 } },
     grandmaster = { bg = { 0.95, 0.72, 0.10, 1.00 }, tx = { 0.16, 0.10, 0.00, 1.00 } },
@@ -78,13 +87,13 @@ M.COLORS = {
 --- The tier a win rate falls in, or nil when there is no win rate to read.
 --
 -- nil in, nil out — and the callers all draw nothing for nil rather than
--- guessing AMATEUR. A player the server sent no rating for has not been shown
+-- guessing BEGINNER. A player the server sent no rating for has not been shown
 -- to be bad at this; badging them as the bottom tier would be inventing a fact
 -- about a stranger, and it would fire for every player on a build whose server
 -- does not send ratings at all.
 --
 -- Zero, on the other hand, IS a win rate: a player with games played and no
--- wins is an AMATEUR, and that must not be confused with "unknown".
+-- wins is a BEGINNER, and that must not be confused with "unknown".
 --
 -- Returns a fresh flat table rather than a reference into M.TIERS, so a caller
 -- that stores it cannot mutate the band definitions for everybody else.
@@ -137,8 +146,17 @@ end
 -- jammed against it. The padding is added on both sides, so it is 2 * PAD_X in
 -- total, and the floor still applies underneath — a short label gets the wider
 -- of "its text plus padding" and MIN_W rather than one or the other.
+--
+-- IT WAS 8, AND 8 IS TOO MUCH HERE. That figure was chosen against AMATEUR and
+-- PRO; the longest labels are GRANDMASTER at eleven characters and now
+-- BEGINNER at eight, and 16px of padding on top of an eleven-character
+-- estimate makes a pill wide enough to push the head-to-head block along the
+-- invite strip. 5 keeps a visible gap either side of the word — which is all
+-- the padding was ever for — and takes 6px off every pill: GRANDMASTER goes
+-- 137 -> 131, and BEGINNER lands at 98 against AMATEUR's old 93, so the extra
+-- letter costs 5px rather than the 11 it would have.
 M.CHAR_W = 11
-M.PAD_X  = 8
+M.PAD_X  = 5
 M.MIN_W  = 52
 
 function M.width(label)

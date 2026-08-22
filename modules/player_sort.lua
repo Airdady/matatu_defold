@@ -21,11 +21,11 @@
 -- Every rung can hold a lot of people, and until now their order inside it was
 -- just the order the server sent. Players of my own SKILL TIER come first now,
 -- then the immediate neighbouring tier, then further out — the same ladder the
--- rank badge already draws on the row (AMATEUR, PRO, MASTER, GRANDMASTER), so
+-- rank badge already draws on the row (BEGINNER, PRO, MASTER, GRANDMASTER), so
 -- what a player sees and what the list sorts by are one fact.
 --
 -- It is a tiebreak, never an override: a GRANDMASTER at my stake still ranks
--- above an AMATEUR who is mid-game. Rung first, tier second — being able to
+-- above a BEGINNER who is mid-game. Rung first, tier second — being able to
 -- play someone at all beats playing someone well matched.
 --
 -- The tier is SENT, not computed here. broadcastOnlineUsers attaches
@@ -115,15 +115,23 @@ end
 -- THE SKILL LADDER, weakest to strongest. Index is ladder position, which is
 -- what makes "one tier away" a subtraction. Mirrors be_matatu's SKILL_TIERS
 -- and modules/rank_badge.lua's own bands — if this changes, all three change.
-M.TIERS = { "AMATEUR", "PRO", "MASTER", "GRANDMASTER" }
+M.TIERS = { "BEGINNER", "PRO", "MASTER", "GRANDMASTER" }
 
 local TIER_INDEX = {}
 for i, t in ipairs(M.TIERS) do TIER_INDEX[t] = i end
 
+-- The floor was AMATEUR before the rename, and the tier arrives from the
+-- SERVER — so a client on the new build can still be handed the old word by a
+-- server that has not been deployed yet, or by an account the boot migration
+-- has not swept. Unknown tiers sort to the back of their rung, which would put
+-- every such player behind everybody for as long as the two ends disagree.
+-- One line here costs nothing and makes the rollout order not matter.
+TIER_INDEX.AMATEUR = TIER_INDEX.BEGINNER
+
 --- Where a row's tier sits on the ladder, or nil when it has none.
 --
 -- nil rather than a default: a server that does not send skillTier yet, or an
--- AI row that has no record, must not be treated as AMATEUR and dragged to one
+-- AI row that has no record, must not be treated as BEGINNER and dragged to one
 -- end of every rung. Unknown sorts LAST within its rung and nothing else
 -- changes — which is exactly how this behaved before the field existed.
 function M.tier_index(pu)
