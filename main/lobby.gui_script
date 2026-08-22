@@ -156,9 +156,13 @@ local function rebuild(self)
     local grid_w = grid_r - grid_l
     local grid_h = grid_t - grid_b
 
-    -- Row A (top, bigger): PLAY ONLINE + TEAM CUPS — the two
+    -- Row A (top, bigger): PLAY ONLINE + TOURNAMENTS — the two
     -- real-money/online modes, both prominent. Row B (bottom, smaller): the
     -- three offline-vs-AI modes, secondary to both tiles above them.
+    --
+    -- `team_*` still names the second column's geometry. The tile in it is
+    -- TOURNAMENTS now and TEAM CUPS is unmounted, but the layout maths is the
+    -- same and renaming it would touch a dozen lines to say nothing new.
     local row_a_h  = math.floor((grid_h - GUTTER) * 0.62)
     local row_b_h  = grid_h - row_a_h - GUTTER
     local row_a_cy = grid_b + row_b_h + GUTTER + row_a_h / 2
@@ -403,21 +407,32 @@ local function rebuild(self)
         is_exhausted, false,
         (has_team_tournament and not owns_cup) and "team_action_open" or nil)
 
+    -- TOURNAMENTS, WHERE TEAM CUPS USED TO BE.
+    --
+    -- The tournaments screen was reachable only from inside the players list
+    -- (the nav_tournaments button on the online screen), which is one tap too
+    -- deep for the mode that carries the championship and the season prize
+    -- table. It is a headline mode and it now sits where one belongs — beside
+    -- PLAY ONLINE, in the top row.
+    --
+    -- TEAM CUPS is not deleted, only unmounted. Everything behind it — the cup
+    -- rail, the create/join overlays, the bracket screen, team_action_open and
+    -- the handlers below — is untouched and still reachable the moment this
+    -- tile is pointed back at it. Deleting a feature to hide it is how you
+    -- discover, six weeks later, which half of it something else depended on.
     mode_tile(self, {
         x = team_cx, y = row_a_cy, w = team_w, h = row_a_h,
         accent      = is_exhausted and C_MUTED or C_U_TEAM,
         top_left    = is_exhausted and "OFFLINE" or "ONLINE",
-        top_left_2  = "TEAM",
-        title       = "TEAM CUPS",
-        sub         = is_exhausted and "Offline • Tap to retry" or team_sub,
-        cta_label   = is_exhausted and "RETRY"
-            or ((has_team_tournament and not owns_cup) and "OPEN" or nil),
-        -- Same as PLAY ONLINE: offline is a state you can tap your way out of,
-        -- not a wall. The child CREATE / JOIN buttons stay hidden either way,
-        -- because those DO need a live socket.
-        btn_id      = team_btn_id,
-        child_buttons = is_exhausted and nil or team_children,
-        disabled    = team_disabled,
+        top_left_2  = "GLOBAL",
+        title       = "TOURNAMENTS",
+        sub         = is_exhausted and "Offline • Tap to retry"
+            or "Championship ladder & season prizes",
+        cta_label   = is_exhausted and "RETRY" or "OPEN",
+        -- Offline is a state you can tap your way out of, not a wall: the
+        -- retry path is the same one PLAY ONLINE uses.
+        btn_id      = is_exhausted and team_btn_id or "nav_tournaments_lobby",
+        disabled    = is_exhausted and team_disabled or false,
     })
 
     -- -----------------------------------------------------------------------
@@ -627,6 +642,12 @@ local function handle(self, b)
         app_state.tournament_size = 4
         app_state.mode = ((app_state.t4_mode or "bracket") == "chamber") and "chamber4" or "tournament4"
         msg.post("#controller", "goto_game")
+
+    elseif b.id == "nav_tournaments_lobby" then
+        -- The same destination the players list used to be the only way to
+        -- reach. Posted rather than routed here so the controller keeps being
+        -- the one thing that decides what screen is showing.
+        msg.post("#controller", "goto_tournaments")
 
     elseif b.id == "team_action_open" then
         -- Straight to the bracket of the cup they are in. Falls back to the
