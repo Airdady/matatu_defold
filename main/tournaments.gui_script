@@ -184,9 +184,26 @@ end
 local function fail_search(self, reason)
     local sr = self.search
     if not sr or sr.found or sr.failed then return end
+
+    -- A SEARCH WITH PLAYERS ON THE SHORTLIST HAS NOT FAILED — same rule as
+    -- the online screen's, and for the same reason. The window closing is not
+    -- the end of the work: the server still has to charge the entry, deal a
+    -- deck and create the game. This used to fire in the middle of that and
+    -- report that nobody was available, with the people who HAD accepted still
+    -- drawn underneath the message.
+    if search_clock.has_candidates(sr) and not sr.start_grace_used then
+        sr.start_grace_used = true
+        if sr.timeout_handle then pcall(timer.cancel, sr.timeout_handle) end
+        sr.timeout_handle = timer.delay(search_clock.MATCH_START_GRACE, false, function()
+            if self.search == sr then fail_search(self, nil) end
+        end)
+        if self._active then rebuild(self) end
+        return
+    end
+
     if sr.timeout_handle then pcall(timer.cancel, sr.timeout_handle); sr.timeout_handle = nil end
     sr.failed = true
-    sr.fail_msg = reason or "No opponents available right now"
+    sr.fail_msg = reason or search_clock.give_up_reason(sr)
     app_state.searching_tournament = false
     pcall(msg.post, "#snd_suspense", "stop_sound")
     if self._active then rebuild(self) end
@@ -1031,7 +1048,7 @@ function on_message(self, message_id, message, sender)
             sr.timeout_handle = timer.delay(
                 search_clock.failsafe_delay(sr, SEARCH_FAILSAFE_GRACE), false,
                 function()
-                    if self.search == sr then fail_search(self, "No opponents available right now") end
+                    if self.search == sr then fail_search(self, nil) end
                 end)
             if self._active then rebuild(self) end
         end
@@ -1042,13 +1059,14 @@ function on_message(self, message_id, message, sender)
         local sr = self.search
         local roster = ws.last_search_roster
         if sr and not sr.failed and type(roster) == "table" then
-            local was = #(sr.roster or {})
-            sr.roster = roster.accepted or {}
+            -- ONE SOUND PER PLAYER, not one per message. The server re-sends
+            -- the WHOLE roster on every push, so counting the list rather than
+            -- the difference re-announces everybody already in it. Same module
+            -- the online screen uses — two dialogs telling one story have to
+            -- tell it the same way.
+            local fresh = search_clock.note_arrivals(sr, roster.accepted or {})
             sr.chosen_id = roster.chosen_id
-            -- The found sting on the FIRST arrival only: one cue for "somebody
-            -- is here", not one per acceptance, which on a busy championship
-            -- would be a rattle.
-            if was == 0 and #sr.roster > 0 then pcall(msg.post, "#snd_found", "play_sound") end
+            if fresh > 0 then pcall(msg.post, "#snd_found", "play_sound") end
             if self._active then rebuild(self) end
         end
     elseif message_id == hash("ws_search_failed") then
@@ -1104,7 +1122,7 @@ proceed_with_play = function(self, d)
     -- seconds beyond the window rather than on top of it.
     local sr = self.search
     sr.timeout_handle = timer.delay(sr.max_time + SEARCH_FAILSAFE_GRACE, false, function()
-        if self.search == sr then fail_search(self, "No opponents available right now") end
+        if self.search == sr then fail_search(self, nil) end
     end)
 
     -- Send the request to the controller FIRST. msg.post is async (the backend

@@ -59,12 +59,19 @@ M.FALLBACK_GRACE = 2
 
 --- The countdown the server's numbers imply right now.
 --
--- The last seconds of the window are the server's grace for answers already in
--- flight, so the ring runs down to the START of the grace: once it empties,
--- the dialog is choosing between the people who accepted rather than waiting
--- for more.
+-- THE RING RUNS THE WHOLE WINDOW, INCLUDING THE ASSESSMENT.
 --
--- Returns the seconds left and the length of the visible window.
+-- It used to stop at the start of the grace — the tail the server keeps for
+-- answers already in flight — so the last seconds were spent looking at an
+-- empty ring and the word "assessing". A clock that has stopped reads as a
+-- clock that has failed, which is exactly the wrong thing to show at the
+-- moment the match is actually being decided.
+--
+-- It counts to zero now, and zero lands where the server settles. The
+-- assessment is a PHASE of the countdown rather than a state after it: the
+-- label changes, the number keeps moving.
+--
+-- Returns the seconds left and the length of the whole window.
 function M.target(sr)
     sr = sr or {}
     local max_time = tonumber(sr.max_time) or M.FALLBACK_WINDOW
@@ -74,9 +81,10 @@ function M.target(sr)
     if grace == nil then grace = M.FALLBACK_GRACE end
     grace = math.max(0, math.min(grace, max_time - 1))
 
-    local window = math.max(1, max_time - grace)
     local elapsed = math.max(0, tonumber(sr.t) or 0)
-    return math.max(0, window - elapsed), window
+    -- `grace` is not subtracted from the window any more; it is returned so
+    -- callers can ask WHICH PHASE the remaining time is in (see is_choosing).
+    return math.max(0, max_time - elapsed), max_time, grace
 end
 
 --- Advance the clock by `dt` and return what the ring should draw.
@@ -124,6 +132,10 @@ function M.adopt(sr, settle_ms, grace_ms, invited)
 
     sr.max_time = secs
     sr.grace_time = (tonumber(grace_ms) or 0) / 1000
+    -- arc_window is deliberately NOT reset: it is the denominator the ring is
+    -- already drawn against, and resetting it here would reintroduce the very
+    -- refill this exists to stop. It is per-search state, cleared when a new
+    -- search object is made.
     if invited ~= nil then sr.invited = tonumber(invited) or 0 end
     sr.t = 0
     return true
@@ -131,10 +143,12 @@ end
 
 --- Is the window past the point where new answers are still accepted?
 --
+-- True for the last `grace` seconds — the tail the server holds for answers
+-- already in flight — and the number keeps counting down throughout. The
+-- assessment is a phase of the countdown, not a state after it.
+--
 -- Asked of the SHOWN value rather than the real one, so the words on screen
--- and the ring beneath them cannot disagree — "choosing" appearing while a
--- number is still ticking is the same class of glitch this module exists to
--- remove.
+-- and the ring beneath them cannot disagree.
 function M.is_choosing(sr)
     if type(sr) ~= "table" then return false end
     if sr.found or sr.failed then return false end
@@ -143,8 +157,171 @@ function M.is_choosing(sr)
     -- frame the dialog opens on — still gets a true answer rather than a flat
     -- "no", which is what reading `shown` alone gave it.
     local left = tonumber(sr.shown)
+    local _, _, grace = M.target(sr)
     if left == nil then left = M.target(sr) end
-    return left <= 0
+    return left <= grace
+end
+
+--- How full the ring should be, 1 at the start down to 0 at the settle.
+--
+-- THE ARC HAS ITS OWN DENOMINATOR, AND THAT IS WHAT KEPT REFILLING.
+--
+-- Smoothing the NUMBER was not enough, because the ring is not the number: it
+-- is the number divided by the window. The window is corrected the moment the
+-- server speaks — twelve down to eight — and dividing by a smaller denominator
+-- makes the SAME remaining time a BIGGER fraction:
+--
+--   just before   shown 8, window 12   ->  0.67 of the ring
+--   just after    shown 8, window  8   ->  1.00 of the ring, full again
+--
+-- which is exactly "at 8 it starts afresh". The number was continuous the
+-- whole time; the arc jumped behind it.
+--
+-- So the denominator only ever GROWS. Once the ring has drawn against a
+-- twelve-second window it keeps using twelve, and a correction to eight simply
+-- means the arc is already two thirds down — continuous with where it was, and
+-- still reaching zero exactly when the countdown does, because both are driven
+-- by the same `shown`.
+--
+-- `shown` is folded into the maximum as well: while a correction is still
+-- converging, the smoothed value can briefly exceed the new window, and
+-- without this the fraction would clamp at 1 and the ring would sit full.
+function M.arc(sr)
+    if type(sr) ~= "table" then return 0 end
+    local _, window = M.target(sr)
+    local shown = tonumber(sr.shown)
+    if shown == nil then shown = M.target(sr) end
+
+    local denom = math.max(tonumber(sr.arc_window) or 0, window, shown)
+    sr.arc_window = denom
+    if denom <= 0 then return 0 end
+    return math.max(0, math.min(1, shown / denom))
+end
+
+-- ---------------------------------------------------------------------------
+-- ARRIVALS: what a player joining the search looks like
+-- ---------------------------------------------------------------------------
+--
+-- The roster used to appear all at once, silently, as a row of avatars that
+-- grew when a redraw happened to land. Somebody accepting a staked invite is
+-- the single most interesting thing that happens during those twelve seconds
+-- and it went by without a sound or a movement.
+--
+-- Each arrival now has a moment of its own: it pops in at the slot, the ring
+-- flashes green, and it settles into the shortlist beside the ones before it.
+-- The timings live here rather than in the drawing code so both dialogs play
+-- the same beat, and so they can be reasoned about without a screen.
+
+--- How long a newly arrived player takes to settle into the shortlist.
+M.ARRIVE_POP = 0.35
+
+--- How long the green stays on them, and on the ring behind the slot.
+M.ARRIVE_GLOW = 0.9
+
+--- Merge a fresh roster into `sr`, remembering when each player first appeared.
+--
+-- Returns the number of players who are NEW this push — the caller plays one
+-- sound per arrival rather than one per message, because the server re-sends
+-- the whole roster every time and a naive handler would re-announce everybody
+-- who was already there.
+--
+-- `arrived_at` is stamped from sr.t, the same clock the animation is measured
+-- against, so an arrival cannot be timed against one clock and drawn against
+-- another.
+function M.note_arrivals(sr, incoming)
+    if type(sr) ~= "table" then return 0 end
+    local now = tonumber(sr.t) or 0
+    local seen = {}
+    for _, r in ipairs(sr.roster or {}) do
+        if r.userId then seen[r.userId] = r.arrived_at or now end
+    end
+
+    local merged, fresh = {}, 0
+    for _, r in ipairs(incoming or {}) do
+        local id = r.userId
+        local was = id and seen[id]
+        if was == nil then fresh = fresh + 1 end
+        merged[#merged + 1] = {
+            userId = id, username = r.username, avatar = r.avatar,
+            skillTier = r.skillTier,
+            arrived_at = was or now,
+        }
+    end
+
+    sr.roster = merged
+    if fresh > 0 then sr.flash_at = now end
+    return fresh
+end
+
+--- How big a just-arrived avatar should be drawn, as a multiplier.
+--
+-- Overshoots and settles: 1.6 at the instant of arrival easing back to 1.0.
+-- Nothing else on this dialog moves, so a pop is enough to say "that is new"
+-- without an animation system.
+function M.arrival_scale(sr, entry)
+    if type(sr) ~= "table" or type(entry) ~= "table" then return 1 end
+    local age = (tonumber(sr.t) or 0) - (tonumber(entry.arrived_at) or 0)
+    if age < 0 or age >= M.ARRIVE_POP then return 1 end
+    local k = 1 - (age / M.ARRIVE_POP)
+    -- Cubed so it lands softly rather than arriving at full speed.
+    return 1 + 0.6 * k * k * k
+end
+
+--- How green a just-arrived avatar still is, 1 at arrival down to 0.
+function M.arrival_glow(sr, entry)
+    if type(sr) ~= "table" or type(entry) ~= "table" then return 0 end
+    local age = (tonumber(sr.t) or 0) - (tonumber(entry.arrived_at) or 0)
+    if age < 0 or age >= M.ARRIVE_GLOW then return 0 end
+    return 1 - (age / M.ARRIVE_GLOW)
+end
+
+--- The green light behind the slot, 1 the moment somebody joins down to 0.
+--
+-- One light for the dialog rather than one per player: two people accepting
+-- half a second apart should read as the search working, not as two separate
+-- alarms.
+function M.flash(sr)
+    if type(sr) ~= "table" then return 0 end
+    local at = tonumber(sr.flash_at)
+    if at == nil then return 0 end
+    local age = (tonumber(sr.t) or 0) - at
+    if age < 0 or age >= M.ARRIVE_GLOW then return 0 end
+    return 1 - (age / M.ARRIVE_GLOW)
+end
+
+--- Has anybody actually accepted?
+--
+-- The one question the failure path never asked. A search with players on the
+-- shortlist has NOT failed for want of an opponent, whatever a timer thinks —
+-- the server has somebody and is in the middle of seating them.
+function M.has_candidates(sr)
+    if type(sr) ~= "table" then return false end
+    if sr.chosen_id and tostring(sr.chosen_id) ~= "" then return true end
+    return #((type(sr.roster) == "table") and sr.roster or {}) > 0
+end
+
+--- How long to keep waiting AFTER the window, once somebody has accepted.
+--
+-- The window closing is not the end of the work: the server still has to
+-- charge the entry, deal a deck, create the game and send it. That takes real
+-- time, and the dialog used to give up in the middle of it and announce that
+-- nobody had accepted — with the people who HAD accepted still drawn on
+-- screen underneath the message.
+--
+-- Eight seconds is far longer than the deal has ever taken and still short
+-- enough that a genuinely stuck match does not hold the screen forever.
+M.MATCH_START_GRACE = 8
+
+--- What a search that ran out of time should actually say.
+--
+-- "No one accepted your invite" is only true when nobody did. Said over a
+-- populated shortlist it is not a wording problem, it is the dialog reporting
+-- the opposite of what it is showing.
+function M.give_up_reason(sr)
+    if M.has_candidates(sr) then
+        return "Could not start the match"
+    end
+    return "No one accepted your invite"
 end
 
 --- How long the caller should arm its own backstop for, in seconds.

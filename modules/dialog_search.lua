@@ -39,6 +39,7 @@
 --   reel_key : key on self under which the reel avatar node is stored so the host
 --              update loop can spin it (default "search_reel_node").
 local ws = require("modules.websocket_manager")
+local search_clock = require("modules.search_clock")
 
 local M = {}
 
@@ -64,8 +65,7 @@ function M.draw(self, ctx, sr, reel_key)
     -- a jump. modules/search_clock keeps the two apart: `t` is the real
     -- elapsed time and may be corrected at any moment, `shown` is what a
     -- player watches and only ever descends. See the long note there.
-    local search_clock = require("modules.search_clock")
-    local target, window_len = search_clock.target(sr)
+    local target = search_clock.target(sr)
     local time_shown = tonumber(sr.shown) or target
     local choosing   = search_clock.is_choosing(sr)
 
@@ -183,6 +183,18 @@ function M.draw(self, ctx, sr, reel_key)
         pcall(gui.play_flipbook, reel, "avatar_" .. tostring(show.avatar or 1))
     end
 
+    -- THE GREEN LIGHT. One pulse for the dialog each time somebody joins —
+    -- not one per player, because two acceptances half a second apart should
+    -- read as the search working rather than as two separate alarms.
+    local flash = search_clock.flash(sr)
+    if flash > 0 and not sr.found and not sr.failed then
+        local n = track(self, ui.box(vmath.vector3(bx, ay, 0),
+            vmath.vector3(150 + 40 * flash, 150 + 40 * flash, 0),
+            vmath.vector4(0.15, 0.85, 0.35, 0.35 * flash)))
+        pcall(gui.set_texture, n, "ui")
+        pcall(gui.play_flipbook, n, hash("circle"))
+    end
+
     local who = sr.found and (sr.opp_name or "PLAYER")
         or (sr.failed and "—"
         or (chosen and string.upper(chosen.username or "PLAYER")
@@ -205,9 +217,32 @@ function M.draw(self, ctx, sr, reel_key)
         for i, r in ipairs(roster) do
             local rx = x0 + (i - 1) * (SZ + GAP)
             local is_won = chosen and (r.userId == chosen.userId)
-            track(self, ui.box(vmath.vector3(rx, ry, 0), vmath.vector3(SZ + 4, SZ + 4, 0),
-                is_won and vmath.vector4(0.15, 0.85, 0.35, 1) or vmath.vector4(0.25, 0.25, 0.30, 1)))
-            track(self, ui.avatar(vmath.vector3(rx, ry, 0), vmath.vector3(SZ, SZ, 0), r.avatar or 1))
+
+            -- ARRIVING. A player who has just accepted pops in oversized and
+            -- green, and settles into the row over a third of a second. It is
+            -- the most interesting thing that happens in these twelve seconds
+            -- and it used to appear silently, whenever a redraw happened to
+            -- land. Timings come from search_clock so both dialogs play the
+            -- same beat.
+            local pop  = search_clock.arrival_scale(sr, r)
+            local glow = search_clock.arrival_glow(sr, r)
+
+            -- The green of a fresh arrival fades into the neutral border; the
+            -- chosen player keeps it for good.
+            local border
+            if is_won then
+                border = vmath.vector4(0.15, 0.85, 0.35, 1)
+            else
+                border = vmath.vector4(
+                    0.25 + (0.15 - 0.25) * glow,
+                    0.25 + (0.85 - 0.25) * glow,
+                    0.30 + (0.35 - 0.30) * glow, 1)
+            end
+
+            local bs = (SZ + 4) * pop
+            track(self, ui.box(vmath.vector3(rx, ry, 0), vmath.vector3(bs, bs, 0), border))
+            track(self, ui.avatar(vmath.vector3(rx, ry, 0),
+                vmath.vector3(SZ * pop, SZ * pop, 0), r.avatar or 1))
         end
     end
 
@@ -229,11 +264,15 @@ function M.draw(self, ctx, sr, reel_key)
         gui.set_color(frame, vmath.vector4(0.85, 0.25, 0.25, 0.6))
     else
         -- Native, fully smooth countdown ring (animates independent of redraw
-        -- cycle). It runs to the START of the grace, so it empties exactly when
-        -- new answers stop being accepted rather than when the dialog closes.
-        local window    = window_len
+        -- cycle), running the whole window — the assessment included, so the
+        -- clock is still moving at the moment the match is being decided.
+        --
+        -- The fraction comes from search_clock, NOT from time_left / window.
+        -- The window is corrected the moment the server speaks, and dividing
+        -- by a smaller denominator makes the same remaining time a bigger
+        -- fraction — which refilled the ring mid-count. See M.arc.
         local time_left = time_shown
-        local frac = math.max(0, math.min(1, time_left / window))
+        local frac = search_clock.arc(sr)
         local R = 34
 
         local bg = track(self, gui.new_pie_node(vmath.vector3(CX, CY - 140, 0), vmath.vector3(R*2, R*2, 0)))
