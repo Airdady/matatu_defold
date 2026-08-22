@@ -2,6 +2,7 @@
 -- Fully synchronized with the updated Godot TournamentMap script and tscn.
 
 local ui            = require("modules.ui")
+local search_clock = require("modules.search_clock")
 local app_state     = require("modules.app_state")
 local ws            = require("modules.websocket_manager")
 local screen        = require("modules.screen")
@@ -864,7 +865,10 @@ function update(self, dt)
     local sr = self.search
     if not (self._active and sr) then return end
 
-    sr.t = (sr.t or 0) + dt
+    -- search_clock owns sr.t and sr.shown — the real elapsed time, and the
+    -- number the ring draws, which only ever descends. Same module the online
+    -- screen uses, so the two dialogs cannot drift apart on one rule again.
+    search_clock.tick(sr, dt)
 
     if not sr.found and not sr.failed then
         -- Spin the reel avatar in place (cheap, every ~70ms).
@@ -1013,16 +1017,15 @@ function on_message(self, message_id, message, sender)
             -- part a player can still be joining during.
             sr.grace_time = (tonumber(message.grace_ms) or 0) / 1000
             sr.invited = tonumber(message.invited) or 0
-            -- MEASURED FROM NOW, like the online screen's copy of this — see
-            -- the long note there. settle_ms is a duration, and adopting one
-            -- while an older clock keeps running is what made the ring jump
-            -- backwards and the backstop fire before the server had chosen.
+            -- MEASURED FROM NOW, and `shown` deliberately left alone so the
+            -- correction converges rather than snapping — see
+            -- modules/search_clock.
             sr.t = 0
             -- Re-arm the backstop against the real window rather than the
             -- placeholder it was armed with.
             if sr.timeout_handle then pcall(timer.cancel, sr.timeout_handle) end
             sr.timeout_handle = timer.delay(
-                secs + SEARCH_FAILSAFE_GRACE, false,
+                search_clock.failsafe_delay(sr, SEARCH_FAILSAFE_GRACE), false,
                 function()
                     if self.search == sr then fail_search(self, "No opponents available right now") end
                 end)

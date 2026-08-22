@@ -22,6 +22,7 @@ local champ_banner    = require("modules.champ_banner")
 -- cannot be a PRO on the invite strip and something else on the result screen.
 local rank            = require("modules.rank_badge")
 local season_clock    = require("modules.season_clock")
+local search_clock    = require("modules.search_clock")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local VISIBLE_W, VISIBLE_H = 1280, 720
@@ -603,7 +604,13 @@ function update(self, dt)
 
     -- ── Lottery opponent-search reel ──────────────────────────────────────
     if self.invite_search and not self.invite_search.found then
-        local sr = self.invite_search; sr.t, sr.spin_t, sr.dots_t = (sr.t or 0) + dt, (sr.spin_t or 0) + dt, (sr.dots_t or 0) + dt
+        local sr = self.invite_search
+        -- search_clock owns sr.t and sr.shown: the real elapsed time, and the
+        -- number the ring draws, which only ever descends. The reel and the
+        -- dots keep their own clocks — neither is corrected by the server, so
+        -- neither can jump.
+        search_clock.tick(sr, dt)
+        sr.spin_t, sr.dots_t = (sr.spin_t or 0) + dt, (sr.dots_t or 0) + dt
         if sr.spin_t >= 0.07 then sr.spin_t = 0; sr.reel_ix = math.random(60); if self.invite_reel_node then pcall(gui.play_flipbook, self.invite_reel_node, "avatar_" .. sr.reel_ix) end end
         if sr.dots_t >= 0.5 then sr.dots_t = 0; need_rebuild = true end
     end
@@ -739,17 +746,13 @@ function on_message(self, message_id, message, sender)
         -- ever run down. A late message makes the countdown longer, never
         -- shorter, and never jumps backwards.
         local sr = self.invite_search
-        local secs = (tonumber(message and message.settle_ms) or 0) / 1000
-        if not sr.found and not sr.failed and secs > 0 then
-            sr.max_time = secs
-            sr.grace_time = (tonumber(message.grace_ms) or 0) / 1000
-            sr.invited = tonumber(message.invited) or 0
-            -- The anchor the duration is measured from. Every other clock on
-            -- this dialog (the reel, the dots) keeps its own and is untouched.
-            sr.t = 0
+        if not sr.found and not sr.failed
+           and search_clock.adopt(sr, message and message.settle_ms,
+                                  message and message.grace_ms,
+                                  message and message.invited) then
             if sr.timer_handle then pcall(timer.cancel, sr.timer_handle) end
             sr.timer_handle = timer.delay(
-                secs + right_panel.SEARCH_FAILSAFE_GRACE, false,
+                search_clock.failsafe_delay(sr, right_panel.SEARCH_FAILSAFE_GRACE), false,
                 function()
                     if self.invite_search == sr and not sr.found then
                         right_panel.fail_invite_search(self, app_state, function() rebuild(self) end,
