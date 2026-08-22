@@ -136,7 +136,10 @@ ok("...and NOT that the opponent is settled", not shows(one_in, "OPPONENT FOUND!
 ok("the count is shown", shows(one_in, "1 player joined, still searching"))
 ok("the slot names the player who joined", shows(one_in, "ADA"))
 ok("...instead of the unknown placeholder", not shows(one_in, "? ? ?"))
-ok("and the shortlist is labelled", shows(one_in, "JOINED"))
+-- "HELD FOR YOU", not "JOINED". The rail is not a list of who turned up, it
+-- is the answer to "why has the search not stopped?" — these people are being
+-- kept while a better match is still allowed to answer.
+ok("and the shortlist says what it is for", shows(one_in, "HELD FOR YOU"))
 
 local two_in = draw(withRoster(6, { ada, bem }))
 ok("a second arrival is counted", shows(two_in, "2 players joined, still searching"))
@@ -149,6 +152,24 @@ ok("...over the candidates it has", shows(assessing, "assessing 2 candidates"))
 local matched = draw(withRoster(11.5, { ada, bem }, "u1"))
 ok("the winner is named at the end", shows(matched, "ADA"))
 ok("...and the shortlist says so", shows(matched, "MATCHED"))
+
+----------------------------------------------------------------------
+print("")
+print("EVERY CANDIDATE IS NAMED AND RANKED, NOT JUST COUNTED")
+----------------------------------------------------------------------
+-- The rail is the answer to "why has the search not stopped?", so it has to
+-- say enough for the player to judge the wait: who is being held, and how good
+-- they are. A row of anonymous 34px avatars said neither.
+local tiered = draw(withRoster(6, {
+    { userId = "u1", username = "Ada", avatar = 3, skillTier = "AMATEUR" },
+    { userId = "u2", username = "Bem", avatar = 7, skillTier = "GRANDMASTER" },
+}))
+ok("everybody held is named", shows(tiered, "ADA") and shows(tiered, "BEM"))
+ok("...with their tier beside them", shows(tiered, "GRANDMASTER"))
+-- The server's word for the bottom tier is AMATEUR; the client's own bands
+-- call it BEGINNER. The badge has to survive that, and the label shown is the
+-- server's word rather than a silent re-spelling of what it sent.
+ok("...including the tier the two ends spell differently", shows(tiered, "AMATEUR"))
 
 local nobody = draw(withRoster(3, {}))
 ok("with nobody yet it still reads as searching", shows(nobody, "SEARCHING FOR OPPONENT"))
