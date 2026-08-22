@@ -132,6 +132,10 @@ function M.adopt(sr, settle_ms, grace_ms, invited)
 
     sr.max_time = secs
     sr.grace_time = (tonumber(grace_ms) or 0) / 1000
+    -- arc_window is deliberately NOT reset: it is the denominator the ring is
+    -- already drawn against, and resetting it here would reintroduce the very
+    -- refill this exists to stop. It is per-search state, cleared when a new
+    -- search object is made.
     if invited ~= nil then sr.invited = tonumber(invited) or 0 end
     sr.t = 0
     return true
@@ -156,6 +160,42 @@ function M.is_choosing(sr)
     local _, _, grace = M.target(sr)
     if left == nil then left = M.target(sr) end
     return left <= grace
+end
+
+--- How full the ring should be, 1 at the start down to 0 at the settle.
+--
+-- THE ARC HAS ITS OWN DENOMINATOR, AND THAT IS WHAT KEPT REFILLING.
+--
+-- Smoothing the NUMBER was not enough, because the ring is not the number: it
+-- is the number divided by the window. The window is corrected the moment the
+-- server speaks — twelve down to eight — and dividing by a smaller denominator
+-- makes the SAME remaining time a BIGGER fraction:
+--
+--   just before   shown 8, window 12   ->  0.67 of the ring
+--   just after    shown 8, window  8   ->  1.00 of the ring, full again
+--
+-- which is exactly "at 8 it starts afresh". The number was continuous the
+-- whole time; the arc jumped behind it.
+--
+-- So the denominator only ever GROWS. Once the ring has drawn against a
+-- twelve-second window it keeps using twelve, and a correction to eight simply
+-- means the arc is already two thirds down — continuous with where it was, and
+-- still reaching zero exactly when the countdown does, because both are driven
+-- by the same `shown`.
+--
+-- `shown` is folded into the maximum as well: while a correction is still
+-- converging, the smoothed value can briefly exceed the new window, and
+-- without this the fraction would clamp at 1 and the ring would sit full.
+function M.arc(sr)
+    if type(sr) ~= "table" then return 0 end
+    local _, window = M.target(sr)
+    local shown = tonumber(sr.shown)
+    if shown == nil then shown = M.target(sr) end
+
+    local denom = math.max(tonumber(sr.arc_window) or 0, window, shown)
+    sr.arc_window = denom
+    if denom <= 0 then return 0 end
+    return math.max(0, math.min(1, shown / denom))
 end
 
 -- ---------------------------------------------------------------------------

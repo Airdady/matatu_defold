@@ -214,6 +214,47 @@ do
         SC.arrival_scale(nil, nil) == 1 and SC.arrival_glow(nil, nil) == 0 and SC.flash(nil) == 0, true)
 end
 
+print("\n== the ring never refills ==")
+do
+    -- THE ONE THAT SURVIVED EVERY FIX TO THE NUMBER, because the ring is not
+    -- the number: it is the number divided by the window. The window is
+    -- corrected the moment the server speaks, and dividing by a SMALLER
+    -- denominator makes the SAME remaining time a BIGGER fraction:
+    --
+    --   just before   shown 8, window 12  ->  0.67 of the ring
+    --   just after    shown 8, window  8  ->  1.00, full again
+    --
+    -- which is exactly "at 8 it starts afresh". The number was continuous the
+    -- whole time; the arc jumped behind it.
+    local sr = {}
+    SC.tick(sr, 0)
+    approx("starts full", SC.arc(sr), 1)
+
+    second(sr, 4)
+    local before = SC.arc(sr)
+    approx("two thirds through a twelve-second window", before, 8 / 12, 0.05)
+
+    -- The correction that used to refill it.
+    SC.adopt(sr, 8000, 2000)
+    SC.tick(sr, 0)
+    local after = SC.arc(sr)
+    check("the arc does not jump back up", after <= before + 0.001, true)
+    approx("it stays where it was", after, before, 0.02)
+
+    -- And it keeps falling, monotonically, all the way to empty.
+    local prev, rose = after, false
+    for _ = 1, 60 * 12 do
+        SC.tick(sr, 1 / 60)
+        local a = SC.arc(sr)
+        if a > prev + 0.0001 then rose = true end
+        prev = a
+    end
+    check("never rises across the whole window", rose, false)
+    approx("and lands empty", prev, 0, 0.001)
+
+    check("a non-table does not throw", SC.arc(nil), 0)
+end
+
 print("\n== a search with a shortlist has not failed ==")
 do
     -- THE BUG THAT SURVIVED THREE FIXES TO THE COUNTDOWN, because it was never

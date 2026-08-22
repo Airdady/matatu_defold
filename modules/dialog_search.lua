@@ -65,7 +65,7 @@ function M.draw(self, ctx, sr, reel_key)
     -- a jump. modules/search_clock keeps the two apart: `t` is the real
     -- elapsed time and may be corrected at any moment, `shown` is what a
     -- player watches and only ever descends. See the long note there.
-    local target, window_len = search_clock.target(sr)
+    local target = search_clock.target(sr)
     local time_shown = tonumber(sr.shown) or target
     local choosing   = search_clock.is_choosing(sr)
 
@@ -264,11 +264,15 @@ function M.draw(self, ctx, sr, reel_key)
         gui.set_color(frame, vmath.vector4(0.85, 0.25, 0.25, 0.6))
     else
         -- Native, fully smooth countdown ring (animates independent of redraw
-        -- cycle). It runs to the START of the grace, so it empties exactly when
-        -- new answers stop being accepted rather than when the dialog closes.
-        local window    = window_len
+        -- cycle), running the whole window — the assessment included, so the
+        -- clock is still moving at the moment the match is being decided.
+        --
+        -- The fraction comes from search_clock, NOT from time_left / window.
+        -- The window is corrected the moment the server speaks, and dividing
+        -- by a smaller denominator makes the same remaining time a bigger
+        -- fraction — which refilled the ring mid-count. See M.arc.
         local time_left = time_shown
-        local frac = math.max(0, math.min(1, time_left / window))
+        local frac = search_clock.arc(sr)
         local R = 34
 
         local bg = track(self, gui.new_pie_node(vmath.vector3(CX, CY - 140, 0), vmath.vector3(R*2, R*2, 0)))
