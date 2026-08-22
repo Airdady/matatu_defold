@@ -755,8 +755,8 @@ function on_message(self, message_id, message, sender)
                 search_clock.failsafe_delay(sr, right_panel.SEARCH_FAILSAFE_GRACE), false,
                 function()
                     if self.invite_search == sr and not sr.found then
-                        right_panel.fail_invite_search(self, app_state, function() rebuild(self) end,
-                            "No one accepted your invite")
+                        -- No reason: the shortlist decides what is true.
+                        right_panel.fail_invite_search(self, app_state, function() rebuild(self) end, nil)
                     end
                 end)
             rebuild(self)

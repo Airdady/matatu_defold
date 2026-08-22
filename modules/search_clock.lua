@@ -249,6 +249,41 @@ function M.flash(sr)
     return 1 - (age / M.ARRIVE_GLOW)
 end
 
+--- Has anybody actually accepted?
+--
+-- The one question the failure path never asked. A search with players on the
+-- shortlist has NOT failed for want of an opponent, whatever a timer thinks —
+-- the server has somebody and is in the middle of seating them.
+function M.has_candidates(sr)
+    if type(sr) ~= "table" then return false end
+    if sr.chosen_id and tostring(sr.chosen_id) ~= "" then return true end
+    return #((type(sr.roster) == "table") and sr.roster or {}) > 0
+end
+
+--- How long to keep waiting AFTER the window, once somebody has accepted.
+--
+-- The window closing is not the end of the work: the server still has to
+-- charge the entry, deal a deck, create the game and send it. That takes real
+-- time, and the dialog used to give up in the middle of it and announce that
+-- nobody had accepted — with the people who HAD accepted still drawn on
+-- screen underneath the message.
+--
+-- Eight seconds is far longer than the deal has ever taken and still short
+-- enough that a genuinely stuck match does not hold the screen forever.
+M.MATCH_START_GRACE = 8
+
+--- What a search that ran out of time should actually say.
+--
+-- "No one accepted your invite" is only true when nobody did. Said over a
+-- populated shortlist it is not a wording problem, it is the dialog reporting
+-- the opposite of what it is showing.
+function M.give_up_reason(sr)
+    if M.has_candidates(sr) then
+        return "Could not start the match"
+    end
+    return "No one accepted your invite"
+end
+
 --- How long the caller should arm its own backstop for, in seconds.
 --
 -- The full window plus the caller's grace, measured from now — never minus an

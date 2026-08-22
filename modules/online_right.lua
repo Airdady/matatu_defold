@@ -1,4 +1,5 @@
 local ws            = require("modules.websocket_manager")
+local search_clock = require("modules.search_clock")
 local dialog_search = require("modules.dialog_search")
 local GameMode      = require("modules.game_mode")
 local app_state     = require("modules.app_state")
@@ -1462,7 +1463,10 @@ function M.start_invite_search(self, app_state, rebuild_cb, battle_type)
     self.invite_search.timer_handle = timer.delay(
         M.SEARCH_WINDOW_FALLBACK + M.SEARCH_FAILSAFE_GRACE, false, function()
             if self.invite_search and not self.invite_search.found then
-                M.fail_invite_search(self, app_state, rebuild_cb, "No one accepted your invite")
+                -- No reason passed: fail_invite_search decides what is
+                -- true from the shortlist. A caller asserting "nobody
+                -- accepted" cannot know that — it is a timer.
+                M.fail_invite_search(self, app_state, rebuild_cb, nil)
             end
         end)
 
@@ -1474,10 +1478,37 @@ function M.fail_invite_search(self, app_state, rebuild_cb, reason)
     local sr = self.invite_search
     if not sr or sr.found or sr.failed then return end
 
+    -- A SEARCH WITH PLAYERS ON THE SHORTLIST HAS NOT FAILED.
+    --
+    -- This is the bug that survived three separate fixes to the countdown,
+    -- because it was never in the countdown. The window closing is not the end
+    -- of the work: the server still has to charge the entry, deal a deck,
+    -- create the game and send it, and that takes real time. The backstop
+    -- fired in the middle of it and announced that nobody had accepted — with
+    -- the people who HAD accepted still drawn on screen underneath the words.
+    --
+    -- So the failure path asks the one question it never asked. If somebody
+    -- accepted, wait: the server is going to answer, either with a game or
+    -- with a cancellation. The wait is bounded, because a genuinely stuck
+    -- match must not hold the screen forever — and if it does run out, what it
+    -- says is true.
+    if search_clock.has_candidates(sr) and not sr.start_grace_used then
+        sr.start_grace_used = true
+        if sr.timer_handle then pcall(timer.cancel, sr.timer_handle) end
+        sr.timer_handle = timer.delay(search_clock.MATCH_START_GRACE, false, function()
+            M.fail_invite_search(self, app_state, rebuild_cb, nil)
+        end)
+        rebuild_cb()
+        return
+    end
+
     if sr.timer_handle then pcall(timer.cancel, sr.timer_handle); sr.timer_handle = nil end
 
     sr.failed   = true
-    sr.fail_msg = reason or "No one accepted your invite"
+    -- Never "nobody accepted" over a populated shortlist: that is not a
+    -- wording problem, it is the dialog reporting the opposite of what it is
+    -- showing.
+    sr.fail_msg = reason or search_clock.give_up_reason(sr)
     app_state.searching_invite = false
 
     pcall(msg.post, "#snd_suspense", "stop_sound")

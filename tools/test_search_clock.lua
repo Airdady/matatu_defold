@@ -214,6 +214,31 @@ do
         SC.arrival_scale(nil, nil) == 1 and SC.arrival_glow(nil, nil) == 0 and SC.flash(nil) == 0, true)
 end
 
+print("\n== a search with a shortlist has not failed ==")
+do
+    -- THE BUG THAT SURVIVED THREE FIXES TO THE COUNTDOWN, because it was never
+    -- in the countdown. The window closing is not the end of the work: the
+    -- server still has to charge the entry, deal a deck and create the game.
+    -- The backstop fired in the middle of that and announced that nobody had
+    -- accepted — with the people who HAD accepted still drawn on screen
+    -- underneath the words.
+    check("nobody yet", SC.has_candidates({ roster = {} }), false)
+    check("no roster at all", SC.has_candidates({}), false)
+    check("somebody accepted", SC.has_candidates({ roster = { { userId = "a" } } }), true)
+    check("or one was already chosen", SC.has_candidates({ chosen_id = "a" }), true)
+    check("an empty chosen id is not a choice", SC.has_candidates({ chosen_id = "" }), false)
+    check("rubbish does not throw", SC.has_candidates(nil), false)
+
+    -- And what it says when it does eventually give up has to be true.
+    check("nobody came reads as nobody came",
+        SC.give_up_reason({ roster = {} }), "No one accepted your invite")
+    check("but never over a populated shortlist",
+        SC.give_up_reason({ roster = { { userId = "a" } } }), "Could not start the match")
+
+    check("the extra wait is longer than any deal has taken",
+        SC.MATCH_START_GRACE >= 5, true)
+end
+
 print("\n== the backstop is measured from now ==")
 do
     -- Never minus an elapsed time: that is what made the dialog give up at
