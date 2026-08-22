@@ -187,11 +187,11 @@ local topts = { selected_stake = 200, balance = 10000,
 check("my own tier comes first",
   tnames(ps.sort({ trow("gm", "GRANDMASTER"), trow("pro", "PRO") }, topts)), "pro,gm")
 
--- PRO(0), then AMATEUR and MASTER both one step away — arrival order decides
+-- PRO(0), then BEGINNER and MASTER both one step away — arrival order decides
 -- between them — then GRANDMASTER at two.
 check("then the immediate neighbour, in either direction",
   tnames(ps.sort({
-    trow("gm", "GRANDMASTER"), trow("am", "AMATEUR"),
+    trow("gm", "GRANDMASTER"), trow("am", "BEGINNER"),
     trow("ma", "MASTER"), trow("pro", "PRO"),
   }, topts)), "pro,am,ma,gm")
 
@@ -199,11 +199,11 @@ check("a row with no tier falls to the BACK of its rung, not the front",
   tnames(ps.sort({ trow("none", nil), trow("pro", "PRO") }, topts)), "pro,none")
 
 check("a perfect tier match who is mid-game still ranks below a playable stranger",
-  tnames(ps.sort({ trow("pro_busy", "PRO", 200, true), trow("am_free", "AMATEUR", 200) }, topts)),
+  tnames(ps.sort({ trow("pro_busy", "PRO", 200, true), trow("am_free", "BEGINNER", 200) }, topts)),
   "am_free,pro_busy")
 
 check("and a matching stake beats a matching tier",
-  tnames(ps.sort({ trow("pro_other", "PRO", 500), trow("am_mine", "AMATEUR", 200) }, topts)),
+  tnames(ps.sort({ trow("pro_other", "PRO", 500), trow("am_mine", "BEGINNER", 200) }, topts)),
   "am_mine,pro_other")
 
 -- A SERVER THAT DOES NOT SEND THE FIELD MUST CHANGE NOTHING. This is the old
@@ -215,7 +215,7 @@ check("without my_tier the order is arrival order",
 
 check("an unknown tier name reads as no index", ps.tier_index(trow("x", "WIZARD")), nil)
 check("distance is symmetric across the ladder",
-  ps.tier_gap(trow("x", "AMATEUR"), 4), ps.tier_gap(trow("y", "GRANDMASTER"), 1))
+  ps.tier_gap(trow("x", "BEGINNER"), 4), ps.tier_gap(trow("y", "GRANDMASTER"), 1))
 
 ----------------------------------------------------------------------
 print(("\n%d passed, %d failed"):format(pass, fail))

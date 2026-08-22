@@ -53,7 +53,7 @@ function M.draw(self, ctx, d, a)
     -- This slot used to read "WR 48%" in one of three colours. The number is
     -- the wrong shape for the glance it gets: the player has ten seconds and
     -- one decision, and working out whether 48 is good takes context nobody
-    -- holds at that moment. The tier says it in a word — AMATEUR, PRO, MASTER,
+    -- holds at that moment. The tier says it in a word — BEGINNER, PRO, MASTER,
     -- GRANDMASTER — from the same win rate, in the same place.
     --
     -- Nothing is drawn when the server sent no rating: an unrated stranger has

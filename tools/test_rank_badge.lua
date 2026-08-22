@@ -35,8 +35,8 @@ local function ok(name, cond, detail)
 end
 
 -- ── the bands, at both ends ─────────────────────────────────────────────────
-check("floor of amateur",       rank.label(0.0),   "AMATEUR")
-check("ceiling of amateur",     rank.label(44.9),  "AMATEUR")
+check("floor of beginner",       rank.label(0.0),   "BEGINNER")
+check("ceiling of beginner",     rank.label(44.9),  "BEGINNER")
 check("floor of pro",           rank.label(45.0),  "PRO")
 check("ceiling of pro",         rank.label(49.9),  "PRO")
 check("floor of master",        rank.label(50.0),  "MASTER")
@@ -45,29 +45,29 @@ check("floor of grandmaster",   rank.label(55.0),  "GRANDMASTER")
 check("ceiling of grandmaster", rank.label(100.0), "GRANDMASTER")
 
 -- THE GAPS. A tenth of a point between every written band.
-check("44.95 is still an amateur", rank.label(44.95), "AMATEUR")
+check("44.95 is still a beginner", rank.label(44.95), "BEGINNER")
 check("49.95 is still a pro",      rank.label(49.95), "PRO")
 check("54.95 is still a master",   rank.label(54.95), "MASTER")
 
 -- Off the ends. A rate outside 0-100 is a server bug, not a reason to crash or
 -- to answer nil on a screen that is about to draw the answer.
 check("above 100 is a grandmaster", rank.label(140),  "GRANDMASTER")
-check("below zero is an amateur",   rank.label(-12), "AMATEUR")
+check("below zero is a beginner",   rank.label(-12), "BEGINNER")
 
 -- ZERO IS A WIN RATE; NIL IS NOT.
 --
--- A player with games played and no wins is an AMATEUR. A player the server
+-- A player with games played and no wins is a BEGINNER. A player the server
 -- rated nothing for has not been shown to be bad at this, and badging them as
 -- the bottom tier would invent a fact about a stranger — and would do it for
 -- every player at once on any build whose server does not send ratings.
-check("zero is the bottom tier", rank.label(0), "AMATEUR")
+check("zero is the bottom tier", rank.label(0), "BEGINNER")
 check("nil is no badge at all",  rank.label(nil), nil)
 check("a non-number is no badge", rank.label({}), nil)
 check("a numeric string still reads", rank.label("62"), "GRANDMASTER")
 check("nil tier is nil", rank.tier(nil), nil)
 
 -- Keys travel with the labels: the colour table is keyed by them.
-check("key for amateur",     (rank.tier(10)  or {}).key, "amateur")
+check("key for beginner",     (rank.tier(10)  or {}).key, "beginner")
 check("key for pro",         (rank.tier(47)  or {}).key, "pro")
 check("key for master",      (rank.tier(52)  or {}).key, "master")
 check("key for grandmaster", (rank.tier(88)  or {}).key, "grandmaster")
@@ -111,6 +111,14 @@ ok("the floor is wide enough for PRO",  rank.MIN_W >= 3 * rank.CHAR_W + 2 * rank
 check("no rate, no width",              rank.badge_width(nil),   0)
 check("a rate gives its label's width", rank.badge_width(47),    rank.width("PRO"))
 ok("there is padding at all",           rank.PAD_X > 0)
+-- ...and it is the TRIMMED padding, not the original 8. The pill sits between
+-- the head-to-head block and the two buttons on a strip laid out from the
+-- right edge, so every px of padding on an eleven-character label is a px the
+-- rest of the row does not get. Asserted as an upper bound rather than an
+-- equality so the figure can still be tuned, but not tuned back up.
+ok("the padding was reduced",           rank.PAD_X <= 5)
+ok("GRANDMASTER is narrower than it was at PAD_X 8",
+   rank.width("GRANDMASTER") < 11 * rank.CHAR_W + 16)
 for _, t in ipairs(rank.TIERS) do
   ok("padding survives the floor for " .. t.label,
      rank.width(t.label) >= #t.label * rank.CHAR_W + 2 * rank.PAD_X)
@@ -302,7 +310,7 @@ ok("an unrated opponent gets no pill", not gui.is_enabled(S.n_opp_rank_bg))
 -- ...and a rating arriving after an unrated result brings the pill back, rather
 -- than the panel staying stuck on whatever the last game left behind.
 result(20, 90)
-check("a later result re-badges the player",   gui.get_text(S.n_you_rank_tx), "AMATEUR")
+check("a later result re-badges the player",   gui.get_text(S.n_you_rank_tx), "BEGINNER")
 check("a later result re-badges the opponent", gui.get_text(S.n_opp_rank_tx), "GRANDMASTER")
 
 print()
