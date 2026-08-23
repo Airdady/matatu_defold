@@ -48,11 +48,23 @@ print("")
 print("WHAT THE DIALOG DRAWS")
 ----------------------------------------------------------------------
 -- Every string the card put on screen, so the state can be read back.
+-- CREATION IS NO LONGER WHERE THE WORDS COME FROM.
+--
+-- The dialog builds its layout once and then sets strings on the nodes that
+-- already exist, every frame, instead of asking the host to rebuild the whole
+-- screen twice a second so a countdown digit can change. So a harness that
+-- only watches ui.text sees empty placeholders and none of the actual copy;
+-- gui.set_text is now half of what the dialog says.
 local drawn = {}
 local real_text = ui.text
 ui.text = function(pos, str, font, col)
     drawn[#drawn + 1] = tostring(str or "")
     return real_text(pos, str, font, col)
+end
+local real_set_text = gui.set_text
+gui.set_text = function(node, str)
+    drawn[#drawn + 1] = tostring(str or "")
+    return real_set_text(node, str)
 end
 
 local C = setmetatable({}, { __index = function(_, k)
@@ -152,6 +164,116 @@ ok("...over the candidates it has", shows(assessing, "assessing 2 candidates"))
 local matched = draw(withRoster(11.5, { ada, bem }, "u1"))
 ok("the winner is named at the end", shows(matched, "ADA"))
 ok("...and the shortlist says so", shows(matched, "MATCHED"))
+
+----------------------------------------------------------------------
+print("")
+print("TIME PASSING IS NOT A REASON TO REBUILD A SCREEN")
+----------------------------------------------------------------------
+-- WHERE THE FRAME RATE WENT.
+--
+-- The hosts asked for a full screen rebuild twice a second for as long as this
+-- dialog was open — the whole online player list, both panels, the dividers,
+-- the banner; or the entire tournament map — so that a countdown digit could
+-- change and three dots could cycle. Hundreds of gui nodes a second, to
+-- animate a string.
+--
+-- structure_key is what the hosts test instead. It answers "is the LAYOUT
+-- wrong?", not "has anything changed?", and almost nothing makes it wrong.
+local SC = require("modules.search_clock")
+local key = dialog.structure_key
+
+local base = { active = true, t = 0, max_time = 12, grace_time = 2, invited = 6, roster = {} }
+local k0 = key(base)
+for _ = 1, 60 * 8 do SC.tick(base, 1 / 60) end
+check("eight seconds of countdown need no rebuild", key(base), k0)
+
+base.roster = { ada }
+ok("...but somebody arriving does", key(base) ~= k0)
+local k1 = key(base)
+for _ = 1, 60 do SC.tick(base, 1 / 60) end
+check("and their whole entrance needs none", key(base), k1)
+
+base.roster = { ada, bem }
+ok("a second arrival does", key(base) ~= k1)
+local k2 = key(base)
+base.chosen_id = "u1"
+ok("naming the winner does", key(base) ~= k2)
+local k3 = key(base)
+base.found = true
+ok("and so does the match starting", key(base) ~= k3)
+ok("a failure does too", key({ failed = true }) ~= key({}))
+check("rubbish does not throw", key(nil), "none")
+
+----------------------------------------------------------------------
+print("")
+print("THE ENTRANCE MOVES WITHOUT A REDRAW")
+----------------------------------------------------------------------
+-- The other half of the same problem: a rebuild every 500ms means a 450ms
+-- flight across the dialog gets exactly ONE frame, so an entrance meant to
+-- travel simply teleports. The dialog is built once and animate() moves the
+-- nodes that already exist.
+do
+    local host = { nodes = {}, buttons = {} }
+    local ctx = {
+        track = function(_, n) return n end, ui = ui, C = C,
+        commas = function(x) return tostring(x) end,
+        CX = 640, CY = 360, LOGICAL_W = 1280, LOGICAL_H = 720,
+    }
+    local sr = { active = true, max_time = 12, grace_time = 2, invited = 6, roster = {} }
+    SC.tick(sr, 0)
+    SC.note_arrivals(sr, { ada, bem })
+
+    -- Build once, then never again.
+    local built = pcall(dialog.draw, host, ctx, sr, "reel")
+    ok("the dialog builds", built)
+    local card = host.search_anim and host.search_anim.cards[2]
+    ok("with a node per candidate", card ~= nil)
+
+    local function pos_of(n) return gui.get_position(n).x, gui.get_position(n).y end
+
+    -- HOLD: the newest arrival is standing in the opponent slot.
+    dialog.animate(host, sr)
+    local hx, hy = pos_of(card.av)
+    check("the newest arrival holds the slot", math.floor(hx), math.floor(host.search_anim.bx))
+
+    ok("...so the reel is not left churning behind them", host.reel == nil)
+
+    -- FLY: they travel out towards their seat, and keep travelling. The hold
+    -- comes first, so wind past it before sampling.
+    for _ = 1, math.ceil(SC.ARRIVE_HOLD * 60) do SC.tick(sr, 1 / 60) end
+    local seen = {}
+    for _ = 1, math.floor(SC.ARRIVE_FLY * 60) do
+        SC.tick(sr, 1 / 60)
+        dialog.animate(host, sr)
+        local x = select(1, pos_of(card.av))
+        seen[#seen + 1] = x
+    end
+    local moved, monotone = false, true
+    for i = 2, #seen do
+        if seen[i] ~= seen[i - 1] then moved = true end
+        if seen[i] > seen[i - 1] + 0.001 then monotone = false end
+    end
+    ok("they travel, frame by frame, with no rebuild", moved)
+    ok("...and only ever towards the rail", monotone)
+    ok("...more than a single teleporting step", #seen > 10)
+    ok("...and actually crossed most of the way", math.abs(seen[#seen] - seen[1]) > 50)
+
+    -- REST: seated, and the slot is free to hunt again.
+    for _ = 1, 120 do SC.tick(sr, 1 / 60) end
+    dialog.animate(host, sr)
+    local rx = select(1, pos_of(card.av))
+    check("and land on their seat", math.floor(rx + 0.5), math.floor(card.seat + 0.5))
+    ok("leaving the slot free to hunt again", host.reel ~= nil)
+
+    -- RETURN: the winner comes back out of the rail into the slot.
+    sr.chosen_id = "u2"
+    dialog.animate(host, sr)
+    local sx = select(1, pos_of(card.av))
+    check("the winner starts from where they were kept", math.floor(sx + 0.5), math.floor(card.seat + 0.5))
+    for _ = 1, 60 do SC.tick(sr, 1 / 60); dialog.animate(host, sr) end
+    local ex = select(1, pos_of(card.av))
+    check("and comes home to the slot", math.floor(ex), math.floor(host.search_anim.bx))
+end
 
 ----------------------------------------------------------------------
 print("")

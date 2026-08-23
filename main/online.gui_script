@@ -23,6 +23,7 @@ local champ_banner    = require("modules.champ_banner")
 local rank            = require("modules.rank_badge")
 local season_clock    = require("modules.season_clock")
 local search_clock    = require("modules.search_clock")
+local dialog_search   = require("modules.dialog_search")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local VISIBLE_W, VISIBLE_H = 1280, 720
@@ -610,9 +611,27 @@ function update(self, dt)
         -- dots keep their own clocks — neither is corrected by the server, so
         -- neither can jump.
         search_clock.tick(sr, dt)
-        sr.spin_t, sr.dots_t = (sr.spin_t or 0) + dt, (sr.dots_t or 0) + dt
+        sr.spin_t = (sr.spin_t or 0) + dt
         if sr.spin_t >= 0.07 then sr.spin_t = 0; sr.reel_ix = math.random(60); if self.invite_reel_node then pcall(gui.play_flipbook, self.invite_reel_node, "avatar_" .. sr.reel_ix) end end
-        if sr.dots_t >= 0.5 then sr.dots_t = 0; need_rebuild = true end
+
+        -- ONE FRAME OF THE DIALOG, NOT ONE REBUILD OF THE SCREEN.
+        --
+        -- This used to set need_rebuild twice a second, which tore down and
+        -- recreated the ENTIRE online screen — both panels, every row of the
+        -- player list, the dividers, the banner — so that a countdown digit
+        -- could change and three dots could cycle. Hundreds of gui nodes a
+        -- second to animate a string, for as long as the dialog was open.
+        --
+        -- dialog_search.animate sets the moving parts on the nodes that are
+        -- already there. It allocates nothing, and it runs every frame, which
+        -- is also the only way the entrance animations can play at all: at two
+        -- rebuilds a second a 450ms flight across the dialog got one frame.
+        dialog_search.animate(self, sr)
+
+        -- A rebuild is still needed when the LAYOUT is wrong rather than just
+        -- out of date — somebody joined, a winner was named, the search ended.
+        local key = dialog_search.structure_key(sr)
+        if key ~= sr._layout_key then sr._layout_key = key; need_rebuild = true end
     end
 
     -- ── Request dialog (incoming / outgoing) ──────────────────────────────

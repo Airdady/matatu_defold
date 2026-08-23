@@ -900,12 +900,24 @@ function update(self, dt)
             if self.search_reel_node then pcall(gui.play_flipbook, self.search_reel_node, "avatar_" .. sr.reel_ix) end
         end
 
-        -- Redraw the dialog roughly twice a second so the "searching…" dots and the
-        -- numeric countdown tick. The countdown ring itself tweens natively between
-        -- redraws, so this stays light (same cadence the online invite uses).
-        sr.dots_t = (sr.dots_t or 0) + dt
-        if sr.dots_t >= 0.5 then
-            sr.dots_t = 0
+        -- ONE FRAME OF THE DIALOG, NOT ONE REBUILD OF THE SCREEN.
+        --
+        -- This used to call rebuild() twice a second, which tore down and
+        -- recreated the whole tournament map so that a countdown digit could
+        -- change and three dots could cycle. Hundreds of gui nodes a second to
+        -- animate a string, for as long as the dialog was open.
+        --
+        -- dialog_search.animate sets the moving parts on the nodes that are
+        -- already there. It allocates nothing, and running every frame is also
+        -- the only way the entrance animations can play: at two rebuilds a
+        -- second a 450ms flight across the dialog got one frame.
+        dialog_search.animate(self, sr)
+
+        -- A rebuild is still needed when the LAYOUT is wrong rather than just
+        -- out of date — somebody joined, a winner was named, the search ended.
+        local key = dialog_search.structure_key(sr)
+        if key ~= sr._layout_key then
+            sr._layout_key = key
             rebuild(self)
         end
     end
