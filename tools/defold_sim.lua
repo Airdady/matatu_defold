@@ -309,7 +309,31 @@ function SIM.install_gui_stub()
     -- never fires rather than a screen that never finished being built.
     set_clipping_visible = function() end,
     set_clipping_inverted = function() end,
-    get_text_metrics_from_node = function() return { width = 10, height = 10 } end,
+    -- TEXT METRICS, WITH THE FIELDS THE REAL ONE HAS.
+    --
+    -- This used to answer a flat {width = 10, height = 10} for every string,
+    -- which made it useless for the two things callers actually measure: how
+    -- WIDE a label is, so a badge or a two-part line can be sized around it,
+    -- and how far its ink sits from the centre of its line box.
+    --
+    -- A width that ignores the text meant every layout measured the same and
+    -- no test could tell a fitted box from a fixed one. And max_ascent /
+    -- max_descent were simply absent, so code reading them got nil here and a
+    -- number on a device — the worst shape for a stub, since the fallback path
+    -- is the only one ever exercised.
+    --
+    -- Proportional to the string and roughly Teko-Bold's proportions: caps
+    -- reach the ascent, and the descent is the space reserved for the tails an
+    -- all-caps word does not have.
+    get_text_metrics_from_node = function(n)
+      local text = (n and n.text) or ""
+      return {
+        width = #text * 8,
+        height = 21,
+        max_ascent = 16,
+        max_descent = 5,
+      }
+    end,
     animate = function(n, prop, to, easing, dur, delay, cb)
       if type(delay) == "function" then cb = delay; delay = 0 end
       if cb then timer.delay((dur or 0) + (delay or 0), false, function() cb(nil, n) end) end

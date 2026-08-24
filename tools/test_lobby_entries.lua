@@ -64,8 +64,9 @@ check("open and closed look different", has(RIGHT, 'is_open and vmath.vector4(0.
 -- fixed 48-wide badge would have had the word hanging out of both ends.
 check("the badge is sized to its word", has(RIGHT, "badge_w = math.max"))
 check("...with a fallback if measuring fails", has(RIGHT, "#t_status * 11"))
-check("...and the label sits on the box's own centre",
-      has(RIGHT, "gui.set_position(bn, vmath.vector3(nx, tcy2, 0))"))
+-- NOT the box's exact centre — see the block below.
+check("...and the label sits where its ink centres",
+      has(RIGHT, "gui.set_position(bn, vmath.vector3(nx, tcy2 - bdrop, 0))"))
 -- The old row drew a hairline across the badge's top edge, which read as the
 -- label sitting low in its box rather than as a border.
 check("with no hairline to sit under", not has(RIGHT, "ny + 11"))
@@ -94,6 +95,27 @@ check("and the label is created AFTER the box, so it draws on top",
       string.format("box@%s text@%s", tostring(box_at), tostring(text_at)))
 check("the box is resized after the label is measured, not created after it",
       has(badge_block, "gui.set_size(badge"))
+
+-- LYING SLIGHTLY HIGH, reported after the box stopped covering it entirely.
+--
+-- A text node's pivot is the centre of its LINE BOX — ascent plus descent —
+-- not the centre of the ink. The descent is space reserved for the tails of
+-- g, j, p, q, y, and an all-caps word has none of them, so all of it is empty
+-- space hanging below the letters. Centre the line box and the letters sit
+-- high by half of it.
+check("the box takes the true centre",
+      has(badge_block, "gui.set_position(badge, vmath.vector3(nx, tcy2, 0))"))
+check("...and the label drops by its own metrics to match",
+      has(badge_block, "tcy2 - bdrop"))
+check("the drop is measured, not eyeballed", has(badge_block, "max_descent"))
+check("...and halved, since only half the line box is the empty reservation",
+      has(badge_block, "/ 2"))
+check("with a fallback when measuring fails", has(badge_block, "bdrop = 3"))
+
+-- The other half of "add some padding on top": a 25pt face in a 24px box is
+-- tight enough that any error in where the word sits shows up at once.
+local bh = tonumber(badge_block:match("BADGE_H%s*=%s*(%d+)"))
+check("the badge has breathing room", bh ~= nil and bh >= 26, tostring(bh))
 
 -- TOO WIDE, the other half of the report. Twelve a side around a four-letter
 -- word in a condensed face is a badge; twenty-two, which is what this first

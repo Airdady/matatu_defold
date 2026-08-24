@@ -1228,22 +1228,41 @@ function M.draw(self, ctx, left_M)
         -- It does not have to be. The box is made at a provisional size, the
         -- label on top of it, and then the box is RESIZED once the label has
         -- been measured. Nothing has to be drawn out of order to be measured.
-        local BADGE_H = 24
+        -- Twenty-six, not twenty-four: the extra two are breathing room above
+        -- and below a 25pt face, which was tight enough that any error in
+        -- where the word sat showed up immediately.
+        local BADGE_H = 26
         local badge = track(self, ui.box(vmath.vector3(0, 0, 0),
             vmath.vector3(56, BADGE_H, 0), badge_col))
         local bn = track(self, ui.text(vmath.vector3(0, 0, 0), t_status, "btn_sm", C.COL_WHITE))
 
-        local bw
+        -- Width AND the optical drop, from one measurement.
+        local bw, bdrop
         local bok = pcall(function()
             local m = gui.get_text_metrics_from_node(bn)
             local sc = gui.get_scale(bn)
             bw = m.width * sc.x
+            -- WHY THE LABEL NEEDS NUDGING DOWN AT ALL.
+            --
+            -- A text node's pivot is the centre of its LINE BOX — ascent plus
+            -- descent — not the centre of the ink. The descent is reserved for
+            -- the tails of g, j, p, q, y, and an all-caps word has none, so
+            -- every pixel of that reservation is empty space hanging below the
+            -- letters. Centre the line box and the letters themselves sit high
+            -- by half of it, which is exactly how "OPEN" read against a badge
+            -- whose box was perfectly centred.
+            --
+            -- Half the descent puts the ink back on the middle. Measured
+            -- rather than eyeballed, so it stays right if the badge font ever
+            -- changes size.
+            bdrop = ((m.max_descent or 0) * sc.y) / 2
         end)
         -- btn_sm is Teko-Bold at 25, a condensed face, so roughly eleven
         -- pixels a capital. Wide rather than tight, on the same reasoning
         -- detail_line uses: a badge slightly too big is invisible, one
         -- slightly too small clips the word.
         if not bok or not bw or bw <= 0 then bw = #t_status * 11 end
+        if not bdrop or bdrop <= 0 then bdrop = 3 end
 
         -- SIZED TO ITS WORD, not to a guess about it. The old badge was a flat
         -- 48 wide because "NEW" is three characters and always would be;
@@ -1256,10 +1275,11 @@ function M.draw(self, ctx, left_M)
 
         gui.set_size(badge, vmath.vector3(badge_w, BADGE_H, 0))
         gui.set_position(badge, vmath.vector3(nx, tcy2, 0))
-        -- Label and box share one centre, and nothing else is drawn on it: the
-        -- old row put a hairline across the badge's top edge, which read as the
-        -- word sitting low in its box rather than as a border.
-        gui.set_position(bn, vmath.vector3(nx, tcy2, 0))
+        -- The box takes the true centre; the label takes the centre its own
+        -- ink sits on, which is half a descent lower. Nothing else is drawn
+        -- there: the old row put a hairline across the badge's top edge, which
+        -- read as the word sitting low in its box rather than as a border.
+        gui.set_position(bn, vmath.vector3(nx, tcy2 - bdrop, 0))
     end
     cy = cy - t_h - C.BLOCK_GAP
 
