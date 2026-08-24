@@ -1302,21 +1302,28 @@ function M.draw(self, ctx, left_M)
     end
     local t_status = self._tw_status
 
-    -- Centre the title on the row, with the icon carried alongside it rather
-    -- than anchored to an edge. Measuring is what makes "centred" mean the
-    -- ICON AND TEXT TOGETHER are centred — centring the text alone and hanging
-    -- an icon off it puts the pair visibly left of middle.
+    -- ICON AND TITLE ON THE LEFT, badge on the right, same split every other
+    -- row in this panel uses (the team-cups row below anchors its icon at
+    -- cx - 80 for the same reason): a fixed left edge to read from, and
+    -- whatever sits at the right is a status, not a second heading competing
+    -- for the centre.
+    --
+    -- The title's width still has to be MEASURED even though it is no longer
+    -- centred, because the badge's left clearance is stated relative to where
+    -- the title actually ends, not to a guess about how long "TOURNAMENTS" is.
     local T_ICON, T_ICON_GAP = 32, 12
+    local icon_x = cx - 80
     local title_txt = "TOURNAMENTS"
-    local tn = track(self, ui.text(vmath.vector3(cx, tcy2, 0), title_txt, "btn_lg", C.COL_WHITE))
-    local tw = measure(tn, title_txt, "btn_lg", #title_txt * 13)
 
-    local group_w = T_ICON + T_ICON_GAP + tw
     local t_icon = track(self, ui.image(
-        vmath.vector3(cx - group_w/2 + T_ICON/2, tcy2, 0),
-        vmath.vector3(T_ICON, T_ICON, 0), "tournament_icon"))
+        vmath.vector3(icon_x, tcy2, 0), vmath.vector3(T_ICON, T_ICON, 0), "tournament_icon"))
     gui.set_color(t_icon, C.COL_WHITE)
-    gui.set_position(tn, vmath.vector3(cx - group_w/2 + T_ICON + T_ICON_GAP + tw/2, tcy2, 0))
+
+    local title_x = icon_x + T_ICON/2 + T_ICON_GAP
+    local tn = track(self, ui.text(vmath.vector3(title_x, tcy2, 0), title_txt, "btn_lg", C.COL_WHITE))
+    gui.set_pivot(tn, gui.PIVOT_W)
+    local tw = measure(tn, title_txt, "btn_lg", #title_txt * 13)
+    local title_right = title_x + tw
 
     self.tourn_badge_node = nil
     if t_status then
@@ -1357,7 +1364,32 @@ function M.draw(self, ctx, left_M)
         -- four-letter word and read as a banner.
         local BADGE_PAD = 12
         local badge_w = math.max(52, bw + BADGE_PAD * 2)
-        local nx = cx + pw/2 - badge_w/2 - 20
+
+        -- RIGHT-ALIGNED, WITH ROOM TO BREATHE FROM THE TITLE.
+        --
+        -- Two constraints, and they can genuinely conflict: "TOURNAMENTS" at
+        -- this row's size is not short, the panel is not wide, and "CLOSED"
+        -- is twice the width "NEW" ever was. So this is not a single
+        -- position, it is two, resolved in priority order:
+        --
+        --   1. NEVER draw past the row's own background. cx + pw/2 is that
+        --      edge, and a badge beyond it floats outside its own container,
+        --      which reads as broken rather than merely tight.
+        --   2. Otherwise, prefer clearing the title by TITLE_GAP. Normally
+        --      that costs nothing — the flush-right position already clears
+        --      it with room over — but on a long title it is what keeps the
+        --      badge from touching the word instead of quietly overlapping
+        --      it.
+        --
+        -- Priority 1 wins when they disagree, so the gap can shrink under a
+        -- genuinely tight combination of title and badge word, but the badge
+        -- can never spill outside its own row to buy more of it back. That
+        -- trade is the right one: a slightly close badge reads as a tight
+        -- layout, a badge outside its row reads as a bug.
+        local ROW_PAD, TITLE_GAP = 14, 14
+        local flush_nx  = cx + pw/2 - ROW_PAD - badge_w/2
+        local needed_nx = title_right + TITLE_GAP + badge_w/2
+        local nx = math.min(math.max(flush_nx, needed_nx), cx + pw/2 - badge_w/2)
 
         gui.set_size(badge, vmath.vector3(badge_w, BADGE_H, 0))
         gui.set_position(badge, vmath.vector3(nx, tcy2, 0))

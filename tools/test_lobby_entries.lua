@@ -48,13 +48,117 @@ check("the row draws a tournaments button", has(RIGHT, '"nav_tournaments"'))
 check("with its icon", has(RIGHT, '"tournament_icon"'))
 check("and its title", has(RIGHT, '"TOURNAMENTS"'))
 
--- CENTRED MEANS THE ICON AND THE TEXT TOGETHER. Centring the text alone and
--- hanging an icon off its left puts the visible pair off-centre by half an
--- icon — which is why the row measures before it places anything.
+-- ICON AND TITLE ON THE LEFT, at the same edge the team-cups row below uses
+-- (cx - 80), so both tiles read from one fixed left margin instead of each
+-- picking its own.
+check("the icon sits at the row's standard left edge", has(RIGHT, "icon_x = cx - 80"))
+check("the title starts just after it", has(RIGHT, "title_x = icon_x"))
+
+-- The title is measured even though it is no longer centred: the badge's
+-- clearance from it is stated relative to where the title actually ENDS, not
+-- a guess about how long "TOURNAMENTS" is.
 check("the title is measured, not guessed", has(RIGHT, "gui.get_text_metrics_from_node"))
-check("...and the icon and text are centred as one group", has(RIGHT, "group_w"))
+check("...to know where it actually ends", has(RIGHT, "title_right = title_x + tw"))
 check("...with a fallback if measuring fails", has(RIGHT, "#title_txt"))
 
+----------------------------------------------------------------------
+print("")
+print("THE ROW ACTUALLY LAYS OUT LEFT / RIGHT, WITH A GAP")
+----------------------------------------------------------------------
+-- The checks above only prove the source SAYS left and right; this re-does
+-- the row's own formula, the way test_battle_form.lua checks the battle
+-- maker, since nothing in Defold measures text at build time.
+--
+-- It deliberately does NOT plug in a guessed pixel width for "TOURNAMENTS" or
+-- "CLOSED" and assert an exact gap. Real Teko-Bold Condensed glyph widths are
+-- not something this harness can know, and the row's own fallback constants
+-- (13px/char, 11px/char) are stated in the source as WIDE ON PURPOSE — the
+-- safety net for when measurement fails, not a stand-in for real rendering.
+-- Testing "does the pessimistic fallback fit" would be testing the rare path
+-- as if it were the common one.
+--
+-- What IS knowable without a renderer is the shape of the formula: which
+-- constraint wins when they disagree, and that the badge can never end up
+-- outside its own row no matter how wide the words turn out to be.
+local ROW_PAD   = tonumber(RIGHT:match("local ROW_PAD, TITLE_GAP = (%d+)"))
+local TITLE_GAP = tonumber(RIGHT:match("local ROW_PAD, TITLE_GAP = %d+, (%d+)"))
+check("row padding and the title gap were found",
+      ROW_PAD ~= nil and TITLE_GAP ~= nil, string.format("%s %s", tostring(ROW_PAD), tostring(TITLE_GAP)))
+
+-- THE SHAPE OF THE FORMULA ITSELF, not just its constants. Everything below
+-- reimplements the INTENDED formula independently and checks it is internally
+-- consistent — which would keep passing even if the shipped code regressed to
+-- a bare math.min of the two candidates, since that reimplementation does not
+-- read the module's own arithmetic. This is the one line that actually would
+-- not survive that regression: a bare min picks whichever candidate is
+-- SMALLER, which is the one closer to the title — maximising the overlap
+-- instead of minimising it.
+check("the source prioritises clearing the title over hugging the inset",
+      has(RIGHT, "math.max(flush_nx, needed_nx)"))
+check("...capped so that preference still cannot draw past the row",
+      has(RIGHT, "math.min(math.max(flush_nx, needed_nx), cx + pw/2 - badge_w/2)"))
+
+local function nx_for(cx, pw, title_right, badge_w)
+    local flush_nx  = cx + pw/2 - ROW_PAD - badge_w/2
+    local needed_nx = title_right + TITLE_GAP + badge_w/2
+    return math.min(math.max(flush_nx, needed_nx), cx + pw/2 - badge_w/2)
+end
+
+local cx = 1088
+
+-- ROOMY: a short title, a wide panel. Nothing forces a compromise, so the
+-- gap constraint should win outright and the badge should sit inboard of the
+-- row's hard edge with room to spare.
+do
+    local pw, title_right, badge_w = 600, cx - 200, 80
+    local nx = nx_for(cx, pw, title_right, badge_w)
+    local badge_left, badge_right = nx - badge_w/2, nx + badge_w/2
+    check("roomy: badge stays right of the title", badge_left > title_right)
+    check("roomy: the full gap is kept", badge_left - title_right >= TITLE_GAP - 0.01,
+          string.format("%.1f", badge_left - title_right))
+    check("roomy: badge stays inside its own row", badge_right <= cx + pw/2 + 0.01,
+          string.format("right=%.1f edge=%.1f", badge_right, cx + pw/2))
+end
+
+-- TIGHT: exactly the situation a long title and a wide badge word create —
+-- the title's own end and the row's right edge are close together. This is
+-- where the two constraints disagree, and the invariant that has to hold
+-- whatever the real font turns out to measure is the row edge, not the gap.
+do
+    local pw, title_right, badge_w = 344, cx + 90, 90   -- title already close to the row's own edge
+    local nx = nx_for(cx, pw, title_right, badge_w)
+    local badge_right = nx + badge_w/2
+    check("tight: the badge never draws past its own row",
+          badge_right <= cx + pw/2 + 0.01,
+          string.format("right=%.1f edge=%.1f", badge_right, cx + pw/2))
+
+    -- THE PART A PLAIN math.min OF THE TWO CANDIDATES GETS WRONG. Given a
+    -- choice between "closer to the title" and "closer to the row's edge",
+    -- a bare min picks whichever number is SMALLER — which happens to be the
+    -- one closer to the title, maximising the overlap instead of minimising
+    -- it. The fix has to pick the one that gives the MOST clearance, only
+    -- backing off when the row's own edge forces it to.
+    local hard_cap = cx + pw/2 - badge_w/2
+    local needed_nx = title_right + TITLE_GAP + badge_w/2
+    check("tight: it pushes toward the clearer side, not the closer one",
+          math.abs(nx - math.min(needed_nx, hard_cap)) < 0.01,
+          string.format("nx=%.1f want=%.1f", nx, math.min(needed_nx, hard_cap)))
+end
+
+-- EXTREME: a title so long it already runs past where the panel ends. No
+-- formula can carve out clearance from nothing, but it must still not send
+-- the badge further right than the row itself.
+do
+    local pw, badge_w = 344, 90
+    local title_right = cx + pw/2 + 40   -- title's ink already past the row's own edge
+    local nx = nx_for(cx, pw, title_right, badge_w)
+    check("extreme: still clamped to the row's own edge",
+          nx + badge_w/2 <= cx + pw/2 + 0.01)
+end
+
+----------------------------------------------------------------------
+print("")
+print("THE BADGE SAYS SOMETHING TRUE")
 ----------------------------------------------------------------------
 print("")
 print("THE BADGE SAYS SOMETHING TRUE")
