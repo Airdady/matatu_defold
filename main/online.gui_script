@@ -562,6 +562,15 @@ function init(self)
 end
 
 function update(self, dt)
+    -- A MONOTONIC CLOCK FOR THINGS THAT ANIMATE ACROSS REBUILDS.
+    --
+    -- One addition a frame. rebuild() deletes and recreates every node on the
+    -- screen, so anything that animates has to be able to work out where its
+    -- animation had got to — otherwise it restarts from rest each time and,
+    -- on the paths that rebuild every frame (the savings promo types itself
+    -- out that way), never moves at all.
+    self.ui_clock = (self.ui_clock or 0) + dt
+
     if not self._active then return end
 
     local need_rebuild = false
@@ -659,6 +668,13 @@ function update(self, dt)
             need_rebuild = true
         end
     end
+
+    -- ── The tournaments badge, breathing while the door is open ──────────
+    -- Written straight into the node, like the season countdown below and for
+    -- the same reason: rebuild() would restart a tween every time, and the
+    -- paths that rebuild every frame would hold it at rest forever. Costs one
+    -- cosine and one set_scale, and only while the badge says OPEN.
+    right_panel.pulse_badge(self, self.ui_clock)
 
     -- ── Savings promo, typing itself out ─────────────────────────────────
     -- draw_savings_info works out how much of the copy to show from the wall

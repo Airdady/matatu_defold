@@ -129,6 +129,111 @@ end
 M.BATTLE_TYPES = { "NORMAL", "KNOCKOUT", "PARTY" }
 M.BATTLE_TYPE_LABELS = { NORMAL = "BATTLE", KNOCKOUT = "KNOCKOUT", PARTY = "PARTY" }
 
+-- ---------------------------------------------------------------------------
+-- THE OPEN BADGE'S HEARTBEAT
+--
+-- WHY IT IS NOT gui.animate, WHICH IS WHAT EVERYTHING ELSE HERE USES.
+--
+-- Two reasons, and the second one is fatal on its own.
+--
+-- 1. rebuild() deletes and recreates every node on this screen, and a fresh
+--    node has no animation on it. Rebuilds are not rare: an incoming-request
+--    banner rebuilds once a second, a socket burst up to twelve times a
+--    second, and the savings promo rebuilds EVERY FRAME while it types itself
+--    out. A looping tween restarted sixty times a second never leaves the
+--    start of its first ease — the badge would sit at rest, perfectly still,
+--    which is the opposite of the thing being asked for.
+--
+-- 2. PLAYBACK_LOOP_PINGPONG oscillates between the value the node HAD when the
+--    animation started and the target. So it cannot be seeded to the right
+--    phase to survive those restarts: seed it at 1.03 and it breathes between
+--    1.03 and 1.06 instead of 1.00 and 1.06. Phase continuity and correct
+--    amplitude are mutually exclusive with that playback mode.
+--
+-- So the scale is written straight into the node from a monotonic clock, once
+-- a frame, which is the pattern this screen already uses for the season
+-- countdown a few hundred lines down and for exactly the same reason. It costs
+-- one cosine and one set_scale, it cannot drift out of phase, and a rebuild in
+-- the middle of a breath is invisible because the next frame recomputes the
+-- same value from the same clock.
+
+--- How long one full in-and-out takes.
+M.BADGE_PULSE_PERIOD = 1.0
+
+--- How far it swells. Six percent is enough to catch the eye at the edge of
+--- vision and small enough that a still frame looks like no animation at all,
+--- which is what keeps it gentle rather than nagging.
+M.BADGE_PULSE_AMOUNT = 0.06
+
+--- The scale multiplier at a given moment. Pure, so the shape can be checked
+--- without a screen.
+--
+-- A raised cosine: it leaves 1.0 and returns to it with zero velocity, so
+-- there is no corner at either end of the breath. A triangle wave would tick.
+function M.badge_pulse_scale(clock)
+    local t = tonumber(clock)
+    if t == nil then return 1 end
+    local p = (t % M.BADGE_PULSE_PERIOD) / M.BADGE_PULSE_PERIOD
+    return 1 + M.BADGE_PULSE_AMOUNT * (0.5 - 0.5 * math.cos(p * 2 * math.pi))
+end
+
+--- Breathe the badge, if there is one and it is open.
+--
+-- Called every frame by the host. Safe when the node has been deleted by a
+-- rebuild that has not run draw() yet, and safe when the badge says CLOSED —
+-- CLOSED is a fact and sits still; OPEN is an invitation with a clock on it.
+function M.pulse_badge(self, clock)
+    local n = self and self.tourn_badge_node
+    if not n then return false end
+    local k = M.badge_pulse_scale(clock)
+    local ok = pcall(gui.set_scale, n, vmath.vector3(k, k, 1))
+    if not ok then self.tourn_badge_node = nil end
+    return ok
+end
+
+-- ---------------------------------------------------------------------------
+-- MEASURING TEXT ONCE, NOT ONCE PER REBUILD.
+--
+-- gui.get_text_metrics_from_node LAYS THE STRING OUT. It is the right tool —
+-- nothing in Defold measures text at build time — but this row is redrawn on
+-- every rebuild of the screen, and the strings it measures are fixed:
+-- "TOURNAMENTS", and one of "OPEN" or "CLOSED". Laying the same three strings
+-- out over and over, up to sixty times a second, buys nothing.
+--
+-- Keyed by font and text. Scale is not in the key because every caller here
+-- draws at 1; a caller that scaled would need it, which is why this stays
+-- local to this module rather than becoming a general helper.
+local TEXT_METRICS = {}
+
+local function measure(node, text, font, fallback_w)
+    local key = font .. "\0" .. text
+    local hit = TEXT_METRICS[key]
+    if hit then return hit.w, hit.drop end
+
+    local w, drop
+    local ok = pcall(function()
+        local m = gui.get_text_metrics_from_node(node)
+        local sc = gui.get_scale(node)
+        w = m.width * sc.x
+        -- THE OPTICAL DROP. A text node's pivot is the centre of its LINE BOX
+        -- — ascent plus descent — not the centre of the ink. The descent is
+        -- space reserved for the tails of g, j, p, q, y, and an all-caps word
+        -- has none, so centring the line box puts the letters high.
+        --
+        -- The exact correction is (ascent - descent - capHeight) / 2, and
+        -- Defold reports ascent and descent but never cap height. Half a
+        -- descent is the upper end of that range — it assumes capitals reach
+        -- the full ascent — and it overshot in practice. A quarter is the
+        -- middle, which is the most these metrics can justify.
+        drop = ((m.max_descent or 0) * sc.y) / 4
+    end)
+    if not ok or not w or w <= 0 then w = fallback_w end
+    if not drop or drop <= 0 then drop = 1.5 end
+
+    TEXT_METRICS[key] = { w = w, drop = drop }
+    return w, drop
+end
+
 -- Battle types the UI is allowed to SHOW.
 --
 -- PARTY IS UNMOUNTED, NOT DELETED. This one list is the whole switch: it feeds
@@ -1184,10 +1289,18 @@ function M.draw(self, ctx, left_M)
     track(self, ui.box(vmath.vector3(cx, tcy2, 0), vmath.vector3(pw, t_h, 0), C.COL_BG))
     mkbtn(self, "nav_tournaments", vmath.vector3(cx, tcy2, 0), vmath.vector3(pw, t_h, 0), nil, "container_bg")
 
-    -- The badge first: it decides how much room the centred title has to keep
-    -- clear of, and drawing it after would mean guessing.
-    local t_status = tournament_window.status_label(
-        u.tournaments, tournament_window.minute_of_day(os.date("*t")))
+    -- OPEN or CLOSED, from the same daily window the tournament screen greys
+    -- its PLAY button on. Cached for the minute it describes: the answer can
+    -- only change on a window boundary, and os.date builds a fresh table every
+    -- call — which this row does not need on a screen that rebuilds every
+    -- frame while the savings promo is typing.
+    local now_s = os.time()
+    if self._tw_at ~= now_s then
+        self._tw_at = now_s
+        self._tw_status = tournament_window.status_label(
+            u.tournaments, tournament_window.minute_of_day(os.date("*t", now_s)))
+    end
+    local t_status = self._tw_status
 
     -- Centre the title on the row, with the icon carried alongside it rather
     -- than anchored to an edge. Measuring is what makes "centred" mean the
@@ -1196,13 +1309,7 @@ function M.draw(self, ctx, left_M)
     local T_ICON, T_ICON_GAP = 32, 12
     local title_txt = "TOURNAMENTS"
     local tn = track(self, ui.text(vmath.vector3(cx, tcy2, 0), title_txt, "btn_lg", C.COL_WHITE))
-    local tw
-    local measured = pcall(function()
-        local m = gui.get_text_metrics_from_node(tn)
-        local sc = gui.get_scale(tn)
-        tw = m.width * sc.x
-    end)
-    if not measured or not tw or tw <= 0 then tw = #title_txt * 13 end
+    local tw = measure(tn, title_txt, "btn_lg", #title_txt * 13)
 
     local group_w = T_ICON + T_ICON_GAP + tw
     local t_icon = track(self, ui.image(
@@ -1211,6 +1318,7 @@ function M.draw(self, ctx, left_M)
     gui.set_color(t_icon, C.COL_WHITE)
     gui.set_position(tn, vmath.vector3(cx - group_w/2 + T_ICON + T_ICON_GAP + tw/2, tcy2, 0))
 
+    self.tourn_badge_node = nil
     if t_status then
         local is_open = (t_status == "OPEN")
         local badge_col = is_open and vmath.vector4(0.15, 0.8, 0.25, 1.0)
@@ -1221,63 +1329,32 @@ function M.draw(self, ctx, left_M)
         -- Defold draws gui nodes in creation order, so a box made after its
         -- label is a box drawn OVER its label. The badge came out as a solid
         -- green rectangle with nothing in it — the word was there the whole
-        -- time, underneath. The row this replaced had it right (box, then
-        -- text); measuring the label to size the box is what tempted the
-        -- order to be flipped.
+        -- time, underneath.
         --
-        -- It does not have to be. The box is made at a provisional size, the
-        -- label on top of it, and then the box is RESIZED once the label has
-        -- been measured. Nothing has to be drawn out of order to be measured.
-        -- Twenty-six, not twenty-four: the extra two are breathing room above
-        -- and below a 25pt face, which was tight enough that any error in
-        -- where the word sat showed up immediately.
+        -- Measuring the label in order to size the box is what tempted the
+        -- order to be flipped, and it never had to be: the box is made at a
+        -- provisional size, the label goes on top of it, and the box is
+        -- RESIZED once the label has been measured.
+        --
+        -- Twenty-six tall, not twenty-four: the extra two are breathing room
+        -- around a 25pt face, which was tight enough that any error in where
+        -- the word sat showed up immediately.
         local BADGE_H = 26
         local badge = track(self, ui.box(vmath.vector3(0, 0, 0),
             vmath.vector3(56, BADGE_H, 0), badge_col))
         local bn = track(self, ui.text(vmath.vector3(0, 0, 0), t_status, "btn_sm", C.COL_WHITE))
 
-        -- Width AND the optical drop, from one measurement.
-        local bw, bdrop
-        local bok = pcall(function()
-            local m = gui.get_text_metrics_from_node(bn)
-            local sc = gui.get_scale(bn)
-            bw = m.width * sc.x
-            -- WHY THE LABEL NEEDS NUDGING DOWN AT ALL.
-            --
-            -- A text node's pivot is the centre of its LINE BOX — ascent plus
-            -- descent — not the centre of the ink. The descent is reserved for
-            -- the tails of g, j, p, q, y, and an all-caps word has none, so
-            -- that reservation is empty space hanging below the letters and
-            -- centring the line box puts the letters high.
-            --
-            -- HOW FAR HIGH IS NOT SOMETHING THIS CAN MEASURE.
-            --
-            -- Work it through: with a centred pivot the baseline lands at
-            -- (descent - ascent) / 2 from the node, and the ink of a capital
-            -- runs from there up to the CAP HEIGHT. So the correction is
-            -- (ascent - descent - capHeight) / 2 — and Defold reports ascent
-            -- and descent but never cap height.
-            --
-            -- The two ends of the range are far apart. If capitals reached the
-            -- full ascent the answer would be half the descent; at Teko's
-            -- actual proportions, where the ascent leaves room for accents the
-            -- caps never use, it is close to nothing. Half a descent was tried
-            -- and overshot — the word went from sitting high to sitting low —
-            -- so this takes the middle of the range rather than an end of it.
-            bdrop = ((m.max_descent or 0) * sc.y) / 4
-        end)
         -- btn_sm is Teko-Bold at 25, a condensed face, so roughly eleven
-        -- pixels a capital. Wide rather than tight, on the same reasoning
-        -- detail_line uses: a badge slightly too big is invisible, one
-        -- slightly too small clips the word.
-        if not bok or not bw or bw <= 0 then bw = #t_status * 11 end
-        if not bdrop or bdrop <= 0 then bdrop = 1.5 end
+        -- pixels a capital when the measurement is unavailable. Wide rather
+        -- than tight, on the same reasoning detail_line uses: a badge slightly
+        -- too big is invisible, one slightly too small clips the word.
+        local bw, bdrop = measure(bn, t_status, "btn_sm", #t_status * 11)
 
         -- SIZED TO ITS WORD, not to a guess about it. The old badge was a flat
         -- 48 wide because "NEW" is three characters and always would be;
-        -- "CLOSED" is six. The padding is twelve a side — twenty-two, which is
-        -- what this first shipped with, put nearly two extra characters of air
-        -- around a four-letter word and read as a banner rather than a badge.
+        -- "CLOSED" is six. Twelve a side — twenty-two, which this first
+        -- shipped with, put nearly two extra characters of air around a
+        -- four-letter word and read as a banner.
         local BADGE_PAD = 12
         local badge_w = math.max(52, bw + BADGE_PAD * 2)
         local nx = cx + pw/2 - badge_w/2 - 20
@@ -1285,35 +1362,19 @@ function M.draw(self, ctx, left_M)
         gui.set_size(badge, vmath.vector3(badge_w, BADGE_H, 0))
         gui.set_position(badge, vmath.vector3(nx, tcy2, 0))
         -- The box takes the true centre; the label takes the centre its own
-        -- ink sits on, which is half a descent lower. Nothing else is drawn
-        -- there: the old row put a hairline across the badge's top edge, which
-        -- read as the word sitting low in its box rather than as a border.
+        -- ink sits on, which is a fraction of a descent lower. Nothing else is
+        -- drawn there: the old row put a hairline across the badge's top edge,
+        -- which read as the word sitting low in its box rather than as a
+        -- border.
         gui.set_position(bn, vmath.vector3(nx, tcy2 - bdrop, 0))
 
-        -- A HEARTBEAT WHILE THE DOOR IS OPEN.
-        --
-        -- CLOSED is a fact and sits still. OPEN is an invitation with a clock
-        -- on it — the championship runs a daily window and shuts again — so
-        -- the badge breathes while it is live and stops the moment it is not.
-        -- A pulse on both would say nothing; a pulse on this one is the row
-        -- asking to be tapped.
-        --
-        -- Ping-ponged over half a second, so a full in-and-out is one second.
-        -- Six percent: enough to catch the eye at the edge of vision and small
-        -- enough that a still frame looks like no animation at all, which is
-        -- what keeps it gentle rather than nagging.
-        --
-        -- Native, like the search dialog's countdown ring. gui.animate tweens
-        -- on its own clock, so this costs nothing per frame and needs no
-        -- rebuild to keep moving — this screen only rebuilds on events, and a
-        -- pulse driven from a redraw would sit frozen between them.
-        --
-        -- Only the BOX moves. Scaling the label with it would resample the
-        -- glyphs every frame for no gain, and a word that grows and shrinks
-        -- reads as a wobble where a box that breathes reads as a pulse.
+        -- A HEARTBEAT WHILE THE DOOR IS OPEN. CLOSED is a fact and sits still;
+        -- OPEN is an invitation with a clock on it, so only one of them has any
+        -- reason to move. The host ticks this node once a frame — see
+        -- M.pulse_badge and the note above it for why it is not gui.animate.
         if is_open then
-            pcall(gui.animate, badge, "scale", vmath.vector3(1.06, 1.06, 1),
-                gui.EASING_INOUTSINE, 0.5, 0, nil, gui.PLAYBACK_LOOP_PINGPONG)
+            self.tourn_badge_node = badge
+            M.pulse_badge(self, self.ui_clock)
         end
     end
     cy = cy - t_h - C.BLOCK_GAP

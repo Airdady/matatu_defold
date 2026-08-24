@@ -14,6 +14,16 @@
 -- Source is read rather than run: these are gui_scripts, and what is being
 -- checked is which entry points EXIST, which is a property of the text.
 local here = arg and arg[0] and arg[0]:match("^(.*)/[^/]*$") or "."
+package.path = here .. "/../?.lua;" .. here .. "/?.lua;" .. package.path
+
+-- Most of this file reads source rather than running it — what is being
+-- checked is which entry points EXIST, which is a property of the text. The
+-- pulse is the exception: its shape is arithmetic, so it is exercised for
+-- real, and that needs the engine stubbed.
+local SIM = dofile(here .. "/defold_sim.lua")
+SIM.install_gui_stub()
+_G.window.set_listener = function() end
+_G.http = { request = function() end }
 
 local pass, fail = 0, 0
 local function check(name, cond, detail)
@@ -113,11 +123,11 @@ check("the box takes the true centre",
       has(badge_block, "gui.set_position(badge, vmath.vector3(nx, tcy2, 0))"))
 check("...and the label drops by its own metrics to match",
       has(badge_block, "tcy2 - bdrop"))
-check("the drop is measured, not eyeballed", has(badge_block, "max_descent"))
-local frac = tonumber(badge_block:match("max_descent or 0%) %* sc%.y%) / (%d+)"))
+check("the drop is measured, not eyeballed", has(RIGHT, "max_descent"))
+local frac = tonumber(RIGHT:match("max_descent or 0%) %* sc%.y%) / (%d+)"))
 check("...and scaled to the middle of the range it cannot measure",
       frac == 4, tostring(frac))
-local fb = tonumber(badge_block:match("bdrop = ([%d%.]+)"))
+local fb = tonumber(RIGHT:match("drop = ([%d%.]+)%s*end"))
 check("with a fallback when measuring fails, on the same scale",
       fb ~= nil and fb > 0 and fb <= 2, tostring(fb))
 
@@ -142,29 +152,83 @@ print("OPEN BREATHES, CLOSED SITS STILL")
 -- championship runs a daily window and shuts again — so only one of them has
 -- any reason to move. A pulse on both would say nothing.
 check("the pulse is conditional on being open",
-      badge_block:match("if is_open then%s*\n%s*pcall%(gui%.animate") ~= nil)
+      badge_block:match("if is_open then") ~= nil)
+check("...and the node is handed to the host to tick",
+      has(badge_block, "self.tourn_badge_node = badge"))
+check("...and cleared when there is nothing to breathe",
+      has(RIGHT, "self.tourn_badge_node = nil"))
 
--- Native, like the search dialog's countdown ring: gui.animate tweens on its
--- own clock, so it costs nothing per frame and needs no rebuild to keep
--- moving. This screen only rebuilds on events, and a pulse driven from a
--- redraw would sit frozen between them.
-check("...and runs natively rather than off a redraw",
-      has(badge_block, "gui.PLAYBACK_LOOP_PINGPONG"))
-check("...ping-ponged, so it comes back down", has(badge_block, "PINGPONG"))
+-- NOT gui.animate, which is what everything else on this screen uses. Two
+-- reasons, and the second is fatal on its own:
+--
+--   1. rebuild() deletes and recreates every node here, and a fresh node has
+--      no animation. Rebuilds are not rare — a banner rebuilds once a second,
+--      a socket burst up to twelve times a second, and the savings promo
+--      rebuilds EVERY FRAME while it types itself out. A looping tween
+--      restarted sixty times a second never leaves the start of its first
+--      ease: the badge would sit perfectly still.
+--
+--   2. PLAYBACK_LOOP_PINGPONG oscillates between the value the node HAD when
+--      the animation started and the target, so it cannot be seeded to the
+--      right phase to survive those restarts without corrupting the
+--      amplitude. Phase continuity and correct amplitude are mutually
+--      exclusive with that playback mode.
+local RIGHT_CODE2 = RIGHT:gsub("%-%-[^\n]*", "")
+check("no tween is left to be restarted by a rebuild",
+      not has(RIGHT_CODE2, "PLAYBACK_LOOP_PINGPONG"))
+check("it is written into the node from a clock instead",
+      has(RIGHT, "function M.pulse_badge"))
+check("...and the host ticks it every frame",
+      has(read("main/online.gui_script"), "right_panel.pulse_badge(self, self.ui_clock)"))
+check("...off a monotonic clock that survives rebuilds",
+      has(read("main/online.gui_script"), "self.ui_clock = (self.ui_clock or 0) + dt"))
 
--- Half a second each way is a one-second in-and-out.
-local dur = tonumber(badge_block:match("gui%.EASING_INOUTSINE, ([%d%.]+),"))
-check("a full pump takes about a second", dur ~= nil and dur == 0.5, tostring(dur))
+----------------------------------------------------------------------
+print("")
+print("THE BREATH ITSELF")
+----------------------------------------------------------------------
+local R = require("modules.online_right")
 
--- Small enough that a still frame looks like no animation at all.
-local amp = tonumber(badge_block:match("vmath%.vector3%(1%.(%d+), 1%.%d+, 1%)"))
-check("and it is gentle", amp ~= nil and amp <= 10, tostring(amp))
+local function approx(name, got, want, tol)
+    check(name, math.abs(got - want) <= (tol or 0.0005),
+          string.format("%.4f vs %.4f", got, want))
+end
 
--- Only the BOX moves: scaling the label would resample the glyphs every frame
--- for no gain, and a word that grows and shrinks reads as a wobble where a box
--- that breathes reads as a pulse.
-check("the label is not dragged into it",
-      badge_block:match('gui%.animate, bn,') == nil)
+approx("starts at rest", R.badge_pulse_scale(0), 1)
+approx("swells fully at the half-way point",
+       R.badge_pulse_scale(R.BADGE_PULSE_PERIOD / 2), 1 + R.BADGE_PULSE_AMOUNT)
+approx("and is back at rest a second later", R.badge_pulse_scale(R.BADGE_PULSE_PERIOD), 1)
+approx("...and every second after that", R.badge_pulse_scale(R.BADGE_PULSE_PERIOD * 97), 1)
+check("a full pump takes about a second", R.BADGE_PULSE_PERIOD == 1.0)
+check("and it is gentle", R.BADGE_PULSE_AMOUNT <= 0.10, tostring(R.BADGE_PULSE_AMOUNT))
+
+-- A RAISED COSINE, NOT A TRIANGLE. It leaves 1.0 and returns to it with zero
+-- velocity, so there is no corner at either end of the breath — a triangle
+-- wave would tick audibly, visually.
+local prev, vprev = R.badge_pulse_scale(0), nil
+local lo, hi, max_jerk = 2, 0, 0
+for i = 1, 600 do
+    local v = R.badge_pulse_scale(i / 600 * R.BADGE_PULSE_PERIOD)
+    local dv = v - prev
+    if vprev then max_jerk = math.max(max_jerk, math.abs(dv - vprev)) end
+    vprev, prev = dv, v
+    lo, hi = math.min(lo, v), math.max(hi, v)
+end
+approx("never dips below rest", lo, 1, 0.0001)
+approx("never overshoots the amplitude", hi, 1 + R.BADGE_PULSE_AMOUNT, 0.001)
+check("and has no corner in it", max_jerk < 0.00002, string.format("%.8f", max_jerk))
+
+-- PHASE CONTINUITY IS THE WHOLE POINT. Two rebuilds a millisecond apart must
+-- land on the same value, because the clock is the only thing that decides it.
+approx("the same instant gives the same breath",
+       R.badge_pulse_scale(4.237), R.badge_pulse_scale(4.237))
+approx("...and it does not care when the last rebuild was",
+       R.badge_pulse_scale(4.237), R.badge_pulse_scale(4.237 + R.BADGE_PULSE_PERIOD * 3))
+check("rubbish does not throw", R.badge_pulse_scale(nil) == 1)
+
+-- The host calls this every frame whether or not there is a badge.
+check("nothing to pulse is not an error", R.pulse_badge({}, 1.0) == false)
+check("...nor is a screen that has not drawn yet", R.pulse_badge(nil, 1.0) == false)
 
 ----------------------------------------------------------------------
 print("")
