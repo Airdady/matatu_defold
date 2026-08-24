@@ -136,6 +136,38 @@ check("...and the minimum width is not a banner either", floor_w ~= nil and floo
 
 ----------------------------------------------------------------------
 print("")
+print("OPEN BREATHES, CLOSED SITS STILL")
+----------------------------------------------------------------------
+-- CLOSED is a fact. OPEN is an invitation with a clock on it — the
+-- championship runs a daily window and shuts again — so only one of them has
+-- any reason to move. A pulse on both would say nothing.
+check("the pulse is conditional on being open",
+      badge_block:match("if is_open then%s*\n%s*pcall%(gui%.animate") ~= nil)
+
+-- Native, like the search dialog's countdown ring: gui.animate tweens on its
+-- own clock, so it costs nothing per frame and needs no rebuild to keep
+-- moving. This screen only rebuilds on events, and a pulse driven from a
+-- redraw would sit frozen between them.
+check("...and runs natively rather than off a redraw",
+      has(badge_block, "gui.PLAYBACK_LOOP_PINGPONG"))
+check("...ping-ponged, so it comes back down", has(badge_block, "PINGPONG"))
+
+-- Half a second each way is a one-second in-and-out.
+local dur = tonumber(badge_block:match("gui%.EASING_INOUTSINE, ([%d%.]+),"))
+check("a full pump takes about a second", dur ~= nil and dur == 0.5, tostring(dur))
+
+-- Small enough that a still frame looks like no animation at all.
+local amp = tonumber(badge_block:match("vmath%.vector3%(1%.(%d+), 1%.%d+, 1%)"))
+check("and it is gentle", amp ~= nil and amp <= 10, tostring(amp))
+
+-- Only the BOX moves: scaling the label would resample the glyphs every frame
+-- for no gain, and a word that grows and shrinks reads as a wobble where a box
+-- that breathes reads as a pulse.
+check("the label is not dragged into it",
+      badge_block:match('gui%.animate, bn,') == nil)
+
+----------------------------------------------------------------------
+print("")
 print("TEAM CUPS HAS ITS LOBBY TILE BACK")
 ----------------------------------------------------------------------
 check("the tile is titled TEAM CUPS", has(LOBBY, 'title       = "TEAM CUPS"'))

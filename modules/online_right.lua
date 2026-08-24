@@ -1289,6 +1289,32 @@ function M.draw(self, ctx, left_M)
         -- there: the old row put a hairline across the badge's top edge, which
         -- read as the word sitting low in its box rather than as a border.
         gui.set_position(bn, vmath.vector3(nx, tcy2 - bdrop, 0))
+
+        -- A HEARTBEAT WHILE THE DOOR IS OPEN.
+        --
+        -- CLOSED is a fact and sits still. OPEN is an invitation with a clock
+        -- on it — the championship runs a daily window and shuts again — so
+        -- the badge breathes while it is live and stops the moment it is not.
+        -- A pulse on both would say nothing; a pulse on this one is the row
+        -- asking to be tapped.
+        --
+        -- Ping-ponged over half a second, so a full in-and-out is one second.
+        -- Six percent: enough to catch the eye at the edge of vision and small
+        -- enough that a still frame looks like no animation at all, which is
+        -- what keeps it gentle rather than nagging.
+        --
+        -- Native, like the search dialog's countdown ring. gui.animate tweens
+        -- on its own clock, so this costs nothing per frame and needs no
+        -- rebuild to keep moving — this screen only rebuilds on events, and a
+        -- pulse driven from a redraw would sit frozen between them.
+        --
+        -- Only the BOX moves. Scaling the label with it would resample the
+        -- glyphs every frame for no gain, and a word that grows and shrinks
+        -- reads as a wobble where a box that breathes reads as a pulse.
+        if is_open then
+            pcall(gui.animate, badge, "scale", vmath.vector3(1.06, 1.06, 1),
+                gui.EASING_INOUTSINE, 0.5, 0, nil, gui.PLAYBACK_LOOP_PINGPONG)
+        end
     end
     cy = cy - t_h - C.BLOCK_GAP
 
