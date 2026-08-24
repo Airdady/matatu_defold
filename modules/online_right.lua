@@ -1,6 +1,7 @@
 local ws            = require("modules.websocket_manager")
 local search_clock = require("modules.search_clock")
 local dialog_search = require("modules.dialog_search")
+local tournament_window = require("modules.tournament_window")
 local GameMode      = require("modules.game_mode")
 local app_state     = require("modules.app_state")
 local toast         = require("modules.toast")
@@ -130,19 +131,23 @@ M.BATTLE_TYPE_LABELS = { NORMAL = "BATTLE", KNOCKOUT = "KNOCKOUT", PARTY = "PART
 
 -- Battle types the UI is allowed to SHOW.
 --
--- PARTY is back. It sits third, below KNOCKOUT, and drives two things from
--- this one list: the lobby's right-hand battle rows (each with its own INVITE
--- and EDIT, see the loop further down) and the type picker inside the battle
--- maker. Everything either of them needs was already here while it was hidden
--- — PARTY_TIERS, the is_party branches, battle_of_type, the "N PLAYERS" row
--- detail and the party icon in ui.atlas — so this list is genuinely the whole
--- switch.
+-- PARTY IS UNMOUNTED, NOT DELETED. This one list is the whole switch: it feeds
+-- the lobby's right-hand battle rows (each with its own INVITE and EDIT) and
+-- the type picker inside the battle maker, so dropping the word from it takes
+-- party off both surfaces and nothing else.
 --
--- The server side it talks to is the four-seat table in be_matatu
--- (common/services/partyRules.ts and matatu/websocket/handlers/party.ts):
--- twenty seconds to fill four chairs, 200 to sit down and 500 the ceiling,
--- and every entry refunded if the table does not fill.
-M.BATTLE_TYPES_VISIBLE = { "NORMAL", "KNOCKOUT", "PARTY" }
+-- Everything behind it stays exactly where it is — PARTY_TIERS, PARTY_MODES,
+-- PARTY_CAPS, the is_party branches through the maker, battle_of_type, the
+-- "N PLAYERS" detail row, the party icon in ui.atlas, and the four-seat table
+-- on the server (be_matatu common/services/partyRules.ts and
+-- matatu/websocket/handlers/party.ts). Put the word back and all of it
+-- returns.
+--
+-- Deleting a feature in order to hide it is how you find out, six weeks later,
+-- which half of it something else depended on. It is also the honest state of
+-- this one: the maker and the invite flow are finished, the four-seat GAME is
+-- not, so the entry points come down until it is.
+M.BATTLE_TYPES_VISIBLE = { "NORMAL", "KNOCKOUT" }
 
 -- Resolve the battle a user holds for a given type T ∈ {NORMAL,KNOCKOUT,PARTY}.
 function M.battle_of_type(u, T)
@@ -1163,17 +1168,76 @@ function M.draw(self, ctx, left_M)
     end
     cy = cy - battle_h - (C.BLOCK_GAP + 8)
 
-    -- ── Tournaments: MOVED TO THE LOBBY ──────────────────────────────────
+    -- ── Tournaments panel ────────────────────────────────────────────────
     --
-    -- This panel used to be the only way in, which put the mode carrying the
-    -- championship ladder and the season prize table one tap deeper than the
-    -- offline modes on the front screen. It is a headline mode, so it now
-    -- sits beside PLAY ONLINE in the lobby's top row (main/lobby.gui_script,
-    -- the nav_tournaments_lobby tile) and this row comes out.
+    -- Back in the players list, where it was. It briefly lived on the lobby's
+    -- top row instead, in the slot TEAM CUPS had; both moves are undone.
     --
-    -- The `nav_tournaments` handler in online.gui_script is deliberately left
-    -- in place: nothing routes to it from here any more, but it costs one
-    -- branch and it is what a stale build or a deep link would still land on.
+    -- The title is CENTRED in the row rather than sitting left of an icon, and
+    -- the badge says something true. It read "NEW" — a word that was accurate
+    -- for about a day after the feature shipped and had been decoration ever
+    -- since. It now reads OPEN or CLOSED, from the same daily window the
+    -- tournament screen greys its PLAY button on (modules/tournament_window,
+    -- which both read so the two cannot drift).
+    local t_h  = 72
+    local tcy2 = cy - t_h/2
+    track(self, ui.box(vmath.vector3(cx, tcy2, 0), vmath.vector3(pw, t_h, 0), C.COL_BG))
+    mkbtn(self, "nav_tournaments", vmath.vector3(cx, tcy2, 0), vmath.vector3(pw, t_h, 0), nil, "container_bg")
+
+    -- The badge first: it decides how much room the centred title has to keep
+    -- clear of, and drawing it after would mean guessing.
+    local t_status = tournament_window.status_label(
+        u.tournaments, tournament_window.minute_of_day(os.date("*t")))
+
+    -- Centre the title on the row, with the icon carried alongside it rather
+    -- than anchored to an edge. Measuring is what makes "centred" mean the
+    -- ICON AND TEXT TOGETHER are centred — centring the text alone and hanging
+    -- an icon off it puts the pair visibly left of middle.
+    local T_ICON, T_ICON_GAP = 32, 12
+    local title_txt = "TOURNAMENTS"
+    local tn = track(self, ui.text(vmath.vector3(cx, tcy2, 0), title_txt, "btn_lg", C.COL_WHITE))
+    local tw
+    local measured = pcall(function()
+        local m = gui.get_text_metrics_from_node(tn)
+        local sc = gui.get_scale(tn)
+        tw = m.width * sc.x
+    end)
+    if not measured or not tw or tw <= 0 then tw = #title_txt * 13 end
+
+    local group_w = T_ICON + T_ICON_GAP + tw
+    local t_icon = track(self, ui.image(
+        vmath.vector3(cx - group_w/2 + T_ICON/2, tcy2, 0),
+        vmath.vector3(T_ICON, T_ICON, 0), "tournament_icon"))
+    gui.set_color(t_icon, C.COL_WHITE)
+    gui.set_position(tn, vmath.vector3(cx - group_w/2 + T_ICON + T_ICON_GAP + tw/2, tcy2, 0))
+
+    if t_status then
+        -- SIZED TO ITS WORD. The old badge was a fixed 48 wide because "NEW"
+        -- is three characters and always would be. "CLOSED" is six and would
+        -- have hung out of both ends of it.
+        local bn = track(self, ui.text(vmath.vector3(0, 0, 0), t_status, "btn_sm", C.COL_WHITE))
+        local bw
+        local bok = pcall(function()
+            local m = gui.get_text_metrics_from_node(bn)
+            local sc = gui.get_scale(bn)
+            bw = m.width * sc.x
+        end)
+        if not bok or not bw or bw <= 0 then bw = #t_status * 9 end
+
+        local BADGE_PAD, BADGE_H = 22, 24
+        local badge_w = math.max(56, bw + BADGE_PAD * 2)
+        local nx = cx + pw/2 - badge_w/2 - 20
+        local is_open = (t_status == "OPEN")
+        local badge_col = is_open and vmath.vector4(0.15, 0.8, 0.25, 1.0)
+            or vmath.vector4(0.55, 0.16, 0.16, 1.0)
+
+        track(self, ui.box(vmath.vector3(nx, tcy2, 0), vmath.vector3(badge_w, BADGE_H, 0), badge_col))
+        -- The text goes on the SAME centre as the box, and nothing else: the
+        -- old row drew a hairline across the badge's top edge, which read as
+        -- the label sitting low in its box rather than as a border.
+        gui.set_position(bn, vmath.vector3(nx, tcy2, 0))
+    end
+    cy = cy - t_h - C.BLOCK_GAP
 
     -- ── Team Tournaments panel — only shown once this account has actually
     -- created or joined one (tracked client-side since last create/join —

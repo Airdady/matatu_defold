@@ -7,6 +7,7 @@ local app_state     = require("modules.app_state")
 local ws            = require("modules.websocket_manager")
 local screen        = require("modules.screen")
 local dialog_search = require("modules.dialog_search")
+local tournament_window = require("modules.tournament_window")
 local api           = require("modules.api_service")
 local toast         = require("modules.toast")
 
@@ -30,12 +31,13 @@ local DLG_COLORS = {
 }
 
 -- ═══════════════════════════════════════════════════════════════════════════════
--- TOURNAMENT TIME CONFIGURATION - Swiftly change these values as needed
+-- TOURNAMENT TIME CONFIGURATION — now in modules/tournament_window
 -- ═══════════════════════════════════════════════════════════════════════════════
-local TOURNAMENT_START_HOUR   = 8     -- 09:00 (24-hour format)
-local TOURNAMENT_START_MINUTE = 0
-local TOURNAMENT_END_HOUR     = 23    -- 23:59 (24-hour format)
-local TOURNAMENT_END_MINUTE   = 59
+-- The daily window moved out of this file. The players-list row wears an
+-- OPEN / CLOSED badge that has to mean the same thing this screen means when
+-- it greys the PLAY button, and two copies of a schedule is a promise that
+-- they will drift. Change the hours in tournament_window.START_HOUR and its
+-- neighbours; a tournament's own activeTime still overrides them.
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- PLAYER LOCATOR (RIG) CONFIGURATION - tune the map marker here
@@ -401,34 +403,21 @@ check_timer_states = function(self)
     self.timer_str = "00:00:00"
     self.timer_desc = ""
 
-    -- Use the configurable start/end times from top of file
-    local sh, sm = TOURNAMENT_START_HOUR, TOURNAMENT_START_MINUTE
-    local eh, em = TOURNAMENT_END_HOUR, TOURNAMENT_END_MINUTE
-    
-    -- Format for display strings
-    local start_str = string.format("%02d:%02d", sh, sm)
-    local end_str = string.format("%02d:%02d", eh, em)
-
-    -- Allow tournament data to override if specified
-    if t.activeTime then
-        if t.activeTime.start then
-            local ov_sh, ov_sm = t.activeTime.start:match("(%d+):(%d+)")
-            sh = tonumber(ov_sh) or sh
-            sm = tonumber(ov_sm) or sm
-            start_str = t.activeTime.start
-        end
-        if t.activeTime["end"] then
-            local ov_eh, ov_em = t.activeTime["end"]:match("(%d+):(%d+)")
-            eh = tonumber(ov_eh) or eh
-            em = tonumber(ov_em) or em
-            end_str = t.activeTime["end"]
-        end
+    -- THE WINDOW COMES FROM modules/tournament_window, NOT FROM HERE.
+    --
+    -- The players-list row wears an OPEN / CLOSED badge now, and it has to
+    -- mean the same thing this screen means when it greys the PLAY button. Two
+    -- copies of a schedule is a promise that they will drift — one of them
+    -- gets an override honoured or the overnight case fixed, and the other
+    -- keeps sending players to a door that is shut.
+    local start_mins, end_mins = tournament_window.bounds(t)
+    local function hhmm(mins)
+        return string.format("%02d:%02d", math.floor(mins / 60), mins % 60)
     end
+    local start_str, end_str = hhmm(start_mins), hhmm(end_mins)
 
     local dt = os.date("*t", now)
-    local cur_mins = dt.hour * 60 + dt.min
-    local start_mins = sh * 60 + sm
-    local end_mins = eh * 60 + em
+    local cur_mins = tournament_window.minute_of_day(dt)
 
     if cur_mins < start_mins then
         self.is_dormant = true
