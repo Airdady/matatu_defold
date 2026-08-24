@@ -1247,22 +1247,31 @@ function M.draw(self, ctx, left_M)
             -- A text node's pivot is the centre of its LINE BOX — ascent plus
             -- descent — not the centre of the ink. The descent is reserved for
             -- the tails of g, j, p, q, y, and an all-caps word has none, so
-            -- every pixel of that reservation is empty space hanging below the
-            -- letters. Centre the line box and the letters themselves sit high
-            -- by half of it, which is exactly how "OPEN" read against a badge
-            -- whose box was perfectly centred.
+            -- that reservation is empty space hanging below the letters and
+            -- centring the line box puts the letters high.
             --
-            -- Half the descent puts the ink back on the middle. Measured
-            -- rather than eyeballed, so it stays right if the badge font ever
-            -- changes size.
-            bdrop = ((m.max_descent or 0) * sc.y) / 2
+            -- HOW FAR HIGH IS NOT SOMETHING THIS CAN MEASURE.
+            --
+            -- Work it through: with a centred pivot the baseline lands at
+            -- (descent - ascent) / 2 from the node, and the ink of a capital
+            -- runs from there up to the CAP HEIGHT. So the correction is
+            -- (ascent - descent - capHeight) / 2 — and Defold reports ascent
+            -- and descent but never cap height.
+            --
+            -- The two ends of the range are far apart. If capitals reached the
+            -- full ascent the answer would be half the descent; at Teko's
+            -- actual proportions, where the ascent leaves room for accents the
+            -- caps never use, it is close to nothing. Half a descent was tried
+            -- and overshot — the word went from sitting high to sitting low —
+            -- so this takes the middle of the range rather than an end of it.
+            bdrop = ((m.max_descent or 0) * sc.y) / 4
         end)
         -- btn_sm is Teko-Bold at 25, a condensed face, so roughly eleven
         -- pixels a capital. Wide rather than tight, on the same reasoning
         -- detail_line uses: a badge slightly too big is invisible, one
         -- slightly too small clips the word.
         if not bok or not bw or bw <= 0 then bw = #t_status * 11 end
-        if not bdrop or bdrop <= 0 then bdrop = 3 end
+        if not bdrop or bdrop <= 0 then bdrop = 1.5 end
 
         -- SIZED TO ITS WORD, not to a guess about it. The old badge was a flat
         -- 48 wide because "NEW" is three characters and always would be;

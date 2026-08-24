@@ -100,17 +100,26 @@ check("the box is resized after the label is measured, not created after it",
 --
 -- A text node's pivot is the centre of its LINE BOX — ascent plus descent —
 -- not the centre of the ink. The descent is space reserved for the tails of
--- g, j, p, q, y, and an all-caps word has none of them, so all of it is empty
--- space hanging below the letters. Centre the line box and the letters sit
--- high by half of it.
+-- g, j, p, q, y, and an all-caps word has none of them, so that reservation is
+-- empty space hanging below the letters and centring the line box puts the
+-- letters high.
+--
+-- The exact correction is (ascent - descent - capHeight) / 2, and Defold
+-- reports ascent and descent but never cap height. Half a descent is the
+-- upper end of that range — it assumes capitals reach the full ascent — and it
+-- overshot: the word went from sitting high to sitting low. A quarter is the
+-- middle of the range, which is the most the metrics available can justify.
 check("the box takes the true centre",
       has(badge_block, "gui.set_position(badge, vmath.vector3(nx, tcy2, 0))"))
 check("...and the label drops by its own metrics to match",
       has(badge_block, "tcy2 - bdrop"))
 check("the drop is measured, not eyeballed", has(badge_block, "max_descent"))
-check("...and halved, since only half the line box is the empty reservation",
-      has(badge_block, "/ 2"))
-check("with a fallback when measuring fails", has(badge_block, "bdrop = 3"))
+local frac = tonumber(badge_block:match("max_descent or 0%) %* sc%.y%) / (%d+)"))
+check("...and scaled to the middle of the range it cannot measure",
+      frac == 4, tostring(frac))
+local fb = tonumber(badge_block:match("bdrop = ([%d%.]+)"))
+check("with a fallback when measuring fails, on the same scale",
+      fb ~= nil and fb > 0 and fb <= 2, tostring(fb))
 
 -- The other half of "add some padding on top": a 25pt face in a 24px box is
 -- tight enough that any error in where the word sits shows up at once.
