@@ -1302,17 +1302,23 @@ function M.draw(self, ctx, left_M)
     end
     local t_status = self._tw_status
 
-    -- ICON AND TITLE ON THE LEFT, badge on the right, same split every other
-    -- row in this panel uses (the team-cups row below anchors its icon at
-    -- cx - 80 for the same reason): a fixed left edge to read from, and
-    -- whatever sits at the right is a status, not a second heading competing
-    -- for the centre.
+    -- ICON AND TITLE HARD LEFT, badge on the right.
     --
-    -- The title's width still has to be MEASURED even though it is no longer
-    -- centred, because the badge's left clearance is stated relative to where
-    -- the title actually ends, not to a guess about how long "TOURNAMENTS" is.
+    -- cx - 80 was borrowed from the LOBBY's team-cups tile, a different
+    -- screen with different proportions, and it sits well inside this panel's
+    -- own left edge. The battle/knockout/party rows drawn just above this one
+    -- in the same panel already have the real convention — row_l = cx - pw/2
+    -- + 20, icon centred 24 further in — so the icon here is flush against
+    -- that same inset instead of floating inward from a number that meant
+    -- nothing in this container.
+    --
+    -- The title's width still has to be MEASURED even though it is
+    -- left-aligned, because the badge's left clearance is stated relative to
+    -- where the title actually ends, not to a guess about how long
+    -- "TOURNAMENTS" is.
     local T_ICON, T_ICON_GAP = 32, 12
-    local icon_x = cx - 80
+    local row_l  = cx - pw/2 + 20
+    local icon_x = row_l + T_ICON/2
     local title_txt = "TOURNAMENTS"
 
     local t_icon = track(self, ui.image(

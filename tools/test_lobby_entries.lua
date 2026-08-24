@@ -48,11 +48,26 @@ check("the row draws a tournaments button", has(RIGHT, '"nav_tournaments"'))
 check("with its icon", has(RIGHT, '"tournament_icon"'))
 check("and its title", has(RIGHT, '"TOURNAMENTS"'))
 
--- ICON AND TITLE ON THE LEFT, at the same edge the team-cups row below uses
--- (cx - 80), so both tiles read from one fixed left margin instead of each
--- picking its own.
-check("the icon sits at the row's standard left edge", has(RIGHT, "icon_x = cx - 80"))
+-- ICON AND TITLE HARD LEFT — the row's OWN left inset, the same one the
+-- battle/knockout/party rows drawn just above this one already use
+-- (row_l = cx - pw/2 + 20), not a number borrowed from a different screen's
+-- tile that happened to sit further inward.
+check("the icon sits at this panel's real left inset",
+      has(RIGHT, "row_l  = cx - pw/2 + 20") or has(RIGHT, "row_l = cx - pw/2 + 20"))
+check("the icon is flush against it", has(RIGHT, "icon_x = row_l + T_ICON/2"))
 check("the title starts just after it", has(RIGHT, "title_x = icon_x"))
+
+-- AND IT IS ACTUALLY FURTHER LEFT. Confirmed numerically rather than just by
+-- pattern, since "row_l = cx - pw/2 + 20" existing in the source proves
+-- nothing about where it lands relative to the number it replaced.
+do
+    local cx, pw, T_ICON = 1088, 344, 32
+    local old_icon_x = cx - 80
+    local new_icon_x = (cx - pw/2 + 20) + T_ICON/2
+    check("the new icon position sits further left than the borrowed one",
+          new_icon_x < old_icon_x,
+          string.format("new=%.1f old=%.1f", new_icon_x, old_icon_x))
+end
 
 -- The title is measured even though it is no longer centred: the badge's
 -- clearance from it is stated relative to where the title actually ENDS, not
