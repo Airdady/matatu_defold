@@ -1212,29 +1212,53 @@ function M.draw(self, ctx, left_M)
     gui.set_position(tn, vmath.vector3(cx - group_w/2 + T_ICON + T_ICON_GAP + tw/2, tcy2, 0))
 
     if t_status then
-        -- SIZED TO ITS WORD. The old badge was a fixed 48 wide because "NEW"
-        -- is three characters and always would be. "CLOSED" is six and would
-        -- have hung out of both ends of it.
+        local is_open = (t_status == "OPEN")
+        local badge_col = is_open and vmath.vector4(0.15, 0.8, 0.25, 1.0)
+            or vmath.vector4(0.55, 0.16, 0.16, 1.0)
+
+        -- THE BOX IS CREATED FIRST, AND THAT IS NOT A STYLE CHOICE.
+        --
+        -- Defold draws gui nodes in creation order, so a box made after its
+        -- label is a box drawn OVER its label. The badge came out as a solid
+        -- green rectangle with nothing in it — the word was there the whole
+        -- time, underneath. The row this replaced had it right (box, then
+        -- text); measuring the label to size the box is what tempted the
+        -- order to be flipped.
+        --
+        -- It does not have to be. The box is made at a provisional size, the
+        -- label on top of it, and then the box is RESIZED once the label has
+        -- been measured. Nothing has to be drawn out of order to be measured.
+        local BADGE_H = 24
+        local badge = track(self, ui.box(vmath.vector3(0, 0, 0),
+            vmath.vector3(56, BADGE_H, 0), badge_col))
         local bn = track(self, ui.text(vmath.vector3(0, 0, 0), t_status, "btn_sm", C.COL_WHITE))
+
         local bw
         local bok = pcall(function()
             local m = gui.get_text_metrics_from_node(bn)
             local sc = gui.get_scale(bn)
             bw = m.width * sc.x
         end)
-        if not bok or not bw or bw <= 0 then bw = #t_status * 9 end
+        -- btn_sm is Teko-Bold at 25, a condensed face, so roughly eleven
+        -- pixels a capital. Wide rather than tight, on the same reasoning
+        -- detail_line uses: a badge slightly too big is invisible, one
+        -- slightly too small clips the word.
+        if not bok or not bw or bw <= 0 then bw = #t_status * 11 end
 
-        local BADGE_PAD, BADGE_H = 22, 24
-        local badge_w = math.max(56, bw + BADGE_PAD * 2)
+        -- SIZED TO ITS WORD, not to a guess about it. The old badge was a flat
+        -- 48 wide because "NEW" is three characters and always would be;
+        -- "CLOSED" is six. The padding is twelve a side — twenty-two, which is
+        -- what this first shipped with, put nearly two extra characters of air
+        -- around a four-letter word and read as a banner rather than a badge.
+        local BADGE_PAD = 12
+        local badge_w = math.max(52, bw + BADGE_PAD * 2)
         local nx = cx + pw/2 - badge_w/2 - 20
-        local is_open = (t_status == "OPEN")
-        local badge_col = is_open and vmath.vector4(0.15, 0.8, 0.25, 1.0)
-            or vmath.vector4(0.55, 0.16, 0.16, 1.0)
 
-        track(self, ui.box(vmath.vector3(nx, tcy2, 0), vmath.vector3(badge_w, BADGE_H, 0), badge_col))
-        -- The text goes on the SAME centre as the box, and nothing else: the
-        -- old row drew a hairline across the badge's top edge, which read as
-        -- the label sitting low in its box rather than as a border.
+        gui.set_size(badge, vmath.vector3(badge_w, BADGE_H, 0))
+        gui.set_position(badge, vmath.vector3(nx, tcy2, 0))
+        -- Label and box share one centre, and nothing else is drawn on it: the
+        -- old row put a hairline across the badge's top edge, which read as the
+        -- word sitting low in its box rather than as a border.
         gui.set_position(bn, vmath.vector3(nx, tcy2, 0))
     end
     cy = cy - t_h - C.BLOCK_GAP

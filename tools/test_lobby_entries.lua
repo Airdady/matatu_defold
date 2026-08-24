@@ -63,11 +63,45 @@ check("open and closed look different", has(RIGHT, 'is_open and vmath.vector4(0.
 -- "CLOSED" is six characters where "NEW" was three and always would be, so a
 -- fixed 48-wide badge would have had the word hanging out of both ends.
 check("the badge is sized to its word", has(RIGHT, "badge_w = math.max"))
+check("...with a fallback if measuring fails", has(RIGHT, "#t_status * 11"))
 check("...and the label sits on the box's own centre",
       has(RIGHT, "gui.set_position(bn, vmath.vector3(nx, tcy2, 0))"))
 -- The old row drew a hairline across the badge's top edge, which read as the
 -- label sitting low in its box rather than as a border.
 check("with no hairline to sit under", not has(RIGHT, "ny + 11"))
+
+----------------------------------------------------------------------
+print("")
+print("THE LABEL IS DRAWN ON TOP OF ITS BADGE, NOT UNDER IT")
+----------------------------------------------------------------------
+-- Reported as "green badge with no text". The word was there the whole time,
+-- underneath: Defold draws gui nodes in CREATION ORDER, so a box created after
+-- its label is a box drawn over its label.
+--
+-- The row this replaced had it right — box, then text. Measuring the label in
+-- order to size the box is what tempted the order to be flipped, and it does
+-- not have to be: the box is made at a provisional size, the label goes on top
+-- of it, and the box is resized once the label has been measured.
+local badge_block = RIGHT:match("if t_status then(.-)\n    end") or ""
+check("the badge block was found", #badge_block > 0)
+
+local box_at  = badge_block:find("ui.box(", 1, true)
+local text_at = badge_block:find("ui.text(", 1, true)
+check("the badge box exists", box_at ~= nil)
+check("its label exists", text_at ~= nil)
+check("and the label is created AFTER the box, so it draws on top",
+      box_at and text_at and box_at < text_at,
+      string.format("box@%s text@%s", tostring(box_at), tostring(text_at)))
+check("the box is resized after the label is measured, not created after it",
+      has(badge_block, "gui.set_size(badge"))
+
+-- TOO WIDE, the other half of the report. Twelve a side around a four-letter
+-- word in a condensed face is a badge; twenty-two, which is what this first
+-- shipped with, is nearly two extra characters of air and reads as a banner.
+local pad = tonumber(badge_block:match("BADGE_PAD%s*=%s*(%d+)"))
+check("the padding is snug", pad ~= nil and pad <= 14, tostring(pad))
+local floor_w = tonumber(badge_block:match("math%.max%((%d+),"))
+check("...and the minimum width is not a banner either", floor_w ~= nil and floor_w <= 56, tostring(floor_w))
 
 ----------------------------------------------------------------------
 print("")
