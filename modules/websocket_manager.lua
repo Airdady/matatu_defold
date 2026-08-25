@@ -895,6 +895,27 @@ local function parse_message(json_string)
     -- full leaderboard. Parked here (too big to ride through msg.post) and
     -- read back by the global season_results overlay.
     M.last_season_complete = d
+    -- The server has ALREADY reset points and credited coinsEarned/
+    -- savingCoinsEarned into this player's account by the time this message
+    -- arrives (completeSeason's own bulkWrite, be_matatu side) — but nothing
+    -- here ever told current_user_data, which is what every screen OTHER
+    -- than the results dialog itself reads (the BAL/PTS/SAVINGS panel in
+    -- online_right.lua, in particular). The results dialog showed the right
+    -- numbers because it reads straight off `d`; everywhere else kept
+    -- showing the pre-reset totals until the next full reconnect, which for
+    -- a session that stays open across the boundary could be hours away —
+    -- indistinguishable, from the player's seat, from "points never clear".
+    --
+    -- Mirrors the server's own update exactly: points is a $set (so this is
+    -- an assignment, not an add — rewardPointsEarned IS the new total, 0
+    -- unless a mission or rank bonus paid points alongside it), balance and
+    -- savingCoins are $inc (so these add the earned amount, same as the
+    -- dialog's own "+N" figures already do).
+    if M.current_user_data then
+      M.current_user_data.points = d.rewardPointsEarned or 0
+      M.current_user_data.balance = (M.current_user_data.balance or 0) + (d.coinsEarned or 0)
+      M.current_user_data.savingCoins = (M.current_user_data.savingCoins or 0) + (d.savingCoinsEarned or 0)
+    end
     -- The server sends a fresh SEASON_STATUS for the new season right after
     -- this, but clear the stale one now as a safety net — otherwise, if that
     -- follow-up message is ever lost, the countdown UI would stay frozen
