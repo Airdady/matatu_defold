@@ -27,6 +27,29 @@ M.current_user_id = ""
 M.active_game_id = ""
 M.active_game_state = {}
 
+-- THE MOVE WE SENT AND HAVE NOT SEEN COME BACK.
+--
+-- Every server->client message that matters carries an ack (_ackId /
+-- _replayId, answered with MISSED_MOVE_ACK), and moves/index.ts requeues
+-- anything left unacked into missedMoves so a client that missed a move gets
+-- it on the next reconnect. The client->server direction had NOTHING like
+-- that: send_move called send_message and dropped its return value on the
+-- floor, and send_message returns false without sending a byte whenever the
+-- socket is down.
+--
+-- So a card played into a dead socket was simply gone. play_card had already
+-- removed it from player_hand optimistically, the turn had already flipped to
+-- the opponent locally — and the server never heard about any of it. On
+-- reconnect, IDENTIFY brings the authoritative state where that card is still
+-- in hand, sync_my_hand faithfully reconciles to it, and the card the player
+-- watched land on the pile reappears in their hand. That is the reported
+-- "the K I had placed came back from the pile to my hand".
+--
+-- Held here until the server's own echo of it arrives (or the state proves it
+-- landed). Only ever ONE: a player has one turn, and a second move cannot be
+-- made until the first is answered.
+M.pending_move = nil
+
 -- Large payloads (full game state) cannot travel through msg.post: Defold
 -- serializes message tables into a tiny fixed buffer and overflows on nested
 -- arrays (e.g. the `rank` list with its `points` fields). So we park MOVE
@@ -186,8 +209,122 @@ function M.send_move(game_id, from_id, to_id, actions, new_suit, active_penalty_
   if active_penalty_count and active_penalty_count > 0 then
     move_data.activePenaltyCount = active_penalty_count
   end
-  M.send_message("MOVE", move_data)
+
+  -- Recorded BEFORE the send, and kept regardless of whether it succeeded.
+  -- A send that returns false never reached the wire; a send that returns
+  -- true still might not have (a connection that has gone dark without a
+  -- close looks identical to a healthy one until the ping watchdog notices,
+  -- which is the same reason the server acks its own live sends). Neither
+  -- case is distinguishable from here, so both are held and adjudicated
+  -- later against the server's own state — see resend_pending_move_if_lost.
+  M.pending_move = {
+    game_id = game_id,
+    from_id = from_id,
+    data = move_data,
+    -- Just the PLAY cards: these are what the server's copy of our hand is
+    -- checked against to decide whether this move ever landed. A DRAW has no
+    -- such fingerprint (the drawn card is chosen by the server), so a
+    -- draw-only move is judged on the turn alone.
+    plays = (function()
+      local out = {}
+      for _, a in ipairs(actions or {}) do
+        if a.type == "PLAY" then
+          out[#out + 1] = { v = tonumber(a.v), s = tostring(a.s or "") }
+        end
+      end
+      return out
+    end)(),
+    sent_ok = false,
+    at = now_s(),
+  }
+
+  M.pending_move.sent_ok = M.send_message("MOVE", move_data) and true or false
+  if not M.pending_move.sent_ok then
+    print("[WS] MOVE not sent — socket down. Held for resend on reconnect.")
+  end
+  return M.pending_move.sent_ok
 end
+
+-- The move came back from the server (or became moot). Stop holding it.
+local function clear_pending_move(why)
+  if M.pending_move then
+    print("[WS] pending move cleared: " .. tostring(why))
+    M.pending_move = nil
+  end
+end
+M.clear_pending_move = clear_pending_move
+
+-- DID THE MOVE WE ARE HOLDING EVER REACH THE SERVER?
+--
+-- Asked against the authoritative state that arrives with IDENTIFY on
+-- reconnect, so this is not a guess — it reads the server's own copy of the
+-- board and answers from it:
+--
+--   * not our turn any more  -> the move landed (the server advanced the
+--     turn), or the turn moved on without us. Either way, resending would be
+--     refused (handleMove attributes by currentTurn and answers a mismatched
+--     sender with NOT_YOUR_TURN) and there is nothing to recover.
+--   * still our turn AND every card we played is still in the server's copy
+--     of our hand -> the server never saw it. Resend.
+--   * still our turn but the cards are gone from our hand -> it landed and
+--     the turn is ours again (a Whot hold-on, a penalty stack). Nothing to do.
+--
+-- The resend is safe even if this judgement is somehow wrong: validateMove
+-- rejects a card that is not in hand, and a sender who is not currentTurn is
+-- ignored with NOT_YOUR_TURN rather than applied. The server cannot be made
+-- to play the same card twice by this.
+local function resend_pending_move_if_lost(gs)
+  local pm = M.pending_move
+  if not pm then return end
+  if type(gs) ~= "table" or next(gs) == nil then return end
+
+  -- A different game entirely — the held move belongs to a board that is no
+  -- longer in front of us.
+  local gid = tostring(gs.gameId or gs.id or "")
+  if gid ~= "" and tostring(pm.game_id or "") ~= "" and gid ~= tostring(pm.game_id) then
+    clear_pending_move("state is for a different game")
+    return
+  end
+
+  local me = tostring(pm.from_id or M.current_user_id or "")
+  if me == "" then return end
+
+  if tostring(gs.currentTurn or "") ~= me then
+    clear_pending_move("server has moved the turn on — the move landed or is moot")
+    return
+  end
+
+  -- Still our turn. Are the cards we played still sitting in our hand?
+  local hand = ((gs.players or {})[me] or {}).hand
+  if type(hand) ~= "table" then
+    clear_pending_move("no authoritative hand to judge against")
+    return
+  end
+
+  local still_held = 0
+  for _, pc in ipairs(pm.plays) do
+    for _, hc in ipairs(hand) do
+      if tonumber(hc.v) == pc.v and tostring(hc.s) == pc.s then
+        still_held = still_held + 1
+        break
+      end
+    end
+  end
+
+  -- Every played card is still in hand (or it was a draw-only move and it is
+  -- still our turn): the server never received this. Send it again.
+  if #pm.plays == 0 or still_held == #pm.plays then
+    print(string.format(
+      "[WS] resending the move the server never got (%d play(s), sent_ok=%s)",
+      #pm.plays, tostring(pm.sent_ok)))
+    M.send_message("MOVE", pm.data)
+    pm.at = now_s()
+    emit("pending_move_resent", pm)
+  else
+    clear_pending_move("cards are no longer in hand — the move landed")
+  end
+end
+M.resend_pending_move_if_lost = resend_pending_move_if_lost
 
 -- IDENTIFY watchdog. The client used to send IDENTIFY and then simply wait:
 -- if the reply never came (dropped frame, a rejected/stale user id answered
@@ -602,8 +739,17 @@ local function parse_message(json_string)
     if next(gs) ~= nil then
       M.active_game_id = gs.gameId or gs.id or d.gameId or ""
       M.active_game_state = gs
+      -- BEFORE the board rebuilds off this state. If our last move never
+      -- reached the server, this is the one moment we can still tell — the
+      -- state in hand is authoritative and the move is still held. Resending
+      -- here means the correction arrives as a normal MOVE the board plays,
+      -- rather than the player watching their own card reappear in their hand.
+      resend_pending_move_if_lost(gs)
       emit("game_request_accepted", gs)
     else
+      -- Identified with no game in progress: whatever we were holding belongs
+      -- to a game that is over.
+      clear_pending_move("identified with no active game")
       emit("identify_success", M.current_user_data, d)
     end
   elseif t == "ONLINE_USERS" then
@@ -733,6 +879,14 @@ local function parse_message(json_string)
         tostring(from_id), #actions, tostring(gs.currentTurn), tostring(gs.chosenSuit),
         tostring(is_replay)))
       pprint("[PIPE-1] gs.actions:", actions)
+      -- OUR OWN MOVE, COME BACK TO US. That echo is the only confirmation the
+      -- server ever sends that it applied what we sent, so it is what retires
+      -- the held copy. Anything else the server says about our move (a
+      -- RESYNC, a NOT_YOUR_TURN, the round ending) retires it too, below.
+      if from_id ~= "" and tostring(from_id) == tostring(M.current_user_id) then
+        clear_pending_move("server echoed our own move")
+      end
+
       local processed = {
         _id = from_id, from = from_id, actions = actions,
         chosenSuit = gs.chosenSuit or "", gameState = gs,
@@ -772,19 +926,35 @@ local function parse_message(json_string)
   elseif t == "GAME_STATE_SYNC" then
     local gs = M.extract_game_state(d)
     if next(gs) ~= nil then M.active_game_state = gs end
+  elseif t == "NOT_YOUR_TURN" then
+    -- The server declined to attribute a move to us because it is not our
+    -- turn. Whatever we were holding is answered — resending it would be
+    -- declined the same way, forever.
+    clear_pending_move("server says it is not our turn")
+    emit("not_your_turn", { game_id = tostring(d.gameId or ""),
+                            current_turn = tostring(d.currentTurn or "") })
   elseif t == "RESYNC" then
     -- The backend rejected our move: our board drifted. Park the
     -- authoritative state and let the board rebuild itself.
+    --
+    -- The held move is dropped rather than retried: a RESYNC IS the server's
+    -- answer to it, and it was a refusal. Retrying a move the server has
+    -- already refused would refuse identically every time.
+    clear_pending_move("server refused the move with a RESYNC")
     local gs = M.extract_game_state(d)
     if next(gs) ~= nil then
       M.active_game_state = gs
       emit("resync", { reason = tostring(d.reason or "") })
     end
   elseif t == "ROUND_COMPLETE" then
+    -- The round this move belonged to is finished; there is nothing left for
+    -- it to land on.
+    clear_pending_move("round complete")
     local gs = M.extract_game_state(d)
     if next(gs) ~= nil then M.active_game_state = gs end
     emit("round_complete", gs)
   elseif t == "GAME_OVER" then
+    clear_pending_move("game over")
     M.active_game_id = ""
     local results = {}
     local final_state = {}
