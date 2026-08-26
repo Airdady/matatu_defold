@@ -1294,7 +1294,25 @@ function init(self)
         msg.post("#game_logic", "ws_ai_played", { mode = info.mode or "SINGLE_MOVE", moves = info.moves or 0, max = info.max or 3 })
     end))
 
-    table.insert(self.tokens, ws.on("game_request_declined", function(reason)
+    table.insert(self.tokens, ws.on("game_request_declined", function(reason, _request_id, revoked)
+        -- A WITHDRAWN INVITATION IS NOT OUR SEARCH FAILING.
+        --
+        -- `revoked` marks the backend retiring an invitation somebody ELSE's
+        -- broadcast sent TO US — their window closed, or they matched with
+        -- another player. Nothing about that concerns a search of our own.
+        --
+        -- Nothing distinguished the two here, so the two crossed. Tap "find
+        -- opponent" while an invitation from another player's broadcast is
+        -- still open on us, and the moment THEIR window settles our search
+        -- dies with their wording on it:
+        --
+        --   Window closed
+        --
+        -- The invitation banner still clears — incoming.gui_script listens to
+        -- the same event and that part was always right. Only the search is
+        -- left alone.
+        if revoked then return end
+
         msg.post("#game_logic", "ws_replay_declined", { reason = tostring(reason or "Declined") })
         if app_state.searching_tournament or app_state.searching_invite then
             pcall(msg.post, "#snd_suspense", "stop_sound")

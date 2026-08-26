@@ -819,7 +819,22 @@ local function parse_message(json_string)
   elseif t == "GAME_REQUEST_CANCELLED" then
     emit("game_request_cancelled", d.requestId or d.id or "")
   elseif t == "GAME_REQUEST_DECLINED" then
-    emit("game_request_declined", d.reason or "Declined", d.requestId or "")
+    -- `message` FIRST, `reason` ONLY AS A FALLBACK.
+    --
+    -- The backend sends both on this message and they are different things:
+    -- `reason` is a machine token it branches on and logs ("NO_OPPONENT"),
+    -- `message` is the sentence written for a player. Reading `reason` put the
+    -- token itself on the search dialog.
+    --
+    -- `revoked` is passed on too. It marks the withdrawal of an invitation
+    -- sent TO US by somebody else's broadcast, which is a completely different
+    -- event from our own request being declined — see controller.script.
+    emit(
+      "game_request_declined",
+      d.message or d.reason or "Declined",
+      d.requestId or "",
+      d.revoked == true
+    )
   elseif t == "GAME_REQUEST_ACCEPTED" then
     local gs = M.extract_game_state(d)
     if next(gs) ~= nil then
