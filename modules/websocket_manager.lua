@@ -1033,6 +1033,30 @@ local function parse_message(json_string)
       print("[PIPE-1] DROPPED — gs decoded empty")
     end
   elseif t == "TIMER_UPDATE" then
+    -- THE SENDER'S CONFIRMATION, AND THE ONLY ONE THEY GET.
+    --
+    -- An ordinary move is echoed as a MOVE to the OPPONENT. The player who
+    -- made it is answered with this and nothing else — turn, clock, penalty
+    -- count — because they already animated it locally (moves/index.ts, the
+    -- `else if (isOnline)` sender branch). It is sent to the mover alone and
+    -- nowhere else, in all three games.
+    --
+    -- So it is the acknowledgement, and nothing was treating it as one. The
+    -- held copy was retired by the MOVE echo, which for an ordinary move never
+    -- comes back to us: only an AI-covered move, a reshuffle and a deck-drift
+    -- resync are echoed to their own sender. Every ordinary move therefore sat
+    -- in the held list until a refusal, the round ending or a reconnect
+    -- cleared it — so the list filled with moves that had plainly landed, and
+    -- past the cap the OLDEST was dropped, which is the one entry that might
+    -- still have been genuinely unanswered.
+    --
+    -- The oldest is retired, not a matched one: this carries no hand to
+    -- identify a move by, and the server answers in the order it was sent.
+    if #M.pending_moves > 0
+      and (d.from == nil or tostring(d.from) == tostring(M.current_user_id)) then
+      table.remove(M.pending_moves, 1)
+      M.pending_move = M.pending_moves[1]
+    end
     emit("timer_update", d)
   elseif t == "PLAYER_READY" then
     emit("player_ready", d._id or "")

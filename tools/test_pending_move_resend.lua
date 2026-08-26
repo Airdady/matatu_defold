@@ -340,6 +340,72 @@ check("and it is the NEWEST that are kept", ws.pending_moves[#ws.pending_moves].
 ws.socket_connected = true
 ws.clear_pending_move("test teardown")
 
+----------------------------------------------------------------------
+print("")
+print("AN ORDINARY MOVE IS ACKNOWLEDGED BY TIMER_UPDATE")
+----------------------------------------------------------------------
+-- The confirmation for an ordinary move is NOT the MOVE echo. That goes to
+-- the opponent; the player who made the move gets a TIMER_UPDATE and nothing
+-- else, because they already animated it locally. Only an AI-covered move, a
+-- reshuffle and a deck-drift resync are echoed back to their own sender.
+--
+-- Nothing treated it as an acknowledgement, so every ordinary move sat in the
+-- held list until a refusal, the round ending or a reconnect cleared it. The
+-- list filled with moves that had plainly landed, and past the cap the OLDEST
+-- was dropped — the one entry that might still have been genuinely unanswered.
+ws.clear_pending_move("test setup")
+ws.socket_connected = true
+ws.send_move(GID, ME, THEM, { K_SPADES }, "", 0)
+check("held on the way out", #ws.pending_moves, 1)
+
+SIM.server_send({ type = "TIMER_UPDATE", data = {
+    gameId = GID, currentTurn = THEM, from = ME, turnExpiresAt = 0,
+} })
+SIM.pump(0.2)
+check("and retired by the sender's own timer sync", #ws.pending_moves, 0)
+check("the alias follows", ws.pending_move, nil)
+
+do
+    -- A TIMER_UPDATE about somebody else is not our acknowledgement.
+    ws.clear_pending_move("test setup")
+    ws.send_move(GID, ME, THEM, { K_SPADES }, "", 0)
+    SIM.server_send({ type = "TIMER_UPDATE", data = {
+        gameId = GID, currentTurn = ME, from = THEM,
+    } })
+    SIM.pump(0.2)
+    check("a timer sync for the opponent retires nothing", #ws.pending_moves, 1)
+    ws.clear_pending_move("test teardown")
+end
+
+do
+    -- The point of the whole thing: ordinary play must not accumulate. Ten
+    -- moves, each acknowledged, leaves nothing behind — so the cap can never
+    -- discard a move that really was lost.
+    ws.clear_pending_move("test setup")
+    for i = 1, 10 do
+        ws.send_move(GID, ME, THEM, { { type = "PLAY", v = i, s = "H" } }, "", 0)
+        SIM.server_send({ type = "TIMER_UPDATE", data = { gameId = GID, from = ME } })
+        SIM.pump(0.05)
+    end
+    check("nothing accumulates across a normal game", #ws.pending_moves, 0)
+end
+
+do
+    -- And the acknowledgement retires the OLDEST, so a lost move that is still
+    -- waiting behind an acknowledged one survives to be resent.
+    ws.clear_pending_move("test setup")
+    ws.socket_connected = false
+    ws.send_move(GID, ME, THEM, { { type = "PLAY", v = 13, s = "D" } }, "", 0)
+    ws.send_move(GID, ME, THEM, { { type = "PLAY", v = 6, s = "D" } }, "", 0)
+    ws.socket_connected = true
+    SIM.server_send({ type = "TIMER_UPDATE", data = { gameId = GID, from = ME } })
+    SIM.pump(0.2)
+    check("one acknowledgement retires one move", #ws.pending_moves, 1)
+    check("and it is the K that was retired, not the 6",
+        ws.pending_moves[1].plays[1].v, 6)
+    ws.clear_pending_move("test teardown")
+end
+
 print("")
 print(("%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)
