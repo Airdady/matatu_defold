@@ -83,6 +83,19 @@ function M.end_turn(self)
         self.last_local_play = { v = tonumber(last_card.v), s = last_card.s }
     end
 
+    -- THIS LIST IS A COMPOSING BUFFER, NOT A DELIVERY RECORD.
+    --
+    -- current_turn_actions collects what the player has staged during THIS
+    -- turn, and it is emptied a few lines below — on SEND, not on delivery.
+    -- It cannot be the thing that survives a lost move: keeping it until the
+    -- server answered would mean the next turn's taps appended to the last
+    -- turn's leftovers, and the stall recovery in game.script deliberately
+    -- re-opens the board while a move is still unanswered.
+    --
+    -- So the two jobs are held separately. What has been SENT and not yet
+    -- answered lives in websocket_manager's pending_moves, which keeps its own
+    -- copy — actions_to_send is a fresh table and send_move copies each card's
+    -- value out of it, so emptying this list cannot reach it.
     ws.send_move(self.online_game_id, self.my_player_id, self.opponent_id,
         actions_to_send, self.chosen_suit, self.active_penalty)
 

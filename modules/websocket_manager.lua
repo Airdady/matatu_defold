@@ -50,10 +50,22 @@ M.active_game_state = {}
 --
 -- A LIST, NOT ONE SLOT. This used to hold a single move, on the reasoning
 -- that a player has one turn and cannot move again until the first is
--- answered. That is not true of this game. A hold-on card KEEPS the turn, so
--- the reported sequence is entirely ordinary play:
+-- answered. That is not true of this game, for two separate reasons.
 --
---   play K of diamonds  -> lost in a network glitch, turn stays with us
+-- A TURN-KEEPING CARD. An 8 or a Jack leaves the turn with the player who
+-- played it (rules.ts: SKIP_TURN), so a chain of them is several moves from
+-- one player in a row.
+--
+-- AND THE STALL RECOVERY, which is the one that produced the report. When a
+-- move is lost, the server's last state still says it is our turn — it never
+-- heard the move that would have ended it. game.script's watchdog sees
+-- is_player_turn() true with nothing in flight and releases `waiting`, which
+-- is exactly what it is for: a board frozen on a dropped frame is worse than
+-- a board that lets you play. So the hand re-opens and a second move goes out
+-- while the first is still unanswered:
+--
+--   play K of diamonds  -> lost in a network glitch
+--   board re-opens       -> the server still believes it is our turn
 --   play 6 of diamonds  -> sent, and OVERWROTE the held K
 --
 -- Only the 6 was then adjudicated on reconnect. The K was dropped without
@@ -61,8 +73,8 @@ M.active_game_state = {}
 -- faithfully put it back, and the player watched the card they had played
 -- fly out of the deck and into their hand.
 --
--- Oldest first, and resent in that order — a hold-on chain only makes sense
--- played in sequence.
+-- Oldest first, and resent in that order — a sequence of plays from one turn
+-- only makes sense played in sequence.
 M.pending_moves = {}
 
 -- The oldest move still unanswered, or nil. Kept as a plain field because
@@ -70,8 +82,8 @@ M.pending_moves = {}
 M.pending_move = nil
 
 -- A turn cannot legitimately be an unbounded chain of unanswered moves. Well
--- past any real hold-on run, and there so that a socket that is down for a
--- long time cannot grow this without limit.
+-- past any real run of plays in one turn, and there so that a socket that is
+-- down for a long time cannot grow this without limit.
 local MAX_PENDING_MOVES = 8
 
 -- Large payloads (full game state) cannot travel through msg.post: Defold
@@ -397,10 +409,11 @@ local function resend_pending_move_if_lost(gs)
 
   -- EACH HELD MOVE IS JUDGED SEPARATELY, OLDEST FIRST.
   --
-  -- A hold-on chain can leave several unanswered, and they are not all in the
-  -- same state: the K may have been lost while the 6 behind it landed, or the
-  -- other way round. Judging only the newest — which is all a single slot
-  -- could do — silently discarded the rest.
+  -- A turn can leave several unanswered — a skip chain, or the stall recovery
+  -- re-opening the board over a lost move — and they are not all in the same
+  -- state: the K may have been lost while the 6 behind it landed, or the other
+  -- way round. Judging only the newest, which is all a single slot could do,
+  -- silently discarded the rest.
   --
   -- Resent in the order they were played, because a chain only makes sense
   -- that way, and the socket preserves that order.
@@ -1001,8 +1014,8 @@ local function parse_message(json_string)
       -- ending) is an answer too, and clears everything held, below.
       --
       -- Retires only what this echo actually PROVES, rather than everything.
-      -- On a hold-on chain several of our moves can be in flight at once, and
-      -- one of them being applied says nothing about the ones behind it — the
+      -- Several of our moves can be in flight at once, and one of them being
+      -- applied says nothing about the ones behind it — the
       -- echoed state names which cards have left our hand, so that is what
       -- decides.
       if from_id ~= "" and tostring(from_id) == tostring(M.current_user_id) then
