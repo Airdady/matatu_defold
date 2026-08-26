@@ -218,12 +218,18 @@ check("and it beats a free playable stranger too",
   tnames(ps.sort({ trow("am_free", "BEGINNER", 0), trow("pro_paid", "PRO", 500) }, topts)),
   "pro_paid,am_free")
 
--- The cost of that, stated as a test rather than left to be discovered: a
--- well-matched player who is mid-game is not tappable, and now sorts above a
--- mismatched player who is free.
-check("a perfect tier match who is mid-game now outranks a playable stranger",
+-- BUT THE SWAP APPLIES ONLY WITHIN THE PLAYABLE SET. A row nobody can tap —
+-- online_center attaches no challenge button to a playing row — cannot be
+-- lifted by a good tier match. The backend says the same thing first
+-- (broadcastOnlineUsers opens its comparator with busyA - busyB); this side
+-- agrees with it rather than re-deciding it.
+check("a perfect tier match who is mid-game still sits below a playable stranger",
   tnames(ps.sort({ trow("pro_busy", "PRO", 200, true), trow("am_free", "BEGINNER", 200) }, topts)),
-  "pro_busy,am_free")
+  "am_free,pro_busy")
+
+check("and no stake makes a playing row playable either",
+  tnames(ps.sort({ trow("pro_mine", "PRO", 200, true), trow("am_free", "BEGINNER", 0) }, topts)),
+  "am_free,pro_mine")
 
 -- WITHIN A TIER, THE ACTIVITY ORDER IS THE ONE ASKED FOR: an active stake
 -- (mine ahead of the rest), then free, then playing.
@@ -233,11 +239,19 @@ check("inside one tier: my stake, other stakes, free, playing",
     trow("p_other", "PRO", 500),         trow("p_mine", "PRO", 200),
   }, topts)), "p_mine,p_other,p_free,p_playing")
 
-check("and that order repeats in the next tier out, below the whole first one",
+check("and that order repeats in the next tier out, with every playing row under both",
   tnames(ps.sort({
     trow("am_mine", "BEGINNER", 200), trow("pro_playing", "PRO", 200, true),
     trow("am_free", "BEGINNER", 0),   trow("pro_free", "PRO", 0),
-  }, topts)), "pro_free,pro_playing,am_mine,am_free")
+  }, topts)), "pro_free,am_mine,am_free,pro_playing")
+
+-- The whole rule in one list: everybody playable, in tier-then-activity
+-- order, and then every playing row after them regardless of tier or stake.
+check("playing rows form the tail, whatever their tier and stake",
+  tnames(ps.sort({
+    trow("gm_busy", "GRANDMASTER", 200, true), trow("pro_busy", "PRO", 200, true),
+    trow("am_free", "BEGINNER", 0),            trow("pro_mine", "PRO", 200),
+  }, topts)), "pro_mine,am_free,pro_busy,gm_busy")
 
 -- A SERVER THAT DOES NOT SEND THE FIELD MUST CHANGE NOTHING. This is the old
 -- behaviour exactly, and it is what an un-deployed backend gets.

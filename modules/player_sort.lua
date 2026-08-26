@@ -5,7 +5,23 @@
 -- they definitely could not, because those players are already mid-game, were
 -- just as likely to be at the top.
 --
--- SKILL FIRST. ACTIVITY SECOND.
+-- A ROW NOBODY CAN TAP IS NOT A CANDIDATE. IT GOES LAST.
+--
+--   0. PLAYING            already mid-game. online_center attaches no
+--                         challenge button to these rows, so nothing about
+--                         them — not their tier, not their stake — can make
+--                         them worth being above someone you could actually
+--                         play. Below everybody, whatever else is true.
+--
+-- THE BACKEND IS THE AUTHORITY ON THIS, and has been: broadcastOnlineUsers'
+-- comparator opens with `busyA - busyB`, before rank, before anything. This
+-- side has to AGREE with it rather than re-decide it — the client sorts the
+-- list it is handed, so it is the last writer, and a client that put playing
+-- rows anywhere else would silently overrule a rule the server had already
+-- applied correctly. That is exactly what happened when the tier gap was
+-- hoisted above it and a well-matched player mid-game floated to the top.
+--
+-- SKILL FIRST. ACTIVITY SECOND. Among everyone who is actually playable:
 --
 --   1. HOW WELL MATCHED   players of my own SKILL TIER first, then the
 --                         immediate neighbouring tier, then further out — the
@@ -31,11 +47,9 @@
 -- matchmaking answer nobody asked for and the fastest way to lose a new
 -- player.
 --
--- What it costs, stated plainly: a well-matched player who is MID-GAME now
--- sorts above a mismatched player who is free. That row is not tappable, so
--- there is a case for keeping every playing row at the very bottom regardless
--- of tier — it is one comparison in M.sort if that reads better on a real
--- lobby.
+-- The swap applies only WITHIN the playable set. A mid-game player was never
+-- meant to rise with it, and briefly did; rung 0 above is what holds them
+-- down.
 --
 -- The tier is SENT, not computed here. broadcastOnlineUsers attaches
 -- `skillTier` to every row (be_matatu's services/playerTier.ts), because "my
@@ -201,6 +215,11 @@ function M.sort(rows, opts)
     for i, pu in ipairs(rows) do
         decorated[i] = {
             pu = pu, i = i,
+            -- Sorted on before anything else. Kept as its own key rather than
+            -- folded into the rung because the rung is compared AFTER the tier
+            -- gap, and a playing row must not be reachable by a good tier
+            -- match.
+            b = M.is_playing(pu) and 1 or 0,
             r = M.rank(pu, pivot),
             -- 0 when the viewer's tier is unknown, so every row ties on it and
             -- the arrival index decides — the old behaviour, exactly.
@@ -208,12 +227,13 @@ function M.sort(rows, opts)
         }
     end
 
-    -- Tier gap first, activity second. Swapping these two lines is the whole
-    -- change described at the top of this file; with `g` at 0 for everybody —
-    -- which is what an unknown viewer tier gives — the order collapses back to
-    -- exactly what it was, so a client talking to a server that does not send
-    -- skillTier yet is unaffected.
+    -- Playing last, unconditionally. Then, among the playable, tier gap before
+    -- activity. With `g` at 0 for everybody — which is what an unknown viewer
+    -- tier gives — the order collapses back to what it was before the tier key
+    -- existed, so a client talking to a server that does not send skillTier
+    -- yet is unaffected.
     table.sort(decorated, function(a, b)
+        if a.b ~= b.b then return a.b < b.b end
         if a.g ~= b.g then return a.g < b.g end
         if a.r ~= b.r then return a.r < b.r end
         return a.i < b.i
