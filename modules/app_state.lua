@@ -292,5 +292,21 @@ M.board_locked = false
 function M.lock_board()   M.board_locked = true  end
 function M.unlock_board() M.board_locked = false end
 
+-- WHAT THE BOARD IS SHOWING INSTEAD OF, OR AS WELL AS, A COIN POT.
+--
+-- Both are decided once when the game is accepted, by
+-- modules/championship_board.lua, and read from here by the two places that
+-- have to agree about it: overlay_ui draws the watermark, and gameover
+-- consults board_coins_may_settle before flying a stake to the winner.
+--
+-- Parked in app_state rather than passed along because the decision is made
+-- before the board GUI exists — controller raises the pot on the accept, and
+-- the searching player's board is not created for another 1.8s.
+--
+-- nil watermark means an ordinary board. board_coins_may_settle nil is read as
+-- TRUE, so nothing that never sets it loses its payout animation.
+M.board_watermark = nil
+M.board_coins_may_settle = nil
 
 return M
+

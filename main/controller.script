@@ -1,6 +1,7 @@
 local ws        = require("modules.websocket_manager")
 local api       = require("modules.api_service")
 local app_state = require("modules.app_state")
+local champ_board = require("modules.championship_board")
 -- Push only. Sign-in is the device id, over api.device_login.
 local fbpush    = require("modules.firebase_push")
 local identify_recovery = require("modules.identify_recovery")
@@ -928,22 +929,28 @@ function init(self)
     -- The searching player's board does not exist yet — the dialog holds the
     -- screen for another 1.8s — so theirs is raised when the screen actually
     -- changes, not now.
+    -- WHAT THE POT IS, AND WHETHER THERE IS ONE, is decided in
+    -- modules/championship_board.lua so the board and the game-over screen
+    -- cannot disagree about it. The rules and the reasoning live there; this
+    -- reads the answer.
+    --
+    -- The old inline version read the stake and raised a bundle for every
+    -- game, championship rungs included — no fabricated default (it once read
+    -- `or 500`, inventing a 1,000-coin pot from a payload with no stake, and a
+    -- wrong number about money is worse than no bundle), but no exceptions
+    -- either.
     local function raise_stake_pot(gs)
-        -- No fabricated default. This read `or 500`, which quietly invented a
-        -- 1,000-coin pot out of a payload that had no stake on it; a wrong
-        -- number about money is worse than no bundle.
-        local stake = (type(gs) == "table" and type(gs.stake) == "table" and tonumber(gs.stake.amount)) or 0
-        -- A zero-stake game (AI trial battle, free match) has no real pot to
-        -- show — skip the bundle entirely instead of sitting a "0 coins"
-        -- bundle on screen for the whole game.
-        if stake <= 0 then return end
+        local plan = champ_board.plan(gs, ws.current_user_data)
+        app_state.board_watermark = plan.watermark
+        app_state.board_coins_may_settle = champ_board.coins_may_settle(plan)
+        if not plan.pot then return end
         pcall(msg.post, "#coins", "coin_collect_pot", {
-            amount  = stake * 2,
+            amount  = plan.pot.amount,
             sources = { { x = 150, y = 64 }, { x = 150, y = 656 } },
             center  = { x = 640, y = 360 },
         })
         -- Keep in sync with main/coins.gui_script's POT_REST_X.
-        pcall(msg.post, "#coins", "coin_pot_to", { x = 220, y = 360 })
+        pcall(msg.post, "#coins", "coin_pot_to", { x = plan.pot.x, y = plan.pot.y })
     end
 
     local function intercept_for_search(self_, gs)

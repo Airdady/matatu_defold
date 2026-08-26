@@ -1,5 +1,21 @@
 local M = {}
 local akira = require("modules.akira")
+local app_state = require("modules.app_state")
+
+-- THE CHAMPIONSHIP WATERMARK.
+--
+-- A global championship rung carries no coin pot — the money in that ladder is
+-- the grand prize, paid once at the end, and a stake bundle on every qualifier
+-- reads as a cash match it is not (see modules/championship_board.lua). This
+-- is what stands in its place: the tournament's NAME, set vertically down the
+-- left edge where the pot would have been.
+--
+-- Faint on purpose. It is there to say what this match is, not to compete with
+-- the cards; anything bright enough to read at a glance is bright enough to
+-- distract from the hand.
+local C_WATERMARK   = vmath.vector4(1.0, 0.84, 0.30, 0.13)
+local WATERMARK_X   = 46
+local WATERMARK_PX  = 34
 
 local C_WHITE       = vmath.vector4(1.0, 1.0, 1.0, 1.0)
 local C_SKIP_TEXT   = vmath.vector4(0.90, 0.91, 0.92, 1.0)
@@ -87,6 +103,20 @@ function M.build(self, logical_w, logical_h)
 
     -- (The stake is now shown entirely by the live coin bundle/pot overlay
     --  in #coins — the old static stake chip has been removed.)
+
+    -- Championship watermark. Built once and left disabled; what turns it on
+    -- is app_state.board_watermark, read in M.update.
+    --
+    -- Rotated a quarter turn so it reads bottom-to-top up the left edge, and
+    -- anchored to that edge so a wider screen does not drag it inward over the
+    -- board.
+    self.watermark = label(vmath.vector3(WATERMARK_X, logical_h / 2, 0), "",
+        WATERMARK_PX, C_WATERMARK, gui.PIVOT_CENTER, "subtitle2")
+    pcall(function() gui.set_rotation(self.watermark, vmath.vector3(0, 0, 90)) end)
+    gui.set_xanchor(self.watermark, gui.ANCHOR_LEFT)
+    gui.set_yanchor(self.watermark, gui.ANCHOR_NONE)
+    gui.set_enabled(self.watermark, false)
+    self._watermark_text = nil
 
     -- Standings
     local st_y, st_x = logical_h - EXIT_BTN_MARGIN_TOP - EXIT_BTN_SIZE - 20, logical_w - EXIT_BTN_MARGIN_RIGHT
@@ -348,7 +378,22 @@ function M.hide_ai_notices(self)
     self._ai_banner_seq = (self._ai_banner_seq or 0) + 1
 end
 
+--- Put a word down the left edge of the board, or take it away.
+function M.set_watermark(self, text)
+    if not self.watermark then return end
+    text = (type(text) == "string" and text ~= "") and text or nil
+    if text == self._watermark_text then return end
+    self._watermark_text = text
+    if text then
+        gui.set_text(self.watermark, text)
+        gui.set_enabled(self.watermark, true)
+    else
+        gui.set_enabled(self.watermark, false)
+    end
+end
+
 function M.reset(self)
+    M.set_watermark(self, nil)
     M.set_skip_visible(self, false)
     M.set_conn_overlay(self, { show = false })
     M.set_conn_progress(self, nil)
@@ -359,6 +404,12 @@ function M.reset(self)
 end
 
 function M.update(self, dt)
+    -- Read here rather than pushed in from the board, because what decides it
+    -- (the pot plan, raised when the game is accepted) can be settled before
+    -- this overlay exists. One comparison a frame; the gui is only touched
+    -- when the answer actually changes.
+    M.set_watermark(self, app_state.board_watermark)
+
     if self.conn_count_active then
         local left = (self.conn_deadline or 0) - socket.gettime()
         if left < 0 then left = 0 end

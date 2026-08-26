@@ -795,7 +795,19 @@ function on_message(self, message_id, message)
 		if message.series_active and not message.series_over then round_continues = true end
 		local owner_level_clear = is_tournament_owner and is_victory
 			and not (res.tournamentCompleted or res.tournamentEndedByTimeout)
-		if stake_amt > 0 and not round_continues and not owner_level_clear then
+		-- A CHAMPIONSHIP RUNG HAS NOTHING TO FLY.
+		--
+		-- Its coins are an entry, not a prize: the money in a global
+		-- championship is the grand prize, paid once at the end of the ladder.
+		-- Flying a stake to the winner of a qualifier tells them they have just
+		-- been paid, which they have not. The board did not draw a pot for that
+		-- match either — see modules/championship_board.lua, which decides both
+		-- so the two cannot disagree — so there is nothing on screen to move.
+		--
+		-- The final is the exception, and it settles the grand prize.
+		local coins_may_settle = app_state.board_coins_may_settle
+		if coins_may_settle == nil then coins_may_settle = true end
+		if stake_amt > 0 and coins_may_settle and not round_continues and not owner_level_clear then
 			pcall(msg.post, "#coins", "coin_settle", {
 				to  = is_victory and { x = 460, y = 370 } or { x = 820, y = 370 },
 				win = is_victory,
