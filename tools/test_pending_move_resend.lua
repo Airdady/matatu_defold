@@ -199,6 +199,147 @@ SIM.server_send({ type = "GAME_OVER", data = { gameOverState = { winner = THEM }
 SIM.pump(0.2)
 check("game over clears it", ws.pending_move, nil)
 
+----------------------------------------------------------------------
+print("")
+print("A HOLD-ON CHAIN: TWO OF OUR MOVES IN FLIGHT AT ONCE")
+----------------------------------------------------------------------
+-- Reported: "I played K of diamonds, the network glitched, the turn was still
+-- on my end so I played the 6 of diamonds — and when the turn finished I
+-- watched the K draw itself out of the deck into my hand."
+--
+-- The K is a hold-on: it KEEPS the turn. So the second play is ordinary,
+-- legal play, and it happened while the first was still unanswered. The held
+-- move used to be a single slot, so the 6 OVERWROTE the K. Only the 6 was
+-- adjudicated on reconnect; the K was dropped without ever being resent, the
+-- server's copy of the hand still contained it, and sync_my_hand faithfully
+-- put it back. The card flying out of the deck was that correction.
+local K_DIAMONDS = { type = "PLAY", v = 13, s = "D" }
+local SIX_DIAMONDS = { type = "PLAY", v = 6, s = "D" }
+
+ws.clear_pending_move("test setup")
+SIM.outbound = {}
+ws.socket_connected = false
+ws.send_move(GID, ME, THEM, { K_DIAMONDS }, "", 0)
+ws.send_move(GID, ME, THEM, { SIX_DIAMONDS }, "", 0)
+
+check("both are held, not one", #ws.pending_moves, 2)
+check("and the oldest is the K", ws.pending_moves[1].plays[1].v, 13)
+check("with the 6 behind it", ws.pending_moves[2].plays[1].v, 6)
+
+-- Reconnect. The server still holds BOTH cards and still says it is our
+-- turn: it saw neither move.
+ws.socket_connected = true
+SIM.outbound = {}
+SIM.server_send({ type = "IDENTIFY", data = {
+    _id = ME, username = "Ada",
+    gameState = state({ { v = 13, s = "D" }, { v = 6, s = "D" }, { v = 5, s = "C" } }, ME),
+} })
+SIM.pump(0.2)
+
+check("both are resent", moves_out(), 2)
+do
+    local sent = {}
+    for _, m in ipairs(SIM.outbound) do
+        if m.type == "MOVE" then sent[#sent + 1] = m.data.cards[1].v end
+    end
+    check("the K goes first, as it was played", sent[1], 13)
+    check("and the 6 after it", sent[2], 6)
+end
+check("and both stay held, pending their echoes", #ws.pending_moves, 2)
+
+----------------------------------------------------------------------
+print("")
+print("ONE OF THE CHAIN LANDED, THE OTHER DID NOT")
+----------------------------------------------------------------------
+-- The K got through and the 6 did not. Resending the K would be wrong, and
+-- dropping the 6 is the bug all over again — each is judged on its own.
+ws.clear_pending_move("test setup")
+SIM.outbound = {}
+ws.socket_connected = false
+ws.send_move(GID, ME, THEM, { K_DIAMONDS }, "", 0)
+ws.send_move(GID, ME, THEM, { SIX_DIAMONDS }, "", 0)
+ws.socket_connected = true
+
+SIM.outbound = {}
+SIM.server_send({ type = "IDENTIFY", data = {
+    _id = ME, username = "Ada",
+    -- K gone from the server's hand, 6 still there, turn still ours.
+    gameState = state({ { v = 6, s = "D" }, { v = 5, s = "C" } }, ME),
+} })
+SIM.pump(0.2)
+
+check("only one move goes out", moves_out(), 1)
+check("and it is the 6, not the K", SIM.outbound[#SIM.outbound].data.cards[1].v, 6)
+check("the K is no longer held", #ws.pending_moves, 1)
+
+----------------------------------------------------------------------
+print("")
+print("THE TURN MOVED ON — NOTHING IN THE CHAIN IS REPLAYED")
+----------------------------------------------------------------------
+-- Whatever happened, replaying now would be an out-of-turn move: handleMove
+-- attributes by currentTurn and answers a mismatched sender with
+-- NOT_YOUR_TURN. There is nothing to recover.
+ws.clear_pending_move("test setup")
+SIM.outbound = {}
+ws.socket_connected = false
+ws.send_move(GID, ME, THEM, { K_DIAMONDS }, "", 0)
+ws.send_move(GID, ME, THEM, { SIX_DIAMONDS }, "", 0)
+ws.socket_connected = true
+
+SIM.outbound = {}
+SIM.server_send({ type = "IDENTIFY", data = {
+    _id = ME, username = "Ada",
+    gameState = state({ { v = 13, s = "D" }, { v = 6, s = "D" } }, THEM),
+} })
+SIM.pump(0.2)
+check("nothing is resent", moves_out(), 0)
+check("and nothing is left held", #ws.pending_moves, 0)
+
+----------------------------------------------------------------------
+print("")
+print("AN ECHO RETIRES WHAT IT PROVES, NOT EVERYTHING")
+----------------------------------------------------------------------
+-- One move being applied says nothing about the ones behind it. Clearing the
+-- lot on the first echo would lose the 6 exactly as the single slot did.
+ws.clear_pending_move("test setup")
+ws.socket_connected = true
+SIM.outbound = {}
+ws.send_move(GID, ME, THEM, { K_DIAMONDS }, "", 0)
+ws.send_move(GID, ME, THEM, { SIX_DIAMONDS }, "", 0)
+check("two in flight", #ws.pending_moves, 2)
+
+SIM.server_send({ type = "MOVE", data = {
+    from = ME,
+    -- The K has left our hand; the 6 has not.
+    gameState = state({ { v = 6, s = "D" }, { v = 5, s = "C" } }, ME),
+} })
+SIM.pump(0.2)
+check("the K is retired by its echo", #ws.pending_moves, 1)
+check("and the 6 is still held", ws.pending_moves[1].plays[1].v, 6)
+
+SIM.server_send({ type = "MOVE", data = {
+    from = ME, gameState = state({ { v = 5, s = "C" } }, THEM),
+} })
+SIM.pump(0.2)
+check("the second echo retires the 6", #ws.pending_moves, 0)
+check("and the alias follows", ws.pending_move, nil)
+
+----------------------------------------------------------------------
+print("")
+print("THE HELD LIST CANNOT GROW WITHOUT LIMIT")
+----------------------------------------------------------------------
+-- A socket down for a long time must not accumulate a turn's worth of moves
+-- forever. Well past any real hold-on run.
+ws.clear_pending_move("test setup")
+ws.socket_connected = false
+for i = 1, 30 do
+    ws.send_move(GID, ME, THEM, { { type = "PLAY", v = i, s = "C" } }, "", 0)
+end
+check("bounded", #ws.pending_moves <= 8, true)
+check("and it is the NEWEST that are kept", ws.pending_moves[#ws.pending_moves].plays[1].v, 30)
+ws.socket_connected = true
+ws.clear_pending_move("test teardown")
+
 print("")
 print(("%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

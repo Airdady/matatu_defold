@@ -46,9 +46,33 @@ M.active_game_state = {}
 -- "the K I had placed came back from the pile to my hand".
 --
 -- Held here until the server's own echo of it arrives (or the state proves it
--- landed). Only ever ONE: a player has one turn, and a second move cannot be
--- made until the first is answered.
+-- landed).
+--
+-- A LIST, NOT ONE SLOT. This used to hold a single move, on the reasoning
+-- that a player has one turn and cannot move again until the first is
+-- answered. That is not true of this game. A hold-on card KEEPS the turn, so
+-- the reported sequence is entirely ordinary play:
+--
+--   play K of diamonds  -> lost in a network glitch, turn stays with us
+--   play 6 of diamonds  -> sent, and OVERWROTE the held K
+--
+-- Only the 6 was then adjudicated on reconnect. The K was dropped without
+-- ever being resent, so the server's hand still contained it, sync_my_hand
+-- faithfully put it back, and the player watched the card they had played
+-- fly out of the deck and into their hand.
+--
+-- Oldest first, and resent in that order — a hold-on chain only makes sense
+-- played in sequence.
+M.pending_moves = {}
+
+-- The oldest move still unanswered, or nil. Kept as a plain field because
+-- "is anything of ours still in flight" is the question most callers have.
 M.pending_move = nil
+
+-- A turn cannot legitimately be an unbounded chain of unanswered moves. Well
+-- past any real hold-on run, and there so that a socket that is down for a
+-- long time cannot grow this without limit.
+local MAX_PENDING_MOVES = 8
 
 -- Large payloads (full game state) cannot travel through msg.post: Defold
 -- serializes message tables into a tiny fixed buffer and overflows on nested
@@ -201,6 +225,11 @@ function M.send_message(msg_type, data)
   return true
 end
 
+-- Keeps M.pending_move pointing at the oldest unanswered move.
+local function sync_pending_alias()
+  M.pending_move = M.pending_moves[1]
+end
+
 function M.send_move(game_id, from_id, to_id, actions, new_suit, active_penalty_count)
   local move_data = { gameId = game_id, from = from_id, to = to_id, cards = actions }
   if new_suit and new_suit ~= "" then
@@ -217,7 +246,7 @@ function M.send_move(game_id, from_id, to_id, actions, new_suit, active_penalty_
   -- which is the same reason the server acks its own live sends). Neither
   -- case is distinguishable from here, so both are held and adjudicated
   -- later against the server's own state — see resend_pending_move_if_lost.
-  M.pending_move = {
+  local held = {
     game_id = game_id,
     from_id = from_id,
     data = move_data,
@@ -238,21 +267,79 @@ function M.send_move(game_id, from_id, to_id, actions, new_suit, active_penalty_
     at = now_s(),
   }
 
-  M.pending_move.sent_ok = M.send_message("MOVE", move_data) and true or false
-  if not M.pending_move.sent_ok then
+  M.pending_moves[#M.pending_moves + 1] = held
+  while #M.pending_moves > MAX_PENDING_MOVES do
+    local dropped = table.remove(M.pending_moves, 1)
+    print(string.format(
+      "[WS] holding more than %d unanswered moves — dropping the oldest (%d play(s))",
+      MAX_PENDING_MOVES, #(dropped.plays or {})))
+  end
+  sync_pending_alias()
+
+  held.sent_ok = M.send_message("MOVE", move_data) and true or false
+  if not held.sent_ok then
     print("[WS] MOVE not sent — socket down. Held for resend on reconnect.")
   end
-  return M.pending_move.sent_ok
+  return held.sent_ok
 end
 
 -- The move came back from the server (or became moot). Stop holding it.
 local function clear_pending_move(why)
-  if M.pending_move then
-    print("[WS] pending move cleared: " .. tostring(why))
-    M.pending_move = nil
+  if #M.pending_moves > 0 then
+    print(string.format("[WS] %d pending move(s) cleared: %s",
+      #M.pending_moves, tostring(why)))
+    M.pending_moves = {}
+    sync_pending_alias()
   end
 end
 M.clear_pending_move = clear_pending_move
+
+-- Which of the held moves have demonstrably landed, judged against a state
+-- the server sent us? Used on the echo of our own move, where one move being
+-- confirmed says nothing about the others still in flight behind it.
+--
+-- A move has landed when the cards it played are no longer in the server's
+-- copy of our hand. Nothing is resent from here: a live echo is not the
+-- moment to retry anything, only to stop holding what is already done.
+local function retire_landed_moves(gs)
+  if #M.pending_moves == 0 then return end
+  local me = tostring(M.current_user_id or "")
+  local hand = me ~= "" and ((gs or {}).players or {})[me]
+  hand = type(hand) == "table" and hand.hand or nil
+  if type(hand) ~= "table" then
+    -- No hand to judge against. The echo still confirms the OLDEST move —
+    -- the server answers in the order it was sent — so retire just that one.
+    table.remove(M.pending_moves, 1)
+    sync_pending_alias()
+    return
+  end
+
+  local in_hand = function(pc)
+    for _, hc in ipairs(hand) do
+      if tonumber(hc.v) == pc.v and tostring(hc.s) == pc.s then return true end
+    end
+    return false
+  end
+
+  local kept = {}
+  for _, pm in ipairs(M.pending_moves) do
+    local still = 0
+    for _, pc in ipairs(pm.plays) do
+      if in_hand(pc) then still = still + 1 end
+    end
+    -- Every card still in hand means this one has NOT been applied yet.
+    -- A draw-only move has no fingerprint, so it is left held for the
+    -- reconnect adjudication to judge on the turn.
+    if #pm.plays > 0 and still == #pm.plays then kept[#kept + 1] = pm end
+  end
+  if #kept ~= #M.pending_moves then
+    print(string.format("[WS] %d of %d held move(s) confirmed by the echo",
+      #M.pending_moves - #kept, #M.pending_moves))
+  end
+  M.pending_moves = kept
+  sync_pending_alias()
+end
+M.retire_landed_moves = retire_landed_moves
 
 -- DID THE MOVE WE ARE HOLDING EVER REACH THE SERVER?
 --
@@ -274,9 +361,9 @@ M.clear_pending_move = clear_pending_move
 -- ignored with NOT_YOUR_TURN rather than applied. The server cannot be made
 -- to play the same card twice by this.
 local function resend_pending_move_if_lost(gs)
-  local pm = M.pending_move
-  if not pm then return end
+  if #M.pending_moves == 0 then return end
   if type(gs) ~= "table" or next(gs) == nil then return end
+  local pm = M.pending_moves[1]
 
   -- A different game entirely — the held move belongs to a board that is no
   -- longer in front of us.
@@ -301,28 +388,42 @@ local function resend_pending_move_if_lost(gs)
     return
   end
 
-  local still_held = 0
-  for _, pc in ipairs(pm.plays) do
+  local in_hand = function(pc)
     for _, hc in ipairs(hand) do
-      if tonumber(hc.v) == pc.v and tostring(hc.s) == pc.s then
-        still_held = still_held + 1
-        break
-      end
+      if tonumber(hc.v) == pc.v and tostring(hc.s) == pc.s then return true end
     end
+    return false
   end
 
-  -- Every played card is still in hand (or it was a draw-only move and it is
-  -- still our turn): the server never received this. Send it again.
-  if #pm.plays == 0 or still_held == #pm.plays then
-    print(string.format(
-      "[WS] resending the move the server never got (%d play(s), sent_ok=%s)",
-      #pm.plays, tostring(pm.sent_ok)))
-    M.send_message("MOVE", pm.data)
-    pm.at = now_s()
-    emit("pending_move_resent", pm)
-  else
-    clear_pending_move("cards are no longer in hand — the move landed")
+  -- EACH HELD MOVE IS JUDGED SEPARATELY, OLDEST FIRST.
+  --
+  -- A hold-on chain can leave several unanswered, and they are not all in the
+  -- same state: the K may have been lost while the 6 behind it landed, or the
+  -- other way round. Judging only the newest — which is all a single slot
+  -- could do — silently discarded the rest.
+  --
+  -- Resent in the order they were played, because a chain only makes sense
+  -- that way, and the socket preserves that order.
+  local kept = {}
+  for _, held in ipairs(M.pending_moves) do
+    local still = 0
+    for _, pc in ipairs(held.plays) do
+      if in_hand(pc) then still = still + 1 end
+    end
+    if #held.plays == 0 or still == #held.plays then
+      print(string.format(
+        "[WS] resending the move the server never got (%d play(s), sent_ok=%s)",
+        #held.plays, tostring(held.sent_ok)))
+      M.send_message("MOVE", held.data)
+      held.at = now_s()
+      emit("pending_move_resent", held)
+      kept[#kept + 1] = held
+    else
+      print("[WS] held move dropped: cards are no longer in hand — it landed")
+    end
   end
+  M.pending_moves = kept
+  sync_pending_alias()
 end
 M.resend_pending_move_if_lost = resend_pending_move_if_lost
 
@@ -895,11 +996,17 @@ local function parse_message(json_string)
         tostring(is_replay)))
       pprint("[PIPE-1] gs.actions:", actions)
       -- OUR OWN MOVE, COME BACK TO US. That echo is the only confirmation the
-      -- server ever sends that it applied what we sent, so it is what retires
-      -- the held copy. Anything else the server says about our move (a
-      -- RESYNC, a NOT_YOUR_TURN, the round ending) retires it too, below.
+      -- server ever sends that it applied what we sent. Anything else the
+      -- server says about our move (a RESYNC, a NOT_YOUR_TURN, the round
+      -- ending) is an answer too, and clears everything held, below.
+      --
+      -- Retires only what this echo actually PROVES, rather than everything.
+      -- On a hold-on chain several of our moves can be in flight at once, and
+      -- one of them being applied says nothing about the ones behind it — the
+      -- echoed state names which cards have left our hand, so that is what
+      -- decides.
       if from_id ~= "" and tostring(from_id) == tostring(M.current_user_id) then
-        clear_pending_move("server echoed our own move")
+        retire_landed_moves(gs)
       end
 
       local processed = {
