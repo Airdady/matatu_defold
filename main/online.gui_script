@@ -23,6 +23,7 @@ local champ_banner    = require("modules.champ_banner")
 local rank            = require("modules.rank_badge")
 local season_clock    = require("modules.season_clock")
 local search_clock    = require("modules.search_clock")
+local list_gesture    = require("modules.list_gesture")
 local dialog_search   = require("modules.dialog_search")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
@@ -910,6 +911,19 @@ function on_input(self, action_id, action)
     -- modal fire. Bail unless online is actually the active screen.
     if app_state.current_screen ~= "online" then return false end
 
+    -- A GESTURE CANNOT SURVIVE THE LIST GOING AWAY UNDER IT.
+    --
+    -- An incoming request banner, a dialog, a tab change — any of them can
+    -- land between the press and the release, and the block below is skipped
+    -- entirely while one is up. The half-finished gesture would then still be
+    -- recorded, and the next release to reach here would be read as a tap on
+    -- whatever now occupies that point. Dropped instead.
+    if self.dialog or self.battle_modal or self.invite_search or self.banners
+        or not self.list_region then
+        if self._gesture then list_gesture.cancel(self._gesture) end
+        self._tap_at = nil
+    end
+
     -- Handle natural scrolling (Touch Dragging + Mouse Wheel Support)
     if not self.dialog and not self.battle_modal and not self.invite_search and not self.banners and self.list_region and action.x and action.y then
         local reg = self.list_region
@@ -917,13 +931,29 @@ function on_input(self, action_id, action)
 
         if action_id == hash("touch") then
             if action.pressed and in_reg then
-                self._dy = action.y; self._dstart = action.y; self._drag = false
-            elseif self._dy and not action.released then
-                if math.abs(action.y - (self._dstart or action.y)) > 6 then self._drag = true end
-                -- FIX: Changed sign from '-' to '+' here so drag follows UI naturally
-                self.list_scroll, self._dy = (self.list_scroll or 0) + (action.y - self._dy), action.y; rebuild(self); return true
-            elseif action.released and self._dy then
-                local wd = self._drag; self._dy, self._drag = nil, false; if wd then return true end
+                -- The press is swallowed (return true) so it cannot reach the
+                -- button loop below, which acts on action.pressed. What this
+                -- touch turns out to be is decided at the release.
+                self._gesture = self._gesture or {}
+                list_gesture.press(self._gesture, action.y)
+                return true
+            elseif list_gesture.active(self._gesture) and not action.released then
+                local d = list_gesture.move(self._gesture, action.y)
+                if d ~= 0 then
+                    -- Sign is '+' so the content follows the finger.
+                    self.list_scroll = (self.list_scroll or 0) + d
+                    rebuild(self)
+                end
+                return true
+            elseif action.released and list_gesture.active(self._gesture) then
+                if list_gesture.release(self._gesture) ~= "tap" then return true end
+                -- A TAP. The row is picked from where the finger came UP,
+                -- rather than from a node remembered at the press: rebuild()
+                -- destroys and recreates every node in this list, so a handle
+                -- held across even one frame can refer to something that no
+                -- longer exists. Nothing moved below the slop, so it is the
+                -- same row either way.
+                self._tap_at = { x = action.x, y = action.y }
             end
         elseif action_id == hash("scroll_up") and in_reg then
             self.list_scroll = (self.list_scroll or 0) - 40; rebuild(self); return true
@@ -932,11 +962,24 @@ function on_input(self, action_id, action)
         end
     end
 
-    -- Button Interactions 
-    if action_id == hash("touch") and action.pressed then
+    -- Button Interactions
+    --
+    -- Two ways in. Everything outside the scrolling list still acts on press,
+    -- which is what makes the nav bar and the dialogs feel immediate. A row
+    -- INSIDE the list arrives here only once its touch has been released
+    -- without turning into a scroll, carrying the point it was released at.
+    local tap_x, tap_y
+    if action_id == hash("touch") then
+        if self._tap_at then
+            tap_x, tap_y, self._tap_at = self._tap_at.x, self._tap_at.y, nil
+        elseif action.pressed then
+            tap_x, tap_y = action.x, action.y
+        end
+    end
+    if tap_x then
         for i = #self.buttons, 1, -1 do
             local b = self.buttons[i]
-            if gui.pick_node(b.node, action.x, action.y) then
+            if gui.pick_node(b.node, tap_x, tap_y) then
                 local id = b.id
                 if id == "tab_quick" then self.tab, self.list_scroll = TAB_QUICK, 0; rebuild(self)
                 elseif id == "tab_battles" then self.tab, self.list_scroll = TAB_BATTLES, 0; rebuild(self)
