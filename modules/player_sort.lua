@@ -5,28 +5,37 @@
 -- they definitely could not, because those players are already mid-game, were
 -- just as likely to be at the top.
 --
--- The order asked for, and the reasoning behind each rung:
+-- SKILL FIRST. ACTIVITY SECOND.
 --
---   1. MY STAKE        the tap that works. Someone sitting at the same stake I
+--   1. HOW WELL MATCHED   players of my own SKILL TIER first, then the
+--                         immediate neighbouring tier, then further out — the
+--                         same ladder the rank badge already draws on the row
+--                         (BEGINNER, PRO, MASTER, GRANDMASTER), so what a
+--                         player sees and what the list sorts by are one fact.
+--
+--   2. WHAT THEY ARE DOING, within a tier:
+--
+--        MY STAKE      the tap that works. Someone sitting at the same stake I
 --                      have selected can be challenged with no further steps.
---   2. OTHER STAKES    playable, but I have to change my stake first.
---   3. FREE            playable by anyone, always — but it wins nothing, so it
+--        OTHER STAKES  playable, but I have to change my stake first.
+--        FREE          playable by anyone, always — but it wins nothing, so it
 --                      is the last thing a paying player wants offered.
---   4. PLAYING         not playable at all. The row is not even tappable (see
+--        PLAYING       not playable at all. The row is not even tappable (see
 --                      online_center: no challenge button on a playing row), so
---                      it belongs at the bottom whatever its stake.
+--                      it goes last within its tier.
 --
--- AND WITHIN A RUNG, THE CLOSEST OPPONENT.
+-- THESE TWO USED TO BE THE OTHER WAY ROUND, and the change is deliberate.
+-- Activity was the rung and skill was only the tiebreak inside it, so the top
+-- of the list was whoever happened to be sitting at my stake — at any tier at
+-- all. A BEGINNER's first screen could be four GRANDMASTERS, which is a
+-- matchmaking answer nobody asked for and the fastest way to lose a new
+-- player.
 --
--- Every rung can hold a lot of people, and until now their order inside it was
--- just the order the server sent. Players of my own SKILL TIER come first now,
--- then the immediate neighbouring tier, then further out — the same ladder the
--- rank badge already draws on the row (BEGINNER, PRO, MASTER, GRANDMASTER), so
--- what a player sees and what the list sorts by are one fact.
---
--- It is a tiebreak, never an override: a GRANDMASTER at my stake still ranks
--- above a BEGINNER who is mid-game. Rung first, tier second — being able to
--- play someone at all beats playing someone well matched.
+-- What it costs, stated plainly: a well-matched player who is MID-GAME now
+-- sorts above a mismatched player who is free. That row is not tappable, so
+-- there is a case for keeping every playing row at the very bottom regardless
+-- of tier — it is one comparison in M.sort if that reads better on a real
+-- lobby.
 --
 -- The tier is SENT, not computed here. broadcastOnlineUsers attaches
 -- `skillTier` to every row (be_matatu's services/playerTier.ts), because "my
@@ -151,6 +160,11 @@ function M.tier_gap(pu, mine)
     return math.abs(theirs - mine)
 end
 
+--- What this row is DOING. Lower sorts first, within a tier.
+--
+-- Unchanged from when this was the primary key — the four values already say
+-- "an active stake, then free, then playing", with the stake I have selected
+-- ahead of the rest of the active ones.
 function M.rank(pu, pivot)
     if M.is_playing(pu) then return 4 end
     local s = M.row_stake(pu)
@@ -194,9 +208,14 @@ function M.sort(rows, opts)
         }
     end
 
+    -- Tier gap first, activity second. Swapping these two lines is the whole
+    -- change described at the top of this file; with `g` at 0 for everybody —
+    -- which is what an unknown viewer tier gives — the order collapses back to
+    -- exactly what it was, so a client talking to a server that does not send
+    -- skillTier yet is unaffected.
     table.sort(decorated, function(a, b)
-        if a.r ~= b.r then return a.r < b.r end
         if a.g ~= b.g then return a.g < b.g end
+        if a.r ~= b.r then return a.r < b.r end
         return a.i < b.i
     end)
 

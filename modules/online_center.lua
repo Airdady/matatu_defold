@@ -245,10 +245,10 @@ function M.draw(self, ctx)
     -- it and the ones already mid-game — whose rows are not even tappable —
     -- were as likely as anyone to be at the top.
     --
-    -- My stake, then other stakes, then free, then playing. And when the
-    -- balance cannot cover any paid stake the same ladder is read around a
-    -- pivot of zero, which puts free first without a second ordering existing.
-    -- See modules/player_sort.lua.
+    -- SKILL FIRST, then what they are doing: my stake, other stakes, free,
+    -- playing. And when the balance cannot cover any paid stake that second
+    -- ladder is read around a pivot of zero, which puts free first without a
+    -- second ordering existing. See modules/player_sort.lua.
     --
     -- The stake comes from app_state rather than from self.stake_index because
     -- that is the one the socket has actually been told about (ws.update_stake

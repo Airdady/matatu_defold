@@ -2,12 +2,20 @@
 --
 --   Run: lua5.4 tools/test_player_sort.lua
 --
--- Asked for, in three cases:
+-- Two keys, in this order:
 --
---   stake 200 selected   200s first, then other stakes, then free, then those
---                        already playing
---   stake 500 selected   500s first, then other stakes, then free, then playing
---   cannot afford any    free first, then other stakes, then playing
+--   1. SKILL     my own tier first, then the neighbouring tier, then further
+--                out. A viewer with no known tier ties every row on this, and
+--                the whole order collapses to key 2 — which is what the three
+--                stake cases below are, and why they are unchanged.
+--
+--   2. ACTIVITY  within a tier:
+--
+--        stake 200 selected   200s first, then other stakes, then free, then
+--                             those already playing
+--        stake 500 selected   500s first, then other stakes, then free, then
+--                             playing
+--        cannot afford any    free first, then other stakes, then playing
 --
 -- The third is the same ladder read around a pivot of ZERO, which is why there
 -- is one ordering in modules/player_sort.lua rather than two: the broke case is
@@ -198,13 +206,38 @@ check("then the immediate neighbour, in either direction",
 check("a row with no tier falls to the BACK of its rung, not the front",
   tnames(ps.sort({ trow("none", nil), trow("pro", "PRO") }, topts)), "pro,none")
 
-check("a perfect tier match who is mid-game still ranks below a playable stranger",
-  tnames(ps.sort({ trow("pro_busy", "PRO", 200, true), trow("am_free", "BEGINNER", 200) }, topts)),
-  "am_free,pro_busy")
-
-check("and a matching stake beats a matching tier",
+-- SKILL OUTRANKS ACTIVITY. These two used to assert the opposite, and the
+-- swap is the point: activity as the rung meant the top of the list was
+-- whoever happened to be at my stake, at any tier at all — a BEGINNER's first
+-- screen could be four GRANDMASTERS.
+check("a matching tier beats a matching stake",
   tnames(ps.sort({ trow("pro_other", "PRO", 500), trow("am_mine", "BEGINNER", 200) }, topts)),
-  "am_mine,pro_other")
+  "pro_other,am_mine")
+
+check("and it beats a free playable stranger too",
+  tnames(ps.sort({ trow("am_free", "BEGINNER", 0), trow("pro_paid", "PRO", 500) }, topts)),
+  "pro_paid,am_free")
+
+-- The cost of that, stated as a test rather than left to be discovered: a
+-- well-matched player who is mid-game is not tappable, and now sorts above a
+-- mismatched player who is free.
+check("a perfect tier match who is mid-game now outranks a playable stranger",
+  tnames(ps.sort({ trow("pro_busy", "PRO", 200, true), trow("am_free", "BEGINNER", 200) }, topts)),
+  "pro_busy,am_free")
+
+-- WITHIN A TIER, THE ACTIVITY ORDER IS THE ONE ASKED FOR: an active stake
+-- (mine ahead of the rest), then free, then playing.
+check("inside one tier: my stake, other stakes, free, playing",
+  tnames(ps.sort({
+    trow("p_playing", "PRO", 200, true), trow("p_free", "PRO", 0),
+    trow("p_other", "PRO", 500),         trow("p_mine", "PRO", 200),
+  }, topts)), "p_mine,p_other,p_free,p_playing")
+
+check("and that order repeats in the next tier out, below the whole first one",
+  tnames(ps.sort({
+    trow("am_mine", "BEGINNER", 200), trow("pro_playing", "PRO", 200, true),
+    trow("am_free", "BEGINNER", 0),   trow("pro_free", "PRO", 0),
+  }, topts)), "pro_free,pro_playing,am_mine,am_free")
 
 -- A SERVER THAT DOES NOT SEND THE FIELD MUST CHANGE NOTHING. This is the old
 -- behaviour exactly, and it is what an un-deployed backend gets.
