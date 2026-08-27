@@ -77,6 +77,15 @@ M.active_game_state = {}
 -- only makes sense played in sequence.
 M.pending_moves = {}
 
+-- What the bubble's badge says, and the last page/message parked for the
+-- listener to read back — a page of messages is far too big for msg.post's
+-- fixed buffer, the same reason MOVE payloads are parked here. See the
+-- INBOX_* branches in parse_message.
+M.inbox_unread = 0
+M.last_inbox_page = nil
+M.last_inbox_message = nil
+M.last_inbox_sent = nil
+
 -- The oldest move still unanswered, or nil. Kept as a plain field because
 -- "is anything of ours still in flight" is the question most callers have.
 M.pending_move = nil
@@ -702,6 +711,37 @@ function M.set_savings_auto_charge(enabled, amount)
   M.send_message("SET_SAVINGS_AUTO_CHARGE", { enabled = enabled, amount = amount })
 end
 
+-- ── MESSAGE CENTRE ───────────────────────────────────────────────────────────
+--
+-- The chat bubble. Support moved off email: the player writes here, an
+-- operator answers in the dashboard, and the reply arrives over this socket or
+-- as a push if they are not connected.
+--
+-- The same inbox carries bonus notices and announcements, so there is ONE
+-- badge and one place to look. It is also the missed-message store — every
+-- message is a row on the server before any delivery is attempted — so
+-- anything that arrives while the app is closed is simply read on the next
+-- fetch. Nothing is queued on this side.
+
+--- The player wrote to support.
+function M.send_inbox_message(body)
+  M.send_message("INBOX_SEND", { body = tostring(body or "") })
+end
+
+--- Open the inbox, or page back through it.
+--
+-- `before` is the timestamp of the OLDEST message already held, not an offset:
+-- an offset shifts underneath a message arriving mid-scroll and silently skips
+-- or repeats one.
+function M.fetch_inbox(before, limit)
+  M.send_message("INBOX_FETCH", { before = before, limit = limit })
+end
+
+--- The player has seen these. Ids optional — omitted means everything.
+function M.mark_inbox_read(ids)
+  M.send_message("INBOX_READ", { ids = ids })
+end
+
 function M.send_emoji(name, sound, to)
   M.send_message("EMOJI_MESSAGE", {
     gameId = M.active_game_id,
@@ -1032,6 +1072,27 @@ local function parse_message(json_string)
     else
       print("[PIPE-1] DROPPED — gs decoded empty")
     end
+  elseif t == "INBOX_UNREAD" then
+    M.inbox_unread = tonumber(d.unread) or 0
+    emit("inbox_unread", M.inbox_unread)
+  elseif t == "INBOX_HISTORY" then
+    M.last_inbox_page = {
+      messages = d.messages or {},
+      nextBefore = d.nextBefore,
+      isFirstPage = d.isFirstPage == true,
+    }
+    M.inbox_unread = tonumber(d.unread) or M.inbox_unread or 0
+    emit("inbox_history", M.last_inbox_page)
+  elseif t == "INBOX_MESSAGE" then
+    M.last_inbox_message = d.message
+    M.inbox_unread = tonumber(d.unread) or ((M.inbox_unread or 0) + 1)
+    emit("inbox_message", d.message, M.inbox_unread)
+  elseif t == "INBOX_SENT" then
+    -- The player's OWN message, echoed. Their line appears in the thread only
+    -- once the server has it, which is what makes the bubble honest about
+    -- whether support has actually received anything.
+    M.last_inbox_sent = d
+    emit("inbox_sent", d)
   elseif t == "TIMER_UPDATE" then
     -- THE SENDER'S CONFIRMATION, AND THE ONLY ONE THEY GET.
     --

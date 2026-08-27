@@ -1144,6 +1144,27 @@ function init(self)
         if app_state.searching_invite then msg.post("#online", "ws_search_failed", { reason = reason }) else msg.post("#tournaments", "ws_search_failed", { reason = reason }) end
     end))
 
+    -- MESSAGE CENTRE. Forwarded to #inbox, which is a notification layer like
+    -- the toast: never in the SCREENS list, so it is never enabled or disabled
+    -- by navigation and the bubble survives every screen.
+    --
+    -- The PAYLOADS are not carried in the message. A page of messages is far
+    -- past msg.post's fixed buffer — the same reason MOVE payloads and the
+    -- announcement list are parked on websocket_manager — so only a wake
+    -- signal is posted and #inbox reads the page back from ws.
+    table.insert(self.tokens, ws.on("inbox_unread", function(n)
+        msg.post("#inbox", "ws_inbox_unread", { unread = tonumber(n) or 0 })
+    end))
+    table.insert(self.tokens, ws.on("inbox_history", function()
+        msg.post("#inbox", "ws_inbox_history")
+    end))
+    table.insert(self.tokens, ws.on("inbox_message", function()
+        msg.post("#inbox", "ws_inbox_message")
+    end))
+    table.insert(self.tokens, ws.on("inbox_sent", function()
+        msg.post("#inbox", "ws_inbox_sent")
+    end))
+
     table.insert(self.tokens, ws.on("head_to_head", function() msg.post("#online", "ws_head_to_head") end))
 
     forward("online_users",           "#online", "ws_online_users")
@@ -1151,6 +1172,10 @@ function init(self)
     forward("connected",              "#online", "ws_connected")
     forward("disconnected",           "#online", "ws_disconnected")
     forward("identify_success",       "#online", "ws_identify")
+    -- The bubble is hidden until the player is actually signed in — a support
+    -- button on a screen where nothing can be sent is a button that does
+    -- nothing — so it needs telling when that becomes true.
+    forward("identify_success",       "#inbox",  "ws_identify")
     forward("connection_error",       "#online", "ws_error")
     forward("game_request",           "#online", "ws_game_request")
     forward("game_request_declined",  "#online", "ws_request_declined")

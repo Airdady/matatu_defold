@@ -95,6 +95,10 @@ components {
   component: "/main/announcement.gui"
 }
 components {
+  id: "inbox"
+  component: "/main/inbox.gui"
+}
+components {
   id: "toast"
   component: "/main/toast.gui"
 }
