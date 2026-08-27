@@ -29,10 +29,28 @@ local M = {}
 -- ordinary tap.
 M.SLOP = 12
 
+--- How long a gesture may live without a release before it is abandoned.
+--
+-- A release is not guaranteed to arrive. A touch interrupted by a system
+-- gesture, a notification shade, a second finger, or the app being sent to the
+-- background can end without one — and a gesture left live afterwards is a
+-- gesture that swallows the next press. See M.expired.
+M.MAX_AGE = 4
+
 --- Begin a gesture at y. Nothing is decided here, by design.
-function M.press(g, y)
-    g.y0, g.last, g.dragging = y, y, false
+---
+--- `now` is optional and only used for the staleness check; a caller with no
+--- clock simply never expires one, which is what happened before this existed.
+function M.press(g, y, now)
+    g.y0, g.last, g.dragging, g.started = y, y, false, now
     return "held"
+end
+
+--- Has this gesture outlived any touch that could still be down?
+function M.expired(g, now)
+    if type(g) ~= "table" or g.last == nil then return false end
+    if not g.started or not now then return false end
+    return (now - g.started) > M.MAX_AGE
 end
 
 --- How far to scroll for this move, which is ZERO until the gesture is

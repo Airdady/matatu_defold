@@ -572,6 +572,19 @@ function update(self, dt)
     -- out that way), never moves at all.
     self.ui_clock = (self.ui_clock or 0) + dt
 
+    -- A GESTURE THAT OUTLIVED ITS TOUCH IS ABANDONED.
+    --
+    -- Belt and braces behind the press-ordering fix in on_input: a release can
+    -- simply never arrive, and a live gesture is the thing that swallows
+    -- input. Four seconds is far longer than any real drag and far shorter
+    -- than a player would spend wondering why the screen has stopped
+    -- responding.
+    if self._gesture and list_gesture.expired(self._gesture, self.ui_clock) then
+        print("[ONLINE] abandoning a gesture whose touch never ended")
+        list_gesture.cancel(self._gesture)
+        self._tap_at = nil
+    end
+
     if not self._active then return end
 
     local need_rebuild = false
@@ -930,13 +943,36 @@ function on_input(self, action_id, action)
         local in_reg = action.x >= reg.left and action.x <= reg.right and action.y >= reg.bottom and action.y <= reg.top
 
         if action_id == hash("touch") then
-            if action.pressed and in_reg then
-                -- The press is swallowed (return true) so it cannot reach the
-                -- button loop below, which acts on action.pressed. What this
-                -- touch turns out to be is decided at the release.
-                self._gesture = self._gesture or {}
-                list_gesture.press(self._gesture, action.y)
-                return true
+            -- A PRESS IS ALWAYS THE START OF SOMETHING NEW, so it is tested
+            -- before anything else — and this ordering is the bug it fixes.
+            --
+            -- A release is not guaranteed to arrive: a touch interrupted by a
+            -- system gesture, a notification shade, a second finger or the app
+            -- being backgrounded can end without one, leaving a gesture live.
+            -- The drag branch below reads `not action.released`, and a PRESS is
+            -- also not a release — so with a stale gesture the next press
+            -- anywhere on screen was consumed as a drag and swallowed, and
+            -- every button on the lobby stopped responding until something
+            -- happened to clear it.
+            --
+            -- Nothing usually did. The cancel at the top of on_input only fires
+            -- when there is no list_region, which is the case when the list is
+            -- EMPTY — so a quiet lobby healed itself and a busy one stayed
+            -- stuck, which is why this looked related to how many players were
+            -- online.
+            if action.pressed then
+                if in_reg then
+                    -- Swallowed (return true) so it cannot reach the button
+                    -- loop below, which acts on action.pressed. What this touch
+                    -- turns out to be is decided at the release.
+                    self._gesture = self._gesture or {}
+                    list_gesture.press(self._gesture, action.y, self.ui_clock)
+                    return true
+                end
+                -- Outside the list. Whatever was in flight is over, and this
+                -- press belongs to a button — so drop the gesture and fall
+                -- through rather than eating the tap.
+                if self._gesture then list_gesture.cancel(self._gesture) end
             elseif list_gesture.active(self._gesture) and not action.released then
                 local d = list_gesture.move(self._gesture, action.y)
                 if d ~= 0 then
