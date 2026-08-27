@@ -224,5 +224,56 @@ do
         gui:find("ws.is_identified == true", 1, true) ~= nil, true)
 end
 
+----------------------------------------------------------------------
+print("THE BUTTON ITSELF")
+----------------------------------------------------------------------
+do
+    local function src(rel)
+        local f = io.open(ROOT .. rel); local t = f:read("a"); f:close()
+        return t
+    end
+    local raw = src("main/inbox.gui_script")
+    local gui = (raw:gsub("%-%-[^\n]*", ""))
+
+    -- ROUND. A gui box is a rectangle; roundness has to come from artwork,
+    -- and circle.png is already in ui.atlas.
+    check("it is drawn from the circle image", gui:find('hash("circle")', 1, true) ~= nil, true)
+    check("with a chat icon on it", gui:find('hash("bubble")', 1, true) ~= nil, true)
+    check("and the atlas is reached safely, so a missing image cannot kill init",
+        gui:find("pcall(function()", 1, true) ~= nil, true)
+
+    -- THE REPORTED BUG. Visibility was evaluated once at init and again only
+    -- when identify_success arrived — and identify routinely completes BEFORE
+    -- this component's init, so the event had already fired and the button
+    -- never appeared.
+    check("visibility is re-checked every frame", gui:find("function update(self)", 1, true) ~= nil, true)
+    check("and the gui is only touched when the answer changes",
+        gui:find("if show == self._shown", 1, true) ~= nil, true)
+
+    -- THE CHOICE. Two different jobs behind one button.
+    check("the button opens a menu, not a screen", gui:find("open_menu(self)", 1, true) ~= nil, true)
+    check("with a chat option", gui:find('b.id == "open_chat"', 1, true) ~= nil, true)
+    check("and an inbox option", gui:find('b.id == "open_inbox"', 1, true) ~= nil, true)
+    check("and BACK returns to the choice", gui:find('b.id == "back"', 1, true) ~= nil, true)
+
+    -- One flag, derived. Two that can disagree about whether a modal is up is
+    -- how a screen ends up holding input focus with nothing on it.
+    check("open is derived from view, never set on its own",
+        gui:find("self.open = (view ~= nil)", 1, true) ~= nil, true)
+    -- Assignments only. The other references are reads, which are fine —
+    -- what must not exist is a second place that can put `open` and `view`
+    -- out of step.
+    check("and it is assigned in exactly one place",
+        select(2, gui:gsub("self%.open%s*=", "")), 1)
+
+    -- Keyboard events belong to the composer, which only the chat has.
+    check("typing is ignored outside the chat", gui:find('self.view ~= "chat"', 1, true) ~= nil, true)
+
+    -- The component is registered, or none of the above is on screen at all.
+    local go = src("main/controller.go")
+    check("the component exists in controller.go", go:find('id: "inbox"', 1, true) ~= nil, true)
+    check("and points at the gui", go:find('/main/inbox.gui"', 1, true) ~= nil, true)
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

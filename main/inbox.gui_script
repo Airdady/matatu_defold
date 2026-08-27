@@ -76,39 +76,60 @@ local function build_bubble(self)
     local x = LOGICAL_W - BUBBLE_R - BUBBLE_SIZE / 2
     local y = BUBBLE_B + BUBBLE_SIZE / 2
 
-    self.bubble = gui.new_box_node(vmath.vector3(x, y, 0),
-        vmath.vector3(BUBBLE_SIZE, BUBBLE_SIZE, 0))
-    gui.set_color(self.bubble, P_BG)
-    gui.set_xanchor(self.bubble, gui.ANCHOR_RIGHT)
-    gui.set_yanchor(self.bubble, gui.ANCHOR_BOTTOM)
+    -- ROUND, from the atlas. A gui box is a rectangle — "round" has to come
+    -- from artwork, and circle.png is already in ui.atlas. Two discs rather
+    -- than one: the gold outer reads as a ring against a dark board, and the
+    -- dark inner is what the icon sits on.
+    local function disc(size, colour)
+        local n = gui.new_box_node(vmath.vector3(x, y, 0), vmath.vector3(size, size, 0))
+        gui.set_color(n, colour)
+        gui.set_xanchor(n, gui.ANCHOR_RIGHT)
+        gui.set_yanchor(n, gui.ANCHOR_BOTTOM)
+        -- pcall: a build whose atlas is missing the image still gets a button,
+        -- square rather than round, instead of a script that dies at init and
+        -- takes the whole message centre with it.
+        pcall(function()
+            gui.set_texture(n, "ui")
+            gui.play_flipbook(n, hash("circle"))
+        end)
+        return n
+    end
 
-    self.bubble_ring = gui.new_box_node(vmath.vector3(x, y, 0),
-        vmath.vector3(BUBBLE_SIZE - 5, BUBBLE_SIZE - 5, 0))
-    gui.set_color(self.bubble_ring, P_GOLD)
-    gui.set_xanchor(self.bubble_ring, gui.ANCHOR_RIGHT)
-    gui.set_yanchor(self.bubble_ring, gui.ANCHOR_BOTTOM)
+    self.bubble = disc(BUBBLE_SIZE, P_GOLD)
+    self.bubble_inner = disc(BUBBLE_SIZE - 8, P_BG)
 
-    self.bubble_inner = gui.new_box_node(vmath.vector3(x, y, 0),
-        vmath.vector3(BUBBLE_SIZE - 11, BUBBLE_SIZE - 11, 0))
-    gui.set_color(self.bubble_inner, P_BG)
-    gui.set_xanchor(self.bubble_inner, gui.ANCHOR_RIGHT)
-    gui.set_yanchor(self.bubble_inner, gui.ANCHOR_BOTTOM)
-
-    -- A glyph rather than an atlas image, so the bubble cannot come up blank
-    -- on a build whose atlas is missing the icon.
-    self.bubble_icon = gui.new_text_node(vmath.vector3(x, y - 1, 0), "✉")
-    gui.set_font(self.bubble_icon, "subtitle2")
+    -- The chat icon itself.
+    self.bubble_icon = gui.new_box_node(vmath.vector3(x, y, 0),
+        vmath.vector3(BUBBLE_SIZE - 30, BUBBLE_SIZE - 30, 0))
     gui.set_color(self.bubble_icon, P_GOLD)
     gui.set_xanchor(self.bubble_icon, gui.ANCHOR_RIGHT)
     gui.set_yanchor(self.bubble_icon, gui.ANCHOR_BOTTOM)
+    local iconed = pcall(function()
+        gui.set_texture(self.bubble_icon, "ui")
+        gui.play_flipbook(self.bubble_icon, hash("bubble"))
+    end)
+    if not iconed then
+        -- Fall back to a glyph rather than leaving a gold square: a blank
+        -- button is worse than a plain one.
+        pcall(gui.delete_node, self.bubble_icon)
+        self.bubble_icon = gui.new_text_node(vmath.vector3(x, y - 1, 0), "\u{2709}")
+        gui.set_font(self.bubble_icon, "subtitle2")
+        gui.set_color(self.bubble_icon, P_GOLD)
+        gui.set_xanchor(self.bubble_icon, gui.ANCHOR_RIGHT)
+        gui.set_yanchor(self.bubble_icon, gui.ANCHOR_BOTTOM)
+    end
 
     -- The badge. Its own nodes so the count can change without rebuilding the
-    -- bubble, which is what lets it appear the instant INBOX_UNREAD lands.
-    local bx, by = x + BUBBLE_SIZE / 2 - 8, y + BUBBLE_SIZE / 2 - 8
+    -- button, which is what lets it appear the instant INBOX_UNREAD lands.
+    local bx, by = x + BUBBLE_SIZE / 2 - 9, y + BUBBLE_SIZE / 2 - 9
     self.badge = gui.new_box_node(vmath.vector3(bx, by, 0), vmath.vector3(26, 26, 0))
     gui.set_color(self.badge, P_BADGE)
     gui.set_xanchor(self.badge, gui.ANCHOR_RIGHT)
     gui.set_yanchor(self.badge, gui.ANCHOR_BOTTOM)
+    pcall(function()
+        gui.set_texture(self.badge, "ui")
+        gui.play_flipbook(self.badge, hash("circle"))
+    end)
     self.badge_text = gui.new_text_node(vmath.vector3(bx, by, 0), "")
     gui.set_font(self.badge_text, "small")
     gui.set_color(self.badge_text, P_CREAM)
@@ -133,9 +154,21 @@ local function bubble_should_show()
     return ws.is_identified == true
 end
 
+-- WHY THIS IS RE-CHECKED RATHER THAN WAITED FOR.
+--
+-- The button was hidden until ws.is_identified, and only re-evaluated when an
+-- identify_success event arrived. Boot order does not cooperate: identify
+-- routinely completes BEFORE this component's init runs, so the event had
+-- already fired, nothing re-ran, and the button never appeared — which is the
+-- reported "no floating button on the lobby".
+--
+-- update() asks the question every frame instead. The gui is only touched when
+-- the ANSWER changes (see _shown below), so the cost is one boolean compare.
 local function refresh_bubble(self)
     local show = bubble_should_show()
-    for _, n in ipairs({ self.bubble, self.bubble_ring, self.bubble_inner, self.bubble_icon }) do
+    if show == self._shown and not self._force_bubble then return end
+    self._shown, self._force_bubble = show, false
+    for _, n in ipairs({ self.bubble, self.bubble_inner, self.bubble_icon }) do
         pcall(gui.set_enabled, n, show)
     end
     if not show then
@@ -171,6 +204,112 @@ end
 local CHARS_PER_LINE = 42
 local LINE_H = 18
 
+-- WHAT THE BUTTON OPENS: A CHOICE, NOT A SCREEN.
+--
+-- The two things behind it are different jobs. CHAT is a conversation with
+-- support that the player is about to type into; INBOX is everything that has
+-- been sent TO them — bonus notices, announcements, past replies — which they
+-- read and do not answer. Dropping straight into the composer makes the
+-- notices hard to find, and dropping straight into the list buries the one
+-- action the button exists for.
+local MENU_W, MENU_H = 300, 176
+
+local function draw_menu(self)
+    local cx, cy = LOGICAL_W / 2, LOGICAL_H / 2
+
+    local scrim = track(self, ui.box(vmath.vector3(cx, cy, 0),
+        vmath.vector3(LOGICAL_W * 2, LOGICAL_H * 2, 0), P_SCRIM))
+    self.buttons[#self.buttons + 1] = { node = scrim, id = "scrim" }
+
+    -- Anchored ABOVE the button rather than centred, so it reads as belonging
+    -- to the thing that was tapped.
+    local mx = LOGICAL_W - BUBBLE_R - MENU_W / 2
+    local my = BUBBLE_B + BUBBLE_SIZE + 16 + MENU_H / 2
+
+    track(self, ui.box(vmath.vector3(mx, my, 0), vmath.vector3(MENU_W, MENU_H, 0), P_BORDER))
+    track(self, ui.box(vmath.vector3(mx, my, 0), vmath.vector3(MENU_W - 4, MENU_H - 4, 0), P_BG))
+
+    local top = my + MENU_H / 2
+    track(self, ui.text(vmath.vector3(mx, top - 26, 0), "MESSAGES", "small", P_GOLD))
+
+    btn(self, "open_chat", vmath.vector3(mx, top - 74, 0),
+        vmath.vector3(MENU_W - 36, 52, 0), "CHAT WITH SUPPORT", "small")
+
+    local label = "INBOX"
+    if inbox.has_unread(self.state) then
+        label = "INBOX (" .. inbox.badge_text(self.state) .. ")"
+    end
+    btn(self, "open_inbox", vmath.vector3(mx, top - 134, 0),
+        vmath.vector3(MENU_W - 36, 52, 0), label, "small")
+end
+
+-- EVERYTHING SENT TO THE PLAYER, newest first — a notice board rather than a
+-- conversation, which is why it is read in the opposite order to the chat and
+-- has no composer under it.
+local function draw_inbox_list(self)
+    local cx, cy = LOGICAL_W / 2, LOGICAL_H / 2
+
+    local scrim = track(self, ui.box(vmath.vector3(cx, cy, 0),
+        vmath.vector3(LOGICAL_W * 2, LOGICAL_H * 2, 0), P_SCRIM))
+    self.buttons[#self.buttons + 1] = { node = scrim, id = "scrim" }
+
+    track(self, ui.box(vmath.vector3(cx, cy, 0), vmath.vector3(PANEL_W, PANEL_H, 0), P_BORDER))
+    track(self, ui.box(vmath.vector3(cx, cy, 0), vmath.vector3(PANEL_W - 4, PANEL_H - 4, 0), P_BG))
+
+    local top = cy + PANEL_H / 2
+    track(self, ui.text(vmath.vector3(cx, top - 30, 0), "INBOX", "title", P_GOLD))
+    btn(self, "back", vmath.vector3(cx - PANEL_W / 2 + 44, top - 30, 0),
+        vmath.vector3(64, 40, 0), "BACK", "small")
+    btn(self, "close", vmath.vector3(cx + PANEL_W / 2 - 34, top - 30, 0),
+        vmath.vector3(44, 40, 0), "X", "body")
+
+    local list_top = top - 66
+    local list_bottom = cy - PANEL_H / 2 + 16
+
+    -- Only what was sent TO them. Their own messages belong in the chat, and
+    -- showing them here would make the notice board read as a conversation.
+    local notices = {}
+    for i = #self.state.messages, 1, -1 do
+        local m = self.state.messages[i]
+        if not inbox.is_mine(m) then notices[#notices + 1] = m end
+    end
+
+    if #notices == 0 then
+        track(self, ui.text(vmath.vector3(cx, (list_top + list_bottom) / 2, 0),
+            self.state.loaded and "Nothing here yet." or "Loading...", "small", P_DIM))
+        return
+    end
+
+    local y = list_top
+    for _, m in ipairs(notices) do
+        local lines = wrap(m.body, CHARS_PER_LINE + 6)
+        local h = #lines * LINE_H + 34
+        if y - h < list_bottom then break end
+
+        local card_cy = y - h / 2
+        track(self, ui.box(vmath.vector3(cx, card_cy, 0),
+            vmath.vector3(PANEL_W - 40, h, 0), P_THEIRS))
+        -- Unread gets a gold edge. The badge says how many; this says which.
+        if not m.read then
+            track(self, ui.box(vmath.vector3(cx - (PANEL_W - 40) / 2 + 3, card_cy, 0),
+                vmath.vector3(6, h, 0), P_GOLD))
+        end
+
+        local tx = cx - (PANEL_W - 40) / 2 + 18
+        local ly = y - 16
+        local head = inbox.sender_label(m)
+        if tostring(m.title or "") ~= "" then head = head .. "  -  " .. m.title end
+        track(self, ui.text(vmath.vector3(tx + 120, ly, 0), head, "small", P_GOLD))
+        ly = ly - 18
+        for _, line in ipairs(lines) do
+            track(self, ui.text(vmath.vector3(tx + 140, ly, 0), line, "small", P_CREAM))
+            ly = ly - LINE_H
+        end
+
+        y = y - h - ROW_GAP
+    end
+end
+
 local function draw_panel(self)
     local cx, cy = LOGICAL_W / 2, LOGICAL_H / 2
 
@@ -182,7 +321,9 @@ local function draw_panel(self)
     track(self, ui.box(vmath.vector3(cx, cy, 0), vmath.vector3(PANEL_W - 4, PANEL_H - 4, 0), P_BG))
 
     local top = cy + PANEL_H / 2
-    track(self, ui.text(vmath.vector3(cx, top - 30, 0), "MESSAGES", "title", P_GOLD))
+    track(self, ui.text(vmath.vector3(cx, top - 30, 0), "SUPPORT", "title", P_GOLD))
+    btn(self, "back", vmath.vector3(cx - PANEL_W / 2 + 44, top - 30, 0),
+        vmath.vector3(64, 40, 0), "BACK", "small")
     btn(self, "close", vmath.vector3(cx + PANEL_W / 2 - 34, top - 30, 0),
         vmath.vector3(44, 40, 0), "X", "body")
 
@@ -254,14 +395,35 @@ end
 
 local function rebuild(self)
     clear(self)
-    if self.open then draw_panel(self) end
+    if self.view == "menu" then draw_menu(self)
+    elseif self.view == "chat" then draw_panel(self)
+    elseif self.view == "inbox" then draw_inbox_list(self) end
     refresh_bubble(self)
 end
 
 -- ── open / close ────────────────────────────────────────────────────────────
 
+-- `open` is derived from `view`, never set independently — two flags that can
+-- disagree about whether a modal is up is how a screen ends up holding input
+-- focus with nothing on it.
+local function set_view(self, view)
+    self.view = view
+    self.open = (view ~= nil)
+end
+
+local function open_menu(self)
+    set_view(self, "menu")
+    self.state.error = nil
+    msg.post(".", "acquire_input_focus")
+    -- Fetched on OPENING THE MENU, not on choosing a view: whichever they pick
+    -- has the same messages behind it, and asking now means the list is
+    -- already there when they arrive.
+    pcall(ws.fetch_inbox, nil, nil)
+    rebuild(self)
+end
+
 local function open_panel(self)
-    self.open = true
+    set_view(self, "chat")
     self.state.error = nil
     msg.post(".", "acquire_input_focus")
 
@@ -276,8 +438,22 @@ local function open_panel(self)
     rebuild(self)
 end
 
+local function open_inbox_list(self)
+    set_view(self, "inbox")
+
+    -- Reading the notice board IS reading the messages. Cleared locally and
+    -- the server told separately, for the same reason as the chat: waiting for
+    -- the round trip leaves a badge over an open inbox.
+    local ids = inbox.unread_ids(self.state)
+    inbox.mark_all_read(self.state)
+    if #ids > 0 then pcall(ws.mark_inbox_read, ids) else pcall(ws.mark_inbox_read, nil) end
+
+    msg.post(".", "acquire_input_focus")
+    rebuild(self)
+end
+
 local function close_panel(self)
-    self.open = false
+    set_view(self, nil)
     self.typing = false
     pcall(gui.hide_keyboard)
     msg.post(".", "release_input_focus")
@@ -302,7 +478,12 @@ end
 function init(self)
     self.nodes, self.buttons = {}, {}
     self.state = inbox.new()
-    self.open, self.draft, self.typing = false, "", false
+    self.draft, self.typing = "", false
+    -- Through set_view like every other transition, so `open` has exactly one
+    -- assignment in the file and cannot drift out of step with `view`.
+    set_view(self, nil)
+    -- nil, not false: the first refresh must run whatever the answer is.
+    self._shown, self._force_bubble = nil, true
     screen.apply(self)
     build_bubble(self)
     rebuild(self)
@@ -316,7 +497,10 @@ end
 function on_message(self, message_id, message)
     if message_id == hash("ws_inbox_unread") then
         inbox.set_unread(self.state, message and message.unread)
-        if self.open then inbox.mark_all_read(self.state) end
+        -- A count that arrives while they are reading is already read.
+        if self.view == "chat" or self.view == "inbox" then
+            inbox.mark_all_read(self.state)
+        end
         rebuild(self)
 
     elseif message_id == hash("ws_inbox_history") then
@@ -331,7 +515,7 @@ function on_message(self, message_id, message)
             inbox.append(self.state, m)
             -- Read on arrival only if they are looking at it. Otherwise the
             -- badge stands, and the server keeps its own count either way.
-            if self.open then
+            if self.view == "chat" or self.view == "inbox" then
                 inbox.mark_all_read(self.state)
                 pcall(ws.mark_inbox_read, nil)
             else
@@ -354,9 +538,17 @@ function on_message(self, message_id, message)
         end
         rebuild(self)
 
-    elseif message_id == hash("ws_identify") or message_id == hash("screen_changed") then
+    elseif message_id == hash("ws_identify") then
+        self._force_bubble = true
         rebuild(self)
     end
+end
+
+function update(self)
+    -- One boolean compare a frame; refresh_bubble returns immediately unless
+    -- the answer actually changed. This is what makes the button appear on a
+    -- boot where identify finished before this component existed.
+    refresh_bubble(self)
 end
 
 function on_input(self, action_id, action)
@@ -366,7 +558,7 @@ function on_input(self, action_id, action)
     if not self.open then
         if action_id == hash("touch") and action.pressed and bubble_should_show() then
             if self.bubble and gui.pick_node(self.bubble, action.x, action.y) then
-                open_panel(self)
+                open_menu(self)
                 return true
             end
         end
@@ -375,6 +567,13 @@ function on_input(self, action_id, action)
 
     -- Device keyboard, the same way team_tournament takes text: the native IME
     -- brings autocorrect and the player's own layout.
+    -- Keyboard events belong to the composer, which only the chat view has.
+    -- Left ungated they would build a draft nobody can see while the notice
+    -- board is up, and send it the next time SEND was reachable.
+    if self.view ~= "chat" then
+        if action_id == hash("text") or action_id == hash("backspace") then return true end
+    end
+
     if action_id == hash("text") then
         if #self.draft < inbox.MAX_BODY then self.draft = self.draft .. tostring(action.text or "") end
         rebuild(self)
@@ -384,7 +583,7 @@ function on_input(self, action_id, action)
         rebuild(self)
         return true
     elseif action_id == hash("enter") and action.pressed then
-        do_send(self)
+        if self.view == "chat" then do_send(self) end
         return true
     end
 
@@ -395,6 +594,18 @@ function on_input(self, action_id, action)
         if gui.pick_node(b.node, action.x, action.y) then
             if b.id == "close" or b.id == "scrim" then
                 close_panel(self)
+            elseif b.id == "back" then
+                -- Back to the choice, not out of the whole thing: a player who
+                -- opened the chat to look for a bonus notice is one tap from
+                -- the right place rather than starting over at the button.
+                self.typing = false
+                pcall(gui.hide_keyboard)
+                set_view(self, "menu")
+                rebuild(self)
+            elseif b.id == "open_chat" then
+                open_panel(self)
+            elseif b.id == "open_inbox" then
+                open_inbox_list(self)
             elseif b.id == "send" then
                 do_send(self)
             elseif b.id == "field" then
