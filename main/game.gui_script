@@ -330,9 +330,6 @@ function on_message(self, message_id, message)
     elseif message_id == hash("conn_overlay") then
         overlay.set_conn_overlay(self, message)
 
-    elseif message_id == hash("ai_takeover_notice") then
-        overlay.show_ai_notice(self, message)
-
     elseif message_id == hash("emoji_received") then
         emoji_popover.on_message(self, message_id, message)
 

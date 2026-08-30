@@ -1010,9 +1010,6 @@ function start_new_online_game(self, state, is_explicit_start_event)
         end
     end
     
-    if self._ai_notice then
-        notify_gui(self.gui_hud, "ai_takeover_notice", self._ai_notice)
-    end
 end
 
 -- THE ROUND HAS FINISHED ENDING. Let whatever was waiting on it through.
@@ -1070,10 +1067,6 @@ function on_message(self, message_id, message, sender)
             if ws.current_user_data.rank then
                 notify_gui(self.gui_hud, "update_standings", { ranks = ws.current_user_data.rank })
             end
-        end
-
-        if self._ai_notice then
-            notify_gui(self.gui_hud, "ai_takeover_notice", self._ai_notice)
         end
 
     elseif message_id == hash("ws_new_game_start") then
@@ -1466,20 +1459,6 @@ function on_message(self, message_id, message, sender)
             if fresh then self.game_state = fresh end
             OnlineHandler.sync_timers(self, self.game_state or {})
         end
-
-    elseif message_id == hash("ws_ai_played") then
-        local mode = (message and message.mode) or "SINGLE_MOVE"
-        if mode == "TAKEOVER" then
-            self._ai_notice = { mode = "TAKEOVER", moves = (message and message.moves) or 0 }
-        end
-        notify_gui(self.gui_hud, "ai_takeover_notice", {
-            mode = mode,
-            moves = (message and message.moves) or 0,
-            max = (message and message.max) or 3,
-        })
-
-    elseif message_id == hash("ai_notice_ack") then
-        self._ai_notice = nil
 
     elseif message_id == hash("send_emoji") then
         if self.online_mode and message and message.emoji then

@@ -587,7 +587,6 @@ function M.process_opponent_actions(self, actions, chosen_suit, new_game_state, 
             -- together) — exactly how the player's own multi-draw animates —
             -- instead of one hard-coded single-card draw per action with a
             -- fixed beat in between. Honors act.count when the server sends
-            -- a batched draw action (mirrors process_my_actions).
             local count = tonumber(act.count) or 1
             idx = idx + 1
             while actions[idx] and actions[idx].type == "DRAW" do
@@ -774,87 +773,6 @@ function M.finalize_state_sync(self, state, on_complete)
     end
 end
 
-function M.process_my_actions(self, actions, done)
-    local idx = 1
-    local seq = self._seq
-    local INTER  = 0.24
-    -- Same combo treatment as process_opponent_actions: consecutive PLAYs
-    -- overlap in flight, spaced far enough apart to read clearly and keep
-    -- peak per-frame animation load down.
-    local PLAY_STAGGER = 0.22
-    local SETTLE = 0.30
-
-    local function next_act()
-        if seq ~= self._seq then return end
-        if idx > #actions then
-            timer.delay(SETTLE, false, function()
-                if seq == self._seq then if done then done() end end
-            end)
-            return
-        end
-
-        local act = actions[idx]
-
-        if act.type == "PLAY" then
-            idx = idx + 1
-            local v = tonumber(act.v) or 10
-            local s = tostring(act.s or "H")
-            local rec = nil
-            for i, c in ipairs(self.player_hand) do
-                if tonumber(c.v) == v and tostring(c.s) == s then
-                    rec = table.remove(self.player_hand, i)
-                    break
-                end
-            end
-            if not rec and #self.player_hand > 0 then
-                rec = table.remove(self.player_hand, #self.player_hand)
-                rec.v, rec.s = v, s
-                self.set_face(rec)
-            elseif not rec then
-                rec = self.spawn_card(v, s, vmath.vector3(self.CENTER.x, self.PLAYER_HAND_Y, self.Z_FLY))
-                self.set_face(rec)
-            end
-
-            msg.post(GUI_SUIT, "suit_select", { mode = "close" })
-            self.trigger_play_effects({ v = v, s = s }, #self.player_hand == 0)
-            self.animate_to_pile(rec, true)
-            local nxt = actions[idx]
-            local in_combo = nxt and nxt.type == "PLAY"
-            -- Same as process_opponent_actions: one hand reflow at combo
-            -- end, not one per card — keeps peak animation load flat.
-            if not in_combo then self.position_hands(true) end
-            timer.delay(in_combo and PLAY_STAGGER or INTER, false, next_act)
-
-        elseif act.type == "DRAW" then
-            -- Coalesce consecutive DRAW actions into one staggered batch —
-            -- own-turn draws are recorded one action per card (see
-            -- game_flow.draw_to_hand), so a +4 replay would otherwise run as
-            -- four separate single-card batches back to back.
-            local count = tonumber(act.count) or 1
-            idx = idx + 1
-            while actions[idx] and actions[idx].type == "DRAW" do
-                count = count + (tonumber(actions[idx].count) or 1)
-                idx = idx + 1
-            end
-            -- sync: this is a REPLAY of a move the server already accepted and
-            -- echoed back, so it reports nothing and the identities are
-            -- reconciled by sync_my_hand right after.
-            self.draw_to_hand(self.player_hand, true, count, function()
-                if seq == self._seq then next_act() end
-            end, { sync = true })
-        else
-            idx = idx + 1
-            next_act()
-        end
-    end
-
-    if #actions == 0 then
-        if done then done() end
-    else
-        next_act()
-    end
-end
-
 local function sync_my_hand(self, state)
     local me = (state.players or {})[self.my_player_id] or {}
     local real = (type(me.hand) == "table") and me.hand or nil
@@ -951,7 +869,6 @@ function M.handle_single_move(self, move_data, new_state, done)
     local is_my_move  = (sender ~= "" and sender == tostring(self.my_player_id))
     local actions     = (move_data and move_data.actions) or {}
     local has_actions = #actions > 0
-    local ai_for_me   = is_my_move and (move_data and move_data.aiOnBehalf) and true or false
     local is_replay   = (move_data and move_data.isReplay) and true or false
 
     -- A catch-up plays out like any other move — that is the point of it — but
@@ -973,24 +890,10 @@ function M.handle_single_move(self, move_data, new_state, done)
             -- Reconcile the human's own hand against server truth too, not
             -- just the opponent's — an opponent's move can change OUR hand
             -- server-side (Whot's General Market/14 forces the human to
-            -- draw as a side effect of the OPPONENT'S play), and until now
-            -- only the ai_for_me branch below ever called sync_my_hand.
-            -- Left uncorrected here, the client's local player_hand quietly
+            -- draw as a side effect of the OPPONENT'S play). Left
+            -- uncorrected here, the client's local player_hand quietly
             -- drifts from the server's authoritative hand and stays wrong
             -- until some later, unrelated resync happens to catch it.
-            M.finalize_state_sync(self, new_state, function()
-                sync_my_hand(self, new_state or {})
-                done()
-            end)
-        end)
-    elseif ai_for_me and has_actions then
-        -- Akira consumed our turn: anything we half-did before timing out
-        -- (a draw, a staged play, a suit pick) is now void — drop it so the
-        -- NEXT turn we send starts from a clean slate and validates.
-        self.current_turn_actions = {}
-        self.player_has_drawn = false
-        self.is_local_action_locked = false
-        M.process_my_actions(self, actions, function()
             M.finalize_state_sync(self, new_state, function()
                 sync_my_hand(self, new_state or {})
                 done()

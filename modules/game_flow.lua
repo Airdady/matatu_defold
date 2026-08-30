@@ -331,7 +331,7 @@ end
 -- Drawing (with auto-reshuffle when the deck runs dry)
 ----------------------------------------------------------------------
 -- `opts.sync = true` marks a draw that MIRRORS a decision the server has
--- already made — process_my_actions replaying our own accepted move,
+-- already made — a catch-up replaying an accepted move,
 -- sync_my_hand and do_sync catching a hand up to the authoritative one — as
 -- opposed to a draw the player just initiated. Two things follow from that:
 --

@@ -1321,11 +1321,6 @@ function init(self)
         msg.post("#game_logic", "ws_emoji", { sender = sender or "", emoji = content or "joy", sound = sound or "" })
     end))
 
-    table.insert(self.tokens, ws.on("ai_played_for_you", function(info)
-        info = info or {}
-        msg.post("#game_logic", "ws_ai_played", { mode = info.mode or "SINGLE_MOVE", moves = info.moves or 0, max = info.max or 3 })
-    end))
-
     table.insert(self.tokens, ws.on("game_request_declined", function(reason, _request_id, revoked)
         -- A WITHDRAWN INVITATION IS NOT OUR SEARCH FAILING.
         --

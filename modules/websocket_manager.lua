@@ -1065,7 +1065,6 @@ local function parse_message(json_string)
       local processed = {
         _id = from_id, from = from_id, actions = actions,
         chosenSuit = gs.chosenSuit or "", gameState = gs,
-        aiOnBehalf = (d.aiOnBehalf == true),
         isReplay = is_replay,
       }
       emit("game_move", processed, gs)
@@ -1133,16 +1132,6 @@ local function parse_message(json_string)
     emit("player_reconnected", { player_id = rc.player_id, state = gs })
   elseif t == "EMOJI_MESSAGE" then
     emit("emoji", d._id or d.from or "", d.emoji or d.name or "", d.sound or "")
-  elseif t == "AI_PLAYED_ON_YOUR_BEHALF" then
-    -- The backend AI covered this player's seat: either a one-shot move after
-    -- a turn timeout (mode=SINGLE_MOVE, capped per game) or a full takeover
-    -- while they were offline (mode=TAKEOVER, delivered on reconnect).
-    emit("ai_played_for_you", {
-      mode = tostring(d.mode or "SINGLE_MOVE"),
-      moves = tonumber(d.aiMovesUsed or d.aiMovesPlayed) or 0,
-      max = tonumber(d.aiMovesMax) or 3,
-      message = tostring(d.message or ""),
-    })
   elseif t == "GAME_STATE_SYNC" then
     local gs = M.extract_game_state(d)
     if next(gs) ~= nil then M.active_game_state = gs end
