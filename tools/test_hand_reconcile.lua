@@ -16,10 +16,10 @@
 --   [DRAW] client deck drifted (deck was 29, 1 requested) — dealing server cards
 --
 -- finalize_state_sync applies that state to the DECK, the PILE TOP and the
--- OPPONENT'S hand on every sync. The player's own hand was reconciled only in
--- the two branches that handle somebody ELSE's move — so the echo of the
--- player's own move, the one case where their hand is most likely to be wrong,
--- was the one case nothing checked. The phantom stayed in hand for the rest of
+-- OPPONENT'S hand on every sync. The player's own hand was reconciled only on
+-- the branch that handles somebody ELSE's move — so the echo of the player's
+-- own move, the one case where their hand is most likely to be wrong, was the
+-- one case nothing checked. The phantom stayed in hand for the rest of
 -- the game while the real card was still in the deck, waiting to be drawn and
 -- played by somebody else.
 --
@@ -46,11 +46,15 @@ print("── every branch reconciles the player's own hand ──")
 
 local calls = 0
 for _ in src:gmatch("sync_my_hand%(self, new_state or {}%)") do calls = calls + 1 end
--- opponent's move, AI covering our turn, and the echo of our own move.
-check("all three branches call sync_my_hand", calls, 3)
+-- The opponent's move, and the echo of our own. There used to be a third —
+-- the AI playing our seat for us — until AI takeover was removed; the AI no
+-- longer plays a human's seat, so no move of ours ever comes back with
+-- actions we did not make.
+check("both branches call sync_my_hand", calls, 2)
 
 check("the opponent-move branch does", dispatch:find("process_opponent_actions") ~= nil, true)
-check("the ai-for-me branch does", dispatch:find("process_my_actions") ~= nil, true)
+check("and nothing replays our own actions for us",
+      src:find("process_my_actions") == nil, true)
 
 -- THE ONE THAT WAS MISSING. The `else` is our own move coming back from the
 -- server; it used to call finalize_state_sync and nothing more.
@@ -83,7 +87,7 @@ check("it stamps the deck", fin:find("stamp_deck") ~= nil, true)
 check("it stamps the pile top", fin:find("stamp_pile_top") ~= nil, true)
 check("it stamps the opponent's hand", fin:find("stamp_ai_hand") ~= nil, true)
 -- The asymmetry that caused this: our own hand was never its business, so the
--- caller has to ask for it — which is why all three branches now do.
+-- caller has to ask for it — which is why both branches now do.
 check("but never the player's own hand", fin:find("sync_my_hand") == nil, true)
 
 print(("\n%d passed, %d failed"):format(pass, fail))
