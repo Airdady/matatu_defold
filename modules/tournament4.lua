@@ -401,7 +401,6 @@ end
 function M.advance(self)
     if self.game_over or self.t4.revealing then return end
     self.current_turn_actions = {}
-    self.drew_this_turn = false
     self.t4.turn_timer_seq = (self.t4.turn_timer_seq or 0) + 1
     
     if not self.chosen_suit or self.chosen_suit == "" then
@@ -464,7 +463,6 @@ end
 function M.apply_hold_on(self)
     if self.game_over or self.t4.revealing then return end
     self.current_turn_actions = {}
-    self.drew_this_turn = false
     if not self.chosen_suit or self.chosen_suit == "" then
         notify(GUI_HUD, "suit_badge", { suit = "" })
         notify(GUI_SUIT, "suit_select", { mode = "close" })

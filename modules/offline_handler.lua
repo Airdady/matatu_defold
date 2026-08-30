@@ -282,7 +282,6 @@ end
 
 function M.next_turn(self)
     self.current_turn_actions = {}
-    self.drew_this_turn = false
     self.player_has_drawn = false
     msg.post(GUI_HUD, "skip", { show = false })
 
