@@ -96,8 +96,11 @@ function M.end_turn(self)
     -- answered lives in websocket_manager's pending_moves, which keeps its own
     -- copy — actions_to_send is a fresh table and send_move copies each card's
     -- value out of it, so emptying this list cannot reach it.
+    -- The size the server's copy of our hand should be once this move lands.
+    -- It is what lets a draw-only move be judged on evidence when a reconnect
+    -- asks whether it ever arrived — see send_move's `hand_after`.
     ws.send_move(self.online_game_id, self.my_player_id, self.opponent_id,
-        actions_to_send, self.chosen_suit, self.active_penalty)
+        actions_to_send, self.chosen_suit, self.active_penalty, #self.player_hand)
 
     self.waiting = true
     self.is_waiting_for_server_response = true

@@ -251,7 +251,7 @@ local function sync_pending_alias()
   M.pending_move = M.pending_moves[1]
 end
 
-function M.send_move(game_id, from_id, to_id, actions, new_suit, active_penalty_count)
+function M.send_move(game_id, from_id, to_id, actions, new_suit, active_penalty_count, hand_after)
   local move_data = { gameId = game_id, from = from_id, to = to_id, cards = actions }
   if new_suit and new_suit ~= "" then
     move_data.newSuit = new_suit
@@ -272,9 +272,25 @@ function M.send_move(game_id, from_id, to_id, actions, new_suit, active_penalty_
     from_id = from_id,
     data = move_data,
     -- Just the PLAY cards: these are what the server's copy of our hand is
-    -- checked against to decide whether this move ever landed. A DRAW has no
-    -- such fingerprint (the drawn card is chosen by the server), so a
-    -- draw-only move is judged on the turn alone.
+    -- checked against to decide whether this move ever landed.
+    --
+    -- A DRAW names no card of ours, so it leaves no fingerprint of that kind
+    -- — but it does leave one: OUR HAND GREW. hand_after is the size the
+    -- server's copy should have once this move lands, and comparing against
+    -- it is what makes a draw-only move judgeable at all. Judging it "on the
+    -- turn alone", as this did, is no evidence whatsoever: a draw that LANDS
+    -- and leaves something playable KEEPS the turn (game_flow's
+    -- check_post_draw), so "still my turn" is exactly as true of a move that
+    -- arrived as of one that never did — and every reconnect resent it, and
+    -- the server drew again.
+    draws = (function()
+      local n = 0
+      for _, a in ipairs(actions or {}) do
+        if a.type == "DRAW" then n = n + 1 end
+      end
+      return n
+    end)(),
+    hand_after = tonumber(hand_after),
     plays = (function()
       local out = {}
       for _, a in ipairs(actions or {}) do
@@ -426,13 +442,40 @@ local function resend_pending_move_if_lost(gs)
   --
   -- Resent in the order they were played, because a chain only makes sense
   -- that way, and the socket preserves that order.
+  local server_n = #hand
+
   local kept = {}
   for _, held in ipairs(M.pending_moves) do
-    local still = 0
-    for _, pc in ipairs(held.plays) do
-      if in_hand(pc) then still = still + 1 end
+    local resend
+    if #held.plays > 0 then
+      -- A played card still in the server's hand is proof the move never
+      -- landed. This half was always sound and is unchanged.
+      local still = 0
+      for _, pc in ipairs(held.plays) do
+        if in_hand(pc) then still = still + 1 end
+      end
+      resend = (still == #held.plays)
+    elseif (held.draws or 0) > 0 then
+      -- Draw-only. It landed if the server's hand has already grown to the
+      -- size this move would have made it.
+      --
+      -- With no figure to compare against, DO NOT RESEND. The two mistakes
+      -- are not equal: a draw resent that had already landed takes another
+      -- card off the deck, and repeated across a flaky connection that is
+      -- the deck emptying into one hand. A draw genuinely lost costs the
+      -- player one tap, and the turn timer catches the rest.
+      resend = (held.hand_after ~= nil) and (server_n < held.hand_after)
+      if not resend then
+        print(string.format(
+          "[WS] held draw-only move dropped: server hand is %d, this move would have made it %s",
+          server_n, tostring(held.hand_after)))
+      end
+    else
+      -- Neither plays nor draws — nothing to recover.
+      resend = false
     end
-    if #held.plays == 0 or still == #held.plays then
+
+    if resend then
       print(string.format(
         "[WS] resending the move the server never got (%d play(s), sent_ok=%s)",
         #held.plays, tostring(held.sent_ok)))
