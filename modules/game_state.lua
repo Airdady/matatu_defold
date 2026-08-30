@@ -38,6 +38,11 @@ function M.fresh_state(self)
     self._online_pending_card = nil
     self.last_local_play  = {}
     self.current_turn_actions = {}
+    -- Companion to player_has_drawn, and the thing that tells the two cases
+    -- apart: "this turn has already drawn" versus "a flag left over from a
+    -- previous turn". Reset at every point the turn's action buffer is
+    -- flushed, i.e. every turn boundary. See game.script's draw watchdog.
+    self.drew_this_turn = false
     self.is_waiting_for_server_response = false
 
     self.move_queue = {}

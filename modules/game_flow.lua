@@ -125,6 +125,10 @@ end
 -- anything playable.
 local function reopen_kept_turn(self)
     if not TL.board_may_reopen_kept_turn(self) then return end
+    -- A skip KEEPS the turn and entitles a fresh draw, so this is a genuine
+    -- new draw opportunity rather than the same one repeating — both flags
+    -- clear together or the second card the skip owes never arrives.
+    self.drew_this_turn = false
     self.player_has_drawn = false
     self.is_local_action_locked = false
     notify_gui(self.gui_hud, "skip", { show = false })

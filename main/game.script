@@ -208,6 +208,7 @@ function init(self)
         end
         self.waiting = false
         self.current_turn_actions = {}
+        self.drew_this_turn = false
         self.player_has_drawn = false
         self.is_local_action_locked = false
         notify_gui(self.gui_hud, "skip", { show = false })
@@ -440,7 +441,37 @@ function update(self, dt)
             -- flight (is_animating or is_local_action_locked) fails every one
             -- of those, so a flag still set in this state can only describe a
             -- draw that already finished — i.e. a previous turn's.
-            if self.player_has_drawn and not self.is_animating and not self.is_local_action_locked then
+            -- ...BUT ONLY IF THE FLAG IS ACTUALLY FROM A PREVIOUS TURN.
+            --
+            -- The reasoning above — "a flag still set in this state can only
+            -- describe a draw that already finished, i.e. a previous turn's" —
+            -- does not hold, and the gap is how the deck emptied into one hand.
+            --
+            -- check_post_draw's `has_any` branch clears is_local_action_locked
+            -- and deliberately LEAVES THE TURN OPEN, because Matatu lets you
+            -- play the card you just drew. That is this turn's flag sitting in
+            -- exactly the state this watchdog reads as stale. Clearing it put
+            -- the deck back within reach:
+            --
+            --   tap -> draw 1, player_has_drawn = true, locked = true
+            --   check_post_draw -> still holding something playable -> unlock
+            --   watchdog (next frame) -> clears player_has_drawn
+            --   tap -> draw 1 again ...
+            --
+            -- turn_locks' deck gate deliberately does not consult has_drawn
+            -- (see its note), so that flag was the only thing enforcing one
+            -- draw per turn, and every card taken this way was appended to
+            -- current_turn_actions and flushed as ONE move carrying all of
+            -- them. Worst at the START of a game: has_any is near-certain with
+            -- a full seven-card hand, so the turn never closes itself, while
+            -- later a small hand ends the turn after one draw and the loop
+            -- cannot run.
+            --
+            -- drew_this_turn is reset at every turn boundary — everywhere
+            -- current_turn_actions is flushed — and by reopen_kept_turn, so a
+            -- skip that keeps the turn still gets the second draw it owes.
+            if self.player_has_drawn and not self.drew_this_turn
+                and not self.is_animating and not self.is_local_action_locked then
                 print("[DEBUG] Watchdog clearing stale player_has_drawn (previous turn's draw)")
                 self.player_has_drawn = false
                 RE.pre_validate_hand(self)
@@ -498,6 +529,7 @@ function update(self, dt)
         if now_my_turn and not self._was_my_turn then
             msg.post(".", "acquire_input_focus")
             self.player_has_drawn = false
+            self.drew_this_turn = false
             self.is_local_action_locked = false
             self.is_waiting_for_server_response = false
             self.waiting = false
@@ -809,6 +841,7 @@ function on_input(self, action_id, action)
             if penalty > 0 then
                 if self.player_has_drawn then return true end
                 self.player_has_drawn = true
+                self.drew_this_turn = true
                 self.is_local_action_locked = true
                 t4_cancel_afk_timer(self)
                 local n = penalty
@@ -828,6 +861,7 @@ function on_input(self, action_id, action)
                 end
             elseif not self.player_has_drawn then
                 self.player_has_drawn = true
+                self.drew_this_turn = true
                 self.is_local_action_locked = true
                 t4_cancel_afk_timer(self)
 

@@ -107,6 +107,7 @@ function M.end_turn(self)
         expires_at = 0, grace = config.GRACE_SECONDS })
 
     self.current_turn_actions = {}
+    self.drew_this_turn = false
 end
 
 function M.sync_deck_size(self, target_size)
