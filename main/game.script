@@ -209,6 +209,7 @@ function init(self)
         self.waiting = false
         self.current_turn_actions = {}
         self.player_has_drawn = false
+        self._drew_on_turn = nil
         self.is_local_action_locked = false
         notify_gui(self.gui_hud, "skip", { show = false })
         RE.pre_validate_hand(self)
@@ -221,6 +222,7 @@ function init(self)
         end
         self.waiting = true
         self.player_has_drawn = false
+        self._drew_on_turn = nil
         notify_gui(self.gui_hud, "skip", { show = false })
         RE.pre_validate_hand(self)
     end
@@ -434,15 +436,36 @@ function update(self, dt)
             -- so a stale flag refuses every tap and the whole hand reads as
             -- "disabled", right after the reshuffle that triggered it.
             --
-            -- Safe to clear here precisely because of what this block already
-            -- guarantees: it is our turn, nothing is processing, the queue is
-            -- empty and nothing is awaited from the server. A draw actually in
-            -- flight (is_animating or is_local_action_locked) fails every one
-            -- of those, so a flag still set in this state can only describe a
-            -- draw that already finished — i.e. a previous turn's.
-            if self.player_has_drawn and not self.is_animating and not self.is_local_action_locked then
+            -- WHAT THIS BLOCK GUARANTEES IS NOT ENOUGH TO CALL THE FLAG STALE.
+            --
+            -- It used to clear on exactly the conditions above plus "nothing in
+            -- flight": our turn, nothing processing, empty queue, nothing
+            -- awaited, not is_animating, not is_local_action_locked. The
+            -- reasoning was that a live draw fails one of those, so anything
+            -- left must be a previous turn's.
+            --
+            -- An ordinary pick lands in precisely that state and is THIS
+            -- turn's. draw_to_hand's finish() clears is_animating and then
+            -- calls check_post_draw, which — when the drawn card left something
+            -- playable — clears is_local_action_locked and raises the "tap to
+            -- skip" prompt. That is pick-and-play working correctly, and one
+            -- frame later this cleared the only thing stopping a second trip to
+            -- the deck (game.script's tap handler ends in `elseif not
+            -- self.player_has_drawn`). Every frame after that, too — so the
+            -- deck stayed open all turn and a normal pick was never once per
+            -- turn at all. Reported as "the turn is not locked locally when one
+            -- person picks a card normally".
+            --
+            -- turn_locks.may_clear_stale_draw is the rule now: the draw is
+            -- stamped with the turn it was taken on (server-derived, so it
+            -- cannot be missed by a frame the way the now_my_turn edge can),
+            -- and only a stamp naming a turn that has since ended is cleared.
+            -- The missed-edge case above still clears; a pick taken during the
+            -- turn in progress no longer does.
+            if TL.board_may_clear_stale_draw(self) then
                 print("[DEBUG] Watchdog clearing stale player_has_drawn (previous turn's draw)")
                 self.player_has_drawn = false
+                self._drew_on_turn = nil
                 RE.pre_validate_hand(self)
             end
         end
@@ -498,6 +521,7 @@ function update(self, dt)
         if now_my_turn and not self._was_my_turn then
             msg.post(".", "acquire_input_focus")
             self.player_has_drawn = false
+            self._drew_on_turn = nil
             self.is_local_action_locked = false
             self.is_waiting_for_server_response = false
             self.waiting = false
@@ -809,6 +833,10 @@ function on_input(self, action_id, action)
             if penalty > 0 then
                 if self.player_has_drawn then return true end
                 self.player_has_drawn = true
+                -- Stamp the turn this draw belongs to, so the update()
+                -- watchdog can tell it from a previous turn's leftover
+                -- instead of assuming (see turn_locks.may_clear_stale_draw).
+                self._drew_on_turn = TL.turn_token(self)
                 self.is_local_action_locked = true
                 t4_cancel_afk_timer(self)
                 local n = penalty
@@ -828,6 +856,7 @@ function on_input(self, action_id, action)
                 end
             elseif not self.player_has_drawn then
                 self.player_has_drawn = true
+                self._drew_on_turn = TL.turn_token(self)
                 self.is_local_action_locked = true
                 t4_cancel_afk_timer(self)
 

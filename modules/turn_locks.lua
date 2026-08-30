@@ -113,7 +113,122 @@ function M.may_reopen_kept_turn(s)
     return true
 end
 
---- The two above, read straight off a board object.
+--- May the watchdog treat player_has_drawn as a PREVIOUS turn's leftover?
+--
+-- THE BUG THIS EXISTS FOR
+--
+-- Reported: "the turn is not locked locally when one person picks a card
+-- normally". Picking is meant to be once per turn — only a SKIP card earns a
+-- second trip to the deck — and it had stopped being once per turn at all.
+--
+-- player_has_drawn is the ONLY thing enforcing that rule. game.script's deck
+-- tap ends in `elseif not self.player_has_drawn then`, so whatever clears that
+-- flag mid-turn hands out another card. game.script's update() watchdog was
+-- clearing it every frame, on this reasoning:
+--
+--   it is my turn, nothing is processing, the queue is empty, nothing is
+--   awaited from the server, and neither is_animating nor is_local_action_locked
+--   is set -- so a draw in flight is ruled out, so this flag must be a
+--   previous turn's
+--
+-- The last step does not follow. An ordinary pick lands in exactly that state
+-- and it is THIS turn's:
+--
+--   t+0.00  deck tapped        player_has_drawn = true, locked = true
+--   t+0.46  the card lands     draw_to_hand's finish() clears is_animating,
+--                              THEN calls check_post_draw
+--   t+0.46  check_post_draw    the drawn card left something playable, so it
+--                              clears is_local_action_locked and raises the
+--                              "tap to skip" prompt -- pick-and-play, correct
+--   t+0.47  next frame         watchdog reads has_drawn=true, animating=false,
+--                              locked=false -> "stale" -> clears it
+--   t+0.50  deck tapped again  the one guard there was is gone. Second card.
+--
+-- And a third, and a fourth: the watchdog re-clears the flag every frame, so
+-- the deck stayed open for the whole turn. The server does not catch it either
+-- -- be_matatu's validation.ts carries a long note on why it deliberately has
+-- no per-move draw cap ("the double-tap is prevented where it actually
+-- originates -- matatu_defold's modules/turn_locks.lua"). This IS that guard,
+-- so nothing else was ever going to.
+--
+-- WHY THE WATCHDOG STILL HAS TO EXIST
+--
+-- It is not removable. player_has_drawn's ordinary reset is the false->true
+-- edge of now_my_turn in update(), an edge sampled once a frame, and two state
+-- updates -- the opponent's play (which can trigger a ~1.3s reshuffle settle)
+-- and the turn coming back -- can land in the SAME frame. The intermediate
+-- "not my turn" is then never observed, the edge never fires, and the flag
+-- really does survive into the next turn. With a penalty pending, drawing is
+-- the only legal move, so a stale flag refuses every tap and the whole hand
+-- reads as disabled.
+--
+-- So the watchdog needs what it never had: a way to tell THIS turn's draw from
+-- a previous turn's. It asks the draw which turn it was taken on.
+--
+--   drew_on / turn_now
+--             the turn the draw was stamped with (game.script stamps it at the
+--             moment it sets player_has_drawn) against the turn in progress --
+--             see M.turn_token. This is the authority when both are known, and
+--             it is server-derived, so unlike the now_my_turn edge it cannot be
+--             missed by a frame: handleMove reassigns turnExpiresAt on every
+--             single move. Same token means the draw is THIS turn's and the
+--             one-pick-per-turn rule is simply doing its job; a different token
+--             means the turn it belonged to is over and the flag is a leftover.
+--
+--   staged    #current_turn_actions -- the fallback for when there is no token
+--             to compare (offline, or before any turnExpiresAt has arrived).
+--             A real online pick appends its DRAW here (draw_to_hand) and
+--             online_handler.end_turn empties the list when the turn's move is
+--             sent, so non-empty means "this turn is still mid-composition" --
+--             which is also exactly the signal reconcile_input_locks already
+--             trusts for the same question.
+--
+-- The token is consulted FIRST rather than AND-ed with `staged`, and that
+-- ordering matters in one direction: a turn that ended WITHOUT end_turn (a
+-- server-side timeout, say) leaves its DRAW staged forever, so an AND would
+-- refuse to clear a flag that really is stale and leave the player unable to
+-- draw -- the exact stuck-with-a-penalty-pending failure this watchdog exists
+-- to prevent. The token answers that case correctly, so let it answer.
+--
+-- animating / locked stay as they were: a draw physically in flight is never a
+-- leftover, whatever the rest says.
+function M.may_clear_stale_draw(s)
+    s = s or {}
+    if not s.has_drawn then return false end
+    if s.animating or s.locked then return false end
+    if s.drew_on ~= nil and s.turn_now ~= nil then
+        return s.drew_on ~= s.turn_now
+    end
+    return (s.staged or 0) == 0
+end
+
+--- The identity of the turn currently in progress, or nil if not known.
+--
+-- turnExpiresAt is reassigned by be_matatu's handleMove on EVERY move
+-- (`gameState.turnExpiresAt = Date.now() + PLAY_TIMEOUT_DURATION`), and by
+-- startTimeout whenever it arms a FRESH turn -- which covers the turn a
+-- server-side timeout hands on. It reaches this client through
+-- online_handler.sync_timers, which copies the server's value verbatim: the
+-- local recomputation further down sync_timers only drives the HUD clock and
+-- is never written back. So it changes once per turn, from the authority, and
+-- pairs with currentTurn to name a turn.
+--
+-- What deliberately does NOT move it is a disconnect grace re-arm
+-- (startTimeout's freshTurn = false), which is right for this too: a grace
+-- period is not a new turn, and a draw taken before it is still this turn's.
+--
+-- nil rather than a placeholder when there is nothing to go on (offline, or no
+-- state yet). A caller must read that as "unknown", never as "same turn" --
+-- may_clear_stale_draw does, and falls back to `staged` alone.
+function M.turn_token(self)
+    local gs = self and self.game_state
+    if type(gs) ~= "table" then return nil end
+    local expires = gs.turnExpiresAt
+    if expires == nil or expires == 0 then return nil end
+    return tostring(gs.currentTurn) .. "#" .. tostring(expires)
+end
+
+--- The rules above, read straight off a board object.
 --
 -- The call sites hold `self`; these save them spelling the same fields out
 -- again and getting one of them wrong, which is how the two unlocks came to
@@ -132,6 +247,18 @@ function M.board_may_reopen_kept_turn(self)
     return M.may_reopen_kept_turn({
         has_drawn = on(self.player_has_drawn),
         animating = on(self.is_animating),
+    })
+end
+
+function M.board_may_clear_stale_draw(self)
+    local staged = self.current_turn_actions
+    return M.may_clear_stale_draw({
+        has_drawn = on(self.player_has_drawn),
+        animating = on(self.is_animating),
+        locked    = on(self.is_local_action_locked),
+        staged    = (type(staged) == "table") and #staged or 0,
+        drew_on   = self._drew_on_turn,
+        turn_now  = M.turn_token(self),
     })
 end
 

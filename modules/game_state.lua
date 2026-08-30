@@ -23,6 +23,7 @@ function M.fresh_state(self)
     self.pending_market_draw = nil
     self.chosen_suit      = ""
     self.player_has_drawn = false
+    self._drew_on_turn    = nil
     self.is_local_action_locked = false
     self.lock_stuck       = 0
     self.is_suit_selection_active = false
