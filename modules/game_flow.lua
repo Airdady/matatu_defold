@@ -93,6 +93,7 @@ function M.play_card(self, rec, is_player, result)
         or (NA.HOLD_ON and result.type == NA.HOLD_ON)
         or (NA.GENERAL_MARKET and result.type == NA.GENERAL_MARKET) then
             self.player_has_drawn = false
+            self._drew_on_turn = nil
             self.is_local_action_locked = false
             notify_gui(self.gui_hud, "skip", { show = false })
         end
@@ -126,6 +127,7 @@ end
 local function reopen_kept_turn(self)
     if not TL.board_may_reopen_kept_turn(self) then return end
     self.player_has_drawn = false
+    self._drew_on_turn = nil
     self.is_local_action_locked = false
     notify_gui(self.gui_hud, "skip", { show = false })
 end
@@ -308,6 +310,7 @@ function M.after_play_settled(self, rec, is_player, result, ticket)
                 self.pending_market_draw = { who = "player", count = count, return_to = "ai" }
                 self.waiting = false
                 self.player_has_drawn = false
+                self._drew_on_turn = nil
                 self.is_local_action_locked = false
                 notify_gui(self.gui_hud, "skip", { show = false })
                 RE.pre_validate_hand(self)

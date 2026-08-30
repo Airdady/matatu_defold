@@ -157,5 +157,157 @@ check("and the late re-open on an untouched turn is still allowed",
       TL.board_may_reopen_kept_turn(chaining), true)
 
 ----------------------------------------------------------------------
+-- may_clear_stale_draw: ONE PICK PER TURN, AND THE WATCHDOG KNOWS WHICH TURN
+----------------------------------------------------------------------
+-- Reported: "the turn is not locked locally when one person picks a card
+-- normally". player_has_drawn is the only thing enforcing one pick per turn,
+-- and game.script's update() watchdog was clearing it every frame on the
+-- reasoning that a draw not in flight must be a previous turn's. An ordinary
+-- pick is not in flight either the moment it lands — check_post_draw clears
+-- is_local_action_locked so the player can play what they drew — so the guard
+-- was wiped one frame later, and the deck stayed open for the rest of the turn.
+local function drew(over)
+    -- A turn where the player has picked and the card has landed.
+    local s = { has_drawn = true, animating = false, locked = false,
+                staged = 1, drew_on = "me#1000", turn_now = "me#1000" }
+    for k, v in pairs(over or {}) do s[k] = v end
+    return s
+end
+
+check("THE BUG: a pick taken this turn is not a previous turn's leftover",
+      TL.may_clear_stale_draw(drew()), false)
+check("nothing to clear when the player has not drawn",
+      TL.may_clear_stale_draw(drew{ has_drawn = false }), false)
+check("a draw still in the air is never stale",
+      TL.may_clear_stale_draw(drew{ animating = true, staged = 0, drew_on = "me#900" }), false)
+check("nor is one whose local action is still committed",
+      TL.may_clear_stale_draw(drew{ locked = true, staged = 0, drew_on = "me#900" }), false)
+
+-- THE CASE THE WATCHDOG EXISTS FOR, which must keep working. Two state updates
+-- landing in one frame hide the "not my turn" in between, so the now_my_turn
+-- edge never fires and the flag survives. By then end_turn has emptied the
+-- staged list and the opponent's move has moved the server's turn token, so
+-- both discriminators agree the draw belongs to a turn that is over.
+check("a genuine previous turn's flag is still cleared",
+      TL.may_clear_stale_draw(drew{ staged = 0, drew_on = "me#1000", turn_now = "me#2000" }), true)
+
+-- The token is the authority, and it has to OUTRANK the staged list: a turn
+-- that ended without end_turn (a server-side timeout) leaves its DRAW staged
+-- forever. Refusing on `staged` there would pin the flag on and leave the
+-- player unable to draw — the stuck-with-a-penalty-pending failure this
+-- watchdog exists to prevent in the first place.
+check("a turn that ended without emptying the staged list still clears",
+      TL.may_clear_stale_draw(drew{ staged = 2, drew_on = "me#1000", turn_now = "me#2000" }), true)
+check("and the token equally outranks it the other way",
+      TL.may_clear_stale_draw(drew{ staged = 0, drew_on = "me#1000", turn_now = "me#1000" }), false)
+-- Spelled out rather than built with drew{}: these turn on a token being
+-- ABSENT, and a nil override cannot survive a pairs() copy.
+-- `staged` is the fallback for when there is no token at all.
+check("staged alone carries it when there is no token to compare",
+      TL.may_clear_stale_draw({ has_drawn = true, animating = false, locked = false,
+                                staged = 0 }), true)
+check("an unknown token must read as unknown, never as 'same turn'",
+      TL.may_clear_stale_draw({ has_drawn = true, animating = false, locked = false,
+                                staged = 0, drew_on = "me#1000" }), true)
+check("...and the same the other way round",
+      TL.may_clear_stale_draw({ has_drawn = true, animating = false, locked = false,
+                                staged = 0, turn_now = "me#1000" }), true)
+check("a missing state table refuses rather than throws",
+      TL.may_clear_stale_draw(nil), false)
+
+----------------------------------------------------------------------
+-- turn_token: server-derived, and nil when it knows nothing
+----------------------------------------------------------------------
+check("no state, no token", TL.turn_token({}), nil)
+check("no turnExpiresAt, no token",
+      TL.turn_token({ game_state = { currentTurn = "me" } }), nil)
+check("a zero expiry is 'not known yet', not a turn",
+      TL.turn_token({ game_state = { currentTurn = "me", turnExpiresAt = 0 } }), nil)
+check("a real turn names itself",
+      TL.turn_token({ game_state = { currentTurn = "me", turnExpiresAt = 1000 } }), "me#1000")
+-- handleMove reassigns turnExpiresAt on EVERY move, so consecutive turns of
+-- the same player never share a token — which is the whole point of using it.
+check("the same seat on a later turn is a different turn",
+      TL.turn_token({ game_state = { currentTurn = "me", turnExpiresAt = 2000 } }) ~=
+      TL.turn_token({ game_state = { currentTurn = "me", turnExpiresAt = 1000 } }), true)
+
+----------------------------------------------------------------------
+-- the reported sequence, walked in order: ONE normal pick, then no more
+----------------------------------------------------------------------
+local picked = {
+    is_player_turn = function() return true end,
+    waiting = false, is_local_action_locked = false,
+    is_suit_selection_active = false, player_has_drawn = false, is_animating = false,
+    current_turn_actions = {},
+    game_state = { currentTurn = "me", turnExpiresAt = 5000 },
+}
+
+-- t+0.00 — the turn opens. The deck is the player's to tap, once.
+check("t+0.00 the deck is open at the start of the turn",
+      TL.board_may_touch_deck(picked), true)
+
+-- t+0.01 — they tap it. The draw commits, stamped with the turn it belongs to,
+-- and its DRAW action is staged for the move that will end the turn.
+picked.player_has_drawn      = true
+picked._drew_on_turn         = TL.turn_token(picked)
+picked.is_local_action_locked = true
+picked.is_animating          = true
+table.insert(picked.current_turn_actions, { type = "DRAW", v = 5, s = "H" })
+check("t+0.01 a second tap mid-flight is refused",
+      TL.board_may_touch_deck(picked), false)
+
+-- t+0.47 — the card lands. draw_to_hand clears is_animating, then
+-- check_post_draw finds the drawn card left something playable and clears
+-- is_local_action_locked so it can be played. Pick-and-play, working.
+picked.is_animating           = false
+picked.is_local_action_locked = false
+
+-- t+0.48 — the watchdog frame. THIS is where the pick used to be forgotten.
+check("t+0.48 the watchdog does NOT mistake this turn's pick for a stale one",
+      TL.board_may_clear_stale_draw(picked), false)
+
+-- t+0.50 — and because it was not forgotten, the deck stays shut. The player
+-- may play a card; they may not take a second one.
+check("t+0.50 a normal pick is once per turn",
+      picked.player_has_drawn, true)
+
+-- The turn ends: end_turn sends the move and empties the staged list, and the
+-- opponent's move moves the server's token on. NOW the flag is genuinely a
+-- leftover, and the watchdog is free to clear it — which is the missed-edge
+-- case it was written for.
+picked.current_turn_actions = {}
+picked.game_state.turnExpiresAt = 9000
+check("once the turn has really moved on, the flag is cleared",
+      TL.board_may_clear_stale_draw(picked), true)
+
+----------------------------------------------------------------------
+-- a SKIP card is the one thing that earns a second pick
+----------------------------------------------------------------------
+-- play_card re-opens input for SKIP_TURN synchronously and clears both the
+-- flag and its stamp, so the deck is genuinely open again — this is the one
+-- route back to the deck within a turn, and it must stay open.
+local after_skip = {
+    is_player_turn = function() return true end,
+    waiting = false, is_local_action_locked = false,
+    is_suit_selection_active = false, is_animating = false,
+    game_state = { currentTurn = "me", turnExpiresAt = 5000 },
+    -- the pick, the 8 that came out of it, and then the skip's re-open
+    current_turn_actions = { { type = "DRAW", v = 8, s = "H" }, { type = "PLAY", v = 8, s = "H" } },
+    player_has_drawn = false, _drew_on_turn = nil,
+}
+check("after a skip the deck is open for the pick it entitles them to",
+      TL.board_may_touch_deck(after_skip), true)
+check("and there is no flag left for the watchdog to argue about",
+      TL.board_may_clear_stale_draw(after_skip), false)
+
+-- That second pick commits exactly like the first, and is just as final.
+after_skip.player_has_drawn      = true
+after_skip._drew_on_turn         = TL.turn_token(after_skip)
+after_skip.is_local_action_locked = false
+table.insert(after_skip.current_turn_actions, { type = "DRAW", v = 5, s = "C" })
+check("the skip's pick is itself once-only",
+      TL.board_may_clear_stale_draw(after_skip), false)
+
+----------------------------------------------------------------------
 print(failures == 0 and "\nall checks passed" or ("\n%d FAILED"):format(failures))
 os.exit(failures == 0 and 0 or 1)
