@@ -182,7 +182,12 @@ function M.draw(self, ctx)
     -- profile, or a race with an in-flight identify, none of which mean this
     -- connection is actually authenticated right now.
     local users = ws.is_identified and (ws.get_online_users() or {}) or {}
-    local my_id = ws.get_current_user_id()
+    -- Normalised, because the row ids come out of JSON as strings and this one
+    -- comes out of whatever seeded the session. A raw `~=` between the two is
+    -- how your own row survives the filter below and you end up able to
+    -- challenge yourself — which the server used to let you do (no match ever
+    -- checked that its two sides were two people) and now refuses outright.
+    local my_id = tostring(ws.get_current_user_id() or "")
 
     local rows = {}
     -- Used to filter out duplicates. Keyed by user id alone for Quick Play
@@ -192,7 +197,10 @@ function M.draw(self, ctx)
 
     -- Filter list: No duplicates, no self, and tab-specific logic
     for _, pu in ipairs(users) do
-        if pu._id and pu._id ~= my_id then
+        -- An unresolved my_id filters nobody, so show nobody rather than
+        -- offering a lobby with yourself in it: the list refreshes on the
+        -- next broadcast, and IDENTIFY sets this well before then.
+        if pu._id and my_id ~= "" and tostring(pu._id) ~= my_id then
             if self.tab == TAB_BATTLES then
                 -- A player's `myBattles` map (already broadcast alongside the
                 -- legacy singular `myBattle`) can hold one battle per type —
