@@ -1213,7 +1213,19 @@ function init(self)
         self._silent_login_attempts = 0
         try_device_login(self)
         msg.post("#lobby", "auth_state_changed")
-        if self.screen ~= "lobby" then show(self, "lobby") end
+        -- AN OFFLINE GAME IN PROGRESS OWNS THE SCREEN — see
+        -- modules/takeover_rules.lua. An expired session is about the SOCKET;
+        -- a Quick Play match against the AI needs neither socket nor session
+        -- to finish, and this fires from a background retry the player never
+        -- saw. Sending them to the lobby posts `disable` to #game_logic and
+        -- tears the game down mid-hand. The recovery above still runs — it is
+        -- only the navigation that waits until they leave the game.
+        local may_leave, why = takeover.may_interrupt_now(app_state, self.screen)
+        if not may_leave then
+            print("[TAKEOVER] refusing auth_required navigation: " .. tostring(why))
+        elseif self.screen ~= "lobby" then
+            show(self, "lobby")
+        end
     end))
     -- A failed IDENTIFY means the cached id is no good to the server (stale
     -- session from a reinstall/another environment, or a reply that never
@@ -1277,7 +1289,16 @@ function init(self)
                 try_device_login(self)
             end)
         end
-        if self.screen ~= "lobby" then show(self, "lobby") end
+        -- Same rule as auth_required above, and the same reason: a refused or
+        -- unanswered IDENTIFY says nothing about a game being played against
+        -- the AI. The session rebuild has already been started; the player
+        -- keeps their game while it happens.
+        local may_leave, why = takeover.may_interrupt_now(app_state, self.screen)
+        if not may_leave then
+            print("[TAKEOVER] refusing identify_error navigation: " .. tostring(why))
+        elseif self.screen ~= "lobby" then
+            show(self, "lobby")
+        end
     end))
 
     forward("resync",                "#game_logic", "ws_resync")

@@ -1,4 +1,9 @@
--- WHEN AN ONLINE GAME MAY TAKE THE SCREEN, AND WHEN IT MAY NOT.
+-- WHEN A BACKGROUND EVENT MAY TAKE THE SCREEN FROM A GAME, AND WHEN IT MAY NOT.
+--
+-- Two intruders, one rule: an online game arriving on a reconnect
+-- (may_take_over) and an auth/connection failure sending the player to the
+-- lobby (may_interrupt). Both used to end an offline game that had asked for
+-- neither.
 --
 -- THE BUG THIS EXISTS FOR
 --
@@ -38,7 +43,11 @@
 
 local M = {}
 
---- May an incoming online game take the screen?
+--- What is on the screen right now, as far as either rule below cares.
+---
+--- Both questions turn on exactly this, so it is asked once. Two copies of
+--- the same condition is how a rule like this comes apart: one gets a fix and
+--- the other does not, and the bug comes back down whichever path was missed.
 ---
 --- @param state table {
 ---   screen       = the screen the controller is showing ("game", "lobby", …)
@@ -46,33 +55,112 @@ local M = {}
 ---   game_active  = app_state.game_active
 ---   offline_game = app_state.offline_game
 --- }
---- @return boolean allowed
---- @return string reason  why not, for the log — always set, both ways
-function M.may_take_over(state)
+local function classify(state)
     state = state or {}
 
     if tostring(state.screen or "") ~= "game" then
-        -- Not in any game: this is the ordinary resume/match-found path.
-        return true, "not on the game screen"
+        return "no_game_screen"
     end
 
     if tostring(state.mode or "") ~= "offline" then
-        -- An ONLINE game on screen is the round-continuation case, which is
-        -- exactly what ws_new_game_start is for. Never blocked.
-        return true, "already in an online game"
+        return "online_game"
     end
 
     -- On the game screen, in offline mode. `game_active` is the live flag;
     -- `offline_game` is the game object the lobby handed over. EITHER being
     -- present means there is a match to protect — they are set at slightly
-    -- different moments, and a takeover landing in the gap between them is
+    -- different moments, and an intruder landing in the gap between them is
     -- precisely the kind of timing this is meant to survive.
     if state.game_active or state.offline_game ~= nil then
-        return false, "an offline game is in progress"
+        return "offline_game"
     end
 
     -- The game screen in offline mode with nothing running: a torn-down game,
     -- or the moment before one starts. Nothing to protect.
+    return "idle_game_screen"
+end
+
+--- May an incoming online game take the screen?
+---
+--- @param state table  see classify above
+--- @return boolean allowed
+--- @return string reason  why not, for the log — always set, both ways
+function M.may_take_over(state)
+    local what = classify(state)
+
+    if what == "no_game_screen" then
+        -- Not in any game: this is the ordinary resume/match-found path.
+        return true, "not on the game screen"
+    end
+
+    if what == "online_game" then
+        -- An ONLINE game on screen is the round-continuation case, which is
+        -- exactly what ws_new_game_start is for. Never blocked.
+        return true, "already in an online game"
+    end
+
+    if what == "offline_game" then
+        return false, "an offline game is in progress"
+    end
+
+    return true, "no offline game in progress"
+end
+
+--- May a BACKGROUND CONNECTION OR AUTH EVENT navigate away from the screen?
+---
+--- THE SECOND HALF OF THE SAME BUG.
+---
+--- may_take_over above stops a reconnect REPLACING an offline game with an
+--- online one. It does nothing about the other way a reconnect ended one:
+--- controller.script's auth_required and identify_error handlers both finished
+--- with an unconditional
+---
+---     if self.screen ~= "lobby" then show(self, "lobby") end
+---
+--- and show() posts `disable` to #game_logic, which sets game_active = false
+--- and bumps _seq — the offline game is torn down, mid-hand, and the player is
+--- standing in the lobby.
+---
+--- Neither event has anything to do with an offline game. An expired session
+--- and a refused IDENTIFY are both about the SOCKET, and a Quick Play match
+--- against the AI needs no socket and no session to finish. They fire from
+--- background retries the player never asked for and never saw, which is why
+--- this reads as the game closing by itself.
+---
+--- Reported as: "at times when its offline and the others are trying to
+--- reconnect they end up terminating the offline game going on."
+---
+--- WHAT IS AND IS NOT REFUSED
+---
+--- Only the navigation. Both handlers still clear the session and still start
+--- their silent re-login — the recovery runs exactly as before, in the
+--- background, where it belongs. The player is simply left in their game while
+--- it happens, and lands on a rebuilt session when they leave it.
+---
+--- An ONLINE game deliberately stays interruptible. There the session IS the
+--- game: a rejected identity means the server will take no more moves, so
+--- carrying on would show a board that cannot play. Only the offline case is
+--- changed, which is the whole of what was wrong.
+---
+--- @return boolean allowed
+--- @return string reason  always set, both ways
+function M.may_interrupt(state)
+    local what = classify(state)
+
+    if what == "no_game_screen" then
+        return true, "not on the game screen"
+    end
+
+    if what == "online_game" then
+        -- The session is what makes an online game playable; losing it is
+        -- exactly when leaving is right.
+        return true, "an online game depends on the session"
+    end
+
+    if what == "offline_game" then
+        return false, "an offline game is in progress"
+    end
+
     return true, "no offline game in progress"
 end
 
@@ -80,13 +168,22 @@ end
 ---
 --- A convenience so the two call sites in controller.script read as one line
 --- each and cannot disagree about which fields matter.
-function M.may_take_over_now(app_state, screen)
-    return M.may_take_over({
+local function snapshot(app_state, screen)
+    return {
         screen = screen,
         mode = app_state and app_state.mode,
         game_active = app_state and app_state.game_active,
         offline_game = app_state and app_state.offline_game,
-    })
+    }
+end
+
+function M.may_take_over_now(app_state, screen)
+    return M.may_take_over(snapshot(app_state, screen))
+end
+
+--- may_interrupt, read off the app_state module and a screen name.
+function M.may_interrupt_now(app_state, screen)
+    return M.may_interrupt(snapshot(app_state, screen))
 end
 
 return M

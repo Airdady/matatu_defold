@@ -28,6 +28,27 @@
 -- What is refused is the NAVIGATION and only that. ws.active_game_state is set
 -- by the parser before the event is emitted, so the online game is still there
 -- to resume the moment the player leaves the offline one.
+--
+-- THE SECOND HALF, added later: the same reconnect ended offline games down a
+-- completely different path. auth_required and identify_error both finished
+-- with an unconditional
+--
+--     if self.screen ~= "lobby" then show(self, "lobby") end
+--
+-- and show() posts `disable` to #game_logic — game_active = false, _seq
+-- bumped, the game gone. An expired session and a refused IDENTIFY are both
+-- about the SOCKET, and a match against the AI needs neither socket nor
+-- session to finish; both fire from background retries the player never saw.
+--
+-- Reported as: "at times when its offline and the others are trying to
+-- reconnect they end up terminating the offline game going on."
+--
+-- may_interrupt is that rule, and the sections at the bottom pin two things
+-- about it: that an ONLINE game is still interruptible (there the session IS
+-- the game), and that the session recovery still runs unconditionally — only
+-- the navigation waits. Refusing the jump AND skipping the re-login would
+-- leave the player in their game with a dead session and nothing rebuilding
+-- it, which is worse than the bug being fixed.
 
 local ROOT = (debug.getinfo(1, "S").source:match("@(.*/)") or "./") .. "../"
 
@@ -167,6 +188,152 @@ do
     -- after the offline one ends.
     check("the accept handler still stores the game state",
         accept:find("ws%.active_game_state = gs") ~= nil, true)
+end
+
+print("\n== the OTHER way a reconnect ended an offline game ==")
+do
+    -- auth_required and identify_error both finished with an unconditional
+    --     if self.screen ~= "lobby" then show(self, "lobby") end
+    -- and show() posts `disable` to #game_logic: game_active = false, _seq
+    -- bumped, the offline game gone mid-hand. Neither event is about an
+    -- offline game — both are about the socket, and both fire from background
+    -- retries the player never saw.
+    local function may(state) local ok = T.may_interrupt(state); return ok end
+
+    check("an offline game in progress is protected",
+        may({ screen = "game", mode = "offline", game_active = true }), false)
+    check("the offline game object alone is enough",
+        may({ screen = "game", mode = "offline", offline_game = {} }), false)
+
+    local ok, why = T.may_interrupt({ screen = "game", mode = "offline", game_active = true })
+    check("and it says why", why, "an offline game is in progress")
+    check("the reason comes with a false", ok, false)
+
+    -- AN ONLINE GAME STAYS INTERRUPTIBLE, deliberately. There the session IS
+    -- the game: a rejected identity means the server will take no more moves,
+    -- so staying would show a board that cannot play.
+    check("an online game is still sent to the lobby",
+        may({ screen = "game", mode = "online", game_active = true }), true)
+
+    check("from the lobby it is a no-op anyway",
+        may({ screen = "lobby", mode = "offline" }), true)
+    check("from the online screen", may({ screen = "online", mode = "online" }), true)
+    check("an idle offline game screen allows it",
+        may({ screen = "game", mode = "offline" }), true)
+
+    -- Same asymmetry as may_take_over: being too eager here would strand a
+    -- player who genuinely needs to be signed out.
+    check("no state at all allows it", may(nil), true)
+    check("an empty state allows it", may({}), true)
+    check("a missing mode allows it", may({ screen = "game", game_active = true }), true)
+    check("a missing screen allows it", may({ mode = "offline", game_active = true }), true)
+
+    local cases = {
+        { screen = "lobby" },
+        { screen = "game", mode = "online" },
+        { screen = "game", mode = "offline" },
+        { screen = "game", mode = "offline", game_active = true },
+    }
+    local missing = 0
+    for _, c in ipairs(cases) do
+        local _, w = T.may_interrupt(c)
+        if type(w) ~= "string" or w == "" then missing = missing + 1 end
+    end
+    check("every answer carries a reason", missing, 0)
+end
+
+print("\n== the two rules agree about the thing they both protect ==")
+do
+    -- They are one condition read two ways. If they ever disagree about an
+    -- offline game in progress, the bug is back down whichever path drifted.
+    local protected = {
+        { screen = "game", mode = "offline", game_active = true },
+        { screen = "game", mode = "offline", offline_game = {} },
+        { screen = "game", mode = "offline", game_active = true, offline_game = {} },
+    }
+    local disagreements = 0
+    for _, c in ipairs(protected) do
+        if T.may_take_over(c) ~= false or T.may_interrupt(c) ~= false then
+            disagreements = disagreements + 1
+        end
+    end
+    check("both refuse every offline game in progress", disagreements, 0)
+
+    -- And both allow everything that is not one, except the online-game case
+    -- where they intentionally differ in wording but not in answer.
+    local allowed_both = {
+        { screen = "lobby" },
+        { screen = "online", mode = "online" },
+        { screen = "game", mode = "offline" },
+        { screen = "game", mode = "online", game_active = true },
+        {},
+    }
+    local mismatches = 0
+    for _, c in ipairs(allowed_both) do
+        if T.may_take_over(c) ~= true or T.may_interrupt(c) ~= true then
+            mismatches = mismatches + 1
+        end
+    end
+    check("and both allow everything else", mismatches, 0)
+end
+
+print("\n== the interrupt wrapper reads the same fields ==")
+do
+    local app_state = { mode = "offline", game_active = true, offline_game = nil }
+    check("wrapper blocks the offline game",
+        (T.may_interrupt_now(app_state, "game")), false)
+    check("wrapper allows it from the lobby",
+        (T.may_interrupt_now(app_state, "lobby")), true)
+
+    app_state.mode = "online"
+    check("wrapper allows an online game to be interrupted",
+        (T.may_interrupt_now(app_state, "game")), true)
+
+    check("a nil app_state does not throw",
+        (T.may_interrupt_now(nil, "game")), true)
+end
+
+print("\n== the auth handlers guard the navigation, and ONLY the navigation ==")
+do
+    local f = assert(io.open(ROOT .. "main/controller.script"))
+    local src = f:read("*a"); f:close()
+
+    local guards = 0
+    for _ in src:gmatch("takeover%.may_interrupt_now%(app_state, self%.screen%)") do
+        guards = guards + 1
+    end
+    check("both auth handlers are guarded", guards, 2)
+
+    -- Neither handler may still have a bare lobby jump: that is the exact line
+    -- that was ending offline games.
+    local auth = src:match('ws%.on%("auth_required".-end%)%)') or ""
+    local ident = src:match('ws%.on%("identify_error".-\n    end%)%)') or ""
+    check("the auth_required handler was found", #auth > 0, true)
+    check("the identify_error handler was found", #ident > 0, true)
+
+    for label, body in pairs({ auth_required = auth, identify_error = ident }) do
+        -- The jump must be reached through the guard, never on its own.
+        local guarded = body:find("may_interrupt_now", 1, true) ~= nil
+        check(label .. " consults the rule", guarded, true)
+        -- `if self.screen ~= "lobby" then show(...)` may now only appear as
+        -- the elseif branch of that guard.
+        local bare = body:match('\n%s*if self%.screen ~= "lobby" then show%(self, "lobby"%) end')
+        check(label .. " has no unguarded lobby jump", bare == nil, true)
+    end
+
+    -- THE RECOVERY MUST NOT BE GATED. Refusing the navigation while also
+    -- skipping the re-login would leave the player in their game with a dead
+    -- session and nothing rebuilding it — a worse bug than the one fixed.
+    local a_login = auth:find("try_device_login", 1, true)
+    local a_guard = auth:find("may_interrupt_now", 1, true)
+    check("auth_required re-logs in before it asks about leaving",
+        (a_login ~= nil and a_guard ~= nil and a_login < a_guard), true)
+    check("identify_error still clears the session",
+        ident:find("clear_session()", 1, true) ~= nil, true)
+    local i_login = ident:find("try_device_login", 1, true)
+    local i_guard = ident:find("may_interrupt_now", 1, true)
+    check("identify_error rebuilds before it asks about leaving",
+        (i_login ~= nil and i_guard ~= nil and i_login < i_guard), true)
 end
 
 print("")
