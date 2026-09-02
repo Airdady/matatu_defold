@@ -1093,6 +1093,13 @@ function init(self)
         pcall(msg.post, "#online", "party_offer")
     end))
 
+    -- The server has answered an INVITE, one way or the other.
+    for _, ev in ipairs({ "party_roster", "party_cancelled", "party_error" }) do
+        table.insert(self.tokens, ws.on(ev, function()
+            pcall(msg.post, "#online", "party_settled")
+        end))
+    end
+
     -- The table dealt: the board takes over. The panel has to be told to shut,
     -- or it is still sitting there — showing a roster for a game already in
     -- progress — when the player comes back to the lobby afterwards.

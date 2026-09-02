@@ -873,6 +873,90 @@ local function draw_savings_info(self, ctx)
     mkbtn(self, "savings_info_close", vmath.vector3(CX + btn_w/2 + btn_gap/2, by, 0), vmath.vector3(btn_w, 56, 0), "I UNDERSTAND", "secondary_btn")
 end
 
+-- ── Tournaments: a floating button, not a row ───────────────────────────────
+--
+-- This was a full-width row inside the right-hand panel, below the battles. It
+-- is now a floating action button, because it is the only thing in that panel
+-- that LEAVES the screen — everything else there edits or invites in place,
+-- and a navigation control sitting in a list of settings reads as one more
+-- setting.
+--
+-- WHERE IT SITS. Horizontally midway between the screen centre and the right
+-- edge; vertically at the bottom margin. Both are derived rather than
+-- hand-picked numbers, so the button lands in the same relative place on every
+-- aspect ratio the lobby is laid out for — a fixed x would drift into the
+-- panel on a narrow screen and away from the thumb on a wide one.
+--
+-- Drawn LAST, after every panel, so it floats over them rather than being
+-- overdrawn by whatever the right panel happens to end with.
+local function draw_tournaments_fab(self, ctx)
+    -- Modal open: the button would sit on top of a dimmed backdrop and be
+    -- tappable through it, which is how a player ends up on the tournament
+    -- screen while a form they were filling in is still open behind them.
+    if self.party_open or self.battle_modal or self.invite_search
+       or self.savings_info_open or self.savings_plans_open or self.savings_add_open then
+        self.tourn_badge_node = nil
+        return
+    end
+
+    local track = ctx.track
+    local ui    = ctx.ui
+    local mkbtn = ctx.mkbtn
+    local C     = ctx.C
+    local u     = ws.current_user_data or {}
+
+    local FAB    = 76
+    local MARGIN = 24
+    -- EDGE_R and EDGE_B, not LOGICAL_W and zero: those are the SAFE borders the
+    -- layout resolves per device (get_layout), so on a phone with a notch or a
+    -- gesture bar the button sits inside the usable area rather than under the
+    -- system's own furniture. A floating control is exactly the thing that
+    -- ends up half under a home indicator when it is positioned off the raw
+    -- canvas instead.
+    local right  = ctx.EDGE_R or ctx.LOGICAL_W
+    local bottom = ctx.EDGE_B or 0
+    local fab_x  = ctx.CX + (right - ctx.CX) / 2
+    local fab_y  = bottom + MARGIN + FAB / 2
+
+    track(self, ui.pie(vmath.vector3(fab_x, fab_y, 0), FAB / 2, C.COL_BG))
+    mkbtn(self, "nav_tournaments", vmath.vector3(fab_x, fab_y, 0),
+        vmath.vector3(FAB, FAB, 0), nil, "container_bg")
+
+    local icon = track(self, ui.image(vmath.vector3(fab_x, fab_y + 4, 0),
+        vmath.vector3(34, 34, 0), "tournament_icon"))
+    gui.set_color(icon, C.COL_WHITE)
+
+    -- OPEN or CLOSED, from the same daily window the tournament screen greys
+    -- its PLAY button on (modules/tournament_window, which both read so the
+    -- two cannot drift). Cached for the minute it describes: the answer can
+    -- only change on a window boundary, and os.date builds a fresh table every
+    -- call — which this does not need on a screen that rebuilds every frame
+    -- while the savings promo is typing.
+    local now_s = os.time()
+    if self._tw_at ~= now_s then
+        self._tw_at = now_s
+        self._tw_status = tournament_window.status_label(
+            u.tournaments, tournament_window.minute_of_day(os.date("*t", now_s)))
+    end
+    local t_status = self._tw_status
+
+    self.tourn_badge_node = nil
+    if t_status then
+        local is_open = (t_status == "OPEN")
+        -- THE BOX IS CREATED FIRST, AND THAT IS NOT A STYLE CHOICE. Defold
+        -- draws gui nodes in creation order, so a box made after its label is
+        -- a box drawn OVER its label — the badge came out as a solid rectangle
+        -- with the word underneath it.
+        local badge_y = fab_y - FAB / 2 + 8
+        local badge = track(self, ui.box(vmath.vector3(fab_x, badge_y, 0),
+            vmath.vector3(#t_status * 9 + 16, 20, 0),
+            is_open and vmath.vector4(0.15, 0.8, 0.25, 1.0)
+                    or vmath.vector4(0.55, 0.16, 0.16, 1.0)))
+        track(self, ui.text(vmath.vector3(fab_x, badge_y, 0), t_status, "btn_sm", C.COL_WHITE))
+        self.tourn_badge_node = badge
+    end
+end
+
 -- ── Party Tables Modal ──────────────────────────────────────────────────────
 --
 -- The live party lobby: the open tables you can join, and the button that
@@ -887,10 +971,6 @@ end
 -- only side that knows every balance in the lobby — a client re-deciding
 -- eligibility here could only ever disagree with it and offer a table that
 -- taps through to a refusal.
-local function party_entry_tiers()
-    return M.PARTY_TIERS or { 200, 500 }
-end
-
 local function draw_party_tables(self, ctx)
     if not self.party_open then return end
 
@@ -906,10 +986,14 @@ local function draw_party_tables(self, ctx)
 
     local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.78)))
     self.buttons[#self.buttons+1] = { node = dim, id = "party_block" }
+    -- GRADIENT ONLY, no container_bg plate. The other modals sit a nine-slice
+    -- panel on top of the backdrop; this one is a full-bleed invitation and the
+    -- plate boxed it into a card in the middle of a gradient that was already
+    -- doing the work. The rows below draw their own translucent strips, which
+    -- is all the separation the content needs.
     track(self, ui.grad_backdrop(ctx.LOGICAL_W, ctx.LOGICAL_H))
 
     local panel_w, panel_h = 520, 600
-    track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
 
     local top = CY + panel_h / 2
     local cy = top - 44
@@ -958,9 +1042,19 @@ local function draw_party_tables(self, ctx)
 
     -- NOT SEATED: the open tables, then the way to open one.
     local list = type(ws.available_parties) == "table" and ws.available_parties or {}
-    if #list == 0 then
+    if self.party_pending then
+        -- INVITE has gone out and PARTY_ROSTER has not come back yet — a round
+        -- trip, not a state. Said plainly rather than falling through to "no
+        -- open tables", which is the opposite of what just happened and would
+        -- read as the invite having failed.
+        track(self, ui.text(vmath.vector3(CX, cy - 40, 0), "Opening your table...", "body", C.COL_WHITE))
+        track(self, ui.text(vmath.vector3(CX, cy - 66, 0), "The lobby is about to see it.", "small", C.COL_DIM))
+        cy = cy - 110
+    elseif #list == 0 then
         track(self, ui.text(vmath.vector3(CX, cy - 40, 0), "No open tables right now.", "body", C.COL_DIM))
-        track(self, ui.text(vmath.vector3(CX, cy - 66, 0), "Open one and the lobby will see it.", "small", C.COL_DIM))
+        -- Points at the button that actually opens one, which is not on this
+        -- panel: INVITE on the party row.
+        track(self, ui.text(vmath.vector3(CX, cy - 66, 0), "Tap INVITE on your party row to open one.", "small", C.COL_DIM))
         cy = cy - 110
     else
         local now_ms = socket.gettime() * 1000
@@ -983,30 +1077,19 @@ local function draw_party_tables(self, ctx)
         end
     end
 
-    -- The stake picker. Two rungs and only two, because those are the only two
-    -- the server will honour — see PARTY_TIERS.
-    local tiers = party_entry_tiers()
-    self.party_tier_i = math.max(1, math.min(#tiers, self.party_tier_i or 1))
-    track(self, ui.text(vmath.vector3(CX, cy - 4, 0), "ENTRY", "small", C.COL_DIM))
-    cy = cy - 34
-    local tw = 110
-    for i, amount in ipairs(tiers) do
-        local sel = (i == self.party_tier_i)
-        local bx = CX + (i - (#tiers + 1) / 2) * (tw + 12)
-        track(self, ui.box(vmath.vector3(bx, cy, 0), vmath.vector3(tw, 46, 0),
-            sel and COL_PARTY or vmath.vector4(1, 1, 1, 0.06)))
-        track(self, ui.text(vmath.vector3(bx, cy, 0), commas(amount), "body",
-            sel and C.COL_WHITE or C.COL_DIM))
-        self.buttons[#self.buttons+1] = {
-            node = track(self, ui.box(vmath.vector3(bx, cy, 0), vmath.vector3(tw, 46, 0), vmath.vector4(0,0,0,0))),
-            id = "party_tier:" .. tostring(i),
-        }
-    end
-
+    -- NO STAKE PICKER AND NO "OPEN TABLE" HERE.
+    --
+    -- Tapping INVITE on the party row IS opening the table — the request goes
+    -- out on that tap, at the entry the edit form already holds. Asking for the
+    -- price again here, behind a second button, made INVITE mean "show me a
+    -- form about inviting" and put the one setting that belongs in the edit
+    -- form in two places at once.
+    --
+    -- So this panel only ever does two things: show the table you are at, or
+    -- show the tables you could join.
     local by = CY - panel_h/2 + 48
-    local bw = (panel_w - 64 - 16) / 2
-    mkbtn(self, "party_create", vmath.vector3(CX - bw/2 - 8, by, 0), vmath.vector3(bw, 56, 0), "OPEN TABLE", "primary_btn")
-    mkbtn(self, "party_close", vmath.vector3(CX + bw/2 + 8, by, 0), vmath.vector3(bw, 56, 0), "CLOSE", "secondary_btn")
+    local bw = panel_w - 64
+    mkbtn(self, "party_close", vmath.vector3(CX, by, 0), vmath.vector3(bw, 56, 0), "CLOSE", "secondary_btn")
 end
 
 -- ── Savings Plans Modal Drawing ───────────────────────────────────────────────
@@ -1457,149 +1540,15 @@ function M.draw(self, ctx, left_M)
     end
     cy = cy - battle_h - (C.BLOCK_GAP + 8)
 
-    -- ── Tournaments panel ────────────────────────────────────────────────
+    -- ── Tournaments ──────────────────────────────────────────────────────
     --
-    -- Back in the players list, where it was. It briefly lived on the lobby's
-    -- top row instead, in the slot TEAM CUPS had; both moves are undone.
+    -- LIFTED OUT OF THIS PANEL AND ONTO THE SCREEN. It used to be a full-width
+    -- row here, below the battles; it is now a floating button — see
+    -- draw_tournaments_fab, drawn at screen level so it is not bound to this
+    -- panel's vertical flow at all.
     --
-    -- The title is CENTRED in the row rather than sitting left of an icon, and
-    -- the badge says something true. It read "NEW" — a word that was accurate
-    -- for about a day after the feature shipped and had been decoration ever
-    -- since. It now reads OPEN or CLOSED, from the same daily window the
-    -- tournament screen greys its PLAY button on (modules/tournament_window,
-    -- which both read so the two cannot drift).
-    local t_h  = 72
-    local tcy2 = cy - t_h/2
-    track(self, ui.box(vmath.vector3(cx, tcy2, 0), vmath.vector3(pw, t_h, 0), C.COL_BG))
-    mkbtn(self, "nav_tournaments", vmath.vector3(cx, tcy2, 0), vmath.vector3(pw, t_h, 0), nil, "container_bg")
-
-    -- OPEN or CLOSED, from the same daily window the tournament screen greys
-    -- its PLAY button on. Cached for the minute it describes: the answer can
-    -- only change on a window boundary, and os.date builds a fresh table every
-    -- call — which this row does not need on a screen that rebuilds every
-    -- frame while the savings promo is typing.
-    local now_s = os.time()
-    if self._tw_at ~= now_s then
-        self._tw_at = now_s
-        self._tw_status = tournament_window.status_label(
-            u.tournaments, tournament_window.minute_of_day(os.date("*t", now_s)))
-    end
-    local t_status = self._tw_status
-
-    -- ICON AND TITLE HARD LEFT, badge on the right.
-    --
-    -- cx - 80 was borrowed from the LOBBY's team-cups tile, a different
-    -- screen with different proportions, and it sits well inside this panel's
-    -- own left edge. The battle/knockout/party rows drawn just above this one
-    -- in the same panel already have the real convention — row_l = cx - pw/2
-    -- + 20, icon centred 24 further in — so the icon here is flush against
-    -- that same inset instead of floating inward from a number that meant
-    -- nothing in this container.
-    --
-    -- The title's width still has to be MEASURED even though it is
-    -- left-aligned, because the badge's left clearance is stated relative to
-    -- where the title actually ends, not to a guess about how long
-    -- "TOURNAMENTS" is.
-    local T_ICON, T_ICON_GAP = 32, 12
-    local row_l  = cx - pw/2 + 20
-    local icon_x = row_l + T_ICON/2
-    local title_txt = "TOURNAMENTS"
-
-    local t_icon = track(self, ui.image(
-        vmath.vector3(icon_x, tcy2, 0), vmath.vector3(T_ICON, T_ICON, 0), "tournament_icon"))
-    gui.set_color(t_icon, C.COL_WHITE)
-
-    local title_x = icon_x + T_ICON/2 + T_ICON_GAP
-    local tn = track(self, ui.text(vmath.vector3(title_x, tcy2, 0), title_txt, "btn_lg", C.COL_WHITE))
-    gui.set_pivot(tn, gui.PIVOT_W)
-    local tw = measure(tn, title_txt, "btn_lg", #title_txt * 13)
-    local title_right = title_x + tw
-
-    self.tourn_badge_node = nil
-    if t_status then
-        local is_open = (t_status == "OPEN")
-        local badge_col = is_open and vmath.vector4(0.15, 0.8, 0.25, 1.0)
-            or vmath.vector4(0.55, 0.16, 0.16, 1.0)
-
-        -- THE BOX IS CREATED FIRST, AND THAT IS NOT A STYLE CHOICE.
-        --
-        -- Defold draws gui nodes in creation order, so a box made after its
-        -- label is a box drawn OVER its label. The badge came out as a solid
-        -- green rectangle with nothing in it — the word was there the whole
-        -- time, underneath.
-        --
-        -- Measuring the label in order to size the box is what tempted the
-        -- order to be flipped, and it never had to be: the box is made at a
-        -- provisional size, the label goes on top of it, and the box is
-        -- RESIZED once the label has been measured.
-        --
-        -- Twenty-six tall, not twenty-four: the extra two are breathing room
-        -- around a 25pt face, which was tight enough that any error in where
-        -- the word sat showed up immediately.
-        local BADGE_H = 26
-        local badge = track(self, ui.box(vmath.vector3(0, 0, 0),
-            vmath.vector3(56, BADGE_H, 0), badge_col))
-        local bn = track(self, ui.text(vmath.vector3(0, 0, 0), t_status, "btn_sm", C.COL_WHITE))
-
-        -- btn_sm is Teko-Bold at 25, a condensed face, so roughly eleven
-        -- pixels a capital when the measurement is unavailable. Wide rather
-        -- than tight, on the same reasoning detail_line uses: a badge slightly
-        -- too big is invisible, one slightly too small clips the word.
-        local bw, bdrop = measure(bn, t_status, "btn_sm", #t_status * 11)
-
-        -- SIZED TO ITS WORD, not to a guess about it. The old badge was a flat
-        -- 48 wide because "NEW" is three characters and always would be;
-        -- "CLOSED" is six. Twelve a side — twenty-two, which this first
-        -- shipped with, put nearly two extra characters of air around a
-        -- four-letter word and read as a banner.
-        local BADGE_PAD = 12
-        local badge_w = math.max(52, bw + BADGE_PAD * 2)
-
-        -- RIGHT-ALIGNED, WITH ROOM TO BREATHE FROM THE TITLE.
-        --
-        -- Two constraints, and they can genuinely conflict: "TOURNAMENTS" at
-        -- this row's size is not short, the panel is not wide, and "CLOSED"
-        -- is twice the width "NEW" ever was. So this is not a single
-        -- position, it is two, resolved in priority order:
-        --
-        --   1. NEVER draw past the row's own background. cx + pw/2 is that
-        --      edge, and a badge beyond it floats outside its own container,
-        --      which reads as broken rather than merely tight.
-        --   2. Otherwise, prefer clearing the title by TITLE_GAP. Normally
-        --      that costs nothing — the flush-right position already clears
-        --      it with room over — but on a long title it is what keeps the
-        --      badge from touching the word instead of quietly overlapping
-        --      it.
-        --
-        -- Priority 1 wins when they disagree, so the gap can shrink under a
-        -- genuinely tight combination of title and badge word, but the badge
-        -- can never spill outside its own row to buy more of it back. That
-        -- trade is the right one: a slightly close badge reads as a tight
-        -- layout, a badge outside its row reads as a bug.
-        local ROW_PAD, TITLE_GAP = 14, 14
-        local flush_nx  = cx + pw/2 - ROW_PAD - badge_w/2
-        local needed_nx = title_right + TITLE_GAP + badge_w/2
-        local nx = math.min(math.max(flush_nx, needed_nx), cx + pw/2 - badge_w/2)
-
-        gui.set_size(badge, vmath.vector3(badge_w, BADGE_H, 0))
-        gui.set_position(badge, vmath.vector3(nx, tcy2, 0))
-        -- The box takes the true centre; the label takes the centre its own
-        -- ink sits on, which is a fraction of a descent lower. Nothing else is
-        -- drawn there: the old row put a hairline across the badge's top edge,
-        -- which read as the word sitting low in its box rather than as a
-        -- border.
-        gui.set_position(bn, vmath.vector3(nx, tcy2 - bdrop, 0))
-
-        -- A HEARTBEAT WHILE THE DOOR IS OPEN. CLOSED is a fact and sits still;
-        -- OPEN is an invitation with a clock on it, so only one of them has any
-        -- reason to move. The host ticks this node once a frame — see
-        -- M.pulse_badge and the note above it for why it is not gui.animate.
-        if is_open then
-            self.tourn_badge_node = badge
-            M.pulse_badge(self, self.ui_clock)
-        end
-    end
-    cy = cy - t_h - C.BLOCK_GAP
+    -- Nothing is left behind here, deliberately: the rows below close straight
+    -- up rather than leaving the gap the row used to occupy.
 
     -- ── Team Tournaments panel — only shown once this account has actually
     -- created or joined one (tracked client-side since last create/join —
@@ -1633,6 +1582,7 @@ function M.draw(self, ctx, left_M)
     draw_savings_plans(self, ctx)
     draw_savings_add(self, ctx)
     draw_party_tables(self, ctx)
+    draw_tournaments_fab(self, ctx)
 end
 
 -- ── Input Action Exports for Main Script ─────────────────────────────────────
@@ -1890,6 +1840,9 @@ function M.start_invite_search(self, app_state, rebuild_cb, battle_type)
 
         ws.party_create(entry, M.party_mode_of(mb), M.party_cap_of(mb))
         self.party_open = true
+        -- Cleared by PARTY_ROSTER (we are seated) or by PARTY_CANCELLED /
+        -- PARTY_ERROR (it did not open) — see online.gui_script.
+        self.party_pending = true
         rebuild_cb()
         return true
     end

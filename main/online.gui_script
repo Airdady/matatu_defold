@@ -860,6 +860,11 @@ function on_message(self, message_id, message, sender)
             pcall(ws.request_rank)
             self._rebuild_pending = true
         end
+    elseif message_id == hash("party_settled") then
+        -- The server answered the INVITE: we are seated, or it did not open.
+        -- Either way the "Opening your table..." wait is over.
+        self.party_pending = nil
+        if self._active then self._rebuild_pending = true end
     elseif message_id == hash("party_offer") then
         -- A TABLE OPENS ITS OWN PANEL, ONCE.
         --
@@ -1109,22 +1114,11 @@ function on_input(self, action_id, action)
                 -- ── PARTY: the live two-to-four-seat table ──────────────
                 elseif id == "party_close" or id == "party_block" then
                     self.party_open = false; rebuild(self)
-                elseif id == "party_create" then
-                    local tiers = right_panel.PARTY_TIERS or { 200, 500 }
-                    local amount = tiers[self.party_tier_i or 1] or tiers[1]
-                    ws.party_create(amount, "NORMAL", nil)
-                    -- The panel stays open: PARTY_ROSTER arrives next and
-                    -- turns it into our own table with its countdown, which is
-                    -- the thing the player now needs to watch.
-                    rebuild(self)
                 elseif id == "party_leave" then
                     ws.party_leave()
                     rebuild(self)
                 elseif string.sub(id, 1, 11) == "party_join:" then
                     ws.party_join(string.sub(id, 12))
-                elseif string.sub(id, 1, 11) == "party_tier:" then
-                    self.party_tier_i = tonumber(string.sub(id, 12)) or 1
-                    rebuild(self)
                 elseif id == "savings_info" then
                     -- Cleared so the copy types itself out again on a
                     -- deliberate re-open, not just the first automatic one.
