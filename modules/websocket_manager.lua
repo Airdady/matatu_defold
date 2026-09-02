@@ -782,6 +782,58 @@ function M.request_rank()
   M.send_message("REQUEST_RANK", { _id = M.current_user_id })
 end
 
+-- ── PARTY: a table of two to four, opened for twenty seconds ────────────────
+--
+-- Three pieces of state, and they answer different questions:
+--
+--   M.current_party      the table WE are sitting at, or nil. Set by
+--                        PARTY_ROSTER, cleared by CANCELLED/STARTING.
+--   M.available_parties  the open tables we could join, pushed by the server
+--                        whenever OUR view of them changes (PARTY_AVAILABLE).
+--                        Already filtered per player and sorted soonest-first,
+--                        so the client renders it as given rather than
+--                        deciding eligibility itself — the server is the only
+--                        side that knows every balance in the lobby.
+--   M.last_party_error   the most recent refusal, for the screen to show.
+--
+-- current_party is deliberately NOT derived from available_parties: a table we
+-- are seated at stops being "available" to us the moment we sit down, and
+-- deriving one from the other would empty our own roster as we joined it.
+M.current_party = nil
+M.available_parties = {}
+M.last_party_error = nil
+M.last_party_result = nil
+
+function M.party_create(entry, mode, score_cap)
+  if M.current_user_id == "" then return end
+  M.send_message("PARTY_CREATE", {
+    entry = tonumber(entry),
+    mode = tostring(mode or "NORMAL"),
+    scoreCap = tonumber(score_cap),
+  })
+end
+
+function M.party_join(party_id)
+  if M.current_user_id == "" or not party_id then return end
+  M.send_message("PARTY_JOIN", { partyId = tostring(party_id) })
+end
+
+function M.party_leave(party_id)
+  -- The id is optional on the wire: the server falls back to whichever table
+  -- this player is seated at, which is what a LEAVE button has to hand.
+  local id = party_id or (M.current_party and M.current_party.partyId)
+  M.send_message("PARTY_LEAVE", { partyId = id and tostring(id) or nil })
+end
+
+-- Ask for the open-table list now, for a screen that has just opened. The
+-- server answers this one unconditionally; the pushes it sends unprompted are
+-- de-duplicated against what we were last shown, so a screen re-opening on an
+-- unchanged lobby would otherwise get nothing.
+function M.party_list()
+  if M.current_user_id == "" then return end
+  M.send_message("PARTY_LIST", {})
+end
+
 -- ── message parsing ─────────────────────────────────────────────────────────
 local function handle_online_users(msg_data)
   local users = {}
@@ -1376,6 +1428,104 @@ local function parse_message(json_string)
     emit("transaction_completed", d)
   elseif t == "TRANSACTION_FAILED" then
     emit("transaction_failed", d.reason or "Failed")
+  -- ── PARTY ────────────────────────────────────────────────────────────────
+  -- The open-table list, already filtered to what THIS player can join and
+  -- sorted soonest-to-close first. Replaced wholesale rather than merged: an
+  -- empty list is a real message and is how a table that filled, expired or
+  -- was called off leaves the lobby. Merging would leave dead tables on screen
+  -- that tap through to a refusal.
+  elseif t == "PARTY_AVAILABLE" then
+    local list = {}
+    if type(d) == "table" and type(d.parties) == "table" then
+      for i, p in ipairs(d.parties) do list[i] = p end
+    end
+    M.available_parties = list
+    emit("party_available", list)
+
+  -- Our own table changed: somebody sat down or stood up. partyView sends the
+  -- seats in join order, so a screen diffing two rosters can tell WHICH chair
+  -- just filled and animate only that one.
+  elseif t == "PARTY_ROSTER" then
+    if type(d) == "table" then
+      M.current_party = d
+      M.last_party_error = nil
+      emit("party_roster", d)
+    end
+
+  -- The table is dealing. Carries the game state exactly as an ordinary match
+  -- does, so this hands off to the same board.
+  elseif t == "PARTY_STARTING" then
+    M.current_party = nil
+    local gs = M.extract_game_state(d)
+    if next(gs) ~= nil then
+      M.active_game_id = gs.gameId or gs.id or d.gameId or ""
+      M.active_game_state = gs
+      emit("party_starting", d)
+      -- Deliberately the SAME event an ordinary match start emits. Everything
+      -- that routes to the board, clears the lobby and starts the clock is
+      -- already listening for it, and a party is a game like any other once
+      -- the cards are out.
+      emit("game_start", gs)
+    else
+      -- No state means the deal failed after the table was told it was
+      -- starting. Say nothing about a game; the CANCELLED that follows carries
+      -- the refund.
+      emit("party_starting", d)
+    end
+
+  -- The table was called off, or we left it. `refunded` is what actually went
+  -- back — zero when the entry stays with the table, which is the case when a
+  -- player leaves a seat they held.
+  elseif t == "PARTY_CANCELLED" then
+    M.current_party = nil
+    if type(d) == "table" then emit("party_cancelled", d) end
+
+  -- A refusal we have to show: the table filled, we cannot afford it, we are
+  -- already seated. Every one of these is something the player has to be TOLD
+  -- — a tap that appears to do nothing is the worst answer a full table can
+  -- give.
+  elseif t == "PARTY_ERROR" then
+    M.last_party_error = d
+    emit("party_error", d or {})
+
+  -- One seat dropped out mid-hand and the table plays on. A duel would be
+  -- over; this is not, so the board keeps running and just loses a player.
+  elseif t == "PARTY_PLAYER_OUT" then
+    if type(d) == "table" then
+      if M.active_game_state and type(M.active_game_state.players) == "table" then
+        local p = M.active_game_state.players[tostring(d.playerId or "")]
+        if type(p) == "table" then p.eliminated = true end
+      end
+      if d.currentTurn and M.active_game_state then
+        M.active_game_state.currentTurn = d.currentTurn
+      end
+      emit("party_player_out", d)
+    end
+
+  -- The table finished. Carries the whole finishing order and the pot rather
+  -- than a winner and a loser — see partyPlacements.ts on the server.
+  elseif t == "PARTY_GAME_OVER" then
+    M.last_party_result = d
+    M.active_game_id = ""
+    M.active_game_state = nil
+    if type(d) == "table" then
+      -- Our own new form, applied straight away for the same reason the
+      -- two-player GAME_OVER does it: the lobby form panel reads
+      -- current_user_data and would otherwise sit stale until an identify.
+      for _, place in ipairs(type(d.placements) == "table" and d.placements or {}) do
+        if tostring(place.playerId or "") == tostring(M.current_user_id) then
+          local form = M.current_user_data.recentForm
+          if type(form) ~= "table" then form = {} end
+          table.insert(form, 1, place.won and "W" or "L")
+          while #form > 5 do table.remove(form) end
+          M.current_user_data.recentForm = form
+          emit("user_updated", M.current_user_data)
+          break
+        end
+      end
+      emit("party_game_over", d)
+    end
+
   elseif t == "IDENTIFY_UNKNOWN" then
     -- The server knows nothing about this device and we offered no user id.
     -- NOT a failure and NOT a rejection: there is no session to rebuild, this

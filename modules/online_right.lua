@@ -97,10 +97,16 @@ M.KNOCKOUT_STAKES = KNOCKOUT_STAKES_BY_GAME[GameMode.GAME] or KNOCKOUT_STAKES_BY
 -- picking 100 was silently charged 200, and every whot and kadi rung was below
 -- its floor and clamped up. The stepper showed one number and the balance
 -- moved by another.
+-- TWO RUNGS, NOT THREE. The entry is a ladder on the server and 300 was never
+-- on it: partyRules.ts snapped anything off-ladder to the nearest rung, so a
+-- matatu player picking 300 was charged 200 and a whot player picking 120 was
+-- charged 80. The stepper showed one number and the balance moved by another,
+-- which is the same class of bug the note above describes and the same fix —
+-- offer only what the server will honour.
 local PARTY_TIERS_BY_GAME = {
-    MATATU = { 200, 300, 500 },
-    WHOT   = { 80,  120, 200 },
-    KADI   = { 8,   12,  20  },
+    MATATU = { 200, 500 },
+    WHOT   = { 80,  200 },   -- x0.4
+    KADI   = { 8,   20  },   -- x0.04
 }
 M.PARTY_TIERS = PARTY_TIERS_BY_GAME[GameMode.GAME] or PARTY_TIERS_BY_GAME.MATATU
 
@@ -252,6 +258,19 @@ end
 -- which half of it something else depended on. It is also the honest state of
 -- this one: the maker and the invite flow are finished, the four-seat GAME is
 -- not, so the entry points come down until it is.
+--
+-- WHAT IS LEFT. The server half is now done — a seat order the turn engine
+-- steps round (turnOrder.ts), a deal for two to four (partyGame.ts), a
+-- settlement that pays a pot to a finishing ORDER rather than a stake to a
+-- loser (endPartyGame.ts), a timeout that drops one seat instead of ending the
+-- table, and an open-table list the lobby can see (PARTY_AVAILABLE). The
+-- client can send and receive all of it (websocket_manager).
+--
+-- The BOARD cannot draw it yet. online_handler and game_flow render exactly
+-- one opponent hand (self.ai_hand), and a party seats up to three. Putting the
+-- word back here before that lands would let a player open a table, pay for a
+-- seat and be dealt into a game the board cannot show — which is worse than
+-- the mode being unavailable. It goes back the moment the seats render.
 M.BATTLE_TYPES_VISIBLE = { "NORMAL", "KNOCKOUT" }
 
 -- Resolve the battle a user holds for a given type T ∈ {NORMAL,KNOCKOUT,PARTY}.
