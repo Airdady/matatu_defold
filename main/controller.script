@@ -1074,6 +1074,25 @@ function init(self)
     -- user_data_updated broadcast itself once the exact total lands (see
     -- coin_deposit in main/coins.gui_script). Everything else (withdrawals,
     -- failed/refunded transactions) keeps the plain instant refresh.
+    -- PARTY: every one of these changes something the lobby is drawing — the
+    -- open-table count on the entry button, the roster inside the panel, the
+    -- countdown. Routed through the same user_data_updated the rest of the
+    -- screen already rebuilds on rather than a new message, because the online
+    -- screen's handler for it simply flags a rebuild, which is exactly what
+    -- these need.
+    for _, ev in ipairs({ "party_available", "party_roster", "party_cancelled", "party_error" }) do
+        table.insert(self.tokens, ws.on(ev, function()
+            pcall(msg.post, "#online", "user_data_updated")
+        end))
+    end
+
+    -- The table dealt: the board takes over. The panel has to be told to shut,
+    -- or it is still sitting there — showing a roster for a game already in
+    -- progress — when the player comes back to the lobby afterwards.
+    table.insert(self.tokens, ws.on("party_starting", function()
+        pcall(msg.post, "#online", "party_dismiss")
+    end))
+
     table.insert(self.tokens, ws.on("transaction_completed", function(d)
         d = type(d) == "table" and d or {}
         local new_bal = tonumber(d.newBalance)

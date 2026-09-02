@@ -864,6 +864,142 @@ local function draw_savings_info(self, ctx)
     mkbtn(self, "savings_info_close", vmath.vector3(CX + btn_w/2 + btn_gap/2, by, 0), vmath.vector3(btn_w, 56, 0), "I UNDERSTAND", "secondary_btn")
 end
 
+-- ── Party Tables Modal ──────────────────────────────────────────────────────
+--
+-- The live party lobby: the open tables you can join, and the button that
+-- opens one. Distinct from the battle MAKER above it, which builds a stored
+-- battle other players are invited to; a party table exists for twenty
+-- seconds, is filled by whoever is in the lobby, and deals as soon as it fills
+-- or the clock runs out.
+--
+-- The list is rendered exactly as the server sent it. PARTY_AVAILABLE is
+-- already filtered to what THIS player can join (balance, game, not mid-game,
+-- not already seated) and sorted soonest-to-close first, and the server is the
+-- only side that knows every balance in the lobby — a client re-deciding
+-- eligibility here could only ever disagree with it and offer a table that
+-- taps through to a refusal.
+local function party_entry_tiers()
+    return M.PARTY_TIERS or { 200, 500 }
+end
+
+local function draw_party_tables(self, ctx)
+    if not self.party_open then return end
+
+    local track = ctx.track
+    local ui    = ctx.ui
+    local txtL  = ctx.txtL
+    local txtR  = ctx.txtR
+    local mkbtn = ctx.mkbtn
+    local C     = ctx.C
+    local CX, CY = ctx.CX, ctx.CY
+    local commas = ctx.commas
+    local COL_PARTY = vmath.vector4(0.85, 0.45, 0.95, 1.0)
+
+    local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.78)))
+    self.buttons[#self.buttons+1] = { node = dim, id = "party_block" }
+    track(self, ui.grad_backdrop(ctx.LOGICAL_W, ctx.LOGICAL_H))
+
+    local panel_w, panel_h = 520, 600
+    track(self, ui.panel9(vmath.vector3(CX, CY, 0), vmath.vector3(panel_w, panel_h, 0), "container_bg"))
+
+    local top = CY + panel_h / 2
+    local cy = top - 44
+    track(self, ui.text(vmath.vector3(CX, cy, 0), "PARTY TABLES", "title", C.COL_GOLD))
+    cy = cy - 28
+    track(self, ui.text(vmath.vector3(CX, cy, 0), "2-4 players. Winner takes the pot.", "small", C.COL_WHITE))
+    cy = cy - 34
+
+    local seated = ws.current_party
+    if type(seated) == "table" and seated.partyId then
+        -- SEATED: our own table, its countdown and the way out. Shown instead
+        -- of the list, not beside it — a player at a table is not shopping for
+        -- another one, and the server has already stopped offering them.
+        local now_ms = socket.gettime() * 1000
+        local left = math.max(0, math.floor(((tonumber(seated.closesAt) or 0) - now_ms) / 1000))
+        local n = #(type(seated.seats) == "table" and seated.seats or {})
+
+        track(self, ui.box(vmath.vector3(CX, cy - 40, 0), vmath.vector3(panel_w - 48, 80, 0), vmath.vector4(1,1,1,0.05)))
+        txtL(self, CX - panel_w/2 + 36, cy - 24, "YOUR TABLE", "small", C.COL_DIM)
+        txtR(self, CX + panel_w/2 - 36, cy - 24,
+            commas(tonumber(seated.entry) or 0) .. " " .. GameMode.CURRENCY_SYMBOL, "small", COL_PARTY)
+        txtL(self, CX - panel_w/2 + 36, cy - 52, n .. "/4 SEATED", "body", C.COL_WHITE)
+        txtR(self, CX + panel_w/2 - 36, cy - 52, left .. "s", "body",
+            left <= 5 and C.COL_RED or C.COL_GOLD)
+        cy = cy - 100
+
+        for i, seat in ipairs(type(seated.seats) == "table" and seated.seats or {}) do
+            txtL(self, CX - panel_w/2 + 36, cy, tostring(i) .. ". " .. tostring(seat.username or "PLAYER"),
+                "small", C.COL_WHITE)
+            cy = cy - 26
+        end
+
+        -- The entry does NOT come back. Said here rather than only in the
+        -- reply, because the moment to tell somebody a charge is forfeit is
+        -- before they tap, not after.
+        cy = cy - 10
+        track(self, ui.text(vmath.vector3(CX, cy, 0),
+            "Leaving forfeits your entry.", "small", C.COL_RED))
+
+        local by = CY - panel_h/2 + 48
+        local bw = (panel_w - 64 - 16) / 2
+        mkbtn(self, "party_leave", vmath.vector3(CX - bw/2 - 8, by, 0), vmath.vector3(bw, 56, 0), "LEAVE", "secondary_btn")
+        mkbtn(self, "party_close", vmath.vector3(CX + bw/2 + 8, by, 0), vmath.vector3(bw, 56, 0), "WAIT", "primary_btn")
+        return
+    end
+
+    -- NOT SEATED: the open tables, then the way to open one.
+    local list = type(ws.available_parties) == "table" and ws.available_parties or {}
+    if #list == 0 then
+        track(self, ui.text(vmath.vector3(CX, cy - 40, 0), "No open tables right now.", "body", C.COL_DIM))
+        track(self, ui.text(vmath.vector3(CX, cy - 66, 0), "Open one and the lobby will see it.", "small", C.COL_DIM))
+        cy = cy - 110
+    else
+        local now_ms = socket.gettime() * 1000
+        -- Capped at four rows. More than that and the soonest-to-close table —
+        -- the one where joining actually matters — scrolls off the bottom.
+        for i = 1, math.min(#list, 4) do
+            local p = list[i]
+            local row_y = cy - 34
+            track(self, ui.box(vmath.vector3(CX, row_y, 0), vmath.vector3(panel_w - 48, 62, 0), vmath.vector4(1,1,1,0.05)))
+            txtL(self, CX - panel_w/2 + 36, row_y + 12,
+                string.upper(tostring(p.hostName or "PLAYER")), "small", C.COL_WHITE)
+            local left = math.max(0, math.floor(((tonumber(p.closesAt) or 0) - now_ms) / 1000))
+            txtL(self, CX - panel_w/2 + 36, row_y - 12,
+                tostring(p.seated or 0) .. "/4  ·  " .. left .. "s", "small", C.COL_DIM)
+            txtR(self, CX + panel_w/2 - 150, row_y,
+                commas(tonumber(p.entry) or 0) .. " " .. GameMode.CURRENCY_SYMBOL, "small", COL_PARTY)
+            mkbtn(self, "party_join:" .. tostring(p.partyId),
+                vmath.vector3(CX + panel_w/2 - 80, row_y, 0), vmath.vector3(96, 44, 0), "JOIN", "primary_btn")
+            cy = cy - 70
+        end
+    end
+
+    -- The stake picker. Two rungs and only two, because those are the only two
+    -- the server will honour — see PARTY_TIERS.
+    local tiers = party_entry_tiers()
+    self.party_tier_i = math.max(1, math.min(#tiers, self.party_tier_i or 1))
+    track(self, ui.text(vmath.vector3(CX, cy - 4, 0), "ENTRY", "small", C.COL_DIM))
+    cy = cy - 34
+    local tw = 110
+    for i, amount in ipairs(tiers) do
+        local sel = (i == self.party_tier_i)
+        local bx = CX + (i - (#tiers + 1) / 2) * (tw + 12)
+        track(self, ui.box(vmath.vector3(bx, cy, 0), vmath.vector3(tw, 46, 0),
+            sel and COL_PARTY or vmath.vector4(1, 1, 1, 0.06)))
+        track(self, ui.text(vmath.vector3(bx, cy, 0), commas(amount), "body",
+            sel and C.COL_WHITE or C.COL_DIM))
+        self.buttons[#self.buttons+1] = {
+            node = track(self, ui.box(vmath.vector3(bx, cy, 0), vmath.vector3(tw, 46, 0), vmath.vector4(0,0,0,0))),
+            id = "party_tier:" .. tostring(i),
+        }
+    end
+
+    local by = CY - panel_h/2 + 48
+    local bw = (panel_w - 64 - 16) / 2
+    mkbtn(self, "party_create", vmath.vector3(CX - bw/2 - 8, by, 0), vmath.vector3(bw, 56, 0), "OPEN TABLE", "primary_btn")
+    mkbtn(self, "party_close", vmath.vector3(CX + bw/2 + 8, by, 0), vmath.vector3(bw, 56, 0), "CLOSE", "secondary_btn")
+end
+
 -- ── Savings Plans Modal Drawing ───────────────────────────────────────────────
 -- Reached via the info modal's "TRY IT" button. Where draw_savings_info leads
 -- with the coin bundle and the "why", this one continues the story into the
@@ -1208,9 +1344,33 @@ function M.draw(self, ctx, left_M)
         end
     end
 
-    -- Make Payments Button (Massive Target)
+    -- Make Payments + Party Tables share this row.
+    --
+    -- Party needs its OWN entry point rather than a row in the battles panel
+    -- below: those rows drive the stored-battle flow (create/invite a battle
+    -- other players are invited to), and a party table is a different object —
+    -- it exists for twenty seconds, is filled by whoever is in the lobby, and
+    -- deals the moment it fills. Putting it in that list would give one word
+    -- two meanings.
+    --
+    -- Split across the existing row rather than added below it, so nothing
+    -- underneath moves: pay_y and pay_h are unchanged and MAKE PAYMENTS stays
+    -- a large target, just no longer the full width.
     local pay_y = lcy - list_h/2 - gap - pay_h/2
-    mkbtn(self, "nav_payments", vmath.vector3(cx, pay_y, 0), vmath.vector3(bw, pay_h, 0), "MAKE PAYMENTS", "primary_btn", nil, "btn_lg")
+    local half_gap = 10
+    local half_w = (bw - half_gap) / 2
+    mkbtn(self, "nav_payments", vmath.vector3(cx - half_w/2 - half_gap/2, pay_y, 0),
+        vmath.vector3(half_w, pay_h, 0), "MAKE PAYMENTS", "primary_btn", nil, "btn_lg")
+
+    -- The count is the whole point of the label: an open table lasts twenty
+    -- seconds, so "PARTY (2)" is the difference between a button somebody taps
+    -- now and one they never think to try. ws.available_parties is already
+    -- filtered by the server to tables THIS player can actually join.
+    local open_n = #(type(ws.available_parties) == "table" and ws.available_parties or {})
+    mkbtn(self, "party_tables", vmath.vector3(cx + half_w/2 + half_gap/2, pay_y, 0),
+        vmath.vector3(half_w, pay_h, 0),
+        open_n > 0 and ("PARTY (" .. open_n .. ")") or "PARTY",
+        open_n > 0 and "primary_btn" or "secondary_btn", nil, "btn_lg")
 
     cy = cy - cont_h - (C.BLOCK_GAP + 8)
 
@@ -1480,6 +1640,7 @@ function M.draw(self, ctx, left_M)
     draw_savings_info(self, ctx)
     draw_savings_plans(self, ctx)
     draw_savings_add(self, ctx)
+    draw_party_tables(self, ctx)
 end
 
 -- ── Input Action Exports for Main Script ─────────────────────────────────────

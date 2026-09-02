@@ -572,6 +572,26 @@ function update(self, dt)
     -- out that way), never moves at all.
     self.ui_clock = (self.ui_clock or 0) + dt
 
+    -- THE PARTY COUNTDOWN HAS TO TICK.
+    --
+    -- The panel draws its seconds from closesAt against the wall clock, and
+    -- the screen otherwise only rebuilds when a message arrives — so between
+    -- seat changes the countdown on a twenty-second window would sit frozen,
+    -- which is the one number in that panel a player is actually watching.
+    --
+    -- Four times a second, not every frame: the digits only change once a
+    -- second, and rebuild() recreates every node on the screen. The savings
+    -- promo rebuilds per frame because it is typing characters out; this is
+    -- not, and paying that cost for a number that changes at 1Hz would be
+    -- waste the whole panel is visible for.
+    if self.party_open then
+        self._party_tick = (self._party_tick or 0) + dt
+        if self._party_tick >= 0.25 then
+            self._party_tick = 0
+            self._rebuild_pending = true
+        end
+    end
+
     -- A GESTURE THAT OUTLIVED ITS TOUCH IS ABANDONED.
     --
     -- Belt and braces behind the press-ordering fix in on_input: a release can
@@ -840,6 +860,12 @@ function on_message(self, message_id, message, sender)
             pcall(ws.request_rank)
             self._rebuild_pending = true
         end
+    elseif message_id == hash("party_dismiss") then
+        -- Our table dealt and the board is taking over. Shut the panel so it
+        -- is not still showing a roster for a game in progress when the player
+        -- returns to the lobby.
+        self.party_open = false
+        if self._active then self._rebuild_pending = true end
     elseif message_id == hash("layout_changed") or message_id == hash("user_data_updated") or message_id == hash("ws_online_users") or message_id == hash("ws_connected") or message_id == hash("ws_disconnected") then
         if self._active then self._rebuild_pending = true end
         if message_id == hash("ws_online_users") and self._active and ws.is_identified then
@@ -1049,6 +1075,33 @@ function on_input(self, action_id, action)
                 elseif id == "nav_tournaments" then msg.post("#controller", "goto_tournaments")
                 elseif id == "nav_support" then msg.post("#controller", "goto_support")
                 elseif id == "nav_account" then msg.post("#controller", "goto_profile")
+                -- ── PARTY: the live two-to-four-seat table ──────────────
+                elseif id == "party_tables" then
+                    -- Ask for the list on open. The server de-duplicates the
+                    -- pushes it sends unprompted against what we were last
+                    -- shown, so a re-open onto an unchanged lobby would
+                    -- otherwise draw an empty panel.
+                    self.party_open = true
+                    ws.party_list()
+                    rebuild(self)
+                elseif id == "party_close" or id == "party_block" then
+                    self.party_open = false; rebuild(self)
+                elseif id == "party_create" then
+                    local tiers = right_panel.PARTY_TIERS or { 200, 500 }
+                    local amount = tiers[self.party_tier_i or 1] or tiers[1]
+                    ws.party_create(amount, "NORMAL", nil)
+                    -- The panel stays open: PARTY_ROSTER arrives next and
+                    -- turns it into our own table with its countdown, which is
+                    -- the thing the player now needs to watch.
+                    rebuild(self)
+                elseif id == "party_leave" then
+                    ws.party_leave()
+                    rebuild(self)
+                elseif string.sub(id, 1, 11) == "party_join:" then
+                    ws.party_join(string.sub(id, 12))
+                elseif string.sub(id, 1, 11) == "party_tier:" then
+                    self.party_tier_i = tonumber(string.sub(id, 12)) or 1
+                    rebuild(self)
                 elseif id == "savings_info" then
                     -- Cleared so the copy types itself out again on a
                     -- deliberate re-open, not just the first automatic one.
