@@ -1219,7 +1219,8 @@ local function parse_message(json_string)
     -- The backend settles wallets before sending GAME_OVER and ships the
     -- post-game balances in gameOverState.balances — apply ours immediately
     -- so every screen shows the updated balance there and then (the IDENTIFY
-    -- refresh is suppressed for zero-stake games and tournament round-continues).
+    -- refresh is fire-and-forget behind a nearby-rank aggregation, and is
+    -- suppressed outright for tournament round-continues).
     local user_touched = false
     if type(results.balances) == "table" then
       local bal = tonumber(results.balances[M.current_user_id])
@@ -1237,6 +1238,24 @@ local function parse_message(json_string)
     if type(results.rank) == "table" and #results.rank > 0 then
       M.current_user_data.rank = results.rank
       user_touched = true
+    end
+    -- Our own W/L form after this game, keyed by user id in
+    -- gameOverState.recentForm (endGame.ts's formByPlayer). Applied here for
+    -- the same reason as balance and rank: the lobby's "YOUR CURRENT FORM"
+    -- panel draws straight off current_user_data, so without this it keeps
+    -- showing the form from before the game until some later identify happens
+    -- to refresh it.
+    --
+    -- A missing or non-table entry leaves the cached form alone rather than
+    -- replacing it with an empty one — the backend omits the key for games it
+    -- never settled (no-shows, failed saves), and blanking the panel on those
+    -- would be worse than showing a form that is one game stale.
+    if type(results.recentForm) == "table" then
+      local mine = results.recentForm[tostring(M.current_user_id)]
+      if type(mine) == "table" then
+        M.current_user_data.recentForm = mine
+        user_touched = true
+      end
     end
     if user_touched then
       emit("user_updated", M.current_user_data)

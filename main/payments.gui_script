@@ -318,11 +318,32 @@ rebuild = function(self)
 		end
 		ktext(self, vmath.vector3(px0, content_top - 66, 0), pct .. "% through this savings period", 14, M_LABEL)
 
+		-- Red lock warning, directly under the progress bar it qualifies.
+		-- Savings are not spendable money: coins moved in here (by hand or by
+		-- the per-game auto-charge) stay locked for the whole six-month period
+		-- and only become redeemable on the redemption date itself — 25 June
+		-- and 25 December, per getNextRedemptionDate on the backend. Players
+		-- were reading the growing "Savings:" figure as balance they could
+		-- take out at any time, so the date is stated outright rather than
+		-- left to be inferred from "Next redemption" above.
+		--
+		-- Named as the date whenever the status payload has given us one, and
+		-- kept deliberately vague when it has not: a wrong date here is worse
+		-- than no date, and nextRedemptionDate is missing exactly when the
+		-- SAVINGS_STATUS round-trip has not landed yet.
+		local lock_msg = redemption_str ~= ""
+			and ("Locked: saved coins cannot be redeemed until this period ends on " .. redemption_str)
+			or "Locked: saved coins cannot be redeemed until the current savings period ends"
+		ktext(self, vmath.vector3(px0, content_top - 84, 0), lock_msg, 13, M_MIN_WARN)
+
 		-- Divider between the top strip and the two columns below.
-		track(self, ui.box(vmath.vector3(px0, content_top - 86, 0), vmath.vector3(MW - P*2, 1, 0), M_IN_BD))
+		-- The 16px this and col_top gained over the pre-warning layout come out
+		-- of the slack under the columns (the vertical divider used to stop
+		-- ~44px short of the panel edge), so nothing below moves off-panel.
+		track(self, ui.box(vmath.vector3(px0, content_top - 102, 0), vmath.vector3(MW - P*2, 1, 0), M_IN_BD))
 
 		-- Vertical divider between the two columns.
-		local col_top = content_top - 106
+		local col_top = content_top - 122
 		track(self, ui.box(vmath.vector3(px0, col_top - 90, 0), vmath.vector3(1, 220, 0), M_IN_BD))
 
 		-- ── LEFT column: Exchange to Savings now ────────────────────────────

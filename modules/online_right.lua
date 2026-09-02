@@ -970,6 +970,19 @@ local function draw_savings_add(self, ctx)
     end
     track(self, ui.text(vmath.vector3(CX, top - 104, 0), pct .. "% complete", "small", C.COL_WHITE))
 
+    -- Red lock warning, same wording as the SAVE COINS tab in payments — this
+    -- dialog is the OTHER way into savings, and a caution shown on only one of
+    -- the two surfaces is not a caution. Coins moved in here are locked for the
+    -- whole six-month period and only become redeemable on the redemption date
+    -- (25 June / 25 December, per the backend's getNextRedemptionDate).
+    --
+    -- Sits in the gap that was already between "% complete" and the first
+    -- section heading, so nothing below it moves.
+    local lock_msg = (redemption_str ~= "")
+        and ("Locked until " .. redemption_str .. " — savings cannot be redeemed before then")
+        or "Locked — savings cannot be redeemed until this period ends"
+    track(self, ui.text(vmath.vector3(CX, top - 124, 0), lock_msg, "small", C.COL_RED))
+
     -- ── Section A: Exchange to Savings now ────────────────────────────────
     local sec_a_y = top - 146
     track(self, ui.text(vmath.vector3(CX, sec_a_y, 0), "EXCHANGE TO SAVINGS NOW", "small", C.COL_DIM))
