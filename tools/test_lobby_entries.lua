@@ -42,60 +42,52 @@ local RIGHT = read("modules/online_right.lua")
 local LOBBY = read("main/lobby.gui_script")
 
 ----------------------------------------------------------------------
-print("TOURNAMENTS IS A FLOATING BAR, NOT A FLOATING DOT")
+print("TOURNAMENTS IS A ROW AGAIN, AND NOTHING FLOATS")
 ----------------------------------------------------------------------
 check("something draws a tournaments button", has(RIGHT, '"nav_tournaments"'))
 check("with its icon", has(RIGHT, '"tournament_icon"'))
 check("and its title", has(RIGHT, '"TOURNAMENTS"'))
 
--- IT FLOATS, so it is drawn at screen level rather than inside the right
--- panel's vertical flow, and it is hidden while any modal is open — otherwise
--- it sits on top of a dimmed backdrop and is tappable through it.
-check("it is drawn last, over the panels", has(RIGHT, "draw_tournaments_fab(self, ctx)"))
-check("...and stands down while a modal is open", has(RIGHT, "self.party_open or self.battle_modal"))
-
--- IT SPANS THE RIGHT-HAND COLUMN. The right edge takes the same SIDE_MARGIN
--- inset the panel's own containers take; the LEFT edge is div_rx, the divider
--- between the centre and right panels, which is the fourth return of
--- get_layout and the same number draw_dividers puts its stripes on. Both are
--- derived, so the bar keeps the same relationship to the layout on every
--- aspect ratio instead of drifting into the centre panel on a narrow screen.
-check("its right edge takes the panel's own inset", has(RIGHT, "bar_r = right - (C.SIDE_MARGIN or 20)"))
-check("its left edge is the centre/right divider", has(RIGHT, "local _, _, _, div_rx = ctx.get_layout()"))
-check("...which is what it is set to", has(RIGHT, "bar_l = div_rx"))
-check("with a floor so a narrow layout cannot squeeze the word out",
-      has(RIGHT, "if bar_r - bar_l < 300 then bar_l = bar_r - 300 end"))
-
--- IT SITS INSIDE THE SAFE AREA. EDGE_B, not zero: a floating control is
--- exactly the thing that ends up half under a home indicator when it is
--- positioned off the raw canvas.
-check("the bottom is measured from the safe border", has(RIGHT, "ctx.EDGE_B or 0"))
-
--- AND IT IS ACTUALLY BIGGER, AND ACTUALLY FURTHER LEFT than the 76px circle
--- it replaced. Confirmed numerically rather than by pattern, since the source
--- saying "div_rx" proves nothing about where that lands relative to a circle
--- centred midway between the screen centre and the right edge.
+-- IN FLOW. It hangs from the cursor the panel hands it and reports the cursor
+-- below itself, like every other block in this panel — rather than being
+-- drawn last at a screen coordinate of its own.
+check("the panel draws it in its own vertical flow",
+      has(RIGHT, "cy = draw_tournaments_row(self, ctx, cx, pw, cy) - C.BLOCK_GAP"))
 do
-    local EDGE_R, CX = 1280, 640
-    local SIDE_RATIO, SIDE_MARGIN = 0.30, 20
-    local div_rx = EDGE_R - EDGE_R * SIDE_RATIO
+    -- The CALL, not the definition: the definition sits hundreds of lines
+    -- above the battles and matching it would make this pass whatever the
+    -- panel actually does with the row.
+    local battles_at = RIGHT:find("cy = cy - battle_h - C.BLOCK_GAP", 1, true)
+    local row_at     = RIGHT:find("cy = draw_tournaments_row(self, ctx, cx, pw, cy)", 1, true)
+    check("...after the battles container",
+          battles_at ~= nil and row_at ~= nil and battles_at < row_at,
+          string.format("battles@%s row@%s", tostring(battles_at), tostring(row_at)))
+end
 
-    local FAB = 76                                  -- the circle this replaced
-    local old_cx   = CX + (EDGE_R - CX) / 2
-    local old_left = old_cx - FAB / 2
+-- NOTHING FLOATS ANY MORE. Checked against the source with its comments
+-- stripped: the reasoning for why the floating passes went survives in the
+-- notes, and matching that would make this pass for the wrong reason the day
+-- somebody deletes them.
+local RIGHT_CODE0 = RIGHT:gsub("%-%-[^\n]*", "")
+check("no floating drawer is left", not has(RIGHT_CODE0, "draw_tournaments_fab"))
+check("...so it no longer positions itself off the safe borders",
+      not has(RIGHT_CODE0, "ctx.EDGE_B or 0"))
+check("...and no longer has to hide itself from modals",
+      not has(RIGHT_CODE0, "self.party_open or self.battle_modal"))
 
-    local new_right = EDGE_R - SIDE_MARGIN
-    local new_left  = div_rx
+-- IT FILLS THE PANEL, at the same inset the battle rows above it use.
+check("the row is the panel's own width", has(RIGHT, "vmath.vector3(pw, ROW_H, 0), C.COL_BG"))
+check("...and insets its content the way the battle rows do",
+      has(RIGHT, "local row_l = cx - pw/2 + PAD"))
 
-    check("the bar reaches at least to the centre/right border",
-          new_left <= div_rx + 0.01,
-          string.format("left=%.1f border=%.1f", new_left, div_rx))
-    check("...which is further left than the circle ever reached",
-          new_left < old_left,
-          string.format("new=%.1f old=%.1f", new_left, old_left))
-    check("...and it is far wider than the circle was",
-          (new_right - new_left) > FAB * 3,
-          string.format("w=%.1f fab=%d", new_right - new_left, FAB))
+-- AND IT IS BIGGER THAN THE ROW IT REPLACED. 72 was what the full-width row
+-- first shipped at; the "too small" report is what the floating passes were
+-- chasing, and the height is the part of that worth keeping.
+do
+    local row_h = tonumber(RIGHT:match("local ROW_H = (%d+)"))
+    check("the row height was found", row_h ~= nil, tostring(row_h))
+    check("...and it is taller than the 72 it replaced", row_h and row_h > 72, tostring(row_h))
+    check("...without outgrowing the battle rows above it", row_h and row_h <= 88, tostring(row_h))
 end
 
 -- The title is measured even though it is left-aligned: the badge's clearance
@@ -107,15 +99,15 @@ check("...with a fallback if measuring fails", has(RIGHT, "#title_txt"))
 
 ----------------------------------------------------------------------
 print("")
-print("THE BAR ACTUALLY LAYS OUT LEFT / RIGHT, WITH A GAP")
+print("THE ROW ACTUALLY LAYS OUT LEFT / RIGHT, WITH A GAP")
 ----------------------------------------------------------------------
 -- The checks above only prove the source SAYS left and right; this re-does
--- the bar's own formula, the way test_battle_form.lua checks the battle
+-- the row's own formula, the way test_battle_form.lua checks the battle
 -- maker, since nothing in Defold measures text at build time.
 --
 -- It deliberately does NOT plug in a guessed pixel width for "TOURNAMENTS" or
 -- "CLOSED" and assert an exact gap. Real Teko-Bold Condensed glyph widths are
--- not something this harness can know, and the bar's own fallback constants
+-- not something this harness can know, and the row's own fallback constants
 -- (14px/char, 11px/char) are stated in the source as WIDE ON PURPOSE — the
 -- safety net for when measurement fails, not a stand-in for real rendering.
 -- Testing "does the pessimistic fallback fit" would be testing the rare path
@@ -123,18 +115,18 @@ print("THE BAR ACTUALLY LAYS OUT LEFT / RIGHT, WITH A GAP")
 --
 -- What IS knowable without a renderer is the shape of the formula: which
 -- constraint wins when they disagree, and that the badge can never end up
--- outside the bar no matter how wide the words turn out to be.
+-- outside the row no matter how wide the words turn out to be.
 local PAD       = tonumber(RIGHT:match("local PAD%s*=%s*(%d+)"))
 local GAP       = tonumber(RIGHT:match("local GAP%s*=%s*(%d+)"))
 local EDGE_KEEP = tonumber(RIGHT:match("local EDGE_KEEP = (%d+)"))
-check("the bar's inner inset and its gap were found",
+check("the row's inner inset and its gap were found",
       PAD ~= nil and GAP ~= nil, string.format("%s %s", tostring(PAD), tostring(GAP)))
 check("...and the clearance it keeps off its own edge",
       EDGE_KEEP ~= nil and EDGE_KEEP > 0, tostring(EDGE_KEEP))
 
--- ICON, THEN WORD, THEN BADGE — the left block measured off the bar's own
+-- ICON, THEN WORD, THEN BADGE — the left block measured off the row's own
 -- left edge rather than off a number borrowed from another screen.
-check("the icon is inset from the bar's left edge", has(RIGHT, "icon_x = bar_l + PAD + ICON / 2"))
+check("the icon is inset from the row's left edge", has(RIGHT, "icon_x = row_l + ICON / 2"))
 check("the title starts just after the icon", has(RIGHT, "title_x   = icon_x + ICON / 2 + GAP"))
 check("and it is left-aligned, not centred", has(RIGHT, "gui.set_pivot(tn, gui.PIVOT_W)"))
 
@@ -148,67 +140,71 @@ check("and it is left-aligned, not centred", has(RIGHT, "gui.set_pivot(tn, gui.P
 -- instead of minimising it.
 check("the source prioritises clearing the title over hugging the inset",
       has(RIGHT, "math.max(flush_nx, needed_nx)"))
-check("...capped so that preference still cannot draw past the bar",
-      has(RIGHT, "math.min(math.max(flush_nx, needed_nx), bar_r - EDGE_KEEP - badge_w / 2)"))
+check("...capped so that preference still cannot draw past the row",
+      has(RIGHT, "math.min(math.max(flush_nx, needed_nx), edge_r - EDGE_KEEP - badge_w / 2)"))
 
-local function nx_for(bar_r, title_right, badge_w)
-    local flush_nx  = bar_r - PAD - badge_w/2
+-- edge_r is the ROW BACKGROUND's own right edge; the source states the flush
+-- position as row_r - badge_w/2, and row_r is edge_r inset by PAD, so the two
+-- spellings are the same number and this reimplementation uses the one that
+-- keeps both constraints expressed against the same edge.
+local function nx_for(edge_r, title_right, badge_w)
+    local flush_nx  = edge_r - PAD - badge_w/2
     local needed_nx = title_right + GAP + badge_w/2
-    return math.min(math.max(flush_nx, needed_nx), bar_r - EDGE_KEEP - badge_w/2)
+    return math.min(math.max(flush_nx, needed_nx), edge_r - EDGE_KEEP - badge_w/2)
 end
 
--- The right-hand column on a 1280-wide logical canvas: div_rx at 896, the
--- bar's right edge one SIDE_MARGIN in from EDGE_R.
-local BAR_R = 1280 - 20
+-- The right panel on a 1280-wide logical canvas: div_rx at 896, so the panel
+-- spans 896..1280 less a SIDE_MARGIN each side, and cx + pw/2 lands here.
+local EDGE_R_ROW = 1280 - 20
 
 -- ROOMY: a short title, so nothing forces a compromise. The gap constraint
--- should win outright and the badge should sit inboard of the bar's hard edge
+-- should win outright and the badge should sit inboard of the row's hard edge
 -- with room to spare.
 do
     local title_right, badge_w = 1000, 80
-    local nx = nx_for(BAR_R, title_right, badge_w)
+    local nx = nx_for(EDGE_R_ROW, title_right, badge_w)
     local badge_left, badge_right = nx - badge_w/2, nx + badge_w/2
     check("roomy: badge stays right of the title", badge_left > title_right)
     check("roomy: the full gap is kept", badge_left - title_right >= GAP - 0.01,
           string.format("%.1f", badge_left - title_right))
-    check("roomy: badge stays inside the bar", badge_right <= BAR_R + 0.01,
-          string.format("right=%.1f edge=%.1f", badge_right, BAR_R))
+    check("roomy: badge stays inside the row", badge_right <= EDGE_R_ROW + 0.01,
+          string.format("right=%.1f edge=%.1f", badge_right, EDGE_R_ROW))
 end
 
 -- TIGHT: exactly the situation a long title and a wide badge word create —
--- the title's own end and the bar's right edge are close together. This is
+-- the title's own end and the row's right edge are close together. This is
 -- where the two constraints disagree, and the invariant that has to hold
--- whatever the real font turns out to measure is the bar's edge, not the gap.
+-- whatever the real font turns out to measure is the row's edge, not the gap.
 do
-    local title_right, badge_w = BAR_R - 30, 90   -- title already close to the bar's own edge
-    local nx = nx_for(BAR_R, title_right, badge_w)
+    local title_right, badge_w = EDGE_R_ROW - 30, 90   -- title already close to the row's own edge
+    local nx = nx_for(EDGE_R_ROW, title_right, badge_w)
     local badge_right = nx + badge_w/2
-    check("tight: the badge never draws past the bar",
-          badge_right <= BAR_R + 0.01,
-          string.format("right=%.1f edge=%.1f", badge_right, BAR_R))
+    check("tight: the badge never draws past the row",
+          badge_right <= EDGE_R_ROW + 0.01,
+          string.format("right=%.1f edge=%.1f", badge_right, EDGE_R_ROW))
 
     -- THE PART A PLAIN math.min OF THE TWO CANDIDATES GETS WRONG. Given a
-    -- choice between "closer to the title" and "closer to the bar's edge",
+    -- choice between "closer to the title" and "closer to the row's edge",
     -- a bare min picks whichever number is SMALLER — which happens to be the
     -- one closer to the title, maximising the overlap instead of minimising
     -- it. The fix has to pick the one that gives the MOST clearance, only
-    -- backing off when the bar's own edge forces it to.
-    local hard_cap  = BAR_R - EDGE_KEEP - badge_w/2
+    -- backing off when the row's own edge forces it to.
+    local hard_cap  = EDGE_R_ROW - EDGE_KEEP - badge_w/2
     local needed_nx = title_right + GAP + badge_w/2
     check("tight: it pushes toward the clearer side, not the closer one",
           math.abs(nx - math.min(needed_nx, hard_cap)) < 0.01,
           string.format("nx=%.1f want=%.1f", nx, math.min(needed_nx, hard_cap)))
 end
 
--- EXTREME: a title so long it already runs past where the bar ends. No
+-- EXTREME: a title so long it already runs past where the row ends. No
 -- formula can carve out clearance from nothing, but it must still not send
--- the badge further right than the bar itself.
+-- the badge further right than the row itself.
 do
     local badge_w = 90
-    local title_right = BAR_R + 40   -- title's ink already past the bar's own edge
-    local nx = nx_for(BAR_R, title_right, badge_w)
-    check("extreme: still clamped to the bar's own edge",
-          nx + badge_w/2 <= BAR_R + 0.01)
+    local title_right = EDGE_R_ROW + 40   -- title's ink already past the row's own edge
+    local nx = nx_for(EDGE_R_ROW, title_right, badge_w)
+    check("extreme: still clamped to the row's own edge",
+          nx + badge_w/2 <= EDGE_R_ROW + 0.01)
 end
 
 ----------------------------------------------------------------------
@@ -232,7 +228,7 @@ check("the badge is sized to its word", has(RIGHT, "badge_w = math.max"))
 check("...with a fallback if measuring fails", has(RIGHT, "#t_status * 11"))
 -- NOT the box's exact centre — see the block below.
 check("...and the label sits where its ink centres",
-      has(RIGHT, "gui.set_position(bn, vmath.vector3(nx, bar_cy - bdrop, 0))"))
+      has(RIGHT, "gui.set_position(bn, vmath.vector3(nx, rcy - bdrop, 0))"))
 -- The old row drew a hairline across the badge's top edge, which read as the
 -- label sitting low in its box rather than as a border.
 check("with no hairline to sit under", not has(RIGHT, "ny + 11"))
@@ -276,9 +272,9 @@ check("the box is resized after the label is measured, not created after it",
 -- overshot: the word went from sitting high to sitting low. A quarter is the
 -- middle of the range, which is the most the metrics available can justify.
 check("the box takes the true centre",
-      has(badge_block, "gui.set_position(badge, vmath.vector3(nx, bar_cy, 0))"))
+      has(badge_block, "gui.set_position(badge, vmath.vector3(nx, rcy, 0))"))
 check("...and the label drops by its own metrics to match",
-      has(badge_block, "bar_cy - bdrop"))
+      has(badge_block, "rcy - bdrop"))
 check("the drop is measured, not eyeballed", has(RIGHT, "max_descent"))
 local frac = tonumber(RIGHT:match("max_descent or 0%) %* sc%.y%) / (%d+)"))
 check("...and scaled to the middle of the range it cannot measure",
