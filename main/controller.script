@@ -1086,6 +1086,13 @@ function init(self)
         end))
     end
 
+    -- A table this player can join has appeared. The lobby decides whether to
+    -- put it on screen — it is the side that knows what else the player is
+    -- looking at — but it has to be told the list moved.
+    table.insert(self.tokens, ws.on("party_available", function()
+        pcall(msg.post, "#online", "party_offer")
+    end))
+
     -- The table dealt: the board takes over. The panel has to be told to shut,
     -- or it is still sitting there — showing a roster for a game already in
     -- progress — when the player comes back to the lobby afterwards.

@@ -113,20 +113,11 @@ M.PARTY_TIERS = PARTY_TIERS_BY_GAME[GameMode.GAME] or PARTY_TIERS_BY_GAME.MATATU
 -- HOW A PARTY IS WON. Mirrors PartyMode in be_matatu's partyRules.ts.
 --   NORMAL    play it out; when somebody goes out the rest are counted
 --   SCORECAP  a running total per player, cross the cap and you're out
--- ONLY NORMAL IS OFFERED, because only NORMAL is played.
---
--- SCORECAP is a multi-hand game: scores carry across deals, a player crossing
--- the cap is out, and the survivors are re-dealt until one is left. The server
--- has the elimination half but nothing re-deals between hands, so it forces
--- every table to NORMAL (party.ts). Leaving the choice on this form would let
--- a host pick SCORE CAP, read SCORE CAP back off their own battle, and watch
--- it play by different rules for real money — the client has to tell the same
--- story the server does.
---
--- SCORECAP stays in the list below and in M.PARTY_CAPS so the picker and the
--- stored cap come back with one word when continuation lands.
-M.PARTY_MODES = { "NORMAL" }
-M.PARTY_MODES_ALL = { "NORMAL", "SCORECAP" }
+-- HOW A PARTY IS WON. Mirrors PartyMode in be_matatu's partyRules.ts.
+--   NORMAL    one deal; when somebody goes out the rest are counted
+--   SCORECAP  a running total per player, carried across deals — cross the cap
+--             and you are out, and the survivors are re-dealt until one is left
+M.PARTY_MODES = { "NORMAL", "SCORECAP" }
 
 -- The SAME ladder KNOCKOUT uses, deliberately — see the note on M.KNOCKOUT_CAPS.
 -- Kept as its own name so a future change to one mode cannot silently move the
@@ -134,20 +125,8 @@ M.PARTY_MODES_ALL = { "NORMAL", "SCORECAP" }
 M.PARTY_CAPS = { 100, 200, 250, 300 }
 M.PARTY_DEFAULT_CAP_I = 2 -- 200, matching PARTY_DEFAULT_SCORE_CAP on the server
 
--- Read a party's mode, but only ever report one the table can actually play.
---
--- A battle stored before SCORECAP came off the picker still carries
--- pmode = "SCORECAP". Reporting that would put a mode on the form that the
--- picker no longer offers and that the server will force to NORMAL anyway —
--- so it reads back as what will really be played. The stored value is left
--- alone; when continuation lands, adding SCORECAP to M.PARTY_MODES brings
--- every one of those battles back with it.
 function M.party_mode_of(bm)
-    local want = tostring((bm or {}).pmode or "NORMAL"):upper()
-    for _, allowed in ipairs(M.PARTY_MODES) do
-        if want == allowed then return want end
-    end
-    return "NORMAL"
+    return (tostring((bm or {}).pmode or "NORMAL"):upper() == "SCORECAP") and "SCORECAP" or "NORMAL"
 end
 
 function M.party_cap_of(bm)
@@ -584,9 +563,10 @@ local function draw_battle_modal(self, ctx)
             cap_cx  = left + mode_span + col_gap + cap_span / 2
         end
 
-        -- Only the modes a table will actually play — see M.PARTY_MODES. While
-        -- that is NORMAL alone the row is a single segment rather than a
-        -- choice between one real option and one that silently becomes it.
+        -- Built from M.PARTY_MODES rather than hardcoded, so the row can only
+        -- ever offer modes a table will actually play. Both are honoured now;
+        -- if one is ever pulled again this collapses to a single segment
+        -- instead of offering a choice that silently becomes the other.
         label(mode_cx, opt_y, "PLAY MODE")
         local mode_segs = {}
         for _, mname in ipairs(M.PARTY_MODES) do
@@ -1373,33 +1353,16 @@ function M.draw(self, ctx, left_M)
         end
     end
 
-    -- Make Payments + Party Tables share this row.
+    -- Make Payments Button (Massive Target)
     --
-    -- Party needs its OWN entry point rather than a row in the battles panel
-    -- below: those rows drive the stored-battle flow (create/invite a battle
-    -- other players are invited to), and a party table is a different object —
-    -- it exists for twenty seconds, is filled by whoever is in the lobby, and
-    -- deals the moment it fills. Putting it in that list would give one word
-    -- two meanings.
-    --
-    -- Split across the existing row rather than added below it, so nothing
-    -- underneath moves: pay_y and pay_h are unchanged and MAKE PAYMENTS stays
-    -- a large target, just no longer the full width.
+    -- FULL WIDTH, and party does not get a slice of it. A party table is
+    -- reached through the PARTY row's own INVITE and EDIT below — the same two
+    -- buttons every other battle type has — and the open-table panel opens
+    -- itself when there is something to see (see online.gui_script's
+    -- party_available handling). A third button here would be a third way to
+    -- reach a thing that already has two.
     local pay_y = lcy - list_h/2 - gap - pay_h/2
-    local half_gap = 10
-    local half_w = (bw - half_gap) / 2
-    mkbtn(self, "nav_payments", vmath.vector3(cx - half_w/2 - half_gap/2, pay_y, 0),
-        vmath.vector3(half_w, pay_h, 0), "MAKE PAYMENTS", "primary_btn", nil, "btn_lg")
-
-    -- The count is the whole point of the label: an open table lasts twenty
-    -- seconds, so "PARTY (2)" is the difference between a button somebody taps
-    -- now and one they never think to try. ws.available_parties is already
-    -- filtered by the server to tables THIS player can actually join.
-    local open_n = #(type(ws.available_parties) == "table" and ws.available_parties or {})
-    mkbtn(self, "party_tables", vmath.vector3(cx + half_w/2 + half_gap/2, pay_y, 0),
-        vmath.vector3(half_w, pay_h, 0),
-        open_n > 0 and ("PARTY (" .. open_n .. ")") or "PARTY",
-        open_n > 0 and "primary_btn" or "secondary_btn", nil, "btn_lg")
+    mkbtn(self, "nav_payments", vmath.vector3(cx, pay_y, 0), vmath.vector3(bw, pay_h, 0), "MAKE PAYMENTS", "primary_btn", nil, "btn_lg")
 
     cy = cy - cont_h - (C.BLOCK_GAP + 8)
 

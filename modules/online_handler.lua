@@ -419,6 +419,20 @@ function M.setup_ws_listeners(self)
         ws.queue_move(move_data, gs)
         msg.post(board, "ws_game_move")
     end))
+
+    -- A CAPPED PARTY DEALT ITS NEXT HAND.
+    --
+    -- Not a move and not a new game: the same table carries on with fresh
+    -- cards, updated running totals and possibly one fewer player. Routed
+    -- through start_game because a re-deal is exactly what that path does —
+    -- lay out a hand from a state — and it re-syncs the party seats on the way
+    -- through, so a player knocked out on the cap goes grey in the same frame
+    -- their replacement cards appear.
+    table.insert(self.ws_listeners, ws.on("party_next_hand", function(_, gs)
+        if type(gs) == "table" and next(gs) ~= nil then
+            M.start_game(self, gs)
+        end
+    end))
     table.insert(self.ws_listeners, ws.on("timer_update", function(d)
         msg.post(board, "ws_timer_update", { data = d })
     end))

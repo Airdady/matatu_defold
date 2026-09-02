@@ -1502,6 +1502,21 @@ local function parse_message(json_string)
       emit("party_player_out", d)
     end
 
+  -- A capped party scored a hand and dealt the next one. NOT a game over: the
+  -- board keeps running, with fresh cards and updated running totals. Handled
+  -- as a state replacement so the seats, the counts and whoever just went out
+  -- on the cap all redraw from one message.
+  elseif t == "PARTY_NEXT_HAND" then
+    local gs = M.extract_game_state(d)
+    if next(gs) ~= nil then
+      M.active_game_id = gs.gameId or gs.id or d.gameId or ""
+      M.active_game_state = gs
+      -- Carries the state, so the board re-deals through its ordinary start
+      -- path (online_handler listens for this) rather than through game_move,
+      -- which describes a card being played and cannot express a fresh hand.
+      emit("party_next_hand", d, gs)
+    end
+
   -- The table finished. Carries the whole finishing order and the pot rather
   -- than a winner and a loser — see partyPlacements.ts on the server.
   elseif t == "PARTY_GAME_OVER" then

@@ -860,6 +860,37 @@ function on_message(self, message_id, message, sender)
             pcall(ws.request_rank)
             self._rebuild_pending = true
         end
+    elseif message_id == hash("party_offer") then
+        -- A TABLE OPENS ITS OWN PANEL, ONCE.
+        --
+        -- There is no party button any more: the row below has INVITE and EDIT
+        -- like every other battle type, and this is what replaces the third
+        -- one. An open table lasts twenty seconds — a player who has to go
+        -- looking for it has already missed it, and PARTY_AVAILABLE is only
+        -- sent to people who can actually join.
+        --
+        -- Once per table, tracked by id. Without that, a player who closed the
+        -- panel would have it reopened on the next seat change of the same
+        -- table, which is a modal fighting the person trying to dismiss it.
+        self._party_offered = self._party_offered or {}
+        local fresh = false
+        for _, p in ipairs(type(ws.available_parties) == "table" and ws.available_parties or {}) do
+            local pid = tostring(p.partyId or "")
+            if pid ~= "" and not self._party_offered[pid] then
+                self._party_offered[pid] = true
+                fresh = true
+            end
+        end
+        -- Not while a game is on screen, and not over a modal the player is
+        -- already using: the offer is worth interrupting an idle lobby for,
+        -- nothing else.
+        if fresh and self._active and not self.party_open
+           and not self.battle_modal and not self.invite_search
+           and not self.savings_info_open and not self.savings_plans_open
+           and not self.savings_add_open then
+            self.party_open = true
+            self._rebuild_pending = true
+        end
     elseif message_id == hash("party_dismiss") then
         -- Our table dealt and the board is taking over. Shut the panel so it
         -- is not still showing a roster for a game in progress when the player
@@ -1076,14 +1107,6 @@ function on_input(self, action_id, action)
                 elseif id == "nav_support" then msg.post("#controller", "goto_support")
                 elseif id == "nav_account" then msg.post("#controller", "goto_profile")
                 -- ── PARTY: the live two-to-four-seat table ──────────────
-                elseif id == "party_tables" then
-                    -- Ask for the list on open. The server de-duplicates the
-                    -- pushes it sends unprompted against what we were last
-                    -- shown, so a re-open onto an unchanged lobby would
-                    -- otherwise draw an empty panel.
-                    self.party_open = true
-                    ws.party_list()
-                    rebuild(self)
                 elseif id == "party_close" or id == "party_block" then
                     self.party_open = false; rebuild(self)
                 elseif id == "party_create" then
