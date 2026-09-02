@@ -64,6 +64,15 @@ function M.destroy_all(self)
         self.t4 = nil
     end
 
+    -- Same for an online party's seats, which use the same badges. Cleared
+    -- here rather than on game-over so a board torn down mid-hand (a
+    -- disconnect, a forced exit) does not leave three opponents on screen for
+    -- whatever game is dealt next.
+    if self.party_seats then
+        for _, s in pairs(self.party_seats) do purge(s.cards) end
+        self.party_seats = nil
+    end
+
     if self.ws_listeners then
         for _, token in ipairs(self.ws_listeners) do ws.off(token) end
     end

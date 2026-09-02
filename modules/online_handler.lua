@@ -14,6 +14,8 @@ local PLAY_TIMEOUT_DURATION_S = 30.0
 local DEAL_DELAY = 0.10
 local CUTTING_CARD_OFFSET_X = -60
 
+local PB = require "modules.party_board"
+
 local M = {}
 
 function M.sync_timers(self, state)
@@ -613,6 +615,12 @@ end
 function M.finalize_state_sync(self, state, on_complete)
     state = state or {}
     self.game_state = state
+    -- A party seats up to three opponents; the ordinary board draws one. The
+    -- seats are reconciled against the state on every sync rather than only at
+    -- start, so a resync after a reconnect redraws them instead of leaving the
+    -- badges showing whatever was true before the socket dropped. No-ops for
+    -- an ordinary two-player game, which carries no seatOrder.
+    pcall(PB.sync, self, state)
     self.is_waiting_for_server_response = false
 
     self.active_penalty = state.activePenaltyCount or 0
@@ -1063,6 +1071,10 @@ function M.start_game(self, state)
     self.is_animating = true
     self.online_mode  = true
     self.game_state = state or {}
+    -- Seat the table before anything else is drawn: the badges are where a
+    -- player reads who they are playing, and a party that dealt its cards
+    -- before naming its seats reads as a game against nobody.
+    pcall(PB.sync, self, self.game_state)
     self._seq = (self._seq or 0) + 1
     self.move_queue = {}
     self.is_processing_move = false
