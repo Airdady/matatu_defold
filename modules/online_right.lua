@@ -259,18 +259,20 @@ end
 -- this one: the maker and the invite flow are finished, the four-seat GAME is
 -- not, so the entry points come down until it is.
 --
--- WHAT IS LEFT. The server half is now done — a seat order the turn engine
--- steps round (turnOrder.ts), a deal for two to four (partyGame.ts), a
--- settlement that pays a pot to a finishing ORDER rather than a stake to a
--- loser (endPartyGame.ts), a timeout that drops one seat instead of ending the
--- table, and an open-table list the lobby can see (PARTY_AVAILABLE). The
--- client can send and receive all of it (websocket_manager).
+-- THE LIVE PARTY TABLE IS NOT ONE OF THESE ROWS, and that is deliberate.
 --
--- The BOARD cannot draw it yet. online_handler and game_flow render exactly
--- one opponent hand (self.ai_hand), and a party seats up to three. Putting the
--- word back here before that lands would let a player open a table, pay for a
--- seat and be dealt into a game the board cannot show — which is worse than
--- the mode being unavailable. It goes back the moment the seats render.
+-- Party mode ships — the seats draw (party_board.lua), the server deals and
+-- pays a pot to a finishing order, and the lobby has its own PARTY button next
+-- to MAKE PAYMENTS. What it does NOT have is a row here, because these rows
+-- are the stored-battle flow: create a battle, invite players, they accept
+-- later. A party table exists for twenty seconds, is filled by whoever is in
+-- the lobby, and deals the moment it fills. Same word, different object, and
+-- listing it here would offer players the invite flow for a thing that has no
+-- invites.
+--
+-- Everything behind the word still stands — PARTY_TIERS, PARTY_MODES,
+-- PARTY_CAPS and the is_party branches through the maker — for whenever the
+-- stored-battle version of a party is wanted too.
 M.BATTLE_TYPES_VISIBLE = { "NORMAL", "KNOCKOUT" }
 
 -- Resolve the battle a user holds for a given type T ∈ {NORMAL,KNOCKOUT,PARTY}.
