@@ -119,10 +119,23 @@ local out = render(RANKED)
 local title = find(out, "STANDINGS")
 check("the STANDINGS title is drawn", title ~= nil)
 
-local pos = starts_with(out, "YOU")
+local pos = starts_with(out, "YOUR POSITION")
 check("the player's own position is drawn", pos ~= nil, pos and pos.text)
+check("...and names itself in full, not as a bare YOU",
+      pos ~= nil and pos.text:find("YOUR POSITION", 1, true) == 1, pos and pos.text)
 if title and pos then
-    check("it names the rank the server gave", pos.text:find("4", 1, true) ~= nil, pos.text)
+    check("it names the rank the server gave", pos.text:find("#4", 1, true) ~= nil, pos.text)
+
+    -- IT HAS TO CLEAR THE TITLE. Both are on one row, one hard left and one
+    -- hard right, and the label just got eight characters longer. The stub's
+    -- widths are not Rajdhani's, so this checks the ORDERING that has to hold
+    -- whatever the real font measures — the two never swap sides — and leaves
+    -- the width argument to the SEASON BONUSES countdown, which is a longer
+    -- string beside a longer title in a container of this exact width.
+    check("the title's ink ends before the position's begins",
+          title.pos.x + #title.text * 8 < pos.pos.x - #pos.text * 8
+          or pos.pos.x > title.pos.x,
+          string.format("title.x=%.1f pos.x=%.1f", title.pos.x, pos.pos.x))
     check("it is on the SAME row as the title",
           math.abs(pos.pos.y - title.pos.y) < 0.01,
           string.format("pos.y=%.1f title.y=%.1f", pos.pos.y, title.pos.y))

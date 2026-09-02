@@ -162,11 +162,28 @@ function M.draw(self, ctx)
     -- on the SEASON BONUSES title row further down: the one number a table
     -- does not contain goes on that table's own title row.
     --
+    -- NAMED IN FULL: "YOUR POSITION  #4", not "YOU  #4". The short form was
+    -- borrowed from the standings rows below, where the table's own POSITION
+    -- column already says what the number is and "YOU" only has to mark whose
+    -- row it is. Up here there is no column to inherit that from — a lone #4
+    -- beside a title could be a rank, a count, or a prize tier.
+    --
+    -- IT FITS, and the row below is the proof rather than a measurement this
+    -- cannot take: "4D 05H 12M 07S LEFT" is nineteen characters at this same
+    -- font beside a fourteen-character title, in a container of exactly this
+    -- width, and it has shipped. Seventeen beside nine is the slacker of the
+    -- two by some margin.
+    --
+    -- The unranked case keeps the bare word. "YOUR POSITION  UNRANKED" is
+    -- twenty-three characters — past what that row demonstrates — and the
+    -- label is what makes a NUMBER legible anyway; UNRANKED is already a whole
+    -- statement without it.
+    --
     -- Gold when ranked, dim when not. UNRANKED rather than "#-1" or a blank:
     -- having no position yet is a fact, and the five rows under this one are
     -- about to show people who do have one.
     txtR(self, cx + inner_pw/2 - C.INNER_PAD, cy,
-        (my_pos > 0) and ("YOU  #" .. my_pos) or "UNRANKED", "small",
+        (my_pos > 0) and ("YOUR POSITION  #" .. my_pos) or "UNRANKED", "small",
         (my_pos > 0) and C.COL_GOLD or C.COL_DIM)
 
     cy = cy - title_space

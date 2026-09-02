@@ -1496,7 +1496,17 @@ function M.draw(self, ctx, left_M)
     cy = cy - cont_h - C.BLOCK_GAP
 
     -- ── Battles panel (Taller, Roomier rows) ──────────────────────────────
-    local row_h    = 88 -- Significantly larger rows
+    -- 100, up from 88. The panel freed 56 when the profile card's stats box
+    -- went, and this is what it is for: the three mode rows are the tallest
+    -- thing on the screen a player actually reads, and they were sized when
+    -- this column had a full-width tournaments row under them AND a two-row
+    -- stats box above. Twelve more each is 36 of the 54 that was going spare,
+    -- and it leaves the tournaments row an 18px margin off the bottom border.
+    --
+    -- The rows carry their own separation — a hairline between each, and the
+    -- content centred in the row — so the height IS the gap between the modes.
+    -- There is no spacing constant to raise instead.
+    local row_h    = 100
     local top_pad  = 16
     local bot_pad  = 16
     local list_types = M.BATTLE_TYPES_VISIBLE
@@ -1604,14 +1614,16 @@ function M.draw(self, ctx, left_M)
     -- the two BLOCK_GAP + 8 gaps became plain BLOCK_GAPs, which is what every
     -- other gap in this panel already was: 16 more.
     --
-    -- That is 72 for an 80px row, so the column is no longer scraping its own
-    -- bottom border: the row lands with about 50 to spare, which is the
-    -- breathing room it had none of a commit ago.
+    -- That is 72 for an 80px row. Most of what was left over then went into
+    -- the mode rows above (88 to 100, see row_h), which is what the freed
+    -- height was actually for; the row still lands 18 clear of the bottom
+    -- border.
     --
-    -- STILL WATCH IT. The team-tournaments block below overflows when an
-    -- account is in one, as it did before this row existed — the row makes the
-    -- number worse, not the bug. Anything else added under the battles has to
-    -- bring its own height with it.
+    -- SO THE COLUMN IS SPOKEN FOR. The team-tournaments block below overflows
+    -- when an account is in one, as it did before this row existed — the row
+    -- and the taller modes make the number worse, not the bug. Anything else
+    -- added under the battles has to bring its own height with it, and there
+    -- is no longer anywhere obvious to take it from.
     cy = draw_tournaments_row(self, ctx, cx, pw, cy) - C.BLOCK_GAP
 
     -- ── Team Tournaments panel — only shown once this account has actually
