@@ -1392,10 +1392,9 @@ function M.draw(self, ctx, left_M)
     local av_size  = 84 -- Bigger Avatar
     local stat_h   = 36 -- Chunkier currency rows
     local header_h = 130 -- Covers Avatar, Name, and tightly-packed Balances
-    local list_h   = C.ROW_H_LIST -- Form list; POSITION moved to the STANDINGS title row
     local pay_h    = 56 -- Massive touch target for payments
     local gap      = 16
-    local cont_h   = margin + header_h + gap + list_h + gap + pay_h + margin
+    local cont_h   = margin + header_h + gap + pay_h + margin
     local ccy      = cy - cont_h / 2
 
     glass(self, vmath.vector3(cx, ccy, 0), vmath.vector3(pw, cont_h, 0), "container_bg")
@@ -1461,33 +1460,22 @@ function M.draw(self, ctx, left_M)
     track(self, ui.pie(sav_add_pos, 14, vmath.vector4(0.15, 0.15, 0.15, 0.65)))
     mkbtn(self, "savings_add", sav_add_pos, vmath.vector3(28, 28, 0), "+", vmath.vector4(0, 0, 0, 0), nil, "btn_md", COL_SAVINGS)
 
-    -- Stats List (Form)
+    -- THE STATS BOX IS GONE, BOTH ROWS OF IT.
     --
-    -- ONE ROW, NOT TWO. YOUR POSITION used to sit above the form, and it is
-    -- now on the STANDINGS title row in the left panel — beside the table it
-    -- is a position in, rather than a panel's width away from it. See
-    -- modules/online_left.lua. With one row left there is nothing for the
-    -- divider to divide, so it goes too: a hairline across a single row reads
-    -- as a border that lost its box.
-    local lcy = top_y - header_h - gap - list_h/2
-    track(self, ui.box(vmath.vector3(cx, lcy, 0), vmath.vector3(bw, list_h, 0), C.COL_STAT_BG))
-
-    txtL(self, cx - bw/2 + 12, lcy, "YOUR CURRENT FORM", "small", C.COL_DIM)
-
-    local form = type(u.recentForm) == "table" and u.recentForm or {}
-    local fsz, fgap = 26, 6 
-    local fx0 = cx + bw/2 - 12 - fsz/2
-    for i = 1, 5 do
-        local r  = form[i]
-        local bx = fx0 - (i - 1) * (fsz + fgap)
-        if r == "W" or r == "L" then
-            track(self, ui.box(vmath.vector3(bx, lcy, 0), vmath.vector3(fsz, fsz, 0),
-                r == "W" and vmath.vector4(0.15, 0.70, 0.25, 0.92) or vmath.vector4(0.90, 0.25, 0.25, 0.92)))
-            track(self, ui.text(vmath.vector3(bx, lcy, 0), r, "body", C.COL_WHITE))
-        else
-            track(self, ui.box(vmath.vector3(bx, lcy, 0), vmath.vector3(fsz, fsz, 0), vmath.vector4(1, 1, 1, 0.06)))
-        end
-    end
+    -- YOUR POSITION went first, to the STANDINGS title row in the left panel,
+    -- beside the table it is a position in (modules/online_left.lua). YOUR
+    -- CURRENT FORM — the last five results as W/L pills — followed it out, and
+    -- it is not going anywhere else: nothing on this screen is about the last
+    -- five games, and the box was the only thing between the balances and the
+    -- payments button.
+    --
+    -- The DATA is untouched. websocket_manager still tracks
+    -- current_user_data.recentForm off every game-over payload, so putting the
+    -- row back is a row of drawing code, not an excavation.
+    --
+    -- WHAT ITS HEIGHT PAID FOR: the tournaments row below the battles. The two
+    -- rows plus their gap were 56 of this panel's 704, and the row cost 80 —
+    -- see the note at draw_tournaments_row's call for the whole budget.
 
     -- Make Payments Button (Massive Target)
     --
@@ -1497,7 +1485,7 @@ function M.draw(self, ctx, left_M)
     -- itself when there is something to see (see online.gui_script's
     -- party_available handling). A third button here would be a third way to
     -- reach a thing that already has two.
-    local pay_y = lcy - list_h/2 - gap - pay_h/2
+    local pay_y = top_y - header_h - gap - pay_h/2
     mkbtn(self, "nav_payments", vmath.vector3(cx, pay_y, 0), vmath.vector3(bw, pay_h, 0), "MAKE PAYMENTS", "primary_btn", nil, "btn_lg")
 
     -- BLOCK_GAP, not BLOCK_GAP + 8. The +8 was here and after the battles,
@@ -1509,8 +1497,8 @@ function M.draw(self, ctx, left_M)
 
     -- ── Battles panel (Taller, Roomier rows) ──────────────────────────────
     local row_h    = 88 -- Significantly larger rows
-    local top_pad  = 12
-    local bot_pad  = 12
+    local top_pad  = 16
+    local bot_pad  = 16
     local list_types = M.BATTLE_TYPES_VISIBLE
     local battle_h = top_pad + (row_h * #list_types) + bot_pad
     local scy = cy - battle_h/2
@@ -1610,16 +1598,20 @@ function M.draw(self, ctx, left_M)
     -- plus the battles already spent nearly all of them — the row's first
     -- draft ran 22px below the bottom of the screen.
     --
-    -- Three places found it, none of them this row: YOUR POSITION leaving the
-    -- profile card took the stats box from two rows to one (36), the two
-    -- BLOCK_GAP + 8 gaps became plain BLOCK_GAPs like every other gap in this
-    -- panel (16), and the battles container's own padding went from 16 to 12
-    -- (8). That is 60 for an 80px row, and it leaves single figures of slack.
+    -- Two places found it, neither of them this row. The profile card's stats
+    -- box went entirely — YOUR POSITION to the standings title in the left
+    -- panel, YOUR CURRENT FORM off the screen — which is 56 with its gap. And
+    -- the two BLOCK_GAP + 8 gaps became plain BLOCK_GAPs, which is what every
+    -- other gap in this panel already was: 16 more.
     --
-    -- SO THIS PANEL IS FULL. Anything added below the battles now has to bring
-    -- its own height with it. The team-tournaments block underneath already
-    -- overflows when an account is in one — it did before this row existed —
-    -- and that is the shape of the problem, not an exception to it.
+    -- That is 72 for an 80px row, so the column is no longer scraping its own
+    -- bottom border: the row lands with about 50 to spare, which is the
+    -- breathing room it had none of a commit ago.
+    --
+    -- STILL WATCH IT. The team-tournaments block below overflows when an
+    -- account is in one, as it did before this row existed — the row makes the
+    -- number worse, not the bug. Anything else added under the battles has to
+    -- bring its own height with it.
     cy = draw_tournaments_row(self, ctx, cx, pw, cy) - C.BLOCK_GAP
 
     -- ── Team Tournaments panel — only shown once this account has actually

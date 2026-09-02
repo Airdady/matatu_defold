@@ -174,26 +174,32 @@ end
 
 ----------------------------------------------------------------------
 print("")
-print("AND IT IS GONE FROM THE PROFILE CARD")
+print("AND THE PROFILE CARD'S STATS BOX IS GONE ENTIRELY")
 ----------------------------------------------------------------------
--- Source-read rather than rendered: what is being checked is that the row no
--- longer EXISTS over there, and two panels showing the same number in two
--- places is exactly the thing this move was for.
+-- Source-read rather than rendered: what is being checked is that these rows
+-- no longer EXIST over there. Two panels showing the same number in two places
+-- is exactly the thing the position's move was for, and the form row followed
+-- it out because nothing on this screen is about the last five games.
 do
     local f = assert(io.open(here .. "/../modules/online_right.lua"))
     local RIGHT = f:read("*a"); f:close()
     local CODE = RIGHT:gsub("%-%-[^\n]*", "")
     check("the right panel no longer draws a YOUR POSITION row",
           CODE:find('"YOUR POSITION"', 1, true) == nil)
-    check("...and its stats list is down to the form line",
-          CODE:find('"YOUR CURRENT FORM"', 1, true) ~= nil)
-    -- The container shrank with it: a box still sized for two rows would leave
-    -- a hole where the position used to be. It now takes the theme's own
-    -- single list-row height rather than a number of its own.
-    local list_h = RIGHT:match("local list_h%s*=%s*([%w_.]+)")
-    check("the stats box shrank to one row",
-          list_h == "C.ROW_H_LIST" or (tonumber(list_h) ~= nil and tonumber(list_h) < 80),
-          tostring(list_h))
+    check("...nor a YOUR CURRENT FORM row",
+          CODE:find('"YOUR CURRENT FORM"', 1, true) == nil)
+    check("...and the box that held them is gone with them",
+          CODE:find("local list_h", 1, true) == nil
+          and CODE:find("C.COL_STAT_BG", 1, true) == nil)
+
+    -- UNMOUNTED, NOT DELETED. The server still sends the form and
+    -- websocket_manager still tracks it, so putting the row back is a row of
+    -- drawing code rather than an excavation — the same standing every other
+    -- entry point taken off this screen has.
+    local g = assert(io.open(here .. "/../modules/websocket_manager.lua"))
+    local WS = g:read("*a"); g:close()
+    check("the form data behind it is still tracked",
+          WS:find("current_user_data.recentForm", 1, true) ~= nil)
 end
 
 ----------------------------------------------------------------------
