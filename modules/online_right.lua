@@ -113,7 +113,20 @@ M.PARTY_TIERS = PARTY_TIERS_BY_GAME[GameMode.GAME] or PARTY_TIERS_BY_GAME.MATATU
 -- HOW A PARTY IS WON. Mirrors PartyMode in be_matatu's partyRules.ts.
 --   NORMAL    play it out; when somebody goes out the rest are counted
 --   SCORECAP  a running total per player, cross the cap and you're out
-M.PARTY_MODES = { "NORMAL", "SCORECAP" }
+-- ONLY NORMAL IS OFFERED, because only NORMAL is played.
+--
+-- SCORECAP is a multi-hand game: scores carry across deals, a player crossing
+-- the cap is out, and the survivors are re-dealt until one is left. The server
+-- has the elimination half but nothing re-deals between hands, so it forces
+-- every table to NORMAL (party.ts). Leaving the choice on this form would let
+-- a host pick SCORE CAP, read SCORE CAP back off their own battle, and watch
+-- it play by different rules for real money — the client has to tell the same
+-- story the server does.
+--
+-- SCORECAP stays in the list below and in M.PARTY_CAPS so the picker and the
+-- stored cap come back with one word when continuation lands.
+M.PARTY_MODES = { "NORMAL" }
+M.PARTY_MODES_ALL = { "NORMAL", "SCORECAP" }
 
 -- The SAME ladder KNOCKOUT uses, deliberately — see the note on M.KNOCKOUT_CAPS.
 -- Kept as its own name so a future change to one mode cannot silently move the
@@ -121,8 +134,20 @@ M.PARTY_MODES = { "NORMAL", "SCORECAP" }
 M.PARTY_CAPS = { 100, 200, 250, 300 }
 M.PARTY_DEFAULT_CAP_I = 2 -- 200, matching PARTY_DEFAULT_SCORE_CAP on the server
 
+-- Read a party's mode, but only ever report one the table can actually play.
+--
+-- A battle stored before SCORECAP came off the picker still carries
+-- pmode = "SCORECAP". Reporting that would put a mode on the form that the
+-- picker no longer offers and that the server will force to NORMAL anyway —
+-- so it reads back as what will really be played. The stored value is left
+-- alone; when continuation lands, adding SCORECAP to M.PARTY_MODES brings
+-- every one of those battles back with it.
 function M.party_mode_of(bm)
-    return (tostring((bm or {}).pmode or "NORMAL"):upper() == "SCORECAP") and "SCORECAP" or "NORMAL"
+    local want = tostring((bm or {}).pmode or "NORMAL"):upper()
+    for _, allowed in ipairs(M.PARTY_MODES) do
+        if want == allowed then return want end
+    end
+    return "NORMAL"
 end
 
 function M.party_cap_of(bm)
@@ -259,21 +284,17 @@ end
 -- this one: the maker and the invite flow are finished, the four-seat GAME is
 -- not, so the entry points come down until it is.
 --
--- THE LIVE PARTY TABLE IS NOT ONE OF THESE ROWS, and that is deliberate.
+-- PARTY IS BACK. The sentence above — "the maker and the invite flow are
+-- finished, the four-seat GAME is not" — is what kept it down, and the game
+-- now exists: a seat order the turn engine steps round, a deal for two to
+-- four, a settlement that pays a pot to a finishing ORDER, seats the board can
+-- actually draw (party_board.lua), and an open-table list the lobby sees.
 --
--- Party mode ships — the seats draw (party_board.lua), the server deals and
--- pays a pot to a finishing order, and the lobby has its own PARTY button next
--- to MAKE PAYMENTS. What it does NOT have is a row here, because these rows
--- are the stored-battle flow: create a battle, invite players, they accept
--- later. A party table exists for twenty seconds, is filled by whoever is in
--- the lobby, and deals the moment it fills. Same word, different object, and
--- listing it here would offer players the invite flow for a thing that has no
--- invites.
---
--- Everything behind the word still stands — PARTY_TIERS, PARTY_MODES,
--- PARTY_CAPS and the is_party branches through the maker — for whenever the
--- stored-battle version of a party is wanted too.
-M.BATTLE_TYPES_VISIBLE = { "NORMAL", "KNOCKOUT" }
+-- EDIT still means what it meant: it configures this battle's entry, mode and
+-- cap. INVITE now means something different for a party than for the other two
+-- — see start_invite_search. A party is not searched for, it is OPENED, and
+-- the lobby fills it.
+M.BATTLE_TYPES_VISIBLE = { "NORMAL", "KNOCKOUT", "PARTY" }
 
 -- Resolve the battle a user holds for a given type T ∈ {NORMAL,KNOCKOUT,PARTY}.
 function M.battle_of_type(u, T)
@@ -563,11 +584,17 @@ local function draw_battle_modal(self, ctx)
             cap_cx  = left + mode_span + col_gap + cap_span / 2
         end
 
+        -- Only the modes a table will actually play — see M.PARTY_MODES. While
+        -- that is NORMAL alone the row is a single segment rather than a
+        -- choice between one real option and one that silently becomes it.
         label(mode_cx, opt_y, "PLAY MODE")
-        segments(self, ctx, mode_cx, opt_y, mode_w, mode_gap, {
-            { id = "bm_pmode_normal", label = "NORMAL",    on = not capped },
-            { id = "bm_pmode_cap",    label = "SCORE CAP", on = capped     },
-        })
+        local mode_segs = {}
+        for _, mname in ipairs(M.PARTY_MODES) do
+            mode_segs[#mode_segs + 1] = (mname == "SCORECAP")
+                and { id = "bm_pmode_cap",    label = "SCORE CAP", on = capped }
+                or  { id = "bm_pmode_normal", label = "NORMAL",    on = not capped }
+        end
+        segments(self, ctx, mode_cx, opt_y, mode_w, mode_gap, mode_segs)
 
         if capped then
             -- Same ladder and the same wording as a KNOCKOUT chamber, on
@@ -1865,6 +1892,43 @@ function M.start_invite_search(self, app_state, rebuild_cb, battle_type)
     if need > 0 and bal < need then
         msg.post("#controller", "goto_payments")
         return false
+    end
+
+    -- A PARTY IS NOT SEARCHED FOR, IT IS OPENED.
+    --
+    -- Every other battle type invites ONE opponent: send_game_request goes out,
+    -- the server shortlists whoever is free, and two people are dealt in. That
+    -- is the wrong shape for a party and always was — the request lands in
+    -- initializeDeck, which is the two-player dealer, so a party invite used to
+    -- produce a duel wearing a party label. It never reached party.ts, the pot,
+    -- or the four-seat settlement.
+    --
+    -- The right shape already exists: open a table with this battle's settings
+    -- and let the lobby fill it. PARTY_AVAILABLE puts it in front of everybody
+    -- eligible within a frame, which is a better invite than a shortlist of one
+    -- — and it is the flow the seats, the pot and endPartyGame are built for.
+    --
+    -- No search dialog either. There is nothing to wait on with a spinner: the
+    -- table appears with its own countdown and roster, so the party panel is
+    -- what the player should be looking at.
+    if tostring(battle_type or ""):upper() == "PARTY" then
+        local entry = tonumber(mb.amount) or tonumber(stake.amount) or (M.PARTY_TIERS or { 200 })[1]
+
+        -- Checked against the ENTRY, not the `stake` above. A party battle
+        -- carries its price in `amount` and generally has no stake object at
+        -- all, so the shared balance check a few lines up compares against
+        -- zero and always passes. The server refuses the create either way,
+        -- but arriving at a PARTY_ERROR is a worse answer than the top-up
+        -- screen every other battle type sends the player to.
+        if entry > 0 and bal < entry then
+            msg.post("#controller", "goto_payments")
+            return false
+        end
+
+        ws.party_create(entry, M.party_mode_of(mb), M.party_cap_of(mb))
+        self.party_open = true
+        rebuild_cb()
+        return true
     end
 
     self.invite_search = {
