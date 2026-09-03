@@ -1559,8 +1559,6 @@ local function parse_message(json_string)
   -- than a winner and a loser — see partyPlacements.ts on the server.
   elseif t == "PARTY_GAME_OVER" then
     M.last_party_result = d
-    M.active_game_id = ""
-    M.active_game_state = nil
     if type(d) == "table" then
       -- Our own new form, applied straight away for the same reason the
       -- two-player GAME_OVER does it: the lobby form panel reads
@@ -1577,6 +1575,56 @@ local function parse_message(json_string)
         end
       end
       emit("party_game_over", d)
+
+      -- AND THEN THE ORDINARY GAME-OVER, because nothing was listening to the
+      -- line above.
+      --
+      -- The board reacts to exactly one event, `game_over`: online_handler
+      -- parks it as ws.last_game_over, game.script queues it, and
+      -- process_game_over_queue ends the game with
+      -- `results.winner == my_player_id`. A party emitted its own event that
+      -- no surface subscribed to, so the server settled the table, paid the
+      -- pot, and the board sat there — the game was over everywhere except on
+      -- screen.
+      --
+      -- Translated rather than duplicated, the same way PARTY_STARTING feeds
+      -- game_start: `winner` is the only field that decides anything, and the
+      -- party extras ride along for whatever wants to draw them.
+      local results = {
+        winner      = d.winner,
+        reason      = d.reason or "PARTY_OVER",
+        gameType    = "PARTY",
+        -- A party has no leaderboard slice and no per-player stake movement to
+        -- report, so `rank` and `balances` are deliberately absent rather than
+        -- faked: the balance arrives on the IDENTIFY the server pushes after
+        -- settling, and an empty rank leaves the standings panel alone instead
+        -- of blanking it.
+        pot         = d.pot,
+        entry       = d.entry,
+        mode        = d.mode,
+        placements  = d.placements,
+        isPartyOver = true,
+      }
+
+      -- What each player's balance actually did, in the shape the two-player
+      -- GAME_OVER uses. Only the winner moves: everybody paid their entry when
+      -- they took a seat, not at the end, so for everyone else the change at
+      -- this moment is genuinely zero rather than "minus their entry" — which
+      -- would double-count a charge taken twenty seconds earlier.
+      local rewards = {}
+      for _, place in ipairs(type(d.placements) == "table" and d.placements or {}) do
+        local pid = tostring(place.playerId or "")
+        if pid ~= "" then rewards[pid] = place.won and (tonumber(d.pot) or 0) or 0 end
+      end
+      results.rewards = rewards
+      M.last_game_over = results
+      emit("game_over", results)
+
+      -- Cleared AFTER the event, not before. The board's end-game path reads
+      -- the active game while it tears itself down, and dropping it first left
+      -- it ending a game it could no longer see.
+      M.active_game_id = ""
+      M.active_game_state = nil
     end
 
   elseif t == "IDENTIFY_UNKNOWN" then
