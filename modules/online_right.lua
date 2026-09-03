@@ -1839,10 +1839,28 @@ function M.start_invite_search(self, app_state, rebuild_cb, battle_type)
         end
 
         ws.party_create(entry, M.party_mode_of(mb), M.party_cap_of(mb))
-        self.party_open = true
-        -- Cleared by PARTY_ROSTER (we are seated) or by PARTY_CANCELLED /
-        -- PARTY_ERROR (it did not open) — see online.gui_script.
-        self.party_pending = true
+
+        -- THE SAME DIALOG A TOURNAMENT USES, not a second one.
+        --
+        -- From the player's side the two are identical: you opened something,
+        -- and you are watching people arrive one at a time. dialog_search
+        -- already does exactly that — the roster, the arrival animation, the
+        -- per-player sound — so a party feeds it instead of drawing its own.
+        -- websocket_manager translates PARTY_ROSTER's seats into the same
+        -- `accepted` shape the tournament roster uses.
+        --
+        -- No cancel_id: a party table cannot be withdrawn once opened (the
+        -- entry is committed on the seat), and a Cancel button that cannot
+        -- cancel is worse than none.
+        self.invite_search = {
+            active = true, t = 0, reel_ix = math.random(INVITE_AVATAR_MAX), spin_t = 0,
+            stake = { amount = entry, charge = 0 },
+            max_time = M.SEARCH_WINDOW_FALLBACK,
+            modal = true,
+            party = true,
+            subtitle = "opening your table",
+        }
+        app_state.searching_invite = true
         rebuild_cb()
         return true
     end

@@ -1100,6 +1100,15 @@ function init(self)
         end))
     end
 
+    -- A table that will not happen ends the search dialog the same way a
+    -- tournament with no takers does.
+    for _, ev in ipairs({ "party_cancelled", "party_error" }) do
+        table.insert(self.tokens, ws.on(ev, function(d)
+            d = type(d) == "table" and d or {}
+            pcall(msg.post, "#online", "party_failed", { reason = d.message })
+        end))
+    end
+
     -- The table dealt: the board takes over. The panel has to be told to shut,
     -- or it is still sitting there — showing a roster for a game already in
     -- progress — when the player comes back to the lobby afterwards.

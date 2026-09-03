@@ -862,9 +862,14 @@ function on_message(self, message_id, message, sender)
         end
     elseif message_id == hash("party_settled") then
         -- The server answered the INVITE: we are seated, or it did not open.
-        -- Either way the "Opening your table..." wait is over.
         self.party_pending = nil
         if self._active then self._rebuild_pending = true end
+    elseif message_id == hash("party_failed") and self.invite_search then
+        -- The table did not fill, or it could not be opened. Same ending the
+        -- tournament search has, through the same function — the reel plays
+        -- its miss and the overlay closes on its own timing.
+        right_panel.fail_invite_search(self, app_state, function() rebuild(self) end,
+            (message and message.reason) or "Nobody else sat down in time")
     elseif message_id == hash("party_offer") then
         -- A TABLE OPENS ITS OWN PANEL, ONCE.
         --
@@ -897,9 +902,15 @@ function on_message(self, message_id, message, sender)
             self._rebuild_pending = true
         end
     elseif message_id == hash("party_dismiss") then
-        -- Our table dealt and the board is taking over. Shut the panel so it
-        -- is not still showing a roster for a game in progress when the player
-        -- returns to the lobby.
+        -- The table dealt. Mark the search FOUND rather than just closing it:
+        -- that is the beat the tournament dialog plays before a board appears
+        -- — the roster settles, the title turns over — and a party that
+        -- skipped straight to the board would be the only mode that does.
+        -- The board arrives on game_start a moment later regardless.
+        if self.invite_search then
+            self.invite_search.found = true
+            self.invite_search.failed = false
+        end
         self.party_open = false
         if self._active then self._rebuild_pending = true end
     elseif message_id == hash("layout_changed") or message_id == hash("user_data_updated") or message_id == hash("ws_online_users") or message_id == hash("ws_connected") or message_id == hash("ws_disconnected") then

@@ -61,8 +61,17 @@ local M = {}
 M.TIERS = {
     { key = "beginner",    label = "BEGINNER",    min = 0.0,  max = 44.9  },
     { key = "pro",         label = "PRO",         min = 45.0, max = 49.9  },
-    { key = "master",      label = "MASTER",      min = 50.0, max = 54.9  },
-    { key = "grandmaster", label = "GRANDMASTER", min = 55.0, max = 100.0 },
+    -- GRANDMASTER STARTS AT 54, NOT 55, and MASTER ends one point earlier to
+    -- match. Lowered deliberately: the top band was narrow enough that players
+    -- on 54-point-something wore MASTER while beating most of the people they
+    -- met. Nothing else about the ladder moves.
+    --
+    -- services/rankTier.ts on the server carries the same table and was
+    -- changed with this. The two must not drift — a player badged GRANDMASTER
+    -- here who is matched as a MASTER there is a bug invisible from either
+    -- side alone.
+    { key = "master",      label = "MASTER",      min = 50.0, max = 53.9  },
+    { key = "grandmaster", label = "GRANDMASTER", min = 54.0, max = 100.0 },
 }
 
 -- THE COLOURS, AND WHY THEY ARE NOT A RED-TO-GREEN RAMP.

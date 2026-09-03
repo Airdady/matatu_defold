@@ -67,6 +67,19 @@ local M = {}
 function M.title_for(sr)
     sr = sr or {}
     local joined = #((type(sr.roster) == "table") and sr.roster or {})
+
+    -- A PARTY IS THE SAME DIALOG WITH DIFFERENT WORDS.
+    --
+    -- Everything the tournament search does here a party also does: it opens,
+    -- players arrive one by one, and it resolves. What it never does is
+    -- CHOOSE — a party takes everybody who sat down — so the assessing state
+    -- has no meaning and "opponent", singular, is the wrong noun throughout.
+    if sr.party then
+        if sr.found then return "TABLE READY!" end
+        if sr.failed then return "TABLE DID NOT FILL" end
+        return (joined > 0) and "PLAYERS JOINING" or "TABLE OPEN"
+    end
+
     if sr.found then return "OPPONENT FOUND!" end
     if sr.failed then return "NO OPPONENT FOUND" end
     if search_clock.is_choosing(sr) then return "ASSESSING THE BEST CANDIDATE" end
@@ -85,11 +98,23 @@ end
 -- players who had accepted.
 function M.status_for(sr)
     sr = sr or {}
-    if sr.failed then return sr.fail_msg or "No one accepted your invite" end
+    if sr.failed then
+        return sr.fail_msg or (sr.party and "Nobody else sat down in time"
+                                        or "No one accepted your invite")
+    end
     if sr.found then return "get ready\226\128\166" end
 
     local joined = #((type(sr.roster) == "table") and sr.roster or {})
     local line
+    if sr.party then
+        -- Seats, not candidates. The count is what a player is watching, and
+        -- the table plays with whoever is on it when the clock runs out — so
+        -- "still searching" would promise a selection that never happens.
+        line = (joined > 0)
+            and (plural(joined + 1, "player") .. " at the table")
+            or (sr.subtitle or "waiting for players to join")
+        return line .. string.rep(".", 1 + (math.floor((sr.anim_t or sr.t or 0) * 2) % 3))
+    end
     if search_clock.is_choosing(sr) then
         line = (joined > 0) and ("assessing " .. plural(joined, "candidate"))
             or "picking the best match"
