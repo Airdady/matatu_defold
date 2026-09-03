@@ -88,12 +88,25 @@ function M.show(self, m, opp_display_name)
     local won = m.won and true or false
     local opp = tostring(m.opp_name or opp_display_name or "OPPONENT")
 
-    local t1 = won and "ROUND WON!" or "ROUND LOST"
+    local t1 = tostring(m.title or (won and "ROUND WON!" or "ROUND LOST"))
     local c1 = won and C_FORM_W or C_FORM_L
-    local s1
-    if p > o then s1 = string.format("You lead %d - %d", p, o)
-    elseif o > p then s1 = string.format("%s leads %d - %d", opp, o, p)
-    else s1 = string.format("All square at %d - %d", p, o) end
+
+    -- THE SUBTITLE CAN BE GIVEN RATHER THAN COMPUTED.
+    --
+    -- The line below reads a two-player scoreline — "You lead 2 - 1" — which
+    -- is the whole story of a duel and meaningless at a table of four, where
+    -- there is no single opponent to lead. A party passes its own sentence
+    -- ("Cipher is out - 3 players left") instead of scores that would have to
+    -- be invented to fit a shape it does not have.
+    --
+    -- Everything else about the banner is unchanged, which is the point: one
+    -- round transition, one animation, one place it lives.
+    local s1 = m.subtitle and tostring(m.subtitle) or nil
+    if not s1 then
+        if p > o then s1 = string.format("You lead %d - %d", p, o)
+        elseif o > p then s1 = string.format("%s leads %d - %d", opp, o, p)
+        else s1 = string.format("All square at %d - %d", p, o) end
+    end
 
     -- Only play the single phase, then finish
     story_phase(self, seq, t1, s1, c1, 1.35, function()

@@ -1549,6 +1549,22 @@ local function parse_message(json_string)
     if next(gs) ~= nil then
       M.active_game_id = gs.gameId or gs.id or d.gameId or ""
       M.active_game_state = gs
+      -- A ROUND WAS WON. This only reaches players who are still in — the
+      -- server sends the knocked-out player a PARTY_GAME_OVER instead — so
+      -- arriving here always means "you survived, here is the next deal".
+      --
+      -- Announced before the board is rebuilt, so the banner names who went
+      -- out while their seat is still on screen. Rebuilding first would
+      -- congratulate the player on beating somebody already gone.
+      emit("party_round_won", {
+        eliminated      = d.eliminated,
+        eliminatedNames = d.eliminatedNames,
+        playersLeft     = tonumber(d.playersLeft) or 0,
+        handNumber      = tonumber(d.handNumber) or 0,
+        mode            = d.mode,
+        scores          = d.scores,
+      })
+
       -- Carries the state, so the board re-deals through its ordinary start
       -- path (online_handler listens for this) rather than through game_move,
       -- which describes a card being played and cannot express a fresh hand.
@@ -1593,6 +1609,13 @@ local function parse_message(json_string)
       local results = {
         winner      = d.winner,
         reason      = d.reason or "PARTY_OVER",
+        -- ELIMINATED means the TABLE is still running and only WE are out.
+        -- Carried through so the game-over surface can say "3rd of 4" rather
+        -- than implying the party finished — and so nothing downstream treats
+        -- a knocked-out player as the end of everybody's game.
+        eliminated  = (tostring(d.reason or "") == "ELIMINATED") or nil,
+        place       = tonumber(d.place),
+        totalPlayers = tonumber(d.totalPlayers),
         gameType    = "PARTY",
         -- A party has no leaderboard slice and no per-player stake movement to
         -- report, so `rank` and `balances` are deliberately absent rather than

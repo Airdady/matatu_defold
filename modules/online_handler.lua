@@ -428,6 +428,32 @@ function M.setup_ws_listeners(self)
     -- lay out a hand from a state — and it re-syncs the party seats on the way
     -- through, so a player knocked out on the cap goes grey in the same frame
     -- their replacement cards appear.
+    -- A ROUND WON AT A PARTY TABLE, through the tournament's own banner.
+    --
+    -- Fired before party_next_hand rebuilds the board, so the sentence names
+    -- who went out while their seat is still on screen. It carries its own
+    -- subtitle rather than a scoreline: "You lead 2 - 1" is the whole story of
+    -- a duel and means nothing at a table of four.
+    table.insert(self.ws_listeners, ws.on("party_round_won", function(d)
+        d = type(d) == "table" and d or {}
+        local names = {}
+        for _, n in ipairs(type(d.eliminatedNames) == "table" and d.eliminatedNames or {}) do
+            names[#names + 1] = tostring(n)
+        end
+        local left = tonumber(d.playersLeft) or 0
+        local who = (#names > 0) and (table.concat(names, " and ") .. " is out")
+            or "A player is out"
+        local subtitle = who .. " - " ..
+            (left == 1 and "you are the last one standing"
+                        or (tostring(left) .. " players left"))
+        -- Straight to the game GUI, the same address party_board uses. This
+        -- module has no `util` import and no self.gui_hud — that field belongs
+        -- to game.script, not to the handler.
+        pcall(msg.post, "#game", "round_story", {
+            won = true, title = "ROUND WON!", subtitle = subtitle,
+        })
+    end))
+
     table.insert(self.ws_listeners, ws.on("party_next_hand", function(_, gs)
         if type(gs) == "table" and next(gs) ~= nil then
             M.start_game(self, gs)
