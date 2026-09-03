@@ -1800,6 +1800,18 @@ local function ws_callback(_, conn, data)
   end
 end
 
+-- THE INBOUND FRAME, EXPORTED SO THE MESSAGE CONTRACT CAN BE DRIVEN.
+--
+-- parse_message is the single place a server frame turns into events, and the
+-- party bugs both lived in it: PARTY_GAME_OVER emitted an event no surface
+-- subscribed to, so the server settled the table, paid the pot, and the board
+-- sat there. That is not a defect a diff shows — the code looks right and the
+-- emit succeeds — so it needs to be driven.
+--
+-- A seam, not an API: nothing in the game calls this. The websocket callback
+-- above is the only real caller. See tools/test_party_game_over.lua.
+M.handle_frame = parse_message
+
 function M.connect()
   -- Every other caller of connect() (the "Play Online" tap, the reconnect
   -- timer, the lobby's auto-identify) goes through here, so refusing once is
