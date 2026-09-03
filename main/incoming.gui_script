@@ -415,15 +415,31 @@ local function open_dialog(self, d)
     -- rather than by answering (see update()).
     local window = d.cup_invite and CUP_BANNER_SECONDS or 10
 
-    -- Which surface. Tournament / battle / cup invites are always the banner.
-    -- A plain game request is normally the full modal dialog — unless this
-    -- overlay has already been holding the app's input for too long, in which
-    -- case it drops to the banner as well so the rest of the app keeps working
-    -- through the burst.
-    local as_banner = budget.surface(self.budget, d.banner and true or false)
-        == "banner"
+    -- EVERY INVITE IS THE INLINE STRIP. There is no second surface any more.
+    --
+    -- A plain game request used to open the full centred dialog: a scrim over
+    -- the whole app, a claim on the modal registry, and every screen's
+    -- on_input returning early for ten seconds. A tournament, battle,
+    -- championship or cup invite has always been the strip instead — same
+    -- slot, same clock, same two buttons — and that is the surface an
+    -- interruption should have. Being challenged is not a decision worth
+    -- taking the app away from someone for.
+    --
+    -- This is not a new drawing path, which is why it is a small change: the
+    -- strip already renders a plain request completely. incoming_budget existed
+    -- precisely to fall back to it — once the blocking dialog had held input
+    -- for 25 seconds, it demoted to the banner rather than freeze the app on a
+    -- burst of challenges. That fallback has been the plain request's surface
+    -- under load for a while; it is now its surface always, and the burst it
+    -- was written for can no longer happen, because nothing claims blocking
+    -- input to begin with.
+    --
+    -- budget.tick still runs in update(). It reports "banner" every frame now,
+    -- so it never demotes and never accumulates — kept rather than torn out
+    -- because it is what would measure the blocking claim if one ever returns.
+    local as_banner = true
     local title, desc = d.title, d.desc
-    if as_banner and not d.banner and not title then
+    if not d.banner and not title then
         title, desc = plain_banner_text(d)
     end
 
@@ -437,9 +453,8 @@ local function open_dialog(self, d)
         -- the badge from the one head-to-head payload they all already carry,
         -- and none of them has to remember to thread a second field through.
         opp_winrate = (h2h_view(d.h2h) or {}).opp_winrate,
-        -- Tournament / battle / knockout invites render as the top banner; a
-        -- plain game request gets the full dialog (set in on_message) until the
-        -- input budget demotes it.
+        -- Always the top strip — tournament, battle, knockout, cup and a plain
+        -- challenge alike. See the note above.
         banner = as_banner,
         title = title, desc = desc,
         -- NOT `kind`: that key is already taken by the dialog's own type
