@@ -59,9 +59,11 @@ function M.destroy_all(self)
     self.deck, self.player_hand, self.ai_hand, self.played_cards = {}, {}, {}, {}
 
     -- Tear down any 4-player tournament seat visuals + state.
+    local had_seats = false
     if self.t4 then
         for _, s in ipairs(self.t4.seats or {}) do purge(s.cards) end
         self.t4 = nil
+        had_seats = true
     end
 
     -- Same for an online party's seats, which use the same badges. Cleared
@@ -71,6 +73,23 @@ function M.destroy_all(self)
     if self.party_seats then
         for _, s in pairs(self.party_seats) do purge(s.cards) end
         self.party_seats = nil
+        had_seats = true
+    end
+
+    -- THE CARDS WERE DELETED; THE BADGES WERE NOT.
+    --
+    -- The seat cards above are game objects this module owns, so purging them
+    -- is enough. The avatar disc, the name and the timer ring are GUI nodes
+    -- living in game.gui_script's own t4_badges table, and nothing here could
+    -- reach them — so they survived destroy_all and were still on screen when
+    -- the next game was dealt. That is the opponent "already staged" on a
+    -- fresh party board: not a new avatar drawn too early, an old one never
+    -- taken down.
+    --
+    -- t4_clear is the message that owns them, and both the offline chamber and
+    -- party_board already use it; it simply was not sent on this path.
+    if had_seats then
+        pcall(msg.post, "#game", "t4_clear", {})
     end
 
     if self.ws_listeners then

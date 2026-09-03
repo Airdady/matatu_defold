@@ -1139,11 +1139,28 @@ function M.start_game(self, state)
     local mp = {}
     local op = {}
 
+    -- A PARTY HAS NO "THE OPPONENT", AND PICKING ONE DREW A SECOND BOARD.
+    --
+    -- The loop below takes the first player who is not us and renders them the
+    -- classic way: a face-down arch across the top and an avatar plate. That is
+    -- exactly right for a duel and wrong for a party, where party_board is
+    -- already drawing every opponent as a seat. The two ran together, so a
+    -- fresh party opened with one player's seven cards laid across the middle
+    -- of the table and their avatar parked at the top — cards on the board and
+    -- an opponent staged before anybody had played.
+    --
+    -- So for a party the single-opponent path is skipped entirely: no
+    -- opponent_id, no `op`, and opp_count below falls to zero rather than the
+    -- seven-card default. party_board owns every seat, and there is one board
+    -- again instead of two overlaid.
+    local is_party = (type(state.seatOrder) == "table" and #state.seatOrder > 0)
+        or (tostring(state.matchType or ""):upper() == "PARTY")
+
     for k, v in pairs(players) do
         local pid = v.id or v._id or k
         if pid == self.my_player_id then
             mp = v
-        elseif pid ~= self.my_player_id and self.opponent_id == "" then
+        elseif not is_party and pid ~= self.my_player_id and self.opponent_id == "" then
             self.opponent_id = pid
             op = v
         end
@@ -1166,7 +1183,9 @@ function M.start_game(self, state)
 
     local hand_data = mp.hand or {}
     local opp_hand  = (type(op.hand) == "table") and op.hand or nil
-    local opp_count = op.handCount or (opp_hand and #opp_hand) or 7
+    -- Zero for a party, not the seven-card default: `op` is deliberately empty
+    -- there, and defaulting would deal a phantom hand to nobody.
+    local opp_count = op.handCount or (opp_hand and #opp_hand) or (is_party and 0 or 7)
     local top_card  = state.currentCard
     -- Matatu-only: a side "cutting card" placed beside the deck. The server
     -- sends `cuttingCard` for every game (it's the Whot/Kadi initial deal's
