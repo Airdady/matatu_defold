@@ -133,6 +133,11 @@ function M.draw(self, ctx)
     local prizes = M.build_prizes(commas)
     local rank = (ws.current_user_data and ws.current_user_data.rank) or {}
 
+    -- Where this player sits in the ladder. Read once and used twice: the
+    -- STANDINGS title row prints it, and the Season Bonuses table below
+    -- highlights the prize tier it falls in.
+    local my_pos = tonumber((ws.current_user_data or {}).position) or -1
+
     -- ── Standings Container ──────────────────────────────────────────────────
     local num_standings = math.min(#rank, 5)
     local s_list_h = (num_standings > 0) and (num_standings * C.ROW_H_LG) or 40
@@ -144,7 +149,43 @@ function M.draw(self, ctx)
     cy = cy - pad_top
     local s_title = txtL(self, cx - inner_pw/2 + C.INNER_PAD, cy, "STANDINGS", "body", C.COL_BRIGHT)
     gui.set_scale(s_title, vmath.vector3(0.82, 0.82, 1))
-    
+
+    -- WHERE YOU ARE IN THIS TABLE, on the far right of the same row.
+    --
+    -- It lived in the right panel's profile card, in a two-row stats box under
+    -- the balances, a panel's width away from the standings it is a position
+    -- IN. The table below this title shows the top five and nothing else, so a
+    -- player outside it had their own rank on the opposite side of the screen
+    -- from the only thing that gives it meaning.
+    --
+    -- This is the same move, and the same reasoning, as the season countdown
+    -- on the SEASON BONUSES title row further down: the one number a table
+    -- does not contain goes on that table's own title row.
+    --
+    -- NAMED IN FULL: "YOUR POSITION  #4", not "YOU  #4". The short form was
+    -- borrowed from the standings rows below, where the table's own POSITION
+    -- column already says what the number is and "YOU" only has to mark whose
+    -- row it is. Up here there is no column to inherit that from — a lone #4
+    -- beside a title could be a rank, a count, or a prize tier.
+    --
+    -- IT FITS, and the row below is the proof rather than a measurement this
+    -- cannot take: "4D 05H 12M 07S LEFT" is nineteen characters at this same
+    -- font beside a fourteen-character title, in a container of exactly this
+    -- width, and it has shipped. Seventeen beside nine is the slacker of the
+    -- two by some margin.
+    --
+    -- The unranked case keeps the bare word. "YOUR POSITION  UNRANKED" is
+    -- twenty-three characters — past what that row demonstrates — and the
+    -- label is what makes a NUMBER legible anyway; UNRANKED is already a whole
+    -- statement without it.
+    --
+    -- Gold when ranked, dim when not. UNRANKED rather than "#-1" or a blank:
+    -- having no position yet is a fact, and the five rows under this one are
+    -- about to show people who do have one.
+    txtR(self, cx + inner_pw/2 - C.INNER_PAD, cy,
+        (my_pos > 0) and ("YOUR POSITION  #" .. my_pos) or "UNRANKED", "small",
+        (my_pos > 0) and C.COL_GOLD or C.COL_DIM)
+
     cy = cy - title_space
 
     -- Give the POSITION column a fixed, generous amount of space (100 pixels)
@@ -241,7 +282,6 @@ function M.draw(self, ctx)
     txtL(self, cx - inner_pw/2 + C.INNER_PAD, cy + C.HDR_H_TABLE/2, "RANK",  "small", C.COL_DIM)
     txtR(self, cx + inner_pw/2 - C.INNER_PAD, cy + C.HDR_H_TABLE/2, "PRIZE", "small", C.COL_DIM)
 
-    local my_pos = tonumber((ws.current_user_data or {}).position) or -1
     local active = M.active_tier_index(prizes, my_pos)
     local row_h_bonus = C.ROW_H_BONUS
 

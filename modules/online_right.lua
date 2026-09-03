@@ -873,58 +873,40 @@ local function draw_savings_info(self, ctx)
     mkbtn(self, "savings_info_close", vmath.vector3(CX + btn_w/2 + btn_gap/2, by, 0), vmath.vector3(btn_w, 56, 0), "I UNDERSTAND", "secondary_btn")
 end
 
--- ── Tournaments: a floating button, not a row ───────────────────────────────
+-- ── Tournaments: a full-width row, in flow ──────────────────────────────────
 --
--- This was a full-width row inside the right-hand panel, below the battles. It
--- is now a floating action button, because it is the only thing in that panel
--- that LEAVES the screen — everything else there edits or invites in place,
--- and a navigation control sitting in a list of settings reads as one more
--- setting.
+-- IT FLOATED, TWICE, AND NEITHER SHAPE WORKED. First as a 76px circle, which
+-- carries one glyph: the word TOURNAMENTS came off the control entirely and
+-- the OPEN/CLOSED badge had nowhere to sit but half off the bottom edge. Then
+-- as an extended bar spanning the right-hand column, which fixed both of those
+-- and left the real problem — a floating control covers whatever it is over.
+-- This panel scrolls nothing and hides nothing; there was never any content
+-- for it to float above, only content for it to sit on top of.
 --
--- WHERE IT SITS. Horizontally midway between the screen centre and the right
--- edge; vertically at the bottom margin. Both are derived rather than
--- hand-picked numbers, so the button lands in the same relative place on every
--- aspect ratio the lobby is laid out for — a fixed x would drift into the
--- panel on a narrow screen and away from the thumb on a wide one.
+-- So it is a row again, drawn IN FLOW after the battles container, at the
+-- panel's own full width. What the two floating passes were actually for was
+-- the LAYOUT INSIDE it, and that is what survives: the icon, the word, and a
+-- badge that is right-aligned and vertically centred rather than clipped to an
+-- edge. It is 80 tall rather than the 72 it first shipped at, which is the one
+-- thing the "too small" complaint was really about once it stopped being a dot.
 --
--- Drawn LAST, after every panel, so it floats over them rather than being
--- overdrawn by whatever the right panel happens to end with.
-local function draw_tournaments_fab(self, ctx)
-    -- Modal open: the button would sit on top of a dimmed backdrop and be
-    -- tappable through it, which is how a player ends up on the tournament
-    -- screen while a form they were filling in is still open behind them.
-    if self.party_open or self.battle_modal or self.invite_search
-       or self.savings_info_open or self.savings_plans_open or self.savings_add_open then
-        self.tourn_badge_node = nil
-        return
-    end
-
+-- Returns the cursor below itself, like every other block in this panel.
+local function draw_tournaments_row(self, ctx, cx, pw, cy)
     local track = ctx.track
     local ui    = ctx.ui
     local mkbtn = ctx.mkbtn
     local C     = ctx.C
     local u     = ws.current_user_data or {}
 
-    local FAB    = 76
-    local MARGIN = 24
-    -- EDGE_R and EDGE_B, not LOGICAL_W and zero: those are the SAFE borders the
-    -- layout resolves per device (get_layout), so on a phone with a notch or a
-    -- gesture bar the button sits inside the usable area rather than under the
-    -- system's own furniture. A floating control is exactly the thing that
-    -- ends up half under a home indicator when it is positioned off the raw
-    -- canvas instead.
-    local right  = ctx.EDGE_R or ctx.LOGICAL_W
-    local bottom = ctx.EDGE_B or 0
-    local fab_x  = ctx.CX + (right - ctx.CX) / 2
-    local fab_y  = bottom + MARGIN + FAB / 2
+    local ROW_H = 80   -- a 35pt word and a 40px icon, with air around them
+    local PAD   = 20   -- the same inset row_l/row_r use on the battle rows above
+    local ICON  = 40
+    local GAP   = 14   -- icon → word, and word → badge
 
-    track(self, ui.pie(vmath.vector3(fab_x, fab_y, 0), FAB / 2, C.COL_BG))
-    mkbtn(self, "nav_tournaments", vmath.vector3(fab_x, fab_y, 0),
-        vmath.vector3(FAB, FAB, 0), nil, "container_bg")
-
-    local icon = track(self, ui.image(vmath.vector3(fab_x, fab_y + 4, 0),
-        vmath.vector3(34, 34, 0), "tournament_icon"))
-    gui.set_color(icon, C.COL_WHITE)
+    local row_l = cx - pw/2 + PAD
+    local row_r = cx + pw/2 - PAD
+    local edge_r = cx + pw/2      -- the row background's own right edge
+    local rcy   = cy - ROW_H/2
 
     -- OPEN or CLOSED, from the same daily window the tournament screen greys
     -- its PLAY button on (modules/tournament_window, which both read so the
@@ -940,22 +922,101 @@ local function draw_tournaments_fab(self, ctx)
     end
     local t_status = self._tw_status
 
+    track(self, ui.box(vmath.vector3(cx, rcy, 0), vmath.vector3(pw, ROW_H, 0), C.COL_BG))
+    mkbtn(self, "nav_tournaments", vmath.vector3(cx, rcy, 0),
+        vmath.vector3(pw, ROW_H, 0), nil, "container_bg")
+
+    local icon_x = row_l + ICON / 2
+    local icon = track(self, ui.image(vmath.vector3(icon_x, rcy, 0),
+        vmath.vector3(ICON, ICON, 0), "tournament_icon"))
+    gui.set_color(icon, C.COL_WHITE)
+
+    -- THE WORD, LEFT-ALIGNED OFF THE ICON. Its width still has to be MEASURED,
+    -- because the badge's left clearance is stated relative to where the word
+    -- actually ends, not to a guess about how long "TOURNAMENTS" is at
+    -- Teko-Bold 35.
+    local title_txt = "TOURNAMENTS"
+    local title_x   = icon_x + ICON / 2 + GAP
+    local tn = track(self, ui.text(vmath.vector3(title_x, rcy, 0), title_txt, "btn_lg", C.COL_WHITE))
+    gui.set_pivot(tn, gui.PIVOT_W)
+    local tw = measure(tn, title_txt, "btn_lg", #title_txt * 14)
+    local title_right = title_x + tw
+
     self.tourn_badge_node = nil
     if t_status then
         local is_open = (t_status == "OPEN")
-        -- THE BOX IS CREATED FIRST, AND THAT IS NOT A STYLE CHOICE. Defold
-        -- draws gui nodes in creation order, so a box made after its label is
-        -- a box drawn OVER its label — the badge came out as a solid rectangle
-        -- with the word underneath it.
-        local badge_y = fab_y - FAB / 2 + 8
-        local badge = track(self, ui.box(vmath.vector3(fab_x, badge_y, 0),
-            vmath.vector3(#t_status * 9 + 16, 20, 0),
-            is_open and vmath.vector4(0.15, 0.8, 0.25, 1.0)
-                    or vmath.vector4(0.55, 0.16, 0.16, 1.0)))
-        track(self, ui.text(vmath.vector3(fab_x, badge_y, 0), t_status, "btn_sm", C.COL_WHITE))
-        self.tourn_badge_node = badge
+        local badge_col = is_open and vmath.vector4(0.15, 0.8, 0.25, 1.0)
+            or vmath.vector4(0.55, 0.16, 0.16, 1.0)
+
+        -- THE BOX IS CREATED FIRST, AND THAT IS NOT A STYLE CHOICE.
+        --
+        -- Defold draws gui nodes in creation order, so a box made after its
+        -- label is a box drawn OVER its label. The badge came out as a solid
+        -- green rectangle with nothing in it — the word was there the whole
+        -- time, underneath.
+        --
+        -- Measuring the label in order to size the box is what tempted the
+        -- order to be flipped, and it never had to be: the box is made at a
+        -- provisional size, the label goes on top of it, and the box is
+        -- RESIZED once the label has been measured.
+        local BADGE_H = 30
+        local badge = track(self, ui.box(vmath.vector3(0, 0, 0),
+            vmath.vector3(56, BADGE_H, 0), badge_col))
+        local bn = track(self, ui.text(vmath.vector3(0, 0, 0), t_status, "btn_sm", C.COL_WHITE))
+
+        -- btn_sm is Teko-Bold at 25, a condensed face, so roughly eleven
+        -- pixels a capital when the measurement is unavailable. Wide rather
+        -- than tight: a badge slightly too big is invisible, one slightly too
+        -- small clips the word.
+        local bw, bdrop = measure(bn, t_status, "btn_sm", #t_status * 11)
+        local BADGE_PAD = 13
+        local badge_w = math.max(56, bw + BADGE_PAD * 2)
+
+        -- RIGHT-ALIGNED AND VERTICALLY CENTRED — the position it could not
+        -- have on a circle. Two constraints, resolved in priority order:
+        --
+        --   1. NEVER draw past the row's own background. A badge beyond that
+        --      edge floats outside its own container, which reads as broken
+        --      rather than merely tight.
+        --   2. Otherwise, prefer clearing the word by GAP. Normally that costs
+        --      nothing — the flush-right position already clears it with room
+        --      over — but it is what keeps the badge off the word if either
+        --      string or the column ever changes size.
+        --
+        -- Priority 1 wins when they disagree, so the gap can shrink under a
+        -- genuinely tight combination, but the badge can never spill outside
+        -- the row to buy more of it back.
+        local EDGE_KEEP = 8
+        local flush_nx  = row_r - badge_w / 2
+        local needed_nx = title_right + GAP + badge_w / 2
+        local nx = math.min(math.max(flush_nx, needed_nx), edge_r - EDGE_KEEP - badge_w / 2)
+
+        gui.set_size(badge, vmath.vector3(badge_w, BADGE_H, 0))
+        gui.set_position(badge, vmath.vector3(nx, rcy, 0))
+        -- The box takes the true centre; the label takes the centre its own
+        -- ink sits on, which is a fraction of a descent lower. Nothing else is
+        -- drawn there: an early version put a hairline across the badge's top
+        -- edge, which read as the word sitting low in its box rather than as a
+        -- border.
+        gui.set_position(bn, vmath.vector3(nx, rcy - bdrop, 0))
+
+        -- A HEARTBEAT WHILE THE DOOR IS OPEN. CLOSED is a fact and sits still;
+        -- OPEN is an invitation with a clock on it, so only one of them has any
+        -- reason to move. The host ticks this node once a frame — see
+        -- M.pulse_badge and the note above it for why it is not gui.animate.
+        if is_open then
+            self.tourn_badge_node = badge
+            M.pulse_badge(self, self.ui_clock)
+        end
     end
+
+    return cy - ROW_H
 end
+
+-- EXPORTED so it can be rendered on its own — a headless render of just this
+-- row is what pins its geometry (tools/test_tournaments_row.lua) without
+-- standing up the whole lobby around it.
+M.draw_tournaments_row = draw_tournaments_row
 
 -- ── Party Tables Modal ──────────────────────────────────────────────────────
 --
@@ -1331,10 +1392,9 @@ function M.draw(self, ctx, left_M)
     local av_size  = 84 -- Bigger Avatar
     local stat_h   = 36 -- Chunkier currency rows
     local header_h = 130 -- Covers Avatar, Name, and tightly-packed Balances
-    local list_h   = 80 -- Position & Form list
     local pay_h    = 56 -- Massive touch target for payments
     local gap      = 16
-    local cont_h   = margin + header_h + gap + list_h + gap + pay_h + margin
+    local cont_h   = margin + header_h + gap + pay_h + margin
     local ccy      = cy - cont_h / 2
 
     glass(self, vmath.vector3(cx, ccy, 0), vmath.vector3(pw, cont_h, 0), "container_bg")
@@ -1400,41 +1460,22 @@ function M.draw(self, ctx, left_M)
     track(self, ui.pie(sav_add_pos, 14, vmath.vector4(0.15, 0.15, 0.15, 0.65)))
     mkbtn(self, "savings_add", sav_add_pos, vmath.vector3(28, 28, 0), "+", vmath.vector4(0, 0, 0, 0), nil, "btn_md", COL_SAVINGS)
 
-    -- Stats List (Position & Form)
-    local lcy = top_y - header_h - gap - list_h/2
-    track(self, ui.box(vmath.vector3(cx, lcy, 0), vmath.vector3(bw, list_h, 0), C.COL_STAT_BG))
-
-    local pos      = tonumber(u.position) or -1
-    local has_rank = pos > 0
-    local accent_col = has_rank and C.COL_GOLD or C.COL_DIM
-    local row_h_list = list_h / 2
-
-    -- Divider
-    track(self, ui.box(vmath.vector3(cx, lcy, 0), vmath.vector3(bw - 24, 1, 0), vmath.vector4(1, 1, 1, 0.05)))
-
-    -- Row 1: Your Position
-    local r1_y_list = lcy + row_h_list/2
-    txtL(self, cx - bw/2 + 12, r1_y_list, "YOUR POSITION", "small", C.COL_DIM)
-    txtR(self, cx + bw/2 - 12, r1_y_list, has_rank and ("#"..pos) or "UNRANKED", "body", accent_col)
-
-    -- Row 2: Your Current Form
-    local r2_y_list = lcy - row_h_list/2
-    txtL(self, cx - bw/2 + 12, r2_y_list, "YOUR CURRENT FORM", "small", C.COL_DIM)
-
-    local form = type(u.recentForm) == "table" and u.recentForm or {}
-    local fsz, fgap = 26, 6 
-    local fx0 = cx + bw/2 - 12 - fsz/2
-    for i = 1, 5 do
-        local r  = form[i]
-        local bx = fx0 - (i - 1) * (fsz + fgap)
-        if r == "W" or r == "L" then
-            track(self, ui.box(vmath.vector3(bx, r2_y_list, 0), vmath.vector3(fsz, fsz, 0),
-                r == "W" and vmath.vector4(0.15, 0.70, 0.25, 0.92) or vmath.vector4(0.90, 0.25, 0.25, 0.92)))
-            track(self, ui.text(vmath.vector3(bx, r2_y_list, 0), r, "body", C.COL_WHITE))
-        else
-            track(self, ui.box(vmath.vector3(bx, r2_y_list, 0), vmath.vector3(fsz, fsz, 0), vmath.vector4(1, 1, 1, 0.06)))
-        end
-    end
+    -- THE STATS BOX IS GONE, BOTH ROWS OF IT.
+    --
+    -- YOUR POSITION went first, to the STANDINGS title row in the left panel,
+    -- beside the table it is a position in (modules/online_left.lua). YOUR
+    -- CURRENT FORM — the last five results as W/L pills — followed it out, and
+    -- it is not going anywhere else: nothing on this screen is about the last
+    -- five games, and the box was the only thing between the balances and the
+    -- payments button.
+    --
+    -- The DATA is untouched. websocket_manager still tracks
+    -- current_user_data.recentForm off every game-over payload, so putting the
+    -- row back is a row of drawing code, not an excavation.
+    --
+    -- WHAT ITS HEIGHT PAID FOR: the tournaments row below the battles. The two
+    -- rows plus their gap were 56 of this panel's 704, and the row cost 80 —
+    -- see the note at draw_tournaments_row's call for the whole budget.
 
     -- Make Payments Button (Massive Target)
     --
@@ -1444,13 +1485,28 @@ function M.draw(self, ctx, left_M)
     -- itself when there is something to see (see online.gui_script's
     -- party_available handling). A third button here would be a third way to
     -- reach a thing that already has two.
-    local pay_y = lcy - list_h/2 - gap - pay_h/2
+    local pay_y = top_y - header_h - gap - pay_h/2
     mkbtn(self, "nav_payments", vmath.vector3(cx, pay_y, 0), vmath.vector3(bw, pay_h, 0), "MAKE PAYMENTS", "primary_btn", nil, "btn_lg")
 
-    cy = cy - cont_h - (C.BLOCK_GAP + 8)
+    -- BLOCK_GAP, not BLOCK_GAP + 8. The +8 was here and after the battles,
+    -- and nowhere else in this panel — the team-tournaments block below closes
+    -- on a plain BLOCK_GAP. Two spellings of one gap, and this panel has no
+    -- vertical room to spend on the difference: see the note above
+    -- draw_tournaments_row's call for what the budget actually is.
+    cy = cy - cont_h - C.BLOCK_GAP
 
     -- ── Battles panel (Taller, Roomier rows) ──────────────────────────────
-    local row_h    = 88 -- Significantly larger rows
+    -- 100, up from 88. The panel freed 56 when the profile card's stats box
+    -- went, and this is what it is for: the three mode rows are the tallest
+    -- thing on the screen a player actually reads, and they were sized when
+    -- this column had a full-width tournaments row under them AND a two-row
+    -- stats box above. Twelve more each is 36 of the 54 that was going spare,
+    -- and it leaves the tournaments row an 18px margin off the bottom border.
+    --
+    -- The rows carry their own separation — a hairline between each, and the
+    -- content centred in the row — so the height IS the gap between the modes.
+    -- There is no spacing constant to raise instead.
+    local row_h    = 100
     local top_pad  = 16
     local bot_pad  = 16
     local list_types = M.BATTLE_TYPES_VISIBLE
@@ -1538,17 +1594,37 @@ function M.draw(self, ctx, left_M)
             mkbtn(self, "create_battle", vmath.vector3(create_bx, row_cy, 0), vmath.vector3(create_w, btn_h, 0), create_lbl, "primary_btn", T, "btn_md")
         end
     end
-    cy = cy - battle_h - (C.BLOCK_GAP + 8)
+    cy = cy - battle_h - C.BLOCK_GAP
 
     -- ── Tournaments ──────────────────────────────────────────────────────
     --
-    -- LIFTED OUT OF THIS PANEL AND ONTO THE SCREEN. It used to be a full-width
-    -- row here, below the battles; it is now a floating button — see
-    -- draw_tournaments_fab, drawn at screen level so it is not bound to this
-    -- panel's vertical flow at all.
+    -- BACK IN THIS PANEL, below the battles, where it was before two passes at
+    -- floating it. See draw_tournaments_row for what those passes were
+    -- actually worth — the layout inside the row, not the floating.
     --
-    -- Nothing is left behind here, deliberately: the rows below close straight
-    -- up rather than leaving the gap the row used to occupy.
+    -- THE PANEL HAD TO BE PAID FOR IT, because a row in flow costs height and
+    -- a floating one does not. On a 16:9 canvas this column runs from
+    -- EDGE_T - 16 down to EDGE_B with 704 usable pixels, and the profile card
+    -- plus the battles already spent nearly all of them — the row's first
+    -- draft ran 22px below the bottom of the screen.
+    --
+    -- Two places found it, neither of them this row. The profile card's stats
+    -- box went entirely — YOUR POSITION to the standings title in the left
+    -- panel, YOUR CURRENT FORM off the screen — which is 56 with its gap. And
+    -- the two BLOCK_GAP + 8 gaps became plain BLOCK_GAPs, which is what every
+    -- other gap in this panel already was: 16 more.
+    --
+    -- That is 72 for an 80px row. Most of what was left over then went into
+    -- the mode rows above (88 to 100, see row_h), which is what the freed
+    -- height was actually for; the row still lands 18 clear of the bottom
+    -- border.
+    --
+    -- SO THE COLUMN IS SPOKEN FOR. The team-tournaments block below overflows
+    -- when an account is in one, as it did before this row existed — the row
+    -- and the taller modes make the number worse, not the bug. Anything else
+    -- added under the battles has to bring its own height with it, and there
+    -- is no longer anywhere obvious to take it from.
+    cy = draw_tournaments_row(self, ctx, cx, pw, cy) - C.BLOCK_GAP
 
     -- ── Team Tournaments panel — only shown once this account has actually
     -- created or joined one (tracked client-side since last create/join —
@@ -1582,7 +1658,6 @@ function M.draw(self, ctx, left_M)
     draw_savings_plans(self, ctx)
     draw_savings_add(self, ctx)
     draw_party_tables(self, ctx)
-    draw_tournaments_fab(self, ctx)
 end
 
 -- ── Input Action Exports for Main Script ─────────────────────────────────────
