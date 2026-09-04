@@ -157,6 +157,11 @@ local BAN_BADGE = {
     CHAMPIONSHIP = { bg = vmath.vector4(0.78, 0.12, 0.16, 1.00), tx = vmath.vector4(1.00, 0.94, 0.94, 1.00) },
     KNOCKOUT     = { bg = vmath.vector4(0.90, 0.42, 0.05, 1.00), tx = vmath.vector4(1.00, 0.96, 0.90, 1.00) },
     BATTLE       = { bg = vmath.vector4(0.16, 0.42, 0.72, 1.00), tx = vmath.vector4(0.94, 0.97, 1.00, 1.00) },
+    -- An open party table. Same violet the online screen's strip uses, for the
+    -- same reason every other colour here is shared: the two surfaces draw the
+    -- SAME offer, and one that changed colour with the screen would read as
+    -- two different things.
+    PARTY        = { bg = vmath.vector4(0.60, 0.25, 0.78, 1.00), tx = vmath.vector4(1.00, 0.96, 1.00, 1.00) },
 }
 
 -- WHERE THE INLINE BADGE GOES, AND WHY H2H MOVES FOR IT.
@@ -410,10 +415,20 @@ local function open_dialog(self, d)
         pcall(ws.decline_game_request, prev.request_id)
     end
 
-    -- A cup invitation runs on a different clock: nobody is sitting waiting on
-    -- the answer, so it gets a long window and, crucially, expires by HIDING
-    -- rather than by answering (see update()).
-    local window = d.cup_invite and CUP_BANNER_SECONDS or 10
+    -- TWO INVITES RUN ON SOMEBODY ELSE'S CLOCK, NOT THE TEN-SECOND ONE.
+    --
+    -- A cup invitation has nobody sitting waiting on the answer, so it gets a
+    -- long window. A party table has a deadline that is not ours at all: the
+    -- server closes it at closesAt — twenty seconds after it opened, so a
+    -- strip arriving partway through has less than that — and a window of our
+    -- own choosing would either offer a seat at a table that has already dealt
+    -- or take one away while it is still filling.
+    --
+    -- Both also expire by HIDING rather than by answering (see update()):
+    -- there is no request behind either of them to decline.
+    local window = 10
+    if d.cup_invite then window = CUP_BANNER_SECONDS
+    elseif d.party_seconds then window = math.max(1, d.party_seconds) end
 
     -- EVERY INVITE IS THE INLINE STRIP. There is no second surface any more.
     --
@@ -465,6 +480,10 @@ local function open_dialog(self, d)
         -- the socket, and never auto-declined.
         cup_invite = d.cup_invite and true or false,
         cup_id = d.cup_id,
+        -- An open party table: joined by id on the socket, never declined —
+        -- LATER puts the strip away and tells nobody, because nobody asked.
+        party = d.party and true or false,
+        party_id = d.party_id,
         accept_label = d.accept_label, decline_label = d.decline_label,
     }
     self.dlg_alpha = 1
@@ -648,7 +667,7 @@ function update(self, dt)
         end
 
         if self.dialog.time_left <= 0 then
-            if not self.dialog.cup_invite
+            if not self.dialog.cup_invite and not self.dialog.party
                and self.dialog.request_id and self.dialog.request_id ~= "" then
                 ws.decline_game_request(self.dialog.request_id)
             end
@@ -729,8 +748,17 @@ function on_message(self, message_id, message)
 
             -- A BATTLE is never the championship however many levels its
             -- document happens to carry — checking levels alone would badge
-            -- knockouts that share the same shape.
-            championship = kind == "TOURNAMENT" and is_championship(tourney)
+            -- knockouts that share the same shape. champ.kind above already
+            -- applies that rule, and champ.offer below is what actually
+            -- selects the premium strip.
+            --
+            -- There was a line here that recomputed it: a GLOBAL assignment
+            -- nothing read, calling a global `is_championship` that has never
+            -- existed on this surface — the module is required as `champ`. On
+            -- a plain TOURNAMENT invite (the one kind that does not
+            -- short-circuit) it raised "attempt to call a nil value" inside
+            -- on_message, and the invite was lost with it. Removed rather than
+            -- corrected: there was nothing for the value it computed to do.
         end
 
         open_dialog(self, {
@@ -789,6 +817,73 @@ function on_message(self, message_id, message)
             decline_label = "LATER",
         })
 
+    elseif message_id == hash("party_offer") then
+        -- AN OPEN TABLE, EVERYWHERE THE PLAYER IS NOT LOOKING AT THE LOBBY.
+        --
+        -- Same division tournament and battle invites already run on: the
+        -- online screen draws its own inline strip while it is up, and this
+        -- global overlay carries the offer everywhere else. Without it a party
+        -- was a mode you could only be invited to on one screen.
+        --
+        -- The message is a WAKE SIGNAL, not a payload. The listing lives on
+        -- the socket module — the same place last_game_request does — and
+        -- reading it here rather than threading it through msg.post keeps this
+        -- surface working off exactly the list the lobby is working off.
+        if app_state.current_screen == "online" then return end
+
+        local list = type(ws.available_parties) == "table" and ws.available_parties or {}
+        local seated = type(ws.current_party) == "table" and ws.current_party.partyId ~= nil
+
+        -- A STRIP THAT OUTLIVED ITS TABLE. The listing is the whole truth
+        -- every time it arrives, so a table missing from it has filled,
+        -- expired or been called off — and an offer that taps through to a
+        -- refusal is worse than no offer.
+        if self.dialog and self.dialog.party then
+            local still_open = false
+            for _, p in ipairs(list) do
+                if tostring(p.partyId or "") == self.dialog.party_id then still_open = true end
+            end
+            if seated or not still_open then close_dialog(self) end
+            return
+        end
+
+        -- Never over a live request. Somebody is waiting ten seconds on the
+        -- answer to that one; a table is not addressed to this player at all.
+        if self.dialog or seated then return end
+
+        local p = list[1]   -- the server sorts soonest-to-close first
+        if type(p) ~= "table" then return end
+        local pid = tostring(p.partyId or "")
+        if pid == "" then return end
+
+        local now_ms = (socket and socket.gettime and socket.gettime() * 1000) or (os.time() * 1000)
+        local closes = tonumber(p.closesAt) or 0
+        local left   = closes > 0 and math.max(0, (closes - now_ms) / 1000) or 20
+        -- Not worth interrupting anybody for. By the time the strip has faded
+        -- in and been read the table is dealing.
+        if left < 3 then return end
+
+        local entry  = tonumber(p.entry) or 0
+        local seats  = tonumber(p.seated) or 0
+        local mode   = (tostring(p.mode or "NORMAL"):upper() == "SCORECAP") and "KNOCKOUT" or "NORMAL"
+
+        open_dialog(self, {
+            name           = p.hostName,
+            avatar         = tonumber(p.hostAvatar) or 1,
+            banner         = true,
+            party          = true,
+            party_id       = pid,
+            party_seconds  = left,
+            badge          = "PARTY",
+            title          = "PARTY  -  " .. string.upper(tostring(p.hostName ~= "" and p.hostName or "A PLAYER")),
+            desc           = mode .. "   -   " .. seats .. "/4 seated   -   "
+                             .. (entry > 0 and (commas(entry) .. " Coins") or "Free table"),
+            accept_label   = "JOIN",
+            -- Not DECLINE: there is no decline for a table, and putting the
+            -- strip away is not turning anything down.
+            decline_label  = "LATER",
+        })
+
     elseif message_id == hash("cup_event") then
         -- Ambient news about a cup this player is already in. No decision, so
         -- no banner: a toast, and it never interrupts whatever they are doing.
@@ -825,8 +920,23 @@ function on_input(self, action_id, action)
             if gui.pick_node(b.node, action.x, action.y) then
                 local id = b.id
                 local cup = self.dialog and self.dialog.cup_invite and self.dialog.cup_id or nil
+                local party = self.dialog and self.dialog.party and self.dialog.party_id or nil
                 if id == "accept" then
-                    if cup then
+                    if party then
+                        -- A SEAT, TAKEN FROM WHEREVER THEY WERE STANDING.
+                        --
+                        -- The online screen answers a JOIN by opening the same
+                        -- search dialog a party host watches their table fill
+                        -- in. There is no such dialog on the lobby or the
+                        -- profile screen, and dragging the player onto another
+                        -- screen to show them one would be a bigger
+                        -- interruption than the strip was. So this says what
+                        -- happened and leaves them where they are: the table
+                        -- deals into the board on its own (PARTY_STARTING), or
+                        -- it is called off and the entry comes back.
+                        ws.party_join(party)
+                        toast.info("Seat taken - waiting for the table to fill")
+                    elseif cup then
                         -- Joining a cup is an HTTP call, not a socket message:
                         -- the cup is owned by the tournament controller, and
                         -- the accept endpoint is the same one the lobby tile
@@ -863,7 +973,8 @@ function on_input(self, action_id, action)
                     -- invitation stays on the TEAM CUPS tile, and putting a
                     -- banner away is not the same as turning an invitation
                     -- down.
-                    if not cup and self.dialog and self.dialog.request_id and self.dialog.request_id ~= "" then
+                    if not cup and not party
+                       and self.dialog and self.dialog.request_id and self.dialog.request_id ~= "" then
                         ws.decline_game_request(self.dialog.request_id)
                     end
                     self.dialog = nil

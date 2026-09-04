@@ -12,14 +12,12 @@ local GameMode  = require("modules.game_mode")
 local left_panel      = require("modules.online_left")
 local center_panel    = require("modules.online_center")
 local right_panel     = require("modules.online_right")
-local dialog_incoming = require("modules.dialog_incoming")
-local dialog_outgoing = require("modules.dialog_outgoing")
 local toast           = require("modules.toast")
 local champ           = require("modules.championship")
 local champ_banner    = require("modules.champ_banner")
 -- The opponent's win rate, drawn as a tier pill rather than a percentage. Same
--- module the two request dialogs and the game-over panel use, so one player
--- cannot be a PRO on the invite strip and something else on the result screen.
+-- module the incoming dialog and the game-over panel use, so one player cannot
+-- be a PRO on the invite strip and something else on the result screen.
 local rank            = require("modules.rank_badge")
 local season_clock    = require("modules.season_clock")
 local search_clock    = require("modules.search_clock")
@@ -201,6 +199,10 @@ local BAN_BADGE = {
     CHAMPIONSHIP = { bg = vmath.vector4(0.78, 0.12, 0.16, 1.00), tx = vmath.vector4(1.00, 0.94, 0.94, 1.00) },
     KNOCKOUT     = { bg = vmath.vector4(0.90, 0.42, 0.05, 1.00), tx = vmath.vector4(1.00, 0.96, 0.90, 1.00) },
     BATTLE       = { bg = vmath.vector4(0.16, 0.42, 0.72, 1.00), tx = vmath.vector4(0.94, 0.97, 1.00, 1.00) },
+    -- An open table, in the party panel's own violet. Nothing else on this
+    -- strip is violet, which is the point: a party is the one invite that did
+    -- not come from a person choosing YOU, and it is the one that seats four.
+    PARTY        = { bg = vmath.vector4(0.60, 0.25, 0.78, 1.00), tx = vmath.vector4(1.00, 0.96, 1.00, 1.00) },
 }
 
 -- WHERE THE INLINE BADGE GOES, AND WHY H2H MOVES FOR IT.
@@ -336,10 +338,29 @@ local function draw_banner(self)
             local title_x = EDGE_L + 90 + (rank_w > 0 and (rank_w + BAN_RANK_GAP) or 0)
             gui.set_pivot(track(self, ui.text(vmath.vector3(title_x, cy + 20, 0), b.title or "GAME REQUEST", "body", vmath.vector4(0.92, 0.96, 1.0, alpha))), gui.PIVOT_W)
             gui.set_pivot(track(self, ui.text(vmath.vector3(EDGE_L + 90, cy - 12, 0), b.desc or "", "small", vmath.vector4(0.42, 0.56, 0.68, alpha))), gui.PIVOT_W)
-            self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(EDGE_R - 90, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.0, 0.9, 0.63, 0.30 * alpha))), id = "banner_accept", data = b.request_id }
-            track(self, ui.text(vmath.vector3(EDGE_R - 90, cy, 0), "ACCEPT", "btn_md", vmath.vector4(1,1,1,alpha)))
-            self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(EDGE_R - 225, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.12, 0.19, 0.27, 0.85 * alpha))), id = "banner_decline", data = b.request_id }
-            track(self, ui.text(vmath.vector3(EDGE_R - 225, cy, 0), "DECLINE", "btn_md", vmath.vector4(0.82,0.86,0.91,alpha)))
+            -- ONE BUTTON OR TWO, decided by what the strip is FOR.
+            --
+            -- An arriving invite is a choice and has both. A challenge this
+            -- player SENT is not: the answer belongs to the opponent, so there
+            -- is nothing here to accept and the only thing the sender can do is
+            -- take it back. A greyed-out ACCEPT beside CANCEL would only be a
+            -- second way of saying that.
+            --
+            -- The buttons carry the banner's KEY rather than its request id.
+            -- A party offer has no request id — it is a table, not a challenge
+            -- addressed to anybody — and keying on the id would have every
+            -- open table share the empty string with every other.
+            local key = b.key or b.request_id
+            if not b.outgoing then
+                self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(EDGE_R - 90, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.0, 0.9, 0.63, 0.30 * alpha))), id = "banner_accept", data = key }
+                track(self, ui.text(vmath.vector3(EDGE_R - 90, cy, 0), b.accept_label or "ACCEPT", "btn_md", vmath.vector4(1,1,1,alpha)))
+            end
+            -- On an outgoing strip the single button takes ACCEPT's slot, so
+            -- the one thing that can be pressed sits where a thumb already
+            -- expects to find a button on this strip.
+            local dec_x = b.outgoing and 90 or 225
+            self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(EDGE_R - dec_x, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.12, 0.19, 0.27, 0.85 * alpha))), id = "banner_decline", data = key }
+            track(self, ui.text(vmath.vector3(EDGE_R - dec_x, cy, 0), b.decline_label or "DECLINE", "btn_md", vmath.vector4(0.82,0.86,0.91,alpha)))
             -- Inline badge: same centre line as H2H and the buttons, in the
             -- space the shifted H2H anchor opens up.
             draw_badge(self, b.badge, EDGE_R - BAN_CHAMP_X, cy, BAN_CHAMP_H, alpha)
@@ -360,12 +381,6 @@ end
 -- ── Main Rebuild ──────────────────────────────────────────────────────────────
 local rebuild -- Forward declaration
 
-local function draw_dialog(self, ctx)
-    if not self.dialog then return end
-    if self.dialog.kind == "incoming" then dialog_incoming.draw(self, ctx, self.dialog, self.dlg_alpha or 1)
-    else dialog_outgoing.draw(self, ctx, self.dialog, self.dlg_alpha or 1) end
-end
-
 rebuild = function(self)
     clear(self); local _, _, div_lx, div_rx = get_layout(); local ctx = make_ctx()
     track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(LOGICAL_W*2, LOGICAL_H*2, 0), COL_BG))
@@ -378,7 +393,6 @@ rebuild = function(self)
     right_panel.draw(self, ctx, left_panel)
 
     draw_banner(self)
-    draw_dialog(self, ctx)
 end
 
 -- ── ISO-8601 UTC date parsing ──────────────────────────────────────────────────
@@ -459,13 +473,174 @@ local function update_season(self)
     end
 end
 
--- ── Dialog / Banner Lifecycle ─────────────────────────────────────────────────
-local function open_dialog(self, kind, name, stake, request_id, avatar, opponent_id, h2h)
-    self.dialog, self.dlg_alpha = { kind = kind, name = name, stake = stake or {}, request_id = request_id, avatar = tonumber(avatar) or 1, time_left = 10, max_time = 10, opponent_id = opponent_id and tostring(opponent_id) or nil, h2h = h2h }, 1
-    -- Audible cue when an opponent's challenge arrives.
-    if kind == "incoming" then play_snd("snd_notify") end
+-- ── Banner Lifecycle ──────────────────────────────────────────────────────────
+--
+-- EVERY REQUEST ON THIS SCREEN IS THE SAME STRIP. Incoming, outgoing, party.
+--
+-- The two centred dialogs this replaced were the last modal surfaces in the
+-- invite flow: a scrim over the whole lobby, and every screen's on_input
+-- returning early behind it for ten seconds. A tournament, battle, knockout or
+-- championship invite has been the strip for a long time — same slot, same
+-- clock, same buttons — and neither being challenged nor waiting on an answer
+-- is worth taking the app away from someone for. The strip already draws all
+-- of it; what is added below is three constructors, not three designs.
+
+--- Seconds left on a server deadline, in epoch milliseconds.
+--
+-- Returns nil when there is no deadline to read, so a caller can tell "no
+-- clock" from "no time left" — those want opposite things (fall back to a
+-- window of our own, versus close the strip now).
+local function ms_left(closes_at)
+    local closes = tonumber(closes_at) or 0
+    if closes <= 0 then return nil end
+    local now_ms = (socket and socket.gettime and socket.gettime() * 1000) or (os.time() * 1000)
+    return math.max(0, (closes - now_ms) / 1000)
+end
+
+-- Only if the server never said. PARTY_JOIN_WINDOW_MS in be_matatu's
+-- partyRules.ts is 20 seconds — twice a game request's window, because a table
+-- is waiting for a lobby rather than for one person — and closesAt is what the
+-- strip actually counts down. This is the "the payload said nothing" case.
+local PARTY_WINDOW_FALLBACK = 20
+
+-- At most two open tables on screen at once. The lobby can have more, and the
+-- strips stack downward at 102px each: a third would be pushing the player
+-- list off the screen to advertise a table that closes in fifteen seconds.
+-- Tables that do not fit are simply not offered — they are NOT marked as
+-- offered either, so one still open when a slot frees can take it.
+local PARTY_BANNERS_MAX = 2
+
+--- The strip for a challenge THIS PLAYER SENT.
+--
+-- Same row, same clock, one button. `key` rather than a request id because
+-- there is not one: GAME_REQUEST is fire-and-forget, and the server answers
+-- with a match or a decline rather than an id to cancel by. Keyed on the
+-- opponent instead, which is what a second challenge to the same player would
+-- collide with, and exactly what should.
+local function open_outgoing_banner(self, u, stake)
+    local amount = tonumber((stake or {}).amount) or 0
+    local name   = string.upper(tostring(u.username or "OPPONENT"))
+    local b = {
+        outgoing      = true,
+        key           = "out:" .. tostring(u._id or name),
+        request_id    = "",
+        opponent_id   = u._id and tostring(u._id) or nil,
+        title         = "CHALLENGE SENT  -  " .. name,
+        desc          = "Waiting for them to accept"
+                        .. "   -   " .. (amount > 0 and (commas(amount * 2) .. " Coins pot") or "Practice Mode"),
+        avatar        = tonumber(u.avatar) or 1,
+        stake         = stake or {},
+        time_left     = 10,
+        max_time      = 10,
+        alpha         = 1,
+        y_off         = 0,
+        decline_label = "CANCEL",
+    }
+    self.banners = self.banners or {}
+    for _, ex in ipairs(self.banners) do if ex.key == b.key then return end end
+    table.insert(self.banners, b)
     if self._active then rebuild(self) end
 end
+
+--- The strip for ONE OPEN TABLE, from a PARTY_AVAILABLE listing entry.
+local function party_banner_of(p)
+    local entry  = tonumber(p.entry) or 0
+    local seated = tonumber(p.seated) or 0
+    local left   = ms_left(p.closesAt) or PARTY_WINDOW_FALLBACK
+    -- KNOCKOUT is what the maker's own form calls SCORECAP, and what the
+    -- player chose it by. The wire name is not shown to anybody.
+    local mode = (tostring(p.mode or "NORMAL"):upper() == "SCORECAP") and "KNOCKOUT" or "NORMAL"
+    return {
+        party_id      = tostring(p.partyId or ""),
+        key           = "party:" .. tostring(p.partyId or ""),
+        -- Not a challenge, so nothing to accept or decline on the socket. The
+        -- empty id is what keeps this strip out of every path that answers one.
+        request_id    = "",
+        entry         = entry,
+        closes_at     = tonumber(p.closesAt) or 0,
+        title         = "PARTY  -  " .. string.upper(tostring(p.hostName ~= "" and p.hostName or "A PLAYER")),
+        desc          = mode .. "   -   " .. seated .. "/4 seated   -   "
+                        .. (entry > 0 and (commas(entry) .. " Coins") or "Free table"),
+        badge         = "PARTY",
+        avatar        = tonumber(p.hostAvatar) or 1,
+        accept_label  = "JOIN",
+        -- Not DECLINE. Nobody is waiting on an answer — the table fills with
+        -- whoever sits down — so putting the strip away is not turning
+        -- anything down, and nothing is sent when it is pressed.
+        decline_label = "LATER",
+        time_left     = left,
+        max_time      = math.max(1, left),
+        alpha         = 1,
+        y_off         = 0,
+    }
+end
+
+--- Reconcile the open-table strips against the listing the server just sent.
+--
+-- PARTY_AVAILABLE is the whole truth every time: already filtered to what THIS
+-- player can join and sorted soonest-to-close first. So a table missing from it
+-- has filled, expired or been called off, and its strip goes — a strip that
+-- outlived its table taps through to a refusal, which is the one thing an
+-- offer must never do.
+--
+-- Returns true when anything moved, so the caller can rebuild once rather than
+-- once per table.
+local function sync_party_banners(self)
+    local list = type(ws.available_parties) == "table" and ws.available_parties or {}
+    -- Already sitting at a table: the server has stopped offering us others,
+    -- and any strip still up is from the frame before we sat down.
+    local seated = type(ws.current_party) == "table" and ws.current_party.partyId ~= nil
+
+    local by_id, changed = {}, false
+    for _, p in ipairs(list) do
+        local pid = tostring(p.partyId or "")
+        if pid ~= "" then by_id[pid] = p end
+    end
+
+    self.banners = self.banners or {}
+    local live = 0
+    for i = #self.banners, 1, -1 do
+        local b = self.banners[i]
+        if b.party_id then
+            local p = (not seated) and by_id[b.party_id] or nil
+            if not p then
+                table.remove(self.banners, i); changed = true
+            else
+                live = live + 1
+                -- The SEAT COUNT is the thing that moves while a strip is up,
+                -- and it is the number a player is deciding on. Refreshed in
+                -- place so the strip does not restart its clock every time
+                -- somebody else sits down.
+                local fresh = party_banner_of(p)
+                if fresh.desc ~= b.desc then b.desc = fresh.desc; changed = true end
+                b.closes_at = fresh.closes_at
+            end
+        end
+    end
+
+    if not seated then
+        self._party_offered = self._party_offered or {}
+        for _, p in ipairs(list) do
+            local pid = tostring(p.partyId or "")
+            local room = live < PARTY_BANNERS_MAX
+            -- ONCE PER TABLE, EVER. Without that, a player who put the strip
+            -- away would have it come back on the next seat change of the
+            -- same table — a notification arguing with the person dismissing
+            -- it. Marked only when it is actually shown, so a table that had
+            -- no room stays offerable.
+            if pid ~= "" and room and not self._party_offered[pid] then
+                self._party_offered[pid] = true
+                table.insert(self.banners, party_banner_of(p))
+                live, changed = live + 1, true
+                play_snd("snd_notify")
+            end
+        end
+    end
+
+    if #self.banners == 0 then self.banners = nil end
+    return changed
+end
+
 local function open_banner(self, raw)
     local sender_av = (type(raw.sender) == "table" and tonumber(raw.sender.avatar)) or 1
     local sender_nm = ((type(raw.sender) == "table" and raw.sender.username) or "Opponent"):upper()
@@ -572,26 +747,6 @@ function update(self, dt)
     -- out that way), never moves at all.
     self.ui_clock = (self.ui_clock or 0) + dt
 
-    -- THE PARTY COUNTDOWN HAS TO TICK.
-    --
-    -- The panel draws its seconds from closesAt against the wall clock, and
-    -- the screen otherwise only rebuilds when a message arrives — so between
-    -- seat changes the countdown on a twenty-second window would sit frozen,
-    -- which is the one number in that panel a player is actually watching.
-    --
-    -- Four times a second, not every frame: the digits only change once a
-    -- second, and rebuild() recreates every node on the screen. The savings
-    -- promo rebuilds per frame because it is typing characters out; this is
-    -- not, and paying that cost for a number that changes at 1Hz would be
-    -- waste the whole panel is visible for.
-    if self.party_open then
-        self._party_tick = (self._party_tick or 0) + dt
-        if self._party_tick >= 0.25 then
-            self._party_tick = 0
-            self._rebuild_pending = true
-        end
-    end
-
     -- A GESTURE THAT OUTLIVED ITS TOUCH IS ABANDONED.
     --
     -- Belt and braces behind the press-ordering fix in on_input: a release can
@@ -613,7 +768,16 @@ function update(self, dt)
     if self.banners and #self.banners > 0 then
         local expired = {}
         for _, b in ipairs(self.banners) do
-            b.time_left = (b.time_left or 10) - dt
+            -- A PARTY STRIP COUNTS DOWN TO THE SERVER'S OWN DEADLINE.
+            --
+            -- Every other strip owns its clock: ten seconds from when the
+            -- invite landed, and the server's request timeout is the same ten.
+            -- A table is not ours to time. It closes at closesAt whatever this
+            -- screen thinks, and a strip running its own twenty seconds would
+            -- drift off it — offering a seat at a table that dealt four
+            -- seconds ago, or taking one away that is still filling. So the
+            -- deadline is read every frame and the bar is the truth.
+            b.time_left = (b.party_id and ms_left(b.closes_at)) or ((b.time_left or 10) - dt)
             local cur_sec = math.floor(math.max(0, b.time_left))
             if cur_sec ~= b._last_sec then
                 b._last_sec = cur_sec
@@ -626,8 +790,20 @@ function update(self, dt)
         -- still happens, for everything that genuinely ticks in seconds.
         pcall(update_ban_bars, self, dt)
         for _, b in ipairs(expired) do
-            if b.request_id and b.request_id ~= "" then ws.decline_game_request(b.request_id) end
-            for i = #self.banners, 1, -1 do if self.banners[i].request_id == b.request_id then table.remove(self.banners, i) end end
+            -- A LAPSED STRIP ANSWERS FOR THE PLAYER — but only where there is
+            -- something to answer. An unanswered challenge is declined so the
+            -- opponent is not left watching a spinner until the server's own
+            -- timeout; a table that closed and a challenge we SENT have nobody
+            -- waiting on us, and a decline for either would be a message about
+            -- a request that never existed.
+            if not b.party_id and not b.outgoing
+               and b.request_id and b.request_id ~= "" then
+                ws.decline_game_request(b.request_id)
+            end
+            local key = b.key or b.request_id
+            for i = #self.banners, 1, -1 do
+                if (self.banners[i].key or self.banners[i].request_id) == key then table.remove(self.banners, i) end
+            end
             if #self.banners == 0 then self.banners = nil end
             need_rebuild = true
         end
@@ -675,22 +851,6 @@ function update(self, dt)
         -- out of date — somebody joined, a winner was named, the search ended.
         local key = dialog_search.structure_key(sr)
         if key ~= sr._layout_key then sr._layout_key = key; need_rebuild = true end
-    end
-
-    -- ── Request dialog (incoming / outgoing) ──────────────────────────────
-    if self.dialog then
-        self.dialog.time_left = (self.dialog.time_left or 10) - dt
-        local cur_sec = math.floor(math.max(0, self.dialog.time_left))
-        if cur_sec ~= self.dialog._last_sec then
-            self.dialog._last_sec = cur_sec
-            need_rebuild = true
-        end
-
-        if self.dialog.time_left <= 0 then
-            if self.dialog.kind == "incoming" and self.dialog.request_id then ws.decline_game_request(self.dialog.request_id) end
-            self.dialog, self.list_scroll = nil, 0
-            need_rebuild = true
-        end
     end
 
     -- ── Debounced Rebuild Coalescing for rapid socket bursts ──────────────
@@ -764,7 +924,7 @@ end
 
 function on_message(self, message_id, message, sender)
     if message_id == hash("screen_enter") then
-        msg.post(".", "acquire_input_focus"); self._active, self.dialog, self.banners, self.list_scroll, self.battle_modal, self.invite_search, app_state.searching_invite, self.savings_info_open, self.savings_add_open, self.savings_plans_open = true, nil, nil, 0, nil, nil, false, nil, nil, nil
+        msg.post(".", "acquire_input_focus"); self._active, self.banners, self.list_scroll, self.battle_modal, self.invite_search, app_state.searching_invite, self.savings_info_open, self.savings_add_open, self.savings_plans_open = true, nil, 0, nil, nil, false, nil, nil, nil
         -- Auto-open the Savings explainer (modules/online_right.lua's
         -- draw_savings_info, normally only reached via a small "i" icon a
         -- first-time player would likely never notice) exactly once EVER —
@@ -777,6 +937,12 @@ function on_message(self, message_id, message, sender)
             self.savings_info_open = true
             self._savings_type_t0, self._savings_type_done = nil, nil
         end
+        -- Any table still open when the player walks in. The strips were just
+        -- cleared with everything else, and the dedupe means only a table that
+        -- has not already been offered — here or on the global overlay — comes
+        -- back; without this the lobby shows nothing until the next seat
+        -- change anywhere in it.
+        sync_party_banners(self)
         refresh_wh(); rebuild(self)
         -- Actively ask for a fresh online-players list every time this
         -- screen is entered — don't just trust whatever's cached from the
@@ -836,6 +1002,24 @@ function on_message(self, message_id, message, sender)
         local sr = self.invite_search
         local roster = ws.last_search_roster
         if not sr.failed and type(roster) == "table" then
+            -- A PARTY'S CLOCK BELONGS TO THE TABLE, AND THE TABLE RESTATES IT
+            -- ON EVERY SEAT.
+            --
+            -- The ring opened on a twelve-second placeholder — the battle
+            -- search's fallback — while a table is open for twenty. So it hit
+            -- zero with eight seconds of joining still to go, and sat at zero
+            -- while people were still sitting down. PARTY_ROSTER carries the
+            -- server's own closesAt as remaining_ms; adopt re-aims the ring at
+            -- it from wherever it currently is, so the correction is a change
+            -- of rate rather than a jump.
+            --
+            -- No grace: a table has none. It closes and deals with whoever is
+            -- on it, where a battle holds a tail open for answers in flight.
+            if sr.party and (tonumber(roster.remaining_ms) or 0) > 0 then
+                search_clock.adopt(sr, roster.remaining_ms, 0, nil)
+                right_panel.arm_party_failsafe(self, app_state,
+                    function() rebuild(self) end, roster.remaining_ms / 1000)
+            end
             -- ONE SOUND PER PLAYER, not one per message.
             --
             -- The server re-sends the WHOLE roster on every push, so counting
@@ -861,8 +1045,13 @@ function on_message(self, message_id, message, sender)
             self._rebuild_pending = true
         end
     elseif message_id == hash("party_settled") then
-        -- The server answered the INVITE: we are seated, or it did not open.
-        self.party_pending = nil
+        -- The server answered: we are seated at a table, or it did not open.
+        --
+        -- Either way the OTHER tables stop being offers. Sitting down is what
+        -- the server stops offering on, and a strip left over from the frame
+        -- before now taps through to a refusal — so it goes here rather than
+        -- waiting for the next listing to arrive and say so.
+        sync_party_banners(self)
         if self._active then self._rebuild_pending = true end
     elseif message_id == hash("party_failed") and self.invite_search then
         -- The table did not fill, or it could not be opened. Same ending the
@@ -871,36 +1060,20 @@ function on_message(self, message_id, message, sender)
         right_panel.fail_invite_search(self, app_state, function() rebuild(self) end,
             (message and message.reason) or "Nobody else sat down in time")
     elseif message_id == hash("party_offer") then
-        -- A TABLE OPENS ITS OWN PANEL, ONCE.
+        -- AN OPEN TABLE ARRIVES ON THE SAME STRIP EVERY OTHER INVITE DOES.
         --
-        -- There is no party button any more: the row below has INVITE and EDIT
-        -- like every other battle type, and this is what replaces the third
-        -- one. An open table lasts twenty seconds — a player who has to go
-        -- looking for it has already missed it, and PARTY_AVAILABLE is only
-        -- sent to people who can actually join.
+        -- It used to throw a full-screen PARTY TABLES panel over the lobby the
+        -- moment a table opened — a modal, unasked for, for something nobody
+        -- had done anything to receive. Every other invite in this app is a
+        -- row at the top of the screen that leaves the app working underneath
+        -- it, and a table somebody else opened has less claim on the player's
+        -- attention than a challenge addressed to them by name, not more.
         --
-        -- Once per table, tracked by id. Without that, a player who closed the
-        -- panel would have it reopened on the next seat change of the same
-        -- table, which is a modal fighting the person trying to dismiss it.
-        self._party_offered = self._party_offered or {}
-        local fresh = false
-        for _, p in ipairs(type(ws.available_parties) == "table" and ws.available_parties or {}) do
-            local pid = tostring(p.partyId or "")
-            if pid ~= "" and not self._party_offered[pid] then
-                self._party_offered[pid] = true
-                fresh = true
-            end
-        end
-        -- Not while a game is on screen, and not over a modal the player is
-        -- already using: the offer is worth interrupting an idle lobby for,
-        -- nothing else.
-        if fresh and self._active and not self.party_open
-           and not self.battle_modal and not self.invite_search
-           and not self.savings_info_open and not self.savings_plans_open
-           and not self.savings_add_open then
-            self.party_open = true
-            self._rebuild_pending = true
-        end
+        -- The panel is gone entirely. Its two jobs both had better homes: the
+        -- list of tables is these strips, and the seated view — your table,
+        -- its roster, its countdown — is the search dialog a party host
+        -- already watches fill, which a guest now joins into as well.
+        if self._active and sync_party_banners(self) then self._rebuild_pending = true end
     elseif message_id == hash("party_dismiss") then
         -- The table dealt. Mark the search FOUND rather than just closing it:
         -- that is the beat the tournament dialog plays before a board appears
@@ -911,7 +1084,13 @@ function on_message(self, message_id, message, sender)
             self.invite_search.found = true
             self.invite_search.failed = false
         end
-        self.party_open = false
+        -- And every open-table strip goes with it: we are in a game now, and
+        -- the offers behind it are either the table that just dealt or ones
+        -- the server has already stopped sending us.
+        if self.banners then
+            for i = #self.banners, 1, -1 do if self.banners[i].party_id then table.remove(self.banners, i) end end
+            if #self.banners == 0 then self.banners = nil end
+        end
         if self._active then self._rebuild_pending = true end
     elseif message_id == hash("layout_changed") or message_id == hash("user_data_updated") or message_id == hash("ws_online_users") or message_id == hash("ws_connected") or message_id == hash("ws_disconnected") then
         if self._active then self._rebuild_pending = true end
@@ -932,11 +1111,35 @@ function on_message(self, message_id, message, sender)
             if type(raw) == "table" and (raw.gameType == "TOURNAMENT" or raw.gameType == "BATTLE" or raw.tournament) then open_banner(self, raw) end
         end
     elseif message_id == hash("ws_head_to_head") then
+        -- THE RECORD BETWEEN THE TWO OF YOU, arriving after the challenge went
+        -- out. It used to land on the outgoing dialog; the outgoing strip is
+        -- the same request drawn on the same surface as every other, and
+        -- draw_banner already renders an h2h row when a banner carries one.
         local d = ws.last_head_to_head or {}
-        if self.dialog and self.dialog.opponent_id and tostring(d.opponentId or "") == self.dialog.opponent_id then self.dialog.h2h = d.headToHead; if self._active then rebuild(self) end end
+        local oid = tostring(d.opponentId or "")
+        if oid ~= "" then
+            for _, b in ipairs(self.banners or {}) do
+                if b.opponent_id == oid then
+                    b.h2h = d.headToHead
+                    b.opp_winrate = (h2h_view(d.headToHead) or {}).opp_winrate
+                    if self._active then rebuild(self) end
+                end
+            end
+        end
     elseif message_id == hash("ws_request_declined") or message_id == hash("ws_request_cancelled") then
-        if self.banners and message and message.request_id then for i = #self.banners, 1, -1 do if self.banners[i].request_id == message.request_id then table.remove(self.banners, i) end end; if #self.banners == 0 then self.banners = nil end end
-        self.dialog, self.list_scroll = nil, 0; if self._active then rebuild(self) end
+        -- The named request, and any challenge we have out — an unanswered
+        -- decline carries no id of ours to match on, and leaving the strip up
+        -- after the opponent has said no is worse than closing one strip too
+        -- many on a screen that only ever holds one outgoing challenge.
+        if self.banners then
+            local rid = message and message.request_id
+            for i = #self.banners, 1, -1 do
+                local b = self.banners[i]
+                if b.outgoing or (rid and rid ~= "" and b.request_id == rid) then table.remove(self.banners, i) end
+            end
+            if #self.banners == 0 then self.banners = nil end
+        end
+        self.list_scroll = 0; if self._active then rebuild(self) end
     elseif message_id == hash("ws_savings_status") then
         -- SAVINGS_STATUS parked on ws.current_savings_status — nothing to seed
         -- here (the "savings_add" dispatch seeds self.savings_add lazily on
@@ -1004,14 +1207,14 @@ function on_input(self, action_id, action)
     -- entirely while one is up. The half-finished gesture would then still be
     -- recorded, and the next release to reach here would be read as a tap on
     -- whatever now occupies that point. Dropped instead.
-    if self.dialog or self.battle_modal or self.invite_search or self.banners
+    if self.battle_modal or self.invite_search or self.banners
         or not self.list_region then
         if self._gesture then list_gesture.cancel(self._gesture) end
         self._tap_at = nil
     end
 
     -- Handle natural scrolling (Touch Dragging + Mouse Wheel Support)
-    if not self.dialog and not self.battle_modal and not self.invite_search and not self.banners and self.list_region and action.x and action.y then
+    if not self.battle_modal and not self.invite_search and not self.banners and self.list_region and action.x and action.y then
         local reg = self.list_region
         local in_reg = action.x >= reg.left and action.x <= reg.right and action.y >= reg.bottom and action.y <= reg.top
 
@@ -1111,25 +1314,57 @@ function on_input(self, action_id, action)
                     if not can_afford(sd) then
                         msg.post("#controller", "goto_payments")
                     else
-                        ws.send_game_request({ _id=u._id, username=u.username, isAI=u.isAI, avatar=u.avatar }, sd, ex); open_dialog(self, "challenging", u.username or "opponent", sd, nil, u.avatar, u._id, nil); ws.request_head_to_head(u._id)
+                        ws.send_game_request({ _id=u._id, username=u.username, isAI=u.isAI, avatar=u.avatar }, sd, ex); open_outgoing_banner(self, u, sd); ws.request_head_to_head(u._id)
                     end
-                elseif id == "accept" then if self.dialog and self.dialog.request_id then ws.accept_game_request(self.dialog.request_id) end; self.dialog, self.list_scroll = nil, 0; rebuild(self)
-                elseif id == "decline" or id == "cancel_wait" then if self.dialog and self.dialog.request_id then ws.decline_game_request(self.dialog.request_id) end; self.dialog, self.list_scroll = nil, 0; rebuild(self)
-                elseif id == "banner_accept" or id == "banner_decline" then if b.data and b.data ~= "" then if id == "banner_accept" then ws.accept_game_request(b.data) else ws.decline_game_request(b.data) end end; for j = #self.banners, 1, -1 do if self.banners[j].request_id == b.data then table.remove(self.banners, j) end end; if #self.banners == 0 then self.banners = nil end; self.list_scroll = 0; rebuild(self)
+                elseif id == "banner_accept" or id == "banner_decline" then
+                    -- THREE KINDS OF STRIP, ONE PAIR OF BUTTONS.
+                    --
+                    -- What a press MEANS is a property of the strip, not of
+                    -- the button, so the banner is found first and answered on
+                    -- its own terms: a challenge is accepted or declined on
+                    -- the socket, a table is joined or simply put away, and a
+                    -- challenge we sent has only the second half.
+                    local hit
+                    for _, ban in ipairs(self.banners or {}) do
+                        if (ban.key or ban.request_id) == b.data then hit = ban end
+                    end
+                    if hit then
+                        if hit.party_id then
+                            if id == "banner_accept" then
+                                -- Straight into the same dialog the host of a
+                                -- table watches it fill in. Nothing is sent
+                                -- for LATER: there is no decline for a table,
+                                -- and inventing one would tell the server
+                                -- about a decision the player did not make.
+                                right_panel.join_party_search(self, app_state, function() rebuild(self) end, {
+                                    party_id  = hit.party_id,
+                                    entry     = hit.entry,
+                                    closes_at = hit.closes_at,
+                                })
+                            end
+                        elseif hit.outgoing then
+                            -- CANCEL. GAME_REQUEST is fire-and-forget — there
+                            -- is no id to withdraw by — so this takes the
+                            -- strip down and stops the player waiting on a
+                            -- row. An opponent who answers a moment later
+                            -- still lands on the board, exactly as they did
+                            -- when this was a dialog. Nothing to send.
+                        elseif hit.request_id and hit.request_id ~= "" then
+                            if id == "banner_accept" then ws.accept_game_request(hit.request_id)
+                            else ws.decline_game_request(hit.request_id) end
+                        end
+                    end
+                    for j = #(self.banners or {}), 1, -1 do
+                        if (self.banners[j].key or self.banners[j].request_id) == b.data then table.remove(self.banners, j) end
+                    end
+                    if self.banners and #self.banners == 0 then self.banners = nil end
+                    self.list_scroll = 0; rebuild(self)
                 elseif id == "nav_lobby" then msg.post("#controller", "goto_lobby")
                 elseif id == "nav_payments" then msg.post("#controller", "goto_payments")
                 elseif id == "nav_themes" then msg.post("#controller", "goto_themes")
                 elseif id == "nav_tournaments" then msg.post("#controller", "goto_tournaments")
                 elseif id == "nav_support" then msg.post("#controller", "goto_support")
                 elseif id == "nav_account" then msg.post("#controller", "goto_profile")
-                -- ── PARTY: the live two-to-four-seat table ──────────────
-                elseif id == "party_close" or id == "party_block" then
-                    self.party_open = false; rebuild(self)
-                elseif id == "party_leave" then
-                    ws.party_leave()
-                    rebuild(self)
-                elseif string.sub(id, 1, 11) == "party_join:" then
-                    ws.party_join(string.sub(id, 12))
                 elseif id == "savings_info" then
                     -- Cleared so the copy types itself out again on a
                     -- deliberate re-open, not just the first automatic one.

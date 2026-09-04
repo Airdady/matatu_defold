@@ -1018,141 +1018,6 @@ end
 -- standing up the whole lobby around it.
 M.draw_tournaments_row = draw_tournaments_row
 
--- ── Party Tables Modal ──────────────────────────────────────────────────────
---
--- The live party lobby: the open tables you can join, and the button that
--- opens one. Distinct from the battle MAKER above it, which builds a stored
--- battle other players are invited to; a party table exists for twenty
--- seconds, is filled by whoever is in the lobby, and deals as soon as it fills
--- or the clock runs out.
---
--- The list is rendered exactly as the server sent it. PARTY_AVAILABLE is
--- already filtered to what THIS player can join (balance, game, not mid-game,
--- not already seated) and sorted soonest-to-close first, and the server is the
--- only side that knows every balance in the lobby — a client re-deciding
--- eligibility here could only ever disagree with it and offer a table that
--- taps through to a refusal.
-local function draw_party_tables(self, ctx)
-    if not self.party_open then return end
-
-    local track = ctx.track
-    local ui    = ctx.ui
-    local txtL  = ctx.txtL
-    local txtR  = ctx.txtR
-    local mkbtn = ctx.mkbtn
-    local C     = ctx.C
-    local CX, CY = ctx.CX, ctx.CY
-    local commas = ctx.commas
-    local COL_PARTY = vmath.vector4(0.85, 0.45, 0.95, 1.0)
-
-    local dim = track(self, ui.box(vmath.vector3(CX, CY, 0), vmath.vector3(ctx.LOGICAL_W*2, ctx.LOGICAL_H*2, 0), vmath.vector4(0, 0, 0, 0.78)))
-    self.buttons[#self.buttons+1] = { node = dim, id = "party_block" }
-    -- GRADIENT ONLY, no container_bg plate. The other modals sit a nine-slice
-    -- panel on top of the backdrop; this one is a full-bleed invitation and the
-    -- plate boxed it into a card in the middle of a gradient that was already
-    -- doing the work. The rows below draw their own translucent strips, which
-    -- is all the separation the content needs.
-    track(self, ui.grad_backdrop(ctx.LOGICAL_W, ctx.LOGICAL_H))
-
-    local panel_w, panel_h = 520, 600
-
-    local top = CY + panel_h / 2
-    local cy = top - 44
-    track(self, ui.text(vmath.vector3(CX, cy, 0), "PARTY TABLES", "title", C.COL_GOLD))
-    cy = cy - 28
-    track(self, ui.text(vmath.vector3(CX, cy, 0), "2-4 players. Winner takes the pot.", "small", C.COL_WHITE))
-    cy = cy - 34
-
-    local seated = ws.current_party
-    if type(seated) == "table" and seated.partyId then
-        -- SEATED: our own table, its countdown and the way out. Shown instead
-        -- of the list, not beside it — a player at a table is not shopping for
-        -- another one, and the server has already stopped offering them.
-        local now_ms = socket.gettime() * 1000
-        local left = math.max(0, math.floor(((tonumber(seated.closesAt) or 0) - now_ms) / 1000))
-        local n = #(type(seated.seats) == "table" and seated.seats or {})
-
-        track(self, ui.box(vmath.vector3(CX, cy - 40, 0), vmath.vector3(panel_w - 48, 80, 0), vmath.vector4(1,1,1,0.05)))
-        txtL(self, CX - panel_w/2 + 36, cy - 24, "YOUR TABLE", "small", C.COL_DIM)
-        txtR(self, CX + panel_w/2 - 36, cy - 24,
-            commas(tonumber(seated.entry) or 0) .. " " .. GameMode.CURRENCY_SYMBOL, "small", COL_PARTY)
-        txtL(self, CX - panel_w/2 + 36, cy - 52, n .. "/4 SEATED", "body", C.COL_WHITE)
-        txtR(self, CX + panel_w/2 - 36, cy - 52, left .. "s", "body",
-            left <= 5 and C.COL_RED or C.COL_GOLD)
-        cy = cy - 100
-
-        for i, seat in ipairs(type(seated.seats) == "table" and seated.seats or {}) do
-            txtL(self, CX - panel_w/2 + 36, cy, tostring(i) .. ". " .. tostring(seat.username or "PLAYER"),
-                "small", C.COL_WHITE)
-            cy = cy - 26
-        end
-
-        -- The entry does NOT come back. Said here rather than only in the
-        -- reply, because the moment to tell somebody a charge is forfeit is
-        -- before they tap, not after.
-        cy = cy - 10
-        track(self, ui.text(vmath.vector3(CX, cy, 0),
-            "Leaving forfeits your entry.", "small", C.COL_RED))
-
-        local by = CY - panel_h/2 + 48
-        local bw = (panel_w - 64 - 16) / 2
-        mkbtn(self, "party_leave", vmath.vector3(CX - bw/2 - 8, by, 0), vmath.vector3(bw, 56, 0), "LEAVE", "secondary_btn")
-        mkbtn(self, "party_close", vmath.vector3(CX + bw/2 + 8, by, 0), vmath.vector3(bw, 56, 0), "WAIT", "primary_btn")
-        return
-    end
-
-    -- NOT SEATED: the open tables, then the way to open one.
-    local list = type(ws.available_parties) == "table" and ws.available_parties or {}
-    if self.party_pending then
-        -- INVITE has gone out and PARTY_ROSTER has not come back yet — a round
-        -- trip, not a state. Said plainly rather than falling through to "no
-        -- open tables", which is the opposite of what just happened and would
-        -- read as the invite having failed.
-        track(self, ui.text(vmath.vector3(CX, cy - 40, 0), "Opening your table...", "body", C.COL_WHITE))
-        track(self, ui.text(vmath.vector3(CX, cy - 66, 0), "The lobby is about to see it.", "small", C.COL_DIM))
-        cy = cy - 110
-    elseif #list == 0 then
-        track(self, ui.text(vmath.vector3(CX, cy - 40, 0), "No open tables right now.", "body", C.COL_DIM))
-        -- Points at the button that actually opens one, which is not on this
-        -- panel: INVITE on the party row.
-        track(self, ui.text(vmath.vector3(CX, cy - 66, 0), "Tap INVITE on your party row to open one.", "small", C.COL_DIM))
-        cy = cy - 110
-    else
-        local now_ms = socket.gettime() * 1000
-        -- Capped at four rows. More than that and the soonest-to-close table —
-        -- the one where joining actually matters — scrolls off the bottom.
-        for i = 1, math.min(#list, 4) do
-            local p = list[i]
-            local row_y = cy - 34
-            track(self, ui.box(vmath.vector3(CX, row_y, 0), vmath.vector3(panel_w - 48, 62, 0), vmath.vector4(1,1,1,0.05)))
-            txtL(self, CX - panel_w/2 + 36, row_y + 12,
-                string.upper(tostring(p.hostName or "PLAYER")), "small", C.COL_WHITE)
-            local left = math.max(0, math.floor(((tonumber(p.closesAt) or 0) - now_ms) / 1000))
-            txtL(self, CX - panel_w/2 + 36, row_y - 12,
-                tostring(p.seated or 0) .. "/4  ·  " .. left .. "s", "small", C.COL_DIM)
-            txtR(self, CX + panel_w/2 - 150, row_y,
-                commas(tonumber(p.entry) or 0) .. " " .. GameMode.CURRENCY_SYMBOL, "small", COL_PARTY)
-            mkbtn(self, "party_join:" .. tostring(p.partyId),
-                vmath.vector3(CX + panel_w/2 - 80, row_y, 0), vmath.vector3(96, 44, 0), "JOIN", "primary_btn")
-            cy = cy - 70
-        end
-    end
-
-    -- NO STAKE PICKER AND NO "OPEN TABLE" HERE.
-    --
-    -- Tapping INVITE on the party row IS opening the table — the request goes
-    -- out on that tap, at the entry the edit form already holds. Asking for the
-    -- price again here, behind a second button, made INVITE mean "show me a
-    -- form about inviting" and put the one setting that belongs in the edit
-    -- form in two places at once.
-    --
-    -- So this panel only ever does two things: show the table you are at, or
-    -- show the tables you could join.
-    local by = CY - panel_h/2 + 48
-    local bw = panel_w - 64
-    mkbtn(self, "party_close", vmath.vector3(CX, by, 0), vmath.vector3(bw, 56, 0), "CLOSE", "secondary_btn")
-end
-
 -- ── Savings Plans Modal Drawing ───────────────────────────────────────────────
 -- Reached via the info modal's "TRY IT" button. Where draw_savings_info leads
 -- with the coin bundle and the "why", this one continues the story into the
@@ -1657,7 +1522,6 @@ function M.draw(self, ctx, left_M)
     draw_savings_info(self, ctx)
     draw_savings_plans(self, ctx)
     draw_savings_add(self, ctx)
-    draw_party_tables(self, ctx)
 end
 
 -- ── Input Action Exports for Main Script ─────────────────────────────────────
@@ -1936,6 +1800,10 @@ function M.start_invite_search(self, app_state, rebuild_cb, battle_type)
             subtitle = "opening your table",
         }
         app_state.searching_invite = true
+        -- The table does not exist yet, so there is no closesAt to count down
+        -- to — the window is the backstop until the first PARTY_ROSTER states
+        -- the real deadline and re-arms this against it.
+        M.arm_party_failsafe(self, app_state, rebuild_cb, M.PARTY_JOIN_WINDOW)
         rebuild_cb()
         return true
     end
@@ -1980,6 +1848,85 @@ function M.start_invite_search(self, app_state, rebuild_cb, battle_type)
             end
         end)
 
+    rebuild_cb()
+    return true
+end
+
+--- TAKING A SEAT AT SOMEBODY ELSE'S TABLE.
+--
+-- The other half of start_invite_search's PARTY branch. The host opens a table
+-- and watches it fill; a guest taps JOIN on the invite strip and watches the
+-- same thing — so both end up in the same dialog, fed by the same translated
+-- roster, rather than the guest getting a modal list of tables and the host
+-- getting a waiting room.
+--
+-- `closes_at` is the SERVER'S deadline for the table, in epoch milliseconds,
+-- and the dialog counts down to it. Not a fixed window: the guest is arriving
+-- partway through a twenty-second table, and a fresh twenty-second clock would
+-- promise them time the table does not have.
+--
+-- No balance check here. The listing that produced this strip was filtered by
+-- the server against this player's balance, and it is the only side that knows
+-- every balance in the lobby; refusing here could only ever disagree with it.
+-- A balance that fell in between comes back as a PARTY_ERROR, which is the
+-- same path a full table takes.
+-- The server's join window, in seconds: PARTY_JOIN_WINDOW_MS in be_matatu's
+-- partyRules.ts. Only a backstop — a table states its own closesAt on every
+-- roster push and that is what the dialog actually counts down (see
+-- M.arm_party_failsafe and the ws_search_roster handler on the online screen).
+M.PARTY_JOIN_WINDOW = 20
+
+--- THE DIALOG MUST NOT OUTLIVE THE TABLE.
+--
+-- A party search has no Cancel button — the entry is committed on the seat, and
+-- a button that cannot cancel is worse than none — so nothing on screen can
+-- close this dialog except the server saying the table dealt or was called off.
+-- If neither ever arrives (a socket that drops in the twenty seconds the table
+-- is open, which is exactly when it costs the most) the player is left in a
+-- modal with a spinner and no way out but restarting the app.
+--
+-- So the dialog carries the table's own deadline plus the grace every other
+-- search uses, re-armed by each roster push against the deadline the server
+-- just restated. fail_invite_search is what fires: with seats filled it waits
+-- out MATCH_START_GRACE first, because a window closing is not the end of the
+-- work — the server still has to charge, deal and send.
+function M.arm_party_failsafe(self, app_state, rebuild_cb, seconds)
+    local sr = self.invite_search
+    if not sr or not sr.party or sr.found or sr.failed then return end
+    if sr.timer_handle then pcall(timer.cancel, sr.timer_handle) end
+    local secs = math.max(1, tonumber(seconds) or M.PARTY_JOIN_WINDOW) + M.SEARCH_FAILSAFE_GRACE
+    sr.timer_handle = timer.delay(secs, false, function()
+        if self.invite_search == sr and not sr.found then
+            -- No reason passed: fail_invite_search decides what is true from
+            -- the seats. A caller asserting "nobody sat down" cannot know that
+            -- — it is a timer.
+            M.fail_invite_search(self, app_state, rebuild_cb, nil)
+        end
+    end)
+end
+
+function M.join_party_search(self, app_state, rebuild_cb, p)
+    p = type(p) == "table" and p or {}
+    local pid = tostring(p.party_id or "")
+    if pid == "" then return false end
+
+    local now_ms  = (socket and socket.gettime and socket.gettime() * 1000) or (os.time() * 1000)
+    local closes  = tonumber(p.closes_at) or 0
+    local left    = closes > 0 and math.max(1, (closes - now_ms) / 1000) or M.SEARCH_WINDOW_FALLBACK
+
+    ws.party_join(pid)
+
+    self.invite_search = {
+        active = true, t = 0, reel_ix = math.random(INVITE_AVATAR_MAX), spin_t = 0,
+        stake = { amount = tonumber(p.entry) or 0, charge = 0 },
+        max_time = left,
+        modal = true,
+        party = true,
+        subtitle = "taking your seat",
+    }
+    app_state.searching_invite = true
+
+    M.arm_party_failsafe(self, app_state, rebuild_cb, left)
     rebuild_cb()
     return true
 end

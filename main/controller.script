@@ -1091,6 +1091,17 @@ function init(self)
     -- looking at — but it has to be told the list moved.
     table.insert(self.tokens, ws.on("party_available", function()
         pcall(msg.post, "#online", "party_offer")
+        -- AND EVERYWHERE ELSE. Same split tournament and battle invites run
+        -- on: the online screen draws its own inline strip while it is up, the
+        -- global overlay carries the offer on every other screen. Both are
+        -- told every time; each decides whether it is the one showing (see
+        -- the current_screen check in main/incoming.gui_script), and both read
+        -- the listing itself off the socket module rather than from here.
+        --
+        -- The overlay needs the message even when it is NOT going to open
+        -- anything: a listing that no longer contains the table it is showing
+        -- is how that strip learns the table filled or expired.
+        pcall(msg.post, "#incoming", "party_offer")
     end))
 
     -- The server has answered an INVITE, one way or the other.

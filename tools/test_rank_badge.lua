@@ -3,16 +3,18 @@
 -- Two halves, for two different ways this can go wrong.
 --
 -- The first is the bands themselves. They are written with inclusive maxima —
--- 0-44.9, 45-49.9, 50-54.9, 55-100 — which leaves a tenth of a point between
+-- 0-44.9, 45-49.9, 50-53.9, 54-100 — which leaves a tenth of a point between
 -- every pair of them. A lookup that tested `wr >= min and wr <= max` would
 -- answer nil for a win rate of 44.95, and a real player would wear no badge for
 -- a reason nobody could see. So both ends of every band are checked, and so are
 -- the gaps between them.
 --
--- The second is drift. Five surfaces show a player's standing: the incoming and
--- outgoing request dialogs, the online screen's inline invite strip, the global
--- overlay's strip, and the game-over panel. They used to each render it their
--- own way — three of them printed "WR nn%" with their own colour thresholds and
+-- The second is drift. Four surfaces show a player's standing: the incoming
+-- request dialog, the online screen's inline invite strip, the global overlay's
+-- strip, and the game-over panel. (There were five. The outgoing "CHALLENGING"
+-- dialog is gone — a challenge you SENT is drawn on the same inline strip as
+-- every other request now, so it reads its badge from the strip's own code.)
+-- They used to each render it their own way — three of them printed "WR nn%" with their own colour thresholds and
 -- two showed nothing at all — which is exactly how the same opponent could look
 -- like two different players on two screens. Those checks are source-level,
 -- because the drawing lives inside gui_scripts whose nodes only exist in a
@@ -40,14 +42,14 @@ check("ceiling of beginner",     rank.label(44.9),  "BEGINNER")
 check("floor of pro",           rank.label(45.0),  "PRO")
 check("ceiling of pro",         rank.label(49.9),  "PRO")
 check("floor of master",        rank.label(50.0),  "MASTER")
-check("ceiling of master",      rank.label(54.9),  "MASTER")
-check("floor of grandmaster",   rank.label(55.0),  "GRANDMASTER")
+check("ceiling of master",      rank.label(53.9),  "MASTER")
+check("floor of grandmaster",   rank.label(54.0),  "GRANDMASTER")
 check("ceiling of grandmaster", rank.label(100.0), "GRANDMASTER")
 
 -- THE GAPS. A tenth of a point between every written band.
 check("44.95 is still a beginner", rank.label(44.95), "BEGINNER")
 check("49.95 is still a pro",      rank.label(49.95), "PRO")
-check("54.95 is still a master",   rank.label(54.95), "MASTER")
+check("53.95 is still a master",   rank.label(53.95), "MASTER")
 
 -- Off the ends. A rate outside 0-100 is a server bug, not a reason to crash or
 -- to answer nil on a screen that is about to draw the answer.
@@ -139,7 +141,6 @@ end
 
 local SURFACES = {
   "modules/dialog_incoming.lua",
-  "modules/dialog_outgoing.lua",
   "modules/champ_banner.lua",
   "main/online.gui_script",
   "main/incoming.gui_script",
@@ -256,7 +257,7 @@ local ctx = {
                                         opp_winrate = h.wr } or nil end,
   draw_h2h_row = function() end,
 }
-for _, mod in ipairs({ "modules.dialog_incoming", "modules.dialog_outgoing" }) do
+for _, mod in ipairs({ "modules.dialog_incoming" }) do
   local dlg = require(mod)
   for _, wr in ipairs({ 33, 47, 51, 77 }) do
     ok(mod .. " draws at " .. wr, pcall(dlg.draw, { nodes = {}, buttons = {} }, ctx,
