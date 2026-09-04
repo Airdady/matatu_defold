@@ -19,6 +19,10 @@ local ws     = require("modules.websocket_manager")
 local screen = require("modules.screen")
 local app_state = require("modules.app_state")
 local dialog_incoming = require("modules.dialog_incoming")
+-- THE PARTY TABLE TAKES THIS SAME SURFACE. See the long note at the top of
+-- modules/dialog_party.lua: a party arrives unannounced, on whatever screen
+-- the player is on, with a clock on it, which is the overlay this already is.
+local dialog_party = require("modules.dialog_party")
 local api    = require("modules.api_service")
 local toast  = require("modules.toast")
 local budget = require("modules.incoming_budget")
@@ -30,6 +34,12 @@ local champ  = require("modules.championship")
 local rank   = require("modules.rank_badge")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
+
+-- The party window, mirroring PARTY_JOIN_WINDOW_MS in be_matatu's
+-- partyRules.ts. Only ever a FALLBACK: every roster carries the server's own
+-- remaining time, and this is what a payload with neither that nor a closing
+-- instant falls back to so the dialog still has a clock rather than none.
+local PARTY_WINDOW_SECONDS = 20
 local CX, CY = 640, 360
 
 -- ── Palette (mirrors the subset online.gui_script feeds dialog_incoming) ──────
@@ -355,7 +365,9 @@ local function rebuild(self)
     clear(self)
     if not self.dialog then return end
     local ok, err = pcall(function()
-        if self.dialog.banner then
+        if self.dialog.party then
+            dialog_party.draw(self, make_ctx(), self.dialog, self.dlg_alpha or 1)
+        elseif self.dialog.banner then
             draw_banner(self, self.dialog, self.dlg_alpha or 1)
         else
             dialog_incoming.draw(self, make_ctx(), self.dialog, self.dlg_alpha or 1)
@@ -483,6 +495,88 @@ local function open_dialog(self, d)
     rebuild(self)
 end
 
+-- A PARTY TABLE, ON THE SAME SURFACE AND THROUGH THE SAME LIFECYCLE.
+--
+-- Deliberately NOT open_dialog: that function is built around a request id, a
+-- ten-second window and an auto-decline at zero, and a party has none of the
+-- three. What it does share is everything that matters — the modal claim, the
+-- countdown, the rebuild, and the watchdogs that stop a dialog nobody can see
+-- from swallowing the app's input — so this sets the same `self.dialog` record
+-- and lets update() and on_input drive it.
+--
+-- Called on EVERY roster, not just the first. A seat filling is a redraw of a
+-- table that is already up, and the clock must not restart when it happens: a
+-- table that went back to twenty seconds every time somebody sat down would
+-- never close. Only a DIFFERENT party resets it.
+local function open_party(self, party)
+    if type(party) ~= "table" then return end
+    local id = tostring(party.party_id or "")
+    if id == "" then return end
+
+    local prev = self.dialog
+    local same = prev and prev.party and prev.party_id == id
+
+    -- WHO JUST SAT DOWN, said in words as well as drawn.
+    --
+    -- The chairs already show the table filling, but a player watching the
+    -- clock does not necessarily catch WHICH chair changed — and a roster
+    -- arrives in join order precisely so this is answerable. Named on arrival,
+    -- once, and never for our own seat: the player knows they joined.
+    if same then
+        local was = {}
+        for _, seat in ipairs((prev.party or {}).seats or {}) do was[seat.user_id] = true end
+        local me = tostring(ws.get_current_user_id() or "")
+        for _, seat in ipairs(party.seats or {}) do
+            if not was[seat.user_id] and seat.user_id ~= me then
+                toast.info(tostring(seat.username or "A player"):upper() .. " joined the table")
+            end
+        end
+    end
+
+    -- A challenge that was on screen when the table opened is declined rather
+    -- than silently replaced, exactly as open_dialog does it: the person who
+    -- sent it is watching a spinner, and they should get their answer now
+    -- instead of at the server's own ten-second mark.
+    --
+    -- The server sweeps these when the seat is taken (be_matatu's party
+    -- handler), so this is the case where the sweep's own message has not
+    -- landed yet, not the normal path.
+    if prev and not prev.party and not prev.cup_invite
+       and prev.request_id and prev.request_id ~= "" then
+        pcall(ws.decline_game_request, prev.request_id)
+    end
+
+    -- The window, from the server's own duration. Falls back to the wall-clock
+    -- difference only for a server too old to send one, and to the full window
+    -- when there is nothing to read at all.
+    local left
+    if tonumber(party.remaining_ms) then
+        left = math.max(0, tonumber(party.remaining_ms) / 1000)
+    elseif tonumber(party.closes_at) and tonumber(party.closes_at) > 0 then
+        left = math.max(0, (tonumber(party.closes_at) - (os.time() * 1000)) / 1000)
+    else
+        left = PARTY_WINDOW_SECONDS
+    end
+
+    self.dialog = {
+        kind = "party",
+        party = party,
+        party_id = id,
+        -- The clock keeps running across roster updates for the same table.
+        time_left = same and self.dialog.time_left or left,
+        max_time  = same and self.dialog.max_time or math.max(left, 1),
+        -- Never the banner. A strip cannot show four chairs filling, and the
+        -- table is the whole point of the mode — see the demote guard in
+        -- update().
+        banner = false,
+    }
+    self.dlg_alpha = 1
+    app_state.modal_open("incoming")
+    if not same then pcall(msg.post, "#snd_notify", "play_sound") end
+    refresh_wh()
+    rebuild(self)
+end
+
 local function close_dialog(self)
     self.dialog = nil
     app_state.modal_close("incoming")
@@ -535,6 +629,28 @@ function init(self)
                 prize   = tonumber((d or {}).grandPrize) or 0,
                 members = tonumber((d or {}).members) or 0,
                 max     = tonumber((d or {}).maxPlayers) or 0,
+            })
+        end),
+        -- THE PARTY TABLE. Same pattern as every listener here: the socket's
+        -- callbacks run in the controller's context, so they post back to this
+        -- component rather than touching gui.* from the wrong script. The
+        -- roster itself is read off ws.last_party on the other side, because a
+        -- Defold message cannot carry the nested seat list.
+        ws.on("party_roster", function()
+            msg.post(ME, "party_roster")
+        end),
+        ws.on("party_starting", function()
+            msg.post(ME, "party_over", { message = "" })
+        end),
+        ws.on("party_cancelled", function(d)
+            msg.post(ME, "party_over", {
+                message = tostring((d or {}).message or "That table was called off."),
+            })
+        end),
+        ws.on("party_error", function(d)
+            msg.post(ME, "party_error", {
+                party_id = tostring((d or {}).party_id or ""),
+                message  = tostring((d or {}).message or "That table is not available."),
             })
         end),
         ws.on("cup_event", function(d)
@@ -595,6 +711,15 @@ function update(self, dt)
     -- every invite is still shown and still acceptable, and everything behind
     -- it works again.
     local showing = self.dialog and (self.dialog.banner and "banner" or "dialog") or nil
+    -- A PARTY TABLE IS NEVER DEMOTED TO THE STRIP.
+    --
+    -- The budget exists for a BURST of challenges holding the app's input
+    -- indefinitely, and it demotes by converting the dialog to a banner. A
+    -- party cannot survive that: the banner is one line of text, and what the
+    -- player is watching is four chairs filling. It is also bounded — twenty
+    -- seconds, once — which is the thing the budget is protecting against in
+    -- the first place, so there is nothing here for it to fix.
+    if self.dialog and self.dialog.party then showing = nil end
     if budget.tick(self.budget, dt, showing) == "demote" then
         print("[INCOMING] input held too long by a burst of requests - "
             .. "switching to the non-blocking banner")
@@ -632,7 +757,19 @@ function update(self, dt)
             need_reb = true
         end
 
-        if self.dialog.time_left <= 0 then
+        -- ZERO ON A PARTY CLOCK IS NOT AN ENDING.
+        --
+        -- The table is decided by the SERVER at zero — whoever is seated plays,
+        -- and a lone host is called off — and that answer lands as
+        -- PARTY_STARTING or PARTY_CANCELLED a moment later. Closing the dialog
+        -- ourselves would take the table off the screen a beat before the app
+        -- says what happened to it, which reads as the party having failed.
+        -- So the clock stops at zero and the dialog waits to be told.
+        if self.dialog.party then
+            if self.dialog.time_left < 0 then
+                self.dialog.time_left = 0
+            end
+        elseif self.dialog.time_left <= 0 then
             if not self.dialog.cup_invite
                and self.dialog.request_id and self.dialog.request_id ~= "" then
                 ws.decline_game_request(self.dialog.request_id)
@@ -648,6 +785,16 @@ end
 
 function on_message(self, message_id, message)
     if message_id == hash("incoming_request") then
+        -- A SEATED PLAYER IS NOT TAKING CHALLENGES.
+        --
+        -- The server sweeps every request in flight the moment a seat is taken
+        -- and refuses new ones while the player is at a table (be_matatu's
+        -- party handler and isInParty), so one arriving here has crossed the
+        -- join on the wire. Showing it would put an ACCEPT button over a table
+        -- the player has already paid for; ignoring it costs nothing, because
+        -- the request expires on its own and the sender is told by the server.
+        if self.dialog and self.dialog.party then return end
+
         local r   = ws.last_game_request or {}
         local raw = (ws.last_game_request or {}).raw or {}
 
@@ -789,10 +936,47 @@ function on_message(self, message_id, message)
             toast.info(who .. " left " .. name .. seats)
         end
 
+    elseif message_id == hash("party_roster") then
+        -- Read off the socket rather than out of `message`: a Defold message
+        -- table cannot carry the nested seat list, and the manager has already
+        -- parsed exactly the shape this needs.
+        open_party(self, ws.last_party)
+
+    elseif message_id == hash("party_over") then
+        -- STARTING and CANCELLED both end the table's time on this surface.
+        -- The difference is what the player is told: a start hands over to the
+        -- game screen (controller.script), a cancellation is a toast, because
+        -- there is nothing left to decide and a modal saying "that did not
+        -- happen" is one more thing to dismiss.
+        local said = tostring((message or {}).message or "")
+        if said ~= "" then toast.info(said) end
+        if self.dialog and self.dialog.party then
+            close_dialog(self)
+        end
+
+    elseif message_id == hash("party_error") then
+        -- The table refused the seat — full, already started, not enough
+        -- coins. Nothing was taken and nothing is on screen to unwind, so it
+        -- is a toast and not a modal.
+        toast.error(tostring((message or {}).message or "That table is not available."))
+        -- A refusal that names the table we are SHOWING means the seat we
+        -- thought we had is gone; anything else is about a table we never sat
+        -- at and must not close this one.
+        local pid = tostring((message or {}).party_id or "")
+        if self.dialog and self.dialog.party and pid ~= "" and pid == self.dialog.party_id then
+            close_dialog(self)
+        end
+
     elseif message_id == hash("incoming_clear") then
         -- Clear if the event targets the dialog we're showing (or carries no id).
         local rid = message and message.request_id
-        if self.dialog and (not rid or rid == "" or rid == self.dialog.request_id) then
+        -- Never the party table. These events carry a request id (or none at
+        -- all, which used to mean "clear whatever is up"), and a party has no
+        -- request behind it — a bare clear arriving mid-table would take it off
+        -- the screen for a game request it has nothing to do with.
+        if self.dialog and self.dialog.party then
+            return
+        elseif self.dialog and (not rid or rid == "" or rid == self.dialog.request_id) then
             close_dialog(self)
         elseif not self.dialog then
             -- nothing showing; ignore
@@ -842,6 +1026,16 @@ function on_input(self, action_id, action)
                     self.dialog = nil
                     app_state.modal_close("incoming")
                     rebuild(self)
+                elseif id == "party_leave" then
+                    -- Leaving forfeits the entry, which the dialog says under
+                    -- the button. The table is not closed here: the server
+                    -- answers with PARTY_CANCELLED, and closing early would
+                    -- hide a refusal (the host leaving takes the table with
+                    -- them, and a leave that raced the start is simply too
+                    -- late).
+                    if self.dialog and self.dialog.party_id then
+                        ws.leave_party(self.dialog.party_id)
+                    end
                 elseif id == "decline" then
                     -- LATER on a cup invitation sends nothing at all. There is
                     -- no decline endpoint and there should not be one: the

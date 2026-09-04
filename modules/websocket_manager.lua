@@ -679,6 +679,65 @@ function M.send_game_request(opponent, stake, extra_data)
   M.send_message("GAME_REQUEST", payload)
 end
 
+-- ONE READING OF A PARTY PAYLOAD, used by both messages that carry one.
+--
+-- `seats_remaining` is taken from the server rather than worked out from
+-- #seats, because the table size is the SERVER's number (PARTY_SIZE in
+-- partyRules.ts) and a client that subtracted from its own constant would draw
+-- the wrong number of empty chairs the day that changes.
+function M.parse_party(d)
+  d = (type(d) == "table") and d or {}
+  local seats = {}
+  for _, s in ipairs((type(d.seats) == "table") and d.seats or {}) do
+    seats[#seats + 1] = {
+      user_id  = tostring(s.userId or ""),
+      username = tostring(s.username or "Player"),
+      avatar   = tonumber(s.avatar) or 1,
+      joined_at = tonumber(s.joinedAt) or 0,
+    }
+  end
+  local remaining = tonumber(d.seatsRemaining)
+  return {
+    -- HOW LONG IS LEFT, as the SERVER measured it. `closesAt` is the server's
+    -- wall clock and is kept only as a fallback for a server too old to send a
+    -- duration: subtracting a handset's own clock from it runs a countdown
+    -- that is wrong by however far that clock has drifted, and a player who
+    -- joins at twelve seconds has to see eight however fast their phone is.
+    remaining_ms = tonumber(d.remainingMs) or nil,
+    party_id  = tostring(d.partyId or ""),
+    host_id   = tostring(d.hostId or ""),
+    entry     = tonumber(d.entry) or 0,
+    mode      = tostring(d.mode or "NORMAL"),
+    score_cap = tonumber(d.scoreCap) or 0,
+    status    = tostring(d.status or "FILLING"),
+    seats     = seats,
+    seats_remaining = remaining or 0,
+    -- The table's size, so the dialog knows how many chairs to draw without
+    -- carrying a constant of its own.
+    size      = #seats + (remaining or 0),
+    closes_at = tonumber(d.closesAt) or 0,
+  }
+end
+
+-- Open a table and take the host's seat. `opts` mirrors what the party handler
+-- reads: the entry fee, how the table is won, and the cap when that is
+-- SCORECAP. Everything is normalized server-side, so an older client sending
+-- nothing at all still opens a valid table.
+function M.create_party(opts)
+  opts = (type(opts) == "table") and opts or {}
+  local payload = { entry = tonumber(opts.entry) or nil, mode = opts.mode or nil }
+  if payload.mode == "SCORECAP" then payload.scoreCap = tonumber(opts.score_cap) or nil end
+  M.send_message("PARTY_CREATE", payload)
+end
+
+function M.join_party(party_id)
+  M.send_message("PARTY_JOIN", { partyId = tostring(party_id or "") })
+end
+
+function M.leave_party(party_id)
+  M.send_message("PARTY_LEAVE", { partyId = tostring(party_id or (M.last_party or {}).party_id or "") })
+end
+
 function M.accept_game_request(request_id)
   M.send_message("GAME_REQUEST_ACCEPTED", { requestId = request_id })
 end
@@ -970,6 +1029,42 @@ local function parse_message(json_string)
       chosen_id    = (d.chosenId ~= nil and tostring(d.chosenId) ~= "") and tostring(d.chosenId) or nil,
     }
     emit("search_roster", M.last_search_roster)
+  elseif t == "PARTY_ROSTER" or t == "PARTY_STARTING" then
+    -- A PARTY TABLE, SEAT BY SEAT.
+    --
+    -- ROSTER arrives on every seat change and STARTING once, when the table
+    -- resolves. They carry the SAME shape (partyView on the server), so they
+    -- are normalized in one place and told apart by `status` — a second parser
+    -- for the same payload is how the two ended up disagreeing about whose
+    -- chair was whose.
+    --
+    -- Seats come in join order and that is preserved exactly: it is the whole
+    -- reason the table can animate the chair that just filled instead of
+    -- redrawing itself, and sorting them here by anything at all would throw
+    -- that away.
+    M.last_party = M.parse_party(d)
+    emit("party_roster", M.last_party)
+    if M.last_party.status == "STARTING" then emit("party_starting", M.last_party) end
+  elseif t == "PARTY_CANCELLED" then
+    -- The table did not fill, or this player left it. `refunded` is the
+    -- server's own figure and is printed as given — it is zero under the
+    -- current rule, and a client that assumed the entry came back would put a
+    -- number on screen that no wallet ever saw.
+    local p = {
+      party_id = tostring(d.partyId or ""),
+      reason   = tostring(d.reason or ""),
+      refunded = tonumber(d.refunded) or 0,
+      message  = tostring(d.message or "That table was called off."),
+    }
+    M.last_party = nil
+    emit("party_cancelled", p)
+  elseif t == "PARTY_ERROR" then
+    M.last_party_error = {
+      party_id = tostring(d.partyId or ""),
+      reason   = tostring(d.reason or ""),
+      message  = tostring(d.message or "That table is not available."),
+    }
+    emit("party_error", M.last_party_error)
   elseif t == "GAME_REQUEST_CANCELLED" then
     emit("game_request_cancelled", d.requestId or d.id or "")
   elseif t == "GAME_REQUEST_DECLINED" then

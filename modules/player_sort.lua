@@ -94,12 +94,21 @@ function M.row_stake(pu)
     return (type(pu.stake) == "table") and num(pu.stake.amount) or 0
 end
 
---- Is this player mid-game, and therefore not challengeable?
+--- Is this player mid-game — or seated at a party table — and therefore not
+--- challengeable?
 --
 -- Same test online_center uses to decide whether to attach a challenge button
 -- at all. A row nobody can tap belongs at the bottom of the list.
+--
+-- `inParty` is the second reason and arrived later: a player who has paid an
+-- entry and is watching a twenty-second clock has every request to them
+-- refused server-side, so they are exactly as unreachable as somebody
+-- mid-game. Sorting them up among the available players would put a row that
+-- cannot be tapped at the top of the list.
 function M.is_playing(pu)
-    return type(pu) == "table" and pu.gameId ~= nil and pu.gameId ~= ""
+    if type(pu) ~= "table" then return false end
+    if pu.inParty then return true end
+    return pu.gameId ~= nil and pu.gameId ~= ""
 end
 
 --- Can this balance cover ANY paid stake on the ladder?
