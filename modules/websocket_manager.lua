@@ -1450,43 +1450,24 @@ local function parse_message(json_string)
       M.current_party = d
       M.last_party_error = nil
 
-      -- SEATS, AS A SEARCH ROSTER — so a party fills the same dialog a
-      -- tournament does.
+      -- NO LONGER TRANSLATED INTO A SEARCH ROSTER.
       --
-      -- The two are the same thing from the player's side: you opened
-      -- something, and you are watching people arrive one by one. Tournaments
-      -- already have a dialog for exactly that, with the arrival animation and
-      -- the per-player sound, driven off GAME_REQUEST_ROSTER's `accepted`
-      -- list. Rather than draw a second one, party seats are translated into
-      -- the same shape and the same dialog is fed.
+      -- A party used to be fed to dialog_search by turning its seats into the
+      -- `accepted` shape a tournament roster uses, on the theory that the two
+      -- are the same thing from the player's side: you opened something, and
+      -- you are watching people arrive.
       --
-      -- OUR OWN SEAT IS DROPPED. The tournament roster is everybody who
-      -- accepted the requester's invite — it never contains the requester. A
-      -- party's seats DO include the host, so leaving it in would animate the
-      -- player into their own waiting room.
-      local accepted = {}
-      for _, seat in ipairs(type(d.seats) == "table" and d.seats or {}) do
-        local sid = tostring(seat.userId or "")
-        if sid ~= "" and sid ~= tostring(M.current_user_id) then
-          accepted[#accepted + 1] = {
-            userId    = sid,
-            username  = tostring(seat.username or "Player"),
-            avatar    = tonumber(seat.avatar) or 1,
-            skillTier = seat.skillTier and tostring(seat.skillTier) or nil,
-          }
-        end
-      end
-      local closes = tonumber(d.closesAt) or 0
-      M.last_search_roster = {
-        accepted     = accepted,
-        count        = #accepted,
-        remaining_ms = closes > 0 and math.max(0, closes - (socket.gettime() * 1000)) or 0,
-        -- No chosen_id, ever. A party takes everybody who sat down; there is
-        -- nobody to single out, and naming one would draw a decision the mode
-        -- does not make.
-        chosen_id    = nil,
-      }
-      emit("search_roster", M.last_search_roster)
+      -- They are not. A search roster is a shortlist of CANDIDATES, out of
+      -- whom the server picks one — which is why that dialog keeps a reel
+      -- hunting beside them and drops our own entry, since a requester is
+      -- never on their own shortlist. A party's seats are neither: the table
+      -- is a fixed number of chairs, everybody on it is already in, and OUR
+      -- OWN SEAT IS ONE OF THEM. The translation had to throw away the two
+      -- things the table is actually made of — the player's own chair, and
+      -- how many chairs are left.
+      --
+      -- So the roster is passed on as it arrived and the table draws itself
+      -- (modules/dialog_party.lua, on the incoming overlay).
       emit("party_roster", d)
     end
 
