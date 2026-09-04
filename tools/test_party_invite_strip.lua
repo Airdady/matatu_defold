@@ -180,6 +180,17 @@ check("...and that dialog counts down to the TABLE's deadline, not a fresh windo
 -- ring hit zero with eight seconds of joining still to go.
 check("a party search re-aims its ring at the table's deadline on every seat",
   ONLINE_C:find("search_clock%.adopt%(sr, roster%.remaining_ms, 0, nil%)") ~= nil)
+-- And it opens on the right number to begin with. search_clock never rewinds a
+-- countdown that turns out to be too LOW, so a guess of twelve on a
+-- twenty-second table could not be corrected upward: the ring emptied and the
+-- digits hit zero eight seconds early and sat there. See test_search_clock.lua.
+check("...and opens on the TABLE's window rather than a battle's",
+  RIGHT_C:match("party = true.-max_time = M%.PARTY_JOIN_WINDOW") ~= nil
+    or RIGHT_C:match("max_time = M%.PARTY_JOIN_WINDOW.-party = true") ~= nil)
+check("...with no grace tail, because nobody was invited to a table",
+  RIGHT_C:match("max_time = M%.PARTY_JOIN_WINDOW,%s*\n%s*grace_time = 0") ~= nil)
+check("...and that window is not written down twice",
+  RIGHT_C:find("M%.PARTY_JOIN_WINDOW = search_clock%.PARTY_WINDOW") ~= nil)
 check("...and nothing can leave the player in a modal the table has outlived",
   RIGHT_C:find("function M%.arm_party_failsafe") ~= nil
     and ONLINE_C:find("right_panel%.arm_party_failsafe") ~= nil,

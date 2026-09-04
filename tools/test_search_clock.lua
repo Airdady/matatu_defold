@@ -454,6 +454,62 @@ do
         SC.failsafe_delay({ max_time = 0 }, 3), SC.FALLBACK_WINDOW + 3)
 end
 
+print("\n== a party table's clock, which is not a battle's ==")
+do
+    -- THE REPORTED BUG. A table is open for twenty seconds; this dialog opened
+    -- on the battle search's twelve. The module never rewinds a countdown that
+    -- turns out to be too LOW — by design, because rewinding is a jump — so
+    -- the digits and the ring both hit zero eight seconds before the table
+    -- closed and then sat at zero while players were still sitting down.
+    --
+    -- The fix is upstream of the smoothing: the GUESS has to be the longest
+    -- window this kind of search can run.
+    check("a party guesses the table's window", (SC.defaults_for({ party = true })), SC.PARTY_WINDOW)
+    check("...and everything else still guesses the ladder's",
+        (SC.defaults_for({})), SC.FALLBACK_WINDOW)
+    check("a table has no grace tail: nobody was invited to it",
+        select(2, SC.defaults_for({ party = true })), 0)
+    do
+        local _, grace = SC.defaults_for({})
+        check("...where a battle holds one open for answers in flight", grace, SC.FALLBACK_GRACE)
+    end
+
+    -- A party search that never hears anything at all still runs the whole
+    -- twenty, rather than the twelve it used to.
+    local blind = { party = true }
+    SC.tick(blind, 0)
+    approx("a party with nothing set opens on twenty", blind.shown, 20)
+    second(blind, 12); approx("...and at twelve seconds it is still counting", blind.shown, 8, 0.05)
+
+    -- THE HOST, FOR REAL: opens at the tap, and PARTY_ROSTER lands a moment
+    -- later with the server's own closesAt as a remainder.
+    local host = { party = true, t = 0, max_time = 20, grace_time = 0 }
+    for _ = 1, 18 do SC.tick(host, 1 / 60) end          -- 0.3s round trip
+    SC.adopt(host, 19700, 0, nil)
+    second(host, 10)
+    approx("ten seconds in, the digits agree with the table", host.shown, 9.7, 0.05)
+    approx("...and so does the ring", SC.arc_secs(host), 9.7, 0.05)
+    second(host, 9)
+    approx("...and it is still counting where twelve would have been zero",
+        host.shown, 0.7, 0.05)
+    second(host, 1)
+    approx("landing on zero when the table actually closes", host.shown, 0, 0.05)
+    approx("...with the ring landing there too", SC.arc(host), 0, 0.01)
+
+    -- A GUEST ARRIVING LATE gets what is LEFT of the table, not a fresh
+    -- window: a full ring on a table with eight seconds in it promises time
+    -- that does not exist.
+    local guest = { party = true, t = 0, max_time = 8, grace_time = 0 }
+    SC.tick(guest, 0)
+    approx("a guest opens on what the table has left", guest.shown, 8)
+    second(guest, 8); approx("...and lands on zero with it", guest.shown, 0, 0.05)
+
+    -- The backstop that closes the dialog if the server never speaks again has
+    -- to outlive the table too, or it fires mid-deal.
+    check("the failsafe is measured from the party's window",
+        SC.failsafe_delay({ party = true }, 3), SC.PARTY_WINDOW + 3)
+end
+
 print("\n== nothing here throws on rubbish ==")
 do
     check("tick on a non-table", SC.tick(nil, 1), 0)

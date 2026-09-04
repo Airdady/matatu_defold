@@ -1794,7 +1794,21 @@ function M.start_invite_search(self, app_state, rebuild_cb, battle_type)
         self.invite_search = {
             active = true, t = 0, reel_ix = math.random(INVITE_AVATAR_MAX), spin_t = 0,
             stake = { amount = entry, charge = 0 },
-            max_time = M.SEARCH_WINDOW_FALLBACK,
+            -- THE TABLE'S WINDOW, NOT THE BATTLE SEARCH'S.
+            --
+            -- This opened on SEARCH_WINDOW_FALLBACK — twelve seconds, the
+            -- longest a ladder settles in — while a table is open for twenty.
+            -- search_clock never rewinds a countdown that turns out to be too
+            -- LOW (see the long note there), so the ring emptied and the digits
+            -- hit zero eight seconds before the table closed, then sat at zero
+            -- while players were still sitting down. The guess has to be the
+            -- longest this search can run, and for a table that is the join
+            -- window. PARTY_ROSTER re-aims it at the real closesAt a moment
+            -- later, downward, which is the direction that converges smoothly.
+            max_time = M.PARTY_JOIN_WINDOW,
+            -- And none of it is grace: nobody was invited to a table, so there
+            -- are no answers in flight for a tail to be held open for.
+            grace_time = 0,
             modal = true,
             party = true,
             subtitle = "opening your table",
@@ -1874,7 +1888,12 @@ end
 -- partyRules.ts. Only a backstop — a table states its own closesAt on every
 -- roster push and that is what the dialog actually counts down (see
 -- M.arm_party_failsafe and the ws_search_roster handler on the online screen).
-M.PARTY_JOIN_WINDOW = 20
+--
+-- Taken from search_clock rather than written again: the countdown module has
+-- to know the same figure to guess a party's window correctly, and two copies
+-- of it in two files is how the ring came to run on a battle's twelve in the
+-- first place.
+M.PARTY_JOIN_WINDOW = search_clock.PARTY_WINDOW
 
 --- THE DIALOG MUST NOT OUTLIVE THE TABLE.
 --
@@ -1919,7 +1938,11 @@ function M.join_party_search(self, app_state, rebuild_cb, p)
     self.invite_search = {
         active = true, t = 0, reel_ix = math.random(INVITE_AVATAR_MAX), spin_t = 0,
         stake = { amount = tonumber(p.entry) or 0, charge = 0 },
+        -- What the TABLE has left, not a fresh window: a guest arriving twelve
+        -- seconds into a twenty-second table has eight, and a ring that starts
+        -- full would promise time the table has not got.
         max_time = left,
+        grace_time = 0,
         modal = true,
         party = true,
         subtitle = "taking your seat",

@@ -57,6 +57,36 @@ M.CATCHUP_RATE = 3
 M.FALLBACK_WINDOW = 12
 M.FALLBACK_GRACE = 2
 
+--- ...AND WHAT A PARTY TABLE SHOWS, WHICH IS NOT THE SAME NUMBER.
+--
+-- This is the bug the paragraph above walked straight into. A table is open for
+-- twenty seconds (PARTY_JOIN_WINDOW_MS in be_matatu's partyRules.ts), not
+-- twelve — so guessing twelve is guessing SHORT, and this module deliberately
+-- refuses to rewind a countdown that turns out to be too low. The ring emptied
+-- and the digits hit zero at twelve while the table still had eight seconds of
+-- joining left in it, and then sat at zero watching people sit down.
+--
+-- The guess has to be the longest window THIS KIND of search can have. So the
+-- fallback is a property of the search rather than a constant: a party asks for
+-- the table's window, everything else asks for the ladder's.
+--
+-- A TABLE ALSO HAS NO GRACE. The tail a battle holds open is for answers
+-- already in flight to an invite the server sent out; nobody was invited to a
+-- table, so there is nothing in flight and nothing to hold it open for. It
+-- closes and deals with whoever is on it.
+M.PARTY_WINDOW = 20
+M.PARTY_GRACE = 0
+
+--- The window and grace to assume when the server has not said yet.
+--
+-- Kept here rather than at each call site so a mode cannot be given the wrong
+-- guess by one screen and the right one by another — which is exactly how the
+-- party search came to open on a battle's twelve.
+function M.defaults_for(sr)
+    if type(sr) == "table" and sr.party then return M.PARTY_WINDOW, M.PARTY_GRACE end
+    return M.FALLBACK_WINDOW, M.FALLBACK_GRACE
+end
+
 --- The countdown the server's numbers imply right now.
 --
 -- THE RING RUNS THE WHOLE WINDOW, INCLUDING THE ASSESSMENT.
@@ -74,11 +104,13 @@ M.FALLBACK_GRACE = 2
 -- Returns the seconds left and the length of the whole window.
 function M.target(sr)
     sr = sr or {}
-    local max_time = tonumber(sr.max_time) or M.FALLBACK_WINDOW
-    if max_time <= 0 then max_time = M.FALLBACK_WINDOW end
+    local win_default, grace_default = M.defaults_for(sr)
+
+    local max_time = tonumber(sr.max_time) or win_default
+    if max_time <= 0 then max_time = win_default end
 
     local grace = tonumber(sr.grace_time)
-    if grace == nil then grace = M.FALLBACK_GRACE end
+    if grace == nil then grace = grace_default end
     grace = math.max(0, math.min(grace, max_time - 1))
 
     local elapsed = math.max(0, tonumber(sr.t) or 0)
@@ -491,10 +523,15 @@ end
 -- The full window plus the caller's grace, measured from now — never minus an
 -- elapsed time, which is what used to make the dialog give up at eleven
 -- seconds while the server settled at twelve.
+-- The fallback is the SEARCH'S, not the ladder's, for the same reason target's
+-- is: a backstop armed on twelve seconds fires in the middle of a table that is
+-- open for twenty, and what it does when it fires is tell the player nobody sat
+-- down — while they are watching people sit down.
 function M.failsafe_delay(sr, extra)
     sr = sr or {}
-    local max_time = tonumber(sr.max_time) or M.FALLBACK_WINDOW
-    if max_time <= 0 then max_time = M.FALLBACK_WINDOW end
+    local win_default = M.defaults_for(sr)
+    local max_time = tonumber(sr.max_time) or win_default
+    if max_time <= 0 then max_time = win_default end
     return max_time + math.max(0, tonumber(extra) or 0)
 end
 
