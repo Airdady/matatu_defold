@@ -171,38 +171,86 @@ check("a table is only ever offered once, so LATER means later",
 check("...and at most two are on screen at a time",
   ONLINE_C:find("PARTY_BANNERS_MAX") ~= nil)
 
--- ── JOINING ─────────────────────────────────────────────────────────────────
-check("JOIN takes a seat through the same dialog the host watches fill",
-  ONLINE_C:find("right_panel%.join_party_search") ~= nil)
-check("...and that dialog counts down to the TABLE's deadline, not a fresh window",
-  RIGHT_C:find("local left    = closes > 0 and math%.max%(1, %(closes %- now_ms%) / 1000%)") ~= nil,
-  "a guest arriving partway through must not be promised time the table has not got")
--- THE DIALOG'S OWN CLOCK, on both sides of the table. It opened on the battle
--- search's twelve-second placeholder while a table is open for twenty, so the
--- ring hit zero with eight seconds of joining still to go.
-check("a party search re-aims its ring at the table's deadline on every seat",
-  ONLINE_C:find("search_clock%.adopt%(sr, roster%.remaining_ms, 0, nil%)") ~= nil)
--- And it opens on the right number to begin with. search_clock never rewinds a
--- countdown that turns out to be too LOW, so a guess of twelve on a
--- twenty-second table could not be corrected upward: the ring emptied and the
--- digits hit zero eight seconds early and sat there. See test_search_clock.lua.
-check("...and opens on the TABLE's window rather than a battle's",
-  RIGHT_C:match("party = true.-max_time = M%.PARTY_JOIN_WINDOW") ~= nil
-    or RIGHT_C:match("max_time = M%.PARTY_JOIN_WINDOW.-party = true") ~= nil)
-check("...with no grace tail, because nobody was invited to a table",
-  RIGHT_C:match("max_time = M%.PARTY_JOIN_WINDOW,%s*\n%s*grace_time = 0") ~= nil)
-check("...and that window is not written down twice",
-  RIGHT_C:find("M%.PARTY_JOIN_WINDOW = search_clock%.PARTY_WINDOW") ~= nil)
-check("...and nothing can leave the player in a modal the table has outlived",
-  RIGHT_C:find("function M%.arm_party_failsafe") ~= nil
-    and ONLINE_C:find("right_panel%.arm_party_failsafe") ~= nil,
-  "a party search has no Cancel: without a backstop a dropped socket is a dead app")
-check("...armed on the host's side too, from the moment the table is opened",
-  RIGHT_C:match("ws%.party_create.-M%.arm_party_failsafe") ~= nil)
-
-check("...and is told it is a party, so it counts seats rather than candidates",
+-- ── JOINING: THE TABLE DRAWS ITSELF, ON EVERY SCREEN ───────────────────────
+--
+-- A table used to feed dialog_search — the ring, the reel and the shortlist
+-- rail a tournament search uses — because from the player's side the two look
+-- alike: you opened something and you are watching people arrive.
+--
+-- They are not alike, and the rail is where it shows. A search rail holds
+-- CANDIDATES, out of whom the server picks one, which is why the reel goes on
+-- hunting beside them. A party's seats are neither: four chairs, known from
+-- the moment the table opens, everybody on them already in. What a player
+-- actually wants to know is how many chairs are LEFT — the one thing a rail
+-- that only draws arrivals cannot show.
+--
+-- And it was drawn by the ONLINE SCREEN, so it only existed there: a player
+-- who joined from the lobby or mid-game got a line of text and found out how
+-- it went when a board appeared.
+--
+-- Both are the same fix. The table is now the incoming overlay's, which is
+-- global and already carries every other invite.
+check("JOIN takes a seat and opens no dialog of its own",
   RIGHT_C:find("function M%.join_party_search") ~= nil
-    and RIGHT_C:match("function M%.join_party_search.-party = true") ~= nil)
+    and RIGHT_C:match("function M%.join_party_search.-ws%.party_join%(pid%)") ~= nil)
+-- Read the two PARTY branches themselves rather than the whole file: the
+-- NORMAL branch a few lines below each of them still opens a search dialog,
+-- and it should — a battle really does shortlist candidates.
+local function party_branch(from)
+  local at = RIGHT_C:find(from, 1, false)
+  if not at then return "" end
+  local rest = RIGHT_C:sub(at)
+  return rest:sub(1, (rest:find("return true", 1, true) or #rest) + 10)
+end
+check("...and the search dialog is not what a table opens any more",
+  party_branch("ws%.party_create"):find("invite_search", 1, true) == nil
+    and party_branch("function M%.join_party_search"):find("invite_search", 1, true) == nil,
+  "a table on the search dialog counts candidates, and a table has none")
+check("...on the host's side either",
+  RIGHT_C:match("ws%.party_create.-rebuild_cb%(%)") ~= nil)
+check("...so the online screen no longer re-aims a ring at a table's deadline",
+  ONLINE_C:find("search_clock%.adopt%(sr, roster%.remaining_ms, 0, nil%)") == nil)
+
+-- THE TABLE ITSELF, on the overlay: a roster puts it up, and only the server
+-- takes it down.
+check("a roster raises the table wherever the player is standing",
+  OVERLAY_C:find('hash%("party_roster"%)') ~= nil
+    and OVERLAY_C:find("open_party_table%(self, ws%.current_party%)") ~= nil)
+check("...as a full dialog, never the one-line strip",
+  OVERLAY_C:match("party_table = true.-banner = false") ~= nil)
+check("...and the input budget may not demote it to one",
+  OVERLAY_C:find("if self%.dialog and self%.dialog%.party_table then showing = nil end") ~= nil,
+  "a strip cannot show four chairs filling")
+check("...counting down to the TABLE's deadline, not a fresh window",
+  OVERLAY_C:match("open_party_table.-view%.closes_at %- now_ms") ~= nil,
+  "a guest arriving partway through must not be promised time the table has not got")
+check("...and the clock is not restarted by a seat filling",
+  OVERLAY_C:match("local same = prev and prev%.party_table and prev%.party_id == view%.party_id") ~= nil,
+  "a countdown reset by each arrival is a table that never closes")
+check("zero on the clock waits for the server rather than declaring failure",
+  OVERLAY_C:match("if self%.dialog%.party_table then%s*\n%s*if self%.dialog%.time_left < 0 then") ~= nil)
+check("...but not forever, so a dropped socket is never a dead app",
+  OVERLAY_C:find("PARTY_STALL_GRACE_SECONDS") ~= nil,
+  "a table has no Cancel: the entry is committed on the seat")
+check("...and that backstop is written down once, not on both surfaces",
+  RIGHT_C:find("function M%.arm_party_failsafe") == nil)
+check("a clear meant for a request never takes the table down",
+  OVERLAY_C:match('hash%("incoming_clear"%).-if self%.dialog and self%.dialog%.party_table then return end') ~= nil)
+check("the table is ended by the server saying so, and nothing else",
+  OVERLAY_C:find('hash%("party_over"%)') ~= nil
+    and OVERLAY_C:find('ws%.on%("party_cancelled"') ~= nil
+    and OVERLAY_C:find('ws%.on%("party_starting"') ~= nil)
+check("LEAVE sends the leave and waits to be told, rather than closing itself",
+  OVERLAY_C:match('id == "party_leave".-ws%.party_leave%(self%.dialog%.party_id%)') ~= nil,
+  "the host leaving takes the whole table, and a leave that raced the deal is too late")
+
+-- THE SEAT FLAG IS NOT THE OFFER FLAG. `dialog.party` means a strip offering a
+-- table you are NOT at, and the offer handler closes any dialog carrying it as
+-- soon as that table leaves the listing — which is the instant it fills. A
+-- seated table wearing the same flag would close itself at exactly the moment
+-- it succeeded.
+check("the seated table does not wear the offer strip's flag",
+  OVERLAY_C:match("party_table = true,%s*\n[^}]-party = true") == nil)
 
 -- ── THE SAME OFFER, EVERYWHERE ELSE ─────────────────────────────────────────
 check("the overlay is told about tables too", CTRL:find('"#incoming", "party_offer"', 1, true) ~= nil)

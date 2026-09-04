@@ -1779,45 +1779,29 @@ function M.start_invite_search(self, app_state, rebuild_cb, battle_type)
 
         ws.party_create(entry, M.party_mode_of(mb), M.party_cap_of(mb))
 
-        -- THE SAME DIALOG A TOURNAMENT USES, not a second one.
+        -- AND NOTHING IS OPENED HERE. THE TABLE DRAWS ITSELF.
         --
-        -- From the player's side the two are identical: you opened something,
-        -- and you are watching people arrive one at a time. dialog_search
-        -- already does exactly that — the roster, the arrival animation, the
-        -- per-player sound — so a party feeds it instead of drawing its own.
-        -- websocket_manager translates PARTY_ROSTER's seats into the same
-        -- `accepted` shape the tournament roster uses.
+        -- A table used to feed dialog_search — the same ring, reel and
+        -- shortlist rail a tournament search uses — on the theory that the two
+        -- are the same thing from the player's side: you opened something, and
+        -- you are watching people arrive.
         --
-        -- No cancel_id: a party table cannot be withdrawn once opened (the
-        -- entry is committed on the seat), and a Cancel button that cannot
-        -- cancel is worse than none.
-        self.invite_search = {
-            active = true, t = 0, reel_ix = math.random(INVITE_AVATAR_MAX), spin_t = 0,
-            stake = { amount = entry, charge = 0 },
-            -- THE TABLE'S WINDOW, NOT THE BATTLE SEARCH'S.
-            --
-            -- This opened on SEARCH_WINDOW_FALLBACK — twelve seconds, the
-            -- longest a ladder settles in — while a table is open for twenty.
-            -- search_clock never rewinds a countdown that turns out to be too
-            -- LOW (see the long note there), so the ring emptied and the digits
-            -- hit zero eight seconds before the table closed, then sat at zero
-            -- while players were still sitting down. The guess has to be the
-            -- longest this search can run, and for a table that is the join
-            -- window. PARTY_ROSTER re-aims it at the real closesAt a moment
-            -- later, downward, which is the direction that converges smoothly.
-            max_time = M.PARTY_JOIN_WINDOW,
-            -- And none of it is grace: nobody was invited to a table, so there
-            -- are no answers in flight for a tail to be held open for.
-            grace_time = 0,
-            modal = true,
-            party = true,
-            subtitle = "opening your table",
-        }
-        app_state.searching_invite = true
-        -- The table does not exist yet, so there is no closesAt to count down
-        -- to — the window is the backstop until the first PARTY_ROSTER states
-        -- the real deadline and re-arms this against it.
-        M.arm_party_failsafe(self, app_state, rebuild_cb, M.PARTY_JOIN_WINDOW)
+        -- They are not, and the rail is where it shows. A search rail holds
+        -- CANDIDATES, out of whom the server picks one, which is why the reel
+        -- goes on hunting beside them. A party's seats are neither: the table
+        -- is four chairs, known from the moment it opens, and everybody on it
+        -- is already in. What the player actually wants to know is how many
+        -- chairs are LEFT — the one thing a rail that only draws arrivals
+        -- cannot show.
+        --
+        -- So the table takes the incoming overlay instead (see
+        -- modules/dialog_party.lua), where every chair is drawn including the
+        -- empty ones. That surface is global, which fixes the other half of
+        -- this: a table drawn by the online screen only existed on the online
+        -- screen, so a player who joined from the lobby watched a toast.
+        --
+        -- The first PARTY_ROSTER comes back within a frame and puts the chairs
+        -- up, and the overlay carries the failsafe that used to be armed here.
         rebuild_cb()
         return true
     end
@@ -1884,72 +1868,35 @@ end
 -- every balance in the lobby; refusing here could only ever disagree with it.
 -- A balance that fell in between comes back as a PARTY_ERROR, which is the
 -- same path a full table takes.
--- The server's join window, in seconds: PARTY_JOIN_WINDOW_MS in be_matatu's
--- partyRules.ts. Only a backstop — a table states its own closesAt on every
--- roster push and that is what the dialog actually counts down (see
--- M.arm_party_failsafe and the ws_search_roster handler on the online screen).
+-- THE FAILSAFE THAT USED TO LIVE HERE MOVED WITH THE TABLE.
 --
--- Taken from search_clock rather than written again: the countdown module has
--- to know the same figure to guess a party's window correctly, and two copies
--- of it in two files is how the ring came to run on a battle's twelve in the
--- first place.
-M.PARTY_JOIN_WINDOW = search_clock.PARTY_WINDOW
-
---- THE DIALOG MUST NOT OUTLIVE THE TABLE.
+-- A party had no Cancel — the entry is committed on the seat — so nothing on
+-- screen could close its dialog except the server saying the table dealt or
+-- was called off, and a socket that dropped in those twenty seconds left the
+-- player in a modal with no way out. arm_party_failsafe was the answer while
+-- the table was drawn by this screen's search dialog.
 --
--- A party search has no Cancel button — the entry is committed on the seat, and
--- a button that cannot cancel is worse than none — so nothing on screen can
--- close this dialog except the server saying the table dealt or was called off.
--- If neither ever arrives (a socket that drops in the twenty seconds the table
--- is open, which is exactly when it costs the most) the player is left in a
--- modal with a spinner and no way out but restarting the app.
---
--- So the dialog carries the table's own deadline plus the grace every other
--- search uses, re-armed by each roster push against the deadline the server
--- just restated. fail_invite_search is what fires: with seats filled it waits
--- out MATCH_START_GRACE first, because a window closing is not the end of the
--- work — the server still has to charge, deal and send.
-function M.arm_party_failsafe(self, app_state, rebuild_cb, seconds)
-    local sr = self.invite_search
-    if not sr or not sr.party or sr.found or sr.failed then return end
-    if sr.timer_handle then pcall(timer.cancel, sr.timer_handle) end
-    local secs = math.max(1, tonumber(seconds) or M.PARTY_JOIN_WINDOW) + M.SEARCH_FAILSAFE_GRACE
-    sr.timer_handle = timer.delay(secs, false, function()
-        if self.invite_search == sr and not sr.found then
-            -- No reason passed: fail_invite_search decides what is true from
-            -- the seats. A caller asserting "nobody sat down" cannot know that
-            -- — it is a timer.
-            M.fail_invite_search(self, app_state, rebuild_cb, nil)
-        end
-    end)
-end
+-- The table is now the incoming overlay's (modules/dialog_party.lua), which is
+-- global, so the failsafe is too: see PARTY_STALL_GRACE_SECONDS in
+-- main/incoming.gui_script. Two copies of a rule about when to give up on a
+-- server is exactly how the ring came to run on a battle's twelve seconds.
 
 function M.join_party_search(self, app_state, rebuild_cb, p)
     p = type(p) == "table" and p or {}
     local pid = tostring(p.party_id or "")
     if pid == "" then return false end
 
-    local now_ms  = (socket and socket.gettime and socket.gettime() * 1000) or (os.time() * 1000)
-    local closes  = tonumber(p.closes_at) or 0
-    local left    = closes > 0 and math.max(1, (closes - now_ms) / 1000) or M.SEARCH_WINDOW_FALLBACK
-
     ws.party_join(pid)
 
-    self.invite_search = {
-        active = true, t = 0, reel_ix = math.random(INVITE_AVATAR_MAX), spin_t = 0,
-        stake = { amount = tonumber(p.entry) or 0, charge = 0 },
-        -- What the TABLE has left, not a fresh window: a guest arriving twelve
-        -- seconds into a twenty-second table has eight, and a ring that starts
-        -- full would promise time the table has not got.
-        max_time = left,
-        grace_time = 0,
-        modal = true,
-        party = true,
-        subtitle = "taking your seat",
-    }
-    app_state.searching_invite = true
-
-    M.arm_party_failsafe(self, app_state, rebuild_cb, left)
+    -- AND NOTHING IS OPENED HERE EITHER. See the note in start_invite_search's
+    -- PARTY branch: the table draws itself on the incoming overlay, chairs and
+    -- placeholders, on whatever screen the player is standing on. The guest
+    -- and the host now watch exactly the same thing, which is the point — they
+    -- are at the same table.
+    --
+    -- The deadline this used to work out from the listing's closesAt is gone
+    -- with it: the table restates its own on the first PARTY_ROSTER a frame
+    -- later, and a guess made here could only ever be the staler of the two.
     rebuild_cb()
     return true
 end

@@ -1002,24 +1002,16 @@ function on_message(self, message_id, message, sender)
         local sr = self.invite_search
         local roster = ws.last_search_roster
         if not sr.failed and type(roster) == "table" then
-            -- A PARTY'S CLOCK BELONGS TO THE TABLE, AND THE TABLE RESTATES IT
-            -- ON EVERY SEAT.
+            -- NO PARTY BRANCH HERE ANY MORE.
             --
-            -- The ring opened on a twelve-second placeholder — the battle
-            -- search's fallback — while a table is open for twenty. So it hit
-            -- zero with eight seconds of joining still to go, and sat at zero
-            -- while people were still sitting down. PARTY_ROSTER carries the
-            -- server's own closesAt as remaining_ms; adopt re-aims the ring at
-            -- it from wherever it currently is, so the correction is a change
-            -- of rate rather than a jump.
+            -- A table used to feed this dialog, which meant re-aiming the ring
+            -- at the table's own deadline on every seat and arming a separate
+            -- failsafe for it. A table is now drawn by the incoming overlay
+            -- (modules/dialog_party.lua) — every chair including the empty
+            -- ones, on every screen rather than only this one — so
+            -- self.invite_search is a tournament or battle search again and
+            -- nothing else.
             --
-            -- No grace: a table has none. It closes and deals with whoever is
-            -- on it, where a battle holds a tail open for answers in flight.
-            if sr.party and (tonumber(roster.remaining_ms) or 0) > 0 then
-                search_clock.adopt(sr, roster.remaining_ms, 0, nil)
-                right_panel.arm_party_failsafe(self, app_state,
-                    function() rebuild(self) end, roster.remaining_ms / 1000)
-            end
             -- ONE SOUND PER PLAYER, not one per message.
             --
             -- The server re-sends the WHOLE roster on every push, so counting
@@ -1066,12 +1058,6 @@ function on_message(self, message_id, message, sender)
             if #self.banners == 0 then self.banners = nil end
         end
         if self._active then self._rebuild_pending = true end
-    elseif message_id == hash("party_failed") and self.invite_search then
-        -- The table did not fill, or it could not be opened. Same ending the
-        -- tournament search has, through the same function — the reel plays
-        -- its miss and the overlay closes on its own timing.
-        right_panel.fail_invite_search(self, app_state, function() rebuild(self) end,
-            (message and message.reason) or "Nobody else sat down in time")
     elseif message_id == hash("party_offer") then
         -- AN OPEN TABLE ARRIVES ON THE SAME STRIP EVERY OTHER INVITE DOES.
         --
