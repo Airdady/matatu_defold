@@ -459,6 +459,29 @@ function M.setup_ws_listeners(self)
             M.start_game(self, gs)
         end
     end))
+
+    -- A SEAT THAT LEFT MID-HAND, which is the one case with no re-deal behind
+    -- it to redraw the table.
+    --
+    -- PARTY_PLAYER_OUT is what the server sends when somebody drops out while
+    -- the cards are still on the table — the hand carries on with one fewer
+    -- player, so there is no PARTY_NEXT_HAND to route through start_game and
+    -- no full sync coming. websocket_manager marks the seat eliminated on the
+    -- live state and moves the turn, and nothing was listening: the badge
+    -- stayed lit, the backs stayed in the arch, and the turn ring sat on a
+    -- chair nobody was in until the next state sync happened along.
+    --
+    -- Synced from ws.active_game_state rather than self.game_state because
+    -- that is the table the socket module actually mutated; the two are the
+    -- same object on every path that got here, and preferring the mutated one
+    -- means this cannot quietly redraw the state as it was before the drop.
+    table.insert(self.ws_listeners, ws.on("party_player_out", function()
+        local live = ws.active_game_state
+        if type(live) == "table" and next(live) ~= nil then
+            self.game_state = live
+            pcall(PB.sync, self, live)
+        end
+    end))
     table.insert(self.ws_listeners, ws.on("timer_update", function(d)
         msg.post(board, "ws_timer_update", { data = d })
     end))

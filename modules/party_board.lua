@@ -186,8 +186,19 @@ function M.sync(self, game_state)
     -- Whose clock is running. Only for an opponent — the local player's own
     -- turn already drives the ordinary "turn" HUD, and pushing both would put
     -- two countdowns on screen for the same turn.
+    --
+    -- AND NEVER ON A CHAIR NOBODY IS IN. The seat payload above already refuses
+    -- to mark an eliminated player active; this loop did not, so the same state
+    -- could grey a seat and then start a countdown on it.
+    --
+    -- The state that produces it is real rather than hypothetical: the server's
+    -- nextTurn skips players who are out, but PARTY_PLAYER_OUT carries
+    -- currentTurn only when the turn actually moved. A seat that drops out when
+    -- it was NOT their turn leaves the client holding "eliminated, and the turn
+    -- is still theirs" for exactly as long as it takes the next state to
+    -- arrive — and that is the window this drew a ring in.
     for _, s in ipairs(seats) do
-        if tostring(s.id) == current then
+        if tostring(s.id) == current and not (players[s.id] or {}).eliminated then
             util.notify_gui(GUI_HUD, "t4_active", { slot = s.slot, duration = 3.0 })
             break
         end
