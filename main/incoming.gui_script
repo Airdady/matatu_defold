@@ -682,6 +682,15 @@ end
 
 function on_message(self, message_id, message)
     if message_id == hash("incoming_request") then
+        -- A SEAT OUTRANKS A CHALLENGE.
+        --
+        -- The server refuses to route a request to somebody holding a party
+        -- seat, and retires the ones already in flight when they sit down, so
+        -- one should never arrive here. This is the belt to that braces: an
+        -- invite raised over a table the player has PAID for is a tap that can
+        -- only be refused, and the refusal reads as the party having failed.
+        if type(ws.current_party) == "table" and ws.current_party.partyId then return end
+
         local r   = ws.last_game_request or {}
         local raw = (ws.last_game_request or {}).raw or {}
 

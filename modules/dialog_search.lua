@@ -313,8 +313,17 @@ function M.draw(self, ctx, sr, reel_key)
     -- --- the shortlist rail, and everybody on their way to it -------------
     local rail_label, cards = nil, {}
     if joined > 0 and not sr.failed then
+        -- WHAT THE RAIL IS, WHICH IS NOT THE SAME THING IN BOTH MODES.
+        --
+        -- In a search these are CANDIDATES: they accepted, they are being held
+        -- while the window runs, and one of them will be chosen on tier fit at
+        -- the end of it. At a party they are PLAYERS: they sat down, they are
+        -- in, and nothing is going to choose between them — the table takes
+        -- whoever is on it when the clock stops, in the order they arrived.
+        -- "Held for you" over a party roster describes an assessment that
+        -- never happens.
         rail_label = track(self, ui.text(vmath.vector3(CX, ry + SEAT / 2 + 22, 0),
-            "HELD FOR YOU", "small", C.COL_DIM))
+            sr.party and "AT THE TABLE" or "HELD FOR YOU", "small", C.COL_DIM))
 
         for i, r in ipairs(roster) do
             local sx = seat_x(i)
@@ -326,7 +335,14 @@ function M.draw(self, ctx, sr, reel_key)
             -- mean rebuilding to animate.
             local nm  = track(self, ui.text(vmath.vector3(sx, ry - SEAT / 2 - 16, 0),
                 string.upper(r.username or "PLAYER"), "small", C.COL_WHITE))
-            local tbg, ttx = tier_colors(r)
+            -- AND NO TIER BADGE ON A PARTY SEAT, for the same reason.
+            --
+            -- The badge is on a candidate because their tier is the thing the
+            -- window will judge them by. Nobody at a table is being judged by
+            -- anything: the seats are first come, first served, and badging
+            -- them says a table sorts its players when it does not.
+            local tbg, ttx = nil, nil
+            if not sr.party then tbg, ttx = tier_colors(r) end
             local tb, tt
             if tbg then
                 tb = track(self, ui.box(vmath.vector3(sx, ry - SEAT / 2 - 34, 0), vmath.vector3(62, 15, 0), tbg))

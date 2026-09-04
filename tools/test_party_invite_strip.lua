@@ -41,6 +41,7 @@ local function read(path)
 end
 
 local ONLINE   = read("main/online.gui_script")
+local SEARCH   = read("modules/dialog_search.lua")
 local OVERLAY  = read("main/incoming.gui_script")
 local RIGHT    = read("modules/online_right.lua")
 local CTRL     = read("main/controller.script")
@@ -50,6 +51,7 @@ local CTRL     = read("main/controller.script")
 -- can trust.
 local function code(s) return (s:gsub("%-%-%[%[.-%]%]", ""):gsub("%-%-[^\n]*", "")) end
 local ONLINE_C, OVERLAY_C, RIGHT_C = code(ONLINE), code(OVERLAY), code(RIGHT)
+local SEARCH_C = code(SEARCH)
 
 -- ── THE STRIP ITSELF, BUILT BY THE REAL FUNCTION ────────────────────────────
 -- NOW is frozen so the countdown is arithmetic rather than a race with the
@@ -220,6 +222,28 @@ check("...and closes the strip when the table leaves the listing",
 -- worth interrupting anybody for.
 check("...and does not interrupt anybody for a table that is about to deal",
   OVERLAY_C:find("if left < 3 then return end") ~= nil)
+
+-- ── A SEAT OUTRANKS A CHALLENGE ─────────────────────────────────────────────
+-- The server refuses to route a request to or from a seated player and retires
+-- the ones already in flight; these are the client's half, which is what stops
+-- a tap that can only ever be refused.
+check("the lobby will not challenge anybody while we are at a table",
+  ONLINE_C:match('elseif id == "challenge".-if type%(ws%.current_party%) == "table" and ws%.current_party%.partyId then') ~= nil,
+  "a refusal that arrives as a round trip reads as a failure")
+check("...and drops the strips for requests the server has just retired",
+  ONLINE_C:match("if type%(ws%.current_party%) == \"table\" and ws%.current_party%.partyId and self%.banners then") ~= nil)
+check("the global overlay will not raise one over a table either",
+  OVERLAY_C:match('hash%("incoming_request"%).-if type%(ws%.current_party%) == "table" and ws%.current_party%.partyId then return end') ~= nil)
+
+-- ── AND NOBODY AT A TABLE IS BEING ASSESSED ─────────────────────────────────
+-- A search picks its opponent on tier fit at the end of the window. A table
+-- picks nobody: first come, first served, in arrival order. The two share this
+-- dialog, so the words and the badges have to say which one you are in.
+check("a party roster is not badged by skill",
+  SEARCH_C:find("if not sr%.party then tbg, ttx = tier_colors%(r%) end") ~= nil,
+  "a tier pill on a seat says a table sorts its players")
+check("...and the rail says what it is rather than what it is held for",
+  SEARCH_C:find('sr%.party and "AT THE TABLE" or "HELD FOR YOU"') ~= nil)
 
 print(("party invite strip: %d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

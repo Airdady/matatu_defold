@@ -1052,6 +1052,19 @@ function on_message(self, message_id, message, sender)
         -- before now taps through to a refusal — so it goes here rather than
         -- waiting for the next listing to arrive and say so.
         sync_party_banners(self)
+        -- AND SO DO CHALLENGES, IN BOTH DIRECTIONS.
+        --
+        -- The server retires every request naming a player the moment they
+        -- take a seat — the ones they received are declined, the ones they
+        -- sent are cancelled — so these strips are answering for requests that
+        -- no longer exist. Left up, ACCEPT on one is a tap that can only be
+        -- refused, and the refusal reads as the party having gone wrong.
+        if type(ws.current_party) == "table" and ws.current_party.partyId and self.banners then
+            for i = #self.banners, 1, -1 do
+                if not self.banners[i].party_id then table.remove(self.banners, i) end
+            end
+            if #self.banners == 0 then self.banners = nil end
+        end
         if self._active then self._rebuild_pending = true end
     elseif message_id == hash("party_failed") and self.invite_search then
         -- The table did not fill, or it could not be opened. Same ending the
@@ -1304,6 +1317,18 @@ function on_input(self, action_id, action)
                     end
                 elseif id == "challenge" then
                     local u = b.data or {}
+                    -- A SEAT OUTRANKS A CHALLENGE, and the tap is refused here
+                    -- rather than by the server.
+                    --
+                    -- The server declines a request from a player holding a
+                    -- party seat — it has to, it is the only side that knows
+                    -- — but a refusal that arrives as a round trip reads as a
+                    -- failure. This is a rule the client already knows: we are
+                    -- looking at our own table's roster while we tap.
+                    if type(ws.current_party) == "table" and ws.current_party.partyId then
+                        toast.info("You are at a party table")
+                        return true
+                    end
                     local sd, ex = nil, nil
                     if self.tab == TAB_BATTLES and type(u.myBattle) == "table" then
                         sd = type(u.myBattle.stake) == "table" and u.myBattle.stake or { amount = tonumber(u.myBattle.stakeAmount) or 0 }
