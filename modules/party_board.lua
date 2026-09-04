@@ -18,6 +18,9 @@
 ----------------------------------------------------------------------
 local BL = require "modules.board_layout"
 local util = require "modules.game_util"
+-- The chamber's own rule for a jack and an eight, so the words this board
+-- flashes and the turn game_flow gives up agree with the server.
+local PartyRules = require "modules.party_rules"
 
 local M = {}
 
@@ -157,6 +160,28 @@ function M.sync(self, game_state)
     local seats = M.seating(order, self.my_player_id)
     self.party_seats = self.party_seats or {}
 
+    -- HOW MANY ARE STILL IN, kept on self for two things that are not drawing:
+    -- game_flow asks it to decide whether a skip card ends this player's turn
+    -- (PartyRules.keeps_turn), and the layout below asks it for the geometry
+    -- the offline chamber uses at three or more.
+    local live = PartyRules.live_count(game_state) or #seats
+    local was_live = self.party_live_count
+    self.party_live_count = live
+
+    -- THE OFFLINE TABLE'S OWN GEOMETRY, not a duel's.
+    --
+    -- board_layout keys the deck position — and the arch the player's own hand
+    -- is drawn in — off how many people are at the table. The offline chamber
+    -- tells it through self.t4; an online party told it nothing, so a table of
+    -- four was drawn with the deck at the far right edge where a two-player
+    -- match puts it, and a flat hand. Same table, two different boards.
+    --
+    -- Recomputed only when the count CHANGES: update_layout walks the whole
+    -- screen, and this runs on every state push.
+    -- update_layout repositions both hands and the deck itself, so there is
+    -- nothing to reflow afterwards.
+    if was_live ~= live then pcall(BL.update_layout, self) end
+
     local current = tostring(game_state.currentTurn or "")
     for _, s in ipairs(seats) do
         local p = players[s.id] or {}
@@ -183,6 +208,25 @@ function M.sync(self, game_state)
         layout_backs(self, held, p.eliminated and 0 or count)
     end
 
+    -- WHAT THE TABLE JUST DID, in the chamber's own words.
+    --
+    -- At a table of four the player who lost their turn cannot otherwise tell
+    -- they were skipped rather than passed over by a reversal — the turn ring
+    -- simply lands somewhere unexpected. The server puts the answer on the
+    -- state for exactly one broadcast (moves/index.ts), and the chamber
+    -- already has the banner: t4_flash, the same one that says REVERSE! when a
+    -- bot plays a jack.
+    --
+    -- Keyed on lastActionAt, not on the text: two eights in a row are two
+    -- separate SKIP!s and both should be seen, while the same state arriving
+    -- twice (a resync, a reconnect) must not flash again.
+    local flash = tostring(game_state.lastTurnEffect or "")
+    local stamp = tostring(game_state.lastActionAt or "")
+    if flash ~= "" and stamp ~= "" and stamp ~= self._party_flash_at then
+        self._party_flash_at = stamp
+        util.notify_gui(GUI_HUD, "t4_flash", { text = flash })
+    end
+
     -- Whose clock is running. Only for an opponent — the local player's own
     -- turn already drives the ordinary "turn" HUD, and pushing both would put
     -- two countdowns on screen for the same turn.
@@ -201,6 +245,11 @@ function M.clear(self)
         for _, c in ipairs(seat.cards or {}) do pcall(go.delete, c.id) end
     end
     self.party_seats = nil
+    -- The layout reads this, so a duel following a party must not inherit a
+    -- four-seat deck position.
+    self.party_live_count = nil
+    self._party_flash_at = nil
+    pcall(BL.update_layout, self)
     util.notify_gui(GUI_HUD, "t4_clear", {})
 end
 

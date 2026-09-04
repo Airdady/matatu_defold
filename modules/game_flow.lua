@@ -16,6 +16,9 @@ local RE             = require "modules.rules_eval"
 local Tut            = require "modules.tutorial"
 local RQ             = require "modules.reshuffle_queue"
 local TL             = require "modules.turn_locks"
+-- What a jack and an eight do at a table of more than two. The client half of
+-- be_matatu's turnEffects.ts, and the offline chamber's own rule.
+local PartyRules     = require "modules.party_rules"
 
 -- Tutorial hooks must never be able to break live play: route every call
 -- through pcall so a walkthrough bug can only ever no-op.
@@ -191,6 +194,24 @@ function M.after_play_settled(self, rec, is_player, result, ticket)
                 else
                     self.next_turn()
                 end
+                return
+            end
+            -- A PARTY OF THREE OR MORE ENDS THE TURN ON A SKIP.
+            --
+            -- The branch above already sends an OFFLINE table of four to
+            -- tournament4.apply_skip, which passes the turn on — skipped or
+            -- reversed — and never reopens the hand. The ONLINE party fell
+            -- through to here instead and reopened it, so the same card kept
+            -- the turn against people and gave it away against bots, and the
+            -- server (which had already passed the turn on) rejected whatever
+            -- was played next.
+            --
+            -- Heads-up is untouched: with two players "the next player loses
+            -- their turn" IS play again, which is what reopen_kept_turn is.
+            if self.online_mode
+               and not PartyRules.keeps_turn(rec and rec.v, self.party_live_count) then
+                self.deactivate_turn()
+                OnlineHandler.end_turn(self)
                 return
             end
             reopen_kept_turn(self)
