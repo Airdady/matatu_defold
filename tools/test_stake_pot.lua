@@ -15,6 +15,26 @@
 --
 -- Their board does not exist at that moment (the dialog holds the screen for
 -- another 1.8s), so theirs is raised when the screen actually changes.
+--
+-- REPORTED AGAIN, and it was a second door into the same room: mostly
+-- tournaments, one side with no pot at the start of a match.
+--
+-- The START handler raised the pot only when the screen had to CHANGE to reach
+-- the game — `if arriving then raise_stake_pot(gs) end`. That is one player's
+-- experience of a match and not the other's, and in a tournament it is often
+-- neither: the previous match's result modal sits on the game screen, so when
+-- the next match starts this player is already there, `arriving` is false, and
+-- no pot is raised — while the opponent, who happened to be back on the
+-- tournaments screen, arrives and gets one.
+--
+-- "Am I arriving?" is the wrong question. The right one is "is there already a
+-- pot on this board?", which is exactly what a round CONTINUATION means — the
+-- same match carrying on with the bundle still sitting there, since game-over
+-- settles or dissolves it only when the round does not continue. Both handlers
+-- now ask it the same way, through one function, so they cannot drift.
+--
+-- And a third door: the reconnect resume inside the identify handler shows the
+-- board and never raised one at all.
 
 local SIM = dofile("tools/defold_sim.lua")
 -- controller.script registers a window listener at init; the stub has none,
@@ -151,6 +171,84 @@ accepted(500)
 SIM.pump(0.5)
 check("the next ROUND of a match does not replay the collection",
       #pot_messages(), 0)
+
+----------------------------------------------------------------------
+print("")
+print("A NEW MATCH THAT STARTS WITH THE PLAYER ALREADY ON THE BOARD")
+----------------------------------------------------------------------
+-- The tournament case. The last match's result modal is on the game screen, so
+-- game_active has been cleared (gameover sets it false the moment it opens) and
+-- the pot was settled or dissolved with it. The next match arrives with this
+-- player already on the game screen: nothing is arriving, and there is no pot.
+reset_coins()
+SIM.components.controller.self.screen = "game"
+app_state.game_active = false
+app_state.searching_tournament = false
+app_state.searching_invite = false
+started(500)
+SIM.pump(0.5)
+local on_board = pot_messages()
+check("a START for a new match raises one even with no screen change", #on_board, 1)
+check("...at that match's own value", on_board[1] and on_board[1].amount, 1000)
+
+-- And the same through the accept path, which is the one that was already
+-- right — pinned so the two cannot drift apart again.
+reset_coins()
+SIM.components.controller.self.screen = "game"
+app_state.game_active = false
+accepted(500)
+SIM.pump(0.5)
+check("...and so does an ACCEPT in the same position", #pot_messages(), 1)
+
+-- The round continuation is still the one case that must NOT raise: the pot
+-- never left the board, and raising it would replay the whole collection over
+-- a bundle that is already sitting there.
+reset_coins()
+SIM.components.controller.self.screen = "game"
+app_state.game_active = true
+started(500)
+SIM.pump(0.5)
+check("a continuing round still replays nothing", #pot_messages(), 0)
+
+----------------------------------------------------------------------
+print("")
+print("A GAME RESUMED BY RECONNECTING")
+----------------------------------------------------------------------
+-- Close the app mid-match and reopen it: IDENTIFY's own reply CARRIES the
+-- active game, the controller shows the board straight from it — and used to
+-- do that without a pot, so the player who dropped came back to a board with
+-- the stake missing while the one who never dropped still had theirs.
+--
+-- The state is sent ON THE IDENTIFY, which is where a real reconnect gets it.
+-- It used to be pre-set on the socket module and the IDENTIFY sent empty, and
+-- that is now a contradiction rather than a shortcut: an IDENTIFY carrying no
+-- game means the server HAS no game for us — every other outcome returns
+-- before that point — so the client drops whatever it was holding instead of
+-- putting a finished match back on screen. See test_missed_gameover.lua.
+reset_coins()
+SIM.components.controller.self.screen = "lobby"
+app_state.game_active = false
+app_state.mode = "offline"
+ws.active_game_state = {}
+SIM.server_send({ type = "IDENTIFY", data = {
+    _id = "p1", username = "Me", balance = 5000,
+    gameState = { gameId = "g9", status = "ACTIVE",
+                  stake = { amount = 500, charge = 0, points = 0 },
+                  players = {}, deck = {}, playedCards = {} },
+} })
+SIM.pump(0.5)
+local resumed = pot_messages()
+check("the pot comes back with the board", #resumed, 1)
+check("...carrying the stake it was played for", resumed[1] and resumed[1].amount, 1000)
+
+-- AND AN IDENTIFY THAT CARRIES NO GAME RAISES NOTHING, because there is no
+-- board to raise it on: the match is over and the client has just stopped
+-- holding it.
+reset_coins()
+SIM.components.controller.self.screen = "lobby"
+SIM.server_send({ type = "IDENTIFY", data = { _id = "p1", username = "Me", balance = 5000 } })
+SIM.pump(0.5)
+check("a reconnect with no game raises no pot", #pot_messages(), 0)
 
 print("")
 print(("%d passed, %d failed"):format(pass, fail))

@@ -93,18 +93,15 @@ function M.draw(self, ctx, d, a)
         track(self, ui.text(vmath.vector3(CX, bundle_y + 55, 0), "VS", "title", with_a(ctx.DLG_RED, a)))
     end
 
-    -- Render Dynamic Coin Bundle
+    -- Render Dynamic Coin Bundle. The ladder that picks the pile lives in
+    -- ui.lua now — it was written out here, in dialog_search, in the savings
+    -- card, in the board HUD and in the party table, and five copies of "which
+    -- coin art stands for this many coins" is five chances for the same pot to
+    -- be drawn as three different piles.
     if amt > 0 then
-        local img = "100"
-        if pot_amt >= 2000 then img = "2000"
-        elseif pot_amt >= 1000 then img = "1000"
-        elseif pot_amt >= 500 then img = "500"
-        elseif pot_amt >= 200 then img = "200"
-        end
-
-        local bundle = track(self, gui.new_box_node(vmath.vector3(CX, bundle_y, 0), vmath.vector3(96, bundle_h, 0)))
+        local bundle = track(self, ui.coin_pot(vmath.vector3(CX, bundle_y, 0),
+            vmath.vector3(96, bundle_h, 0), pot_amt))
         gui.set_color(bundle, with_a(vmath.vector4(1, 1, 1, 1), a))
-        pcall(function() gui.set_texture(bundle, "coins"); gui.play_flipbook(bundle, hash(img)) end)
     end
 
     -- Simple text countdown timer strictly below the bundle

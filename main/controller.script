@@ -825,6 +825,12 @@ function init(self)
         msg.post("#lobby", "auth_state_changed")
     end))
 
+    -- Forward-declared: the resume path inside the identify handler below has
+    -- to raise the pot too, and it is registered before the function itself is
+    -- written. Without this the name in that closure would resolve to a global
+    -- — nil at call time, and a pcall away from being invisible.
+    local raise_stake_pot
+
     table.insert(self.tokens, ws.on("identify_success", function()
         self._identify_recoveries = 0
         -- The only signal that means CONNECTED. Everything earlier — a token,
@@ -909,6 +915,15 @@ function init(self)
         if self.screen ~= "game" and ws.active_game_state and next(ws.active_game_state or {}) ~= nil then
             app_state.mode = "online"
             show(self, "game")
+            -- AND THE POT COMES BACK WITH THE BOARD.
+            --
+            -- This is the third way onto the game screen and the only one that
+            -- never raised one: close the app mid-match and reopen it, and the
+            -- game resumed with the stake missing from the board — for the
+            -- player who reconnected, while the one who never dropped still
+            -- had theirs. Same one-sided pot the two handlers below were fixed
+            -- for, arriving by a different door.
+            raise_stake_pot(ws.active_game_state)
         end
     end))
 
@@ -939,7 +954,7 @@ function init(self)
     -- `or 500`, inventing a 1,000-coin pot from a payload with no stake, and a
     -- wrong number about money is worse than no bundle), but no exceptions
     -- either.
-    local function raise_stake_pot(gs)
+    function raise_stake_pot(gs)
         local plan = champ_board.plan(gs, ws.current_user_data)
         app_state.board_watermark = plan.watermark
         app_state.board_coins_may_settle = champ_board.coins_may_settle(plan)
@@ -951,6 +966,21 @@ function init(self)
         })
         -- Keep in sync with main/coins.gui_script's POT_REST_X.
         pcall(msg.post, "#coins", "coin_pot_to", { x = plan.pot.x, y = plan.pot.y })
+    end
+
+    -- IS THERE ALREADY A POT ON THIS BOARD?
+    --
+    -- The one question that decides whether a new game state needs one raised,
+    -- asked the same way by both handlers below so they cannot drift.
+    --
+    -- Between two ROUNDS of one match the bundle is still sitting there and
+    -- still holds the stake — game-over settles or dissolves it only when the
+    -- round does NOT continue — so raising it again would replay the whole
+    -- collection animation over a pot that never left. Every other case is a
+    -- new match on a board with nothing on it, whether or not the player had
+    -- to change screen to get there.
+    local function is_round_continuation(self_, arriving)
+        return (not arriving) and self_.screen == "game" and app_state.game_active
     end
 
     local function intercept_for_search(self_, gs)
@@ -981,6 +1011,52 @@ function init(self)
         return false
     end
 
+    -- A RESULT THAT ARRIVES WITH NO BOARD TO LAND ON.
+    --
+    -- The board's own game_over listener is registered when the board is
+    -- BUILT (online_handler.setup_ws_listeners), so a GAME_OVER reaching a
+    -- player who is not on the game screen has nothing listening for it. That
+    -- is exactly the reconnect case: a game that ended while somebody was
+    -- offline is replayed to them on IDENTIFY — the server keeps it in
+    -- missedGameResults for precisely this — and it landed on a lobby, where
+    -- it was dropped. The player was simply never told they had lost, or won.
+    --
+    -- It used to be told to them because the client kept the finished game
+    -- cached and the resume above put the board back up; that is the bug on
+    -- the other side of this one, and it did far more harm than good (see the
+    -- IDENTIFY note in websocket_manager: they could play on into a match the
+    -- server had already settled). So the cache is dropped now, and the result
+    -- is brought to the screen deliberately instead of arriving by accident.
+    --
+    -- Only when the game screen is not already up: the board handles its own
+    -- endings, and a second hand on the wheel there would show the modal twice.
+    table.insert(self.tokens, ws.on("game_over", function()
+        if self.screen == "game" then return end
+        local final = ws.pending_game_over_state
+        if type(final) ~= "table" or next(final) == nil then return end
+        ws.pending_game_over_state = nil
+
+        -- The board builds from the active state, so the FINAL position is
+        -- what it is given: the hands as they ended, the pot as it was won.
+        -- This is the one place a finished game is deliberately put back into
+        -- that field, immediately before the screen that consumes it.
+        ws.active_game_state = final
+        app_state.mode = "online"
+        show(self, "game")
+
+        -- NO NUDGE FROM HERE. `forward("game_over", "#game_logic",
+        -- "ws_game_over")` further down already posts it for every game over
+        -- there is, and posting a second one would run the board's ending
+        -- twice.
+        --
+        -- The ordering is what makes that enough, and it is not an accident:
+        -- this listener is registered BEFORE that forward, so on one emit the
+        -- screen is enabled first and the result posted second. Defold
+        -- delivers both in the order they were queued, so the board is up and
+        -- listening by the time its ws_game_over arrives — which is exactly
+        -- what was not true when the result landed on a lobby.
+    end))
+
     table.insert(self.tokens, ws.on("game_start", function(gs)
         if type(gs) == "table" and next(gs) ~= nil then ws.active_game_state = gs end
         -- AN OFFLINE GAME IN PROGRESS OWNS THE SCREEN — see
@@ -1003,7 +1079,25 @@ function init(self)
         -- A START that lands on a player who never saw GAME_REQUEST_ACCEPTED
         -- (handlePlayerReady broadcasts it to both sides, and a reconnect can
         -- deliver this one alone) still has to put the stake on their board.
-        if arriving then raise_stake_pot(gs) end
+        --
+        -- AND "ARRIVING" IS THE WRONG QUESTION TO ASK ABOUT IT.
+        --
+        -- This raised the pot only when the screen had to change to get to the
+        -- game, which is one player's experience of a match and not the other's
+        -- — and in a TOURNAMENT it is the common case that it is neither. The
+        -- previous match's result modal sits on the game screen; when the next
+        -- match starts, this player is already there, so `arriving` is false
+        -- and the pot was never raised — while their opponent, who happened to
+        -- be back on the tournaments screen, arrived and got one. Two players,
+        -- one match, one pot between them.
+        --
+        -- The real question is whether a pot is ALREADY on the board, and that
+        -- is what a round continuation means: the same match carrying on, with
+        -- the bundle still sitting there (game-over only settles or dissolves
+        -- it when the round does NOT continue). Anything else is a new match
+        -- and needs its own. Same rule the accept handler below states, so the
+        -- two cannot drift apart.
+        if not is_round_continuation(self, arriving) then raise_stake_pot(gs) end
     end))
 
     table.insert(self.tokens, ws.on("game_request_accepted", function(gs)
@@ -1023,12 +1117,9 @@ function init(self)
         end
         app_state.mode = "online"
         if intercept_for_search(self, gs) then return end
-        -- Between two ROUNDS of one match the pot is already on screen and
-        -- still holds the stake — raising it again would replay the whole
-        -- collection animation over a bundle that never left.
-        local is_round_continuation = (self.screen == "game") and app_state.game_active
+        local continuing = is_round_continuation(self, self.screen ~= "game")
         if self.screen ~= "game" then show(self, "game") else msg.post("#game_logic", "ws_new_game_start") end
-        if not is_round_continuation then raise_stake_pot(gs) end
+        if not continuing then raise_stake_pot(gs) end
     end))
 
     local function broadcast(evt)
