@@ -127,6 +127,37 @@ do
     local view = party_dialog.view(wire())
     check("the table's size is the server's two numbers, not our constant", view.size, 4)
 
+    -- THE POT MUST NOT LAND ON THE CHAIRS.
+    --
+    -- It did. The bundle sat at a hand-picked offset from the dialog's centre
+    -- while the chairs sat at another, and with an 88px pile and 84px chairs
+    -- the two simply overlapped — the coins were drawn straight through the
+    -- placeholder avatars waiting to be filled.
+    --
+    -- Nothing below the chairs is chosen independently any more: the row's own
+    -- bottom edge is measured and everything under it hangs off that. Checked
+    -- at every table size the layout can produce, including the ones that
+    -- shrink the chairs, because that is the change that would have broken a
+    -- pair of fixed offsets.
+    for _, seats in ipairs({ 2, 3, 4, 5, 6, 8 }) do
+        local L = party_dialog.layout(640, 360, seats)
+        ok(("a %d-seat table keeps the pile below the chairs"):format(seats),
+            L.pot_top < L.chairs_bottom,
+            ("pot_top=%.0f chairs_bottom=%.0f"):format(L.pot_top, L.chairs_bottom))
+        ok(("...with air between them at %d seats"):format(seats),
+            L.chairs_bottom - L.pot_top >= 12)
+        -- And the column below it stays in order, top to bottom.
+        ok(("...and the figure, the each-line and the clock follow it at %d"):format(seats),
+            L.figure_y < L.pot_y and L.each_y < L.figure_y and L.status_y < L.each_y)
+    end
+    -- The clearance is DERIVED, so shrinking the chairs moves the pot with
+    -- them rather than eating into the gap.
+    local wide, narrow = party_dialog.layout(640, 360, 4), party_dialog.layout(640, 360, 8)
+    check("the gap is the same however wide the table is",
+        wide.chairs_bottom - wide.pot_top, narrow.chairs_bottom - narrow.pot_top)
+    ok("...and a narrower table brings the pot up with it",
+        narrow.pot_y > wide.pot_y)
+
     ok("the table draws", draw(wire(), 14))
     check("one placeholder per empty chair", count("WAITING"), 2)
     check("the host is named as the host", count("HOST"), 1)

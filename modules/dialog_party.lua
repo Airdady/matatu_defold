@@ -164,6 +164,55 @@ local function seat_layout(cx, n)
     return size, cx - total / 2 + size / 2, size + SEAT_GAP
 end
 
+-- ── THE VERTICAL RHYTHM, DERIVED RATHER THAN PICKED ──────────────────────────
+--
+-- The pot was landing ON the empty chairs. Its bundle sat at a hand-picked
+-- offset from the dialog's centre while the chairs sat at another, and with an
+-- 88px pile and 84px chairs the two numbers simply overlapped: the coins were
+-- drawn straight through the placeholder avatars.
+--
+-- Two offsets chosen independently will always be one layout change away from
+-- colliding, so nothing below the chairs is chosen any more. The row's own
+-- bottom edge — the chair, its label, and the ink that label actually occupies
+-- — is measured, and everything under it hangs off that. Shrink the chairs on
+-- a narrow screen and the pot follows them up; grow them and it moves down.
+local SEAT_LABEL_DROP = 18   -- the name's baseline, below the chair's edge
+local SEAT_LABEL_INK  = 10   -- how far a "small" label reaches below its baseline
+local POT_CLEARANCE   = 18   -- clear air between that ink and the top of the pile
+local POT_SIZE        = 88   -- the same pile the search dialog draws
+local POT_FIGURE_GAP  = 18   -- the figure, under the pile
+local POT_EACH_GAP    = 22   -- "200 each", under the figure
+local STATUS_GAP      = 26   -- and the countdown under that
+
+--- Every y this dialog uses, worked out from the one row that has a size.
+--
+-- Exposed so the layout can be asserted rather than eyeballed: the property
+-- that matters is that `pot_top` sits BELOW `chairs_bottom`, and that is a
+-- number a test can read.
+function M.layout(cx, cy, n)
+    local size, left, step = seat_layout(cx, n)
+    local seat_y   = cy + 52
+    local label_y  = seat_y - size / 2 - SEAT_LABEL_DROP
+    -- The lowest ink in the chair row: the bottom of the WAITING / name label,
+    -- not the bottom of the avatar.
+    local chairs_bottom = label_y - SEAT_LABEL_INK
+    local pot_y    = chairs_bottom - POT_CLEARANCE - POT_SIZE / 2
+    local figure_y = pot_y - POT_SIZE / 2 - POT_FIGURE_GAP
+    return {
+        seat_size = size, seat_left = left, seat_step = step,
+        seat_y = seat_y,
+        seat_label_y = label_y,
+        host_y = seat_y + size / 2 + 16,
+        chairs_bottom = chairs_bottom,
+        pot_y = pot_y,
+        pot_size = POT_SIZE,
+        pot_top = pot_y + POT_SIZE / 2,
+        figure_y = figure_y,
+        each_y = figure_y - POT_EACH_GAP,
+        status_y = figure_y - POT_EACH_GAP - STATUS_GAP,
+    }
+end
+
 --- The whole table.
 --
 -- `d` is the dialog record incoming.gui_script built from a PARTY_ROSTER:
@@ -216,8 +265,11 @@ function M.draw(self, ctx, d, a)
     track(self, ui.text(vmath.vector3(CX, CY + 138, 0), mode_txt, "small", with_a(C.COL_MID, a)))
 
     -- ── The chairs ───────────────────────────────────────────────────────────
-    local size, left, step = seat_layout(CX, n)
-    local seat_y  = CY + 40
+    -- Every y below the title comes from one place, so the pot cannot land on
+    -- the chairs again. See M.layout.
+    local L       = M.layout(CX, CY, n)
+    local size, left, step = L.seat_size, L.seat_left, L.seat_step
+    local seat_y  = L.seat_y
     local my_id   = tostring(ws.get_current_user_id() or "")
     local arrived = tonumber(d.arrived_index)
     local reel_at = M.next_empty(p)
@@ -246,14 +298,14 @@ function M.draw(self, ctx, d, a)
             -- are already the widest thing in the row, and a suffix on one of
             -- them would push that label past its neighbours.
             if seat.user_id == p.host_id then
-                track(self, ui.text(vmath.vector3(x, seat_y + size / 2 + 16, 0), "HOST",
+                track(self, ui.text(vmath.vector3(x, L.host_y, 0), "HOST",
                     "small", with_a(SEAT_HOST, a)))
             end
 
             local is_me = seat.user_id == my_id
             local label = is_me and "YOU" or tostring(seat.username):upper()
             if #label > 10 then label = label:sub(1, 9) .. "." end
-            track(self, ui.text(vmath.vector3(x, seat_y - size / 2 - 18, 0), label, "small",
+            track(self, ui.text(vmath.vector3(x, L.seat_label_y, 0), label, "small",
                 with_a(is_me and ctx.DLG_SEARCH or C.COL_WHITE, a)))
 
             chairs[i] = { face = face, flash = flash, base = size }
@@ -292,40 +344,42 @@ function M.draw(self, ctx, d, a)
                     with_a(SEAT_EMPTY_RING, a)))
             end
 
-            track(self, ui.text(vmath.vector3(x, seat_y - size / 2 - 18, 0), "WAITING", "small",
+            track(self, ui.text(vmath.vector3(x, L.seat_label_y, 0), "WAITING", "small",
                 with_a(C.COL_DIM, a)))
         end
     end
 
-    -- ── The pot ──────────────────────────────────────────────────────────────
-    local entry   = p.entry
-    local pot     = M.pot_of(p)
-    local pot_y   = CY - 62
+    -- ── The pot, BELOW the chairs ────────────────────────────────────────────
+    local entry    = p.entry
+    local pot      = M.pot_of(p)
     local pot_from = tonumber(d.pot_from) or pot
 
     local bundle
     if entry > 0 then
         -- THE REAL POT BUNDLE, the same one the challenge dialog and the board
         -- HUD draw: the "coins" atlas, the tier as the animation, through the
-        -- one helper that knows that pair. Sized and placed like the search
-        -- dialog's — the pile above, the figure directly under it — rather
-        -- than as a small icon beside the text, because this is the thing on
-        -- the screen that says what the table is worth.
+        -- one helper that knows that pair. The pile above, the figure directly
+        -- under it, exactly as the search dialog stacks them — and hung off
+        -- the chair row's own bottom edge, so it can no longer be drawn
+        -- through the placeholder avatars.
         bundle = track(self, ui.coin_pot(
-            vmath.vector3(CX, pot_y + 46, 0), vmath.vector3(88, 88, 0), pot_from))
+            vmath.vector3(CX, L.pot_y, 0), vmath.vector3(L.pot_size, L.pot_size, 0), pot_from))
         gui.set_color(bundle, vmath.vector4(1, 1, 1, a))
     end
 
-    local pot_node = track(self, ui.text(vmath.vector3(CX, pot_y, 0),
+    -- A practice table has no pile, so its words take the pile's place rather
+    -- than leaving a hole in the middle of the column.
+    local pot_node = track(self, ui.text(
+        vmath.vector3(CX, entry > 0 and L.figure_y or L.pot_y, 0),
         entry > 0 and (commas(math.floor(pot_from)) .. " POT") or "PRACTICE TABLE",
         "helvetica_black", with_a(C.COL_GOLD, a)))
     if entry > 0 then
-        track(self, ui.text(vmath.vector3(CX, pot_y - 24, 0),
+        track(self, ui.text(vmath.vector3(CX, L.each_y, 0),
             commas(entry) .. " each", "small", with_a(C.COL_MID, a)))
     end
 
     -- ── How long is left ─────────────────────────────────────────────────────
-    local line_node = track(self, ui.text(vmath.vector3(CX, CY - 108, 0), "", "body",
+    local line_node = track(self, ui.text(vmath.vector3(CX, L.status_y, 0), "", "body",
         with_a(C.COL_GOLD, a)))
 
     -- Everything the per-frame updater needs, and nothing it would have to
