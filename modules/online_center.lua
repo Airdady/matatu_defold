@@ -301,7 +301,14 @@ function M.draw(self, ctx)
         local pu = rows[i]
         local row_cy = y - (i-1) * step
         if row_cy + row_h/2 >= list_bottom and row_cy - row_h/2 <= list_top then
-            local playing = pu.gameId and pu.gameId ~= ""
+            -- AT A TABLE COUNTS AS BUSY.
+            --
+            -- A seated player has paid an entry and is watching a twenty-second
+            -- clock, and the server refuses every request to them for exactly
+            -- that reason. A row that still offered CHALLENGE would be a button
+            -- that cannot work: the player taps it, waits, and is told no.
+            local at_table = pu.inParty and true or false
+            local playing = at_table or (pu.gameId and pu.gameId ~= "")
             local is_ai   = pu.isAI or tostring(pu._id or ""):find("^ai_bot")
 
             local rowcol = (i % 2 == 0)
@@ -319,9 +326,16 @@ function M.draw(self, ctx)
                 badge_x = badge_x + 36
             end
             if playing then
-                track(self, ui.box(vmath.vector3(badge_x + 6, row_cy, 0), vmath.vector3(6, 6, 0), C.COL_RED))
-                txtL(self, badge_x + 16, row_cy, "PLAYING", "small", vmath.vector4(1.0, 0.5, 0.5, 1.0))
-                badge_x = badge_x + 84
+                -- Two reasons, two words. "PLAYING" and "AT A TABLE" are not
+                -- the same wait — one ends when a game does, the other in at
+                -- most twenty seconds — and a player deciding whether it is
+                -- worth waiting for somebody deserves to know which.
+                local dot   = at_table and vmath.vector4(1.0, 0.84, 0.20, 1.0) or C.COL_RED
+                local label = at_table and "AT A TABLE" or "PLAYING"
+                track(self, ui.box(vmath.vector3(badge_x + 6, row_cy, 0), vmath.vector3(6, 6, 0), dot))
+                txtL(self, badge_x + 16, row_cy, label, "small",
+                    at_table and vmath.vector4(1.0, 0.90, 0.60, 1.0) or vmath.vector4(1.0, 0.5, 0.5, 1.0))
+                badge_x = badge_x + (at_table and 108 or 84)
             end
 
             -- KNOCKOUT badge sits next to the name when this battle is a

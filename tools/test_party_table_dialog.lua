@@ -307,5 +307,34 @@ do
     ok("and does not leave the app input-dead", not app_state.input_blocked())
 end
 
+----------------------------------------------------------------------
+print("A PLAYER AT A TABLE READS AS BUSY, NOT AS AVAILABLE")
+----------------------------------------------------------------------
+do
+    for name in pairs(package.loaded) do
+        if name:match("^modules%%.") then package.loaded[name] = nil end
+    end
+    package.path = ROOT .. "?.lua;" .. package.path
+    local SIM = dofile(ROOT .. "tools/defold_sim.lua")
+    SIM.install_gui_stub()
+
+    local sort = require("modules.player_sort")
+
+    -- `inParty` is the flag broadcastOnlineUsers now sends beside inGameWith.
+    -- The server already refuses every request to a seated player; without
+    -- this the lobby still drew a CHALLENGE button over one, and the only way
+    -- to find out was to tap it and be told no.
+    ok("a seated player counts as busy", sort.is_playing({ _id = "a", inParty = true }))
+    ok("a player mid-game still does", sort.is_playing({ _id = "b", gameId = "g1" }))
+    ok("an idle one still does not", not sort.is_playing({ _id = "c" }))
+    ok("nor does one whose game id is empty", not sort.is_playing({ _id = "d", gameId = "" }))
+
+    local src = io.open(ROOT .. "modules/online_center.lua"):read("a")
+    ok("the lobby row reads the same flag", src:find("pu.inParty", 1, true) ~= nil)
+    ok("...and says which kind of busy it is", src:find("AT A TABLE", 1, true) ~= nil)
+    ok("...and attaches no challenge to it",
+        src:find("if not playing then", 1, true) ~= nil)
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
