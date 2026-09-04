@@ -1011,6 +1011,52 @@ function init(self)
         return false
     end
 
+    -- A RESULT THAT ARRIVES WITH NO BOARD TO LAND ON.
+    --
+    -- The board's own game_over listener is registered when the board is
+    -- BUILT (online_handler.setup_ws_listeners), so a GAME_OVER reaching a
+    -- player who is not on the game screen has nothing listening for it. That
+    -- is exactly the reconnect case: a game that ended while somebody was
+    -- offline is replayed to them on IDENTIFY — the server keeps it in
+    -- missedGameResults for precisely this — and it landed on a lobby, where
+    -- it was dropped. The player was simply never told they had lost, or won.
+    --
+    -- It used to be told to them because the client kept the finished game
+    -- cached and the resume above put the board back up; that is the bug on
+    -- the other side of this one, and it did far more harm than good (see the
+    -- IDENTIFY note in websocket_manager: they could play on into a match the
+    -- server had already settled). So the cache is dropped now, and the result
+    -- is brought to the screen deliberately instead of arriving by accident.
+    --
+    -- Only when the game screen is not already up: the board handles its own
+    -- endings, and a second hand on the wheel there would show the modal twice.
+    table.insert(self.tokens, ws.on("game_over", function()
+        if self.screen == "game" then return end
+        local final = ws.pending_game_over_state
+        if type(final) ~= "table" or next(final) == nil then return end
+        ws.pending_game_over_state = nil
+
+        -- The board builds from the active state, so the FINAL position is
+        -- what it is given: the hands as they ended, the pot as it was won.
+        -- This is the one place a finished game is deliberately put back into
+        -- that field, immediately before the screen that consumes it.
+        ws.active_game_state = final
+        app_state.mode = "online"
+        show(self, "game")
+
+        -- NO NUDGE FROM HERE. `forward("game_over", "#game_logic",
+        -- "ws_game_over")` further down already posts it for every game over
+        -- there is, and posting a second one would run the board's ending
+        -- twice.
+        --
+        -- The ordering is what makes that enough, and it is not an accident:
+        -- this listener is registered BEFORE that forward, so on one emit the
+        -- screen is enabled first and the result posted second. Defold
+        -- delivers both in the order they were queued, so the board is up and
+        -- listening by the time its ws_game_over arrives — which is exactly
+        -- what was not true when the result landed on a lobby.
+    end))
+
     table.insert(self.tokens, ws.on("game_start", function(gs)
         if type(gs) == "table" and next(gs) ~= nil then ws.active_game_state = gs end
         -- AN OFFLINE GAME IN PROGRESS OWNS THE SCREEN — see

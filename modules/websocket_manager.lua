@@ -115,6 +115,10 @@ M.move_inbox = {}
 M.announcement_inbox = {}
 
 M.last_game_over = {}
+-- The final position of a game that ended while its board was not on screen,
+-- so the screen can be brought up around the result instead of the result
+-- being dropped. Set by the GAME_OVER branch, cleared by whoever shows it.
+M.pending_game_over_state = nil
 -- playerId -> the hand that player held at GAME_OVER, straight from the final
 -- gameState. The end-of-round reveal's source of truth; see the GAME_OVER
 -- branch in parse_message for why nothing else on the client can be trusted for
@@ -956,6 +960,32 @@ local function parse_message(json_string)
       -- Identified with no game in progress: whatever we were holding belongs
       -- to a game that is over.
       clear_pending_move("identified with no active game")
+
+      -- AND SO DOES THE CACHED GAME, which this did not drop.
+      --
+      -- The server answers IDENTIFY with the active game when there is one,
+      -- and every other outcome returns before that point: a game still
+      -- running comes back as gameState, a game that ended while we were away
+      -- comes back as GAME_OVER (missedGameResults), a settlement still
+      -- counting comes back as GAME_OVER too. So arriving HERE means the
+      -- server has no game for us — the one it had is finished and torn down,
+      -- gameStates and playerGameMap both.
+      --
+      -- The client went on holding it. controller.script's resume reads
+      -- exactly this field ("still an active game? then show the board"), so a
+      -- player who dropped out and came back was put straight back into a
+      -- match the server had already ended and paid out. They could play into
+      -- it — moves landing nowhere — and the opponent, sitting in a game that
+      -- no longer existed, ran down a turn timer and was reported as timing
+      -- out of a game they had already won.
+      --
+      -- The GAME_OVER branch below has cleared this for a game that ended in
+      -- front of us since the "board comes back with the previous state" bug.
+      -- This is the same clear for the game that ended while we were not
+      -- looking, which is the case it could never reach.
+      M.active_game_state = {}
+      M.active_game_id = ""
+
       emit("identify_success", M.current_user_data, d)
     end
   elseif t == "ONLINE_USERS" then
@@ -1312,7 +1342,6 @@ local function parse_message(json_string)
     if user_touched then
       emit("user_updated", M.current_user_data)
     end
-    emit("game_over", results)
     -- Once a game is FINALLY over (i.e. NOT a continuing tournament/battle round)
     -- drop the cached active game. Otherwise the finished state lingers and the
     -- controller resurrects the old board on the next identify/route — the "game
@@ -1324,7 +1353,24 @@ local function parse_message(json_string)
                  or results.tournamentEndedByTimeout or results.isNoShowScenario)
     if not round_continues then
       M.active_game_state = {}
+      M.active_game_id = ""
+      -- THE FINAL POSITION, kept for a result that arrives with no board to
+      -- land on.
+      --
+      -- A GAME_OVER reaching a player who is not on the game screen — the
+      -- reconnect replay above all — finds a board that does not exist yet.
+      -- Parking the final state is what lets the screen be brought up around
+      -- the result instead of the result being dropped. Cleared by whoever
+      -- shows it; see controller.script.
+      M.pending_game_over_state = (type(final_state) == "table" and next(final_state) ~= nil)
+        and final_state or nil
     end
+
+    -- EMITTED LAST, with everything a listener needs already true. The handler
+    -- that brings a screen up around this result reads pending_game_over_state
+    -- from inside the emit, so parking it afterwards would hand every listener
+    -- the state as it was before the game ended.
+    emit("game_over", results)
   elseif t == "TOURNAMENT_NO_OPPONENTS_FOUND" or t == "TOURNAMENT_REQUESTS_CANCELLED" then
     emit("tournament_no_opponents", d)
   elseif t == "HEAD_TO_HEAD" then

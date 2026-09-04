@@ -214,22 +214,41 @@ check("a continuing round still replays nothing", #pot_messages(), 0)
 print("")
 print("A GAME RESUMED BY RECONNECTING")
 ----------------------------------------------------------------------
--- Close the app mid-match and reopen it: IDENTIFY's own reply carries the
+-- Close the app mid-match and reopen it: IDENTIFY's own reply CARRIES the
 -- active game, the controller shows the board straight from it — and used to
 -- do that without a pot, so the player who dropped came back to a board with
 -- the stake missing while the one who never dropped still had theirs.
+--
+-- The state is sent ON THE IDENTIFY, which is where a real reconnect gets it.
+-- It used to be pre-set on the socket module and the IDENTIFY sent empty, and
+-- that is now a contradiction rather than a shortcut: an IDENTIFY carrying no
+-- game means the server HAS no game for us — every other outcome returns
+-- before that point — so the client drops whatever it was holding instead of
+-- putting a finished match back on screen. See test_missed_gameover.lua.
 reset_coins()
 SIM.components.controller.self.screen = "lobby"
 app_state.game_active = false
 app_state.mode = "offline"
-ws.active_game_state = { gameId = "g9", status = "ACTIVE",
-                         stake = { amount = 500, charge = 0, points = 0 },
-                         players = {}, deck = {}, playedCards = {} }
-SIM.server_send({ type = "IDENTIFY", data = { _id = "p1", username = "Me", balance = 5000 } })
+ws.active_game_state = {}
+SIM.server_send({ type = "IDENTIFY", data = {
+    _id = "p1", username = "Me", balance = 5000,
+    gameState = { gameId = "g9", status = "ACTIVE",
+                  stake = { amount = 500, charge = 0, points = 0 },
+                  players = {}, deck = {}, playedCards = {} },
+} })
 SIM.pump(0.5)
 local resumed = pot_messages()
 check("the pot comes back with the board", #resumed, 1)
 check("...carrying the stake it was played for", resumed[1] and resumed[1].amount, 1000)
+
+-- AND AN IDENTIFY THAT CARRIES NO GAME RAISES NOTHING, because there is no
+-- board to raise it on: the match is over and the client has just stopped
+-- holding it.
+reset_coins()
+SIM.components.controller.self.screen = "lobby"
+SIM.server_send({ type = "IDENTIFY", data = { _id = "p1", username = "Me", balance = 5000 } })
+SIM.pump(0.5)
+check("a reconnect with no game raises no pot", #pot_messages(), 0)
 
 print("")
 print(("%d passed, %d failed"):format(pass, fail))
