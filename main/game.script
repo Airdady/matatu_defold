@@ -1327,6 +1327,27 @@ function on_message(self, message_id, message, sender)
         end
 
     elseif message_id == hash("exit_to_lobby") then
+        -- LEAVING TELLS THE SERVER, AND ONLY THEN NAVIGATES.
+        --
+        -- This used to be a navigation and nothing else. The game stayed live
+        -- with a player who was no longer looking at it, so the opponent
+        -- watched a clock run down on somebody who had gone — every turn,
+        -- until the turn timer eventually forfeited it for them — and at a
+        -- party the empty seat held the table up on every rotation.
+        --
+        -- The server ends it the way it already ends that situation: a duel
+        -- goes to the opponent, stake and all, and a party seat drops out
+        -- while the table plays on (be_matatu's handlers/leaveGame.ts). So
+        -- quitting is not cheaper than putting the phone down, which is the
+        -- point — otherwise EXIT is how you escape a game you are losing.
+        --
+        -- NOT SENT ONCE THE GAME IS OVER. There is nothing to leave: the
+        -- server has already settled it and released both players, and asking
+        -- it to end a game again is a request it can only answer with "you are
+        -- not in one".
+        if self.online_mode and not self.game_over then
+            pcall(ws.leave_game, self.online_game_id)
+        end
         if self.online_mode then
             msg.post("#controller", "goto_online")
         else

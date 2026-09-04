@@ -829,6 +829,28 @@ function M.party_leave(party_id)
   M.send_message("PARTY_LEAVE", { partyId = id and tostring(id) or nil })
 end
 
+--- WALKING OUT OF A GAME THAT IS STILL RUNNING.
+--
+-- EXIT used to be a navigation and nothing more: the client went back to the
+-- lobby and the server was never told, so the opponent sat watching a clock
+-- run down on somebody who had gone — every turn, until the turn timer
+-- eventually forfeited it for them.
+--
+-- The server ends it the way it already ends that exact situation: a duel goes
+-- to the opponent, and a party seat drops out while the table plays on. See
+-- be_matatu's handlers/leaveGame.ts.
+--
+-- The game id is sent so a LATE tap cannot end the wrong game — a player who
+-- has already started another one between pressing EXIT and this arriving. The
+-- server takes the id from its own index either way and uses this only to
+-- notice the mismatch and ignore the request.
+function M.leave_game(game_id)
+  local id = tostring(game_id or M.active_game_id or "")
+  if id == "" then return false end
+  M.send_message("LEAVE_GAME", { gameId = id })
+  return true
+end
+
 -- Ask for the open-table list now, for a screen that has just opened. The
 -- server answers this one unconditionally; the pushes it sends unprompted are
 -- de-duplicated against what we were last shown, so a screen re-opening on an
@@ -1052,6 +1074,14 @@ local function parse_message(json_string)
       chosen_id    = (d.chosenId ~= nil and tostring(d.chosenId) ~= "") and tostring(d.chosenId) or nil,
     }
     emit("search_roster", M.last_search_roster)
+  -- The walkout has been dealt with. `ended` says whether the whole game went
+  -- with it (a duel) or the table is still playing without us (a party) — the
+  -- client leaves either way, and this is what tells it that it is safe to.
+  elseif t == "LEFT_GAME" then
+    M.active_game_id = ""
+    M.active_game_state = {}
+    emit("left_game", d or {})
+
   elseif t == "GAME_REQUEST_CANCELLED" then
     emit("game_request_cancelled", d.requestId or d.id or "")
   elseif t == "GAME_REQUEST_DECLINED" then

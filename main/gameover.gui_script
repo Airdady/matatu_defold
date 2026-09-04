@@ -584,6 +584,12 @@ local function contextual_reason(reason, is_win)
 		return "Opponent disconnected."
 	elseif reason == "PLAYER_NO_SHOW" then
 		return "Disconnected from match."
+	elseif reason == "PLAYER_LEFT" then
+		-- A WALKOUT, NOT A DISCONNECTION, and the difference is worth stating.
+		-- "Opponent disconnected" reads as a fault — bad signal, a phone that
+		-- died — and the loser is owed the truth about their own defeat as
+		-- much as the winner is: they chose this, they did not lose it.
+		return is_win and "Opponent left the game." or "You left the game."
 	end
 	return "Game Over"
 end

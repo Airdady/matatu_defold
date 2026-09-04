@@ -15,6 +15,9 @@ local DEAL_DELAY = 0.10
 local CUTTING_CARD_OFFSET_X = -60
 
 local PB = require "modules.party_board"
+-- Naming the seat that just emptied, and why. See the party_player_out
+-- listener: the board says a seat changed, only this says whose and how.
+local toast = require "modules.toast"
 
 local M = {}
 
@@ -475,9 +478,28 @@ function M.setup_ws_listeners(self)
     -- that is the table the socket module actually mutated; the two are the
     -- same object on every path that got here, and preferring the mutated one
     -- means this cannot quietly redraw the state as it was before the drop.
-    table.insert(self.ws_listeners, ws.on("party_player_out", function()
+    table.insert(self.ws_listeners, ws.on("party_player_out", function(d)
         local live = ws.active_game_state
         if type(live) ~= "table" or next(live) == nil then return end
+
+        -- SAY WHO WENT, AND WHY.
+        --
+        -- The badge greys and the chairs reflow, which tells a player that
+        -- SOMETHING happened to a seat they may not have been looking at. It
+        -- does not say whose seat, and at a table of four the difference
+        -- between "they walked out" and "they ran out of time" is the
+        -- difference between somebody quitting on you and somebody's phone
+        -- dying — worth a line either way, and the payload has carried both
+        -- since the drop path was written.
+        local who = ""
+        local pid = tostring((d or {}).playerId or "")
+        if pid ~= "" and type(live.players) == "table" and type(live.players[pid]) == "table" then
+            who = tostring(live.players[pid].username or "")
+        end
+        if who ~= "" and pid ~= tostring(self.my_player_id or "") then
+            local why = tostring((d or {}).reason or "")
+            toast.info(who:upper() .. (why == "TIMEOUT" and " ran out of time" or " left the table"))
+        end
         self.game_state = live
         if PB.is_heads_up(live) then
             -- The drop did not just grey a badge, it changed what game this
