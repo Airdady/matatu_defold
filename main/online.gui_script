@@ -23,6 +23,9 @@ local season_clock    = require("modules.season_clock")
 local search_clock    = require("modules.search_clock")
 local list_gesture    = require("modules.list_gesture")
 local dialog_search   = require("modules.dialog_search")
+-- The request dialog, which also draws the party waiting room — same plate,
+-- four chairs, the empty ones drawn as empty. See draw_party there.
+local dialog_incoming = require("modules.dialog_incoming")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local VISIBLE_W, VISIBLE_H = 1280, 720
@@ -845,11 +848,27 @@ function update(self, dt)
         -- already there. It allocates nothing, and it runs every frame, which
         -- is also the only way the entrance animations can play at all: at two
         -- rebuilds a second a 450ms flight across the dialog got one frame.
-        dialog_search.animate(self, sr)
-
-        -- A rebuild is still needed when the LAYOUT is wrong rather than just
-        -- out of date — somebody joined, a winner was named, the search ended.
-        local key = dialog_search.structure_key(sr)
+        -- A PARTY IS A DIFFERENT DIALOG NOW, and it animates the same way.
+        --
+        -- Same rule either side: set the handful of nodes that move, and
+        -- rebuild only when the thing being drawn actually changes — a chair
+        -- filling, a winner being named, the search ending. Rebuilding to
+        -- advance a countdown digit is what tore down the whole screen sixty
+        -- times a second the last time this was got wrong.
+        local key
+        if sr.party then
+            local d = right_panel.party_wait_state(self)
+            dialog_incoming.animate_party(self, d)
+            -- The arrival is the event this dialog exists to show, so it gets
+            -- the sound the search dialog gives an acceptance.
+            local seated = #((d or {}).seats or {})
+            if sr._seated_count and seated > sr._seated_count then play_snd("snd_found") end
+            sr._seated_count = seated
+            key = dialog_incoming.party_key(d)
+        else
+            dialog_search.animate(self, sr)
+            key = dialog_search.structure_key(sr)
+        end
         if key ~= sr._layout_key then sr._layout_key = key; need_rebuild = true end
     end
 

@@ -245,5 +245,37 @@ check("a party roster is not badged by skill",
 check("...and the rail says what it is rather than what it is held for",
   SEARCH_C:find('sr%.party and "AT THE TABLE" or "HELD FOR YOU"') ~= nil)
 
+-- ── THE WAITING ROOM IS THE REQUEST DIALOG, NOT THE SEARCH REEL ─────────────
+-- A table does not hunt for anybody, and the reel could not draw an empty
+-- chair — which is the only thing a player at a table is watching.
+check("a party no longer borrows the opponent-search reel",
+  RIGHT_C:find("if d then return dialog_incoming%.draw_party") ~= nil,
+  "the reel has no concept of a seat that is still empty")
+check("...and the lobby animates it without rebuilding the screen",
+  ONLINE_C:find("dialog_incoming%.animate_party") ~= nil
+    and ONLINE_C:find("dialog_incoming%.party_key") ~= nil,
+  "rebuilding to advance a countdown digit tears down the whole lobby")
+check("...making a sound for an arrival, which is the event it exists to show",
+  ONLINE_C:find("if sr%._seated_count and seated > sr%._seated_count then play_snd") ~= nil)
+check("...and forgetting the stamps when a NEW table is opened or joined",
+  select(2, RIGHT_C:gsub("self%._party_seen = nil", "")) == 2,
+  "stamps carried into a second table suppress the pop for anybody who was at the first")
+
+-- The same room, off the online screen. Joining from anywhere used to be a
+-- toast and then nothing until a board appeared.
+check("the overlay opens the waiting room where the player already is",
+  OVERLAY_C:find("party_wait = true") ~= nil
+    and OVERLAY_C:find("dialog_incoming%.draw_party") ~= nil)
+check("...on the TABLE's clock, read from closesAt every frame",
+  OVERLAY_C:find("d%.time_left = math%.max%(0, %(closes %- now_ms%) / 1000%)") ~= nil)
+check("...closing when the table is gone, with a grace for the frame before the roster",
+  OVERLAY_C:find("if d%.no_table_t > 3 then") ~= nil)
+check("...and saying so when it is called off or refused",
+  OVERLAY_C:find('hash%("party_gone"%)') ~= nil
+    and OVERLAY_C:find('ws%.on%("party_error"') ~= nil
+    and OVERLAY_C:find('ws%.on%("party_cancelled"') ~= nil)
+check("no game request may replace the room the player has paid to be in",
+  OVERLAY_C:find("if self%.dialog and self%.dialog%.party_wait then return end") ~= nil)
+
 print(("party invite strip: %d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

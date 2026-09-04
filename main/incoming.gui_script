@@ -355,12 +355,52 @@ local function draw_banner(self, d, a)
     update_ban_bar(self, d)
 end
 
+-- ── THE PARTY WAITING ROOM, WHEREVER THE PLAYER IS ──────────────────────────
+--
+-- A seat taken from this overlay used to be a toast and nothing else: the
+-- player paid, and then watched the screen they happened to be on until a
+-- board appeared or the money came back. The one thing worth seeing — the
+-- other players arriving, one chair at a time — happened somewhere they were
+-- not looking.
+--
+-- So it is the same room the lobby draws, from the same function, fed by the
+-- same table. ws.current_party is the whole state: PARTY_ROSTER replaces it on
+-- every seat change, so nothing has to be tracked here except when each chair
+-- filled (for the pop) and the clock.
+--
+-- The seats belong to the SERVER'S table and not to anything this overlay
+-- decided, which is why a cancelled or dealt table simply empties it and the
+-- room closes.
+local PARTY_SEATS = 4
+
+local function party_wait_state(self)
+    local d = self.dialog or {}
+    local now = tonumber(d.anim_t) or 0
+    self._party_seen = self._party_seen or {}
+    local party = ws.current_party
+    local seats = dialog_incoming.party_seats(
+        self._party_seen, party, ws.get_current_user_id(), now)
+    return {
+        seats    = seats,
+        size     = PARTY_SEATS,
+        entry    = tonumber((party or {}).entry) or tonumber(d.entry) or 0,
+        secs     = math.max(0, tonumber(d.time_left) or 0),
+        now      = now,
+        subtitle = "waiting for players to join",
+        -- No `found` here, unlike the lobby's room: when this table deals,
+        -- game_start closes the overlay and the board is already on its way.
+        -- There is no beat in between to say "dealing you in" during.
+    }
+end
+
 -- ── Rendering ─────────────────────────────────────────────────────────────────
 local function rebuild(self)
     clear(self)
     if not self.dialog then return end
     local ok, err = pcall(function()
-        if self.dialog.banner then
+        if self.dialog.party_wait then
+            dialog_incoming.draw_party(self, make_ctx(), party_wait_state(self), self.dlg_alpha or 1)
+        elseif self.dialog.banner then
             draw_banner(self, self.dialog, self.dlg_alpha or 1)
         else
             dialog_incoming.draw(self, make_ctx(), self.dialog, self.dlg_alpha or 1)
@@ -484,6 +524,9 @@ local function open_dialog(self, d)
         -- LATER puts the strip away and tells nobody, because nobody asked.
         party = d.party and true or false,
         party_id = d.party_id,
+        -- Carried so the waiting room can show the pot from its first frame,
+        -- before PARTY_ROSTER has said anything.
+        party_entry = tonumber(d.party_entry) or 0,
         accept_label = d.accept_label, decline_label = d.decline_label,
     }
     self.dlg_alpha = 1
@@ -560,6 +603,21 @@ function init(self)
         -- Both post back to ME rather than acting here: these callbacks run in
         -- the socket owner's context, and building the banner from there would
         -- touch gui.* from the wrong script.
+        -- THE TABLE WILL NOT HAPPEN. A refusal (full, or the balance moved
+        -- between the offer and the tap) or a call-off, both of which carry
+        -- their own money story — the entry is returned on either — so the
+        -- room closes and says which it was rather than fading out on the
+        -- no-table grace with nothing explained.
+        ws.on("party_error", function(d)
+            msg.post(ME, "party_gone", { message = tostring((d or {}).message or "") })
+        end),
+        ws.on("party_cancelled", function(d)
+            local back = tonumber((d or {}).refunded) or 0
+            msg.post(ME, "party_gone", {
+                message = back > 0 and ("Table called off - " .. back .. " returned")
+                    or "Table called off",
+            })
+        end),
         ws.on("cup_invite", function(d)
             msg.post(ME, "cup_invite", {
                 cup_id  = tostring((d or {}).cupId or ""),
@@ -640,6 +698,52 @@ function update(self, dt)
         rebuild(self)
     end
 
+    -- THE WAITING ROOM RUNS ON THE TABLE'S CLOCK, NOT ON ONE OF ITS OWN.
+    --
+    -- closesAt is the server's deadline and arrives on every roster push, so
+    -- the number here is the table's remaining time rather than a countdown
+    -- this overlay started when the player tapped JOIN — the two drift, and
+    -- the one that matters is the one the table will actually close on.
+    if self.dialog and self.dialog.party_wait then
+        local d = self.dialog
+        d.anim_t = (d.anim_t or 0) + dt
+
+        local party = ws.current_party
+        local closes = tonumber((party or {}).closesAt) or 0
+        if closes > 0 then
+            local now_ms = (socket and socket.gettime and socket.gettime() * 1000) or (os.time() * 1000)
+            d.time_left = math.max(0, (closes - now_ms) / 1000)
+        else
+            d.time_left = math.max(0, (d.time_left or 20) - dt)
+        end
+
+        -- THE TABLE IS GONE: it dealt, and the board is on its way, or it was
+        -- called off and the refund has already been sent. Either way there is
+        -- nothing left for this room to show.
+        --
+        -- The grace covers the other case a missing table means: the room is
+        -- opened optimistically on the tap, before PARTY_ROSTER has landed.
+        -- Closing on the first frame would shut it before the server had said
+        -- anything at all.
+        d.no_table_t = (party == nil) and ((d.no_table_t or 0) + dt) or 0
+        if d.no_table_t > 3 then
+            close_dialog(self)
+            return
+        end
+
+        local state = party_wait_state(self)
+        local seated = #(state.seats or {})
+        if d._seated and seated > d._seated then
+            pcall(msg.post, "#snd_notify", "play_sound")
+        end
+        d._seated = seated
+
+        dialog_incoming.animate_party(self, state)
+        local key = dialog_incoming.party_key(state)
+        if key ~= d._key then d._key = key; rebuild(self) end
+        return
+    end
+
     if self.dialog then
         local need_reb = false
 
@@ -690,6 +794,9 @@ function on_message(self, message_id, message)
         -- invite raised over a table the player has PAID for is a tap that can
         -- only be refused, and the refusal reads as the party having failed.
         if type(ws.current_party) == "table" and ws.current_party.partyId then return end
+        -- And not over the waiting room in the moment before the roster lands
+        -- either: the seat is paid for, the request is not.
+        if self.dialog and self.dialog.party_wait then return end
 
         local r   = ws.last_game_request or {}
         local raw = (ws.last_game_request or {}).raw or {}
@@ -882,6 +989,7 @@ function on_message(self, message_id, message)
             banner         = true,
             party          = true,
             party_id       = pid,
+            party_entry    = entry,
             party_seconds  = left,
             badge          = "PARTY",
             title          = "PARTY  -  " .. string.upper(tostring(p.hostName ~= "" and p.hostName or "A PLAYER")),
@@ -906,6 +1014,13 @@ function on_message(self, message_id, message)
             toast.info(who .. " joined " .. name .. seats)
         elseif message.event == "LEFT" then
             toast.info(who .. " left " .. name .. seats)
+        end
+
+    elseif message_id == hash("party_gone") then
+        if self.dialog and self.dialog.party_wait then
+            close_dialog(self)
+            local m = tostring((message or {}).message or "")
+            if m ~= "" then toast.info(m) end
         end
 
     elseif message_id == hash("incoming_clear") then
@@ -944,7 +1059,30 @@ function on_input(self, action_id, action)
                         -- deals into the board on its own (PARTY_STARTING), or
                         -- it is called off and the entry comes back.
                         ws.party_join(party)
-                        toast.info("Seat taken - waiting for the table to fill")
+                        -- STAY AND WATCH IT FILL. The strip becomes the
+                        -- waiting room in place, so a player who joined from
+                        -- the lobby or the profile screen sees the same chairs
+                        -- filling that the online screen shows — which is the
+                        -- whole reason to sit down early rather than late.
+                        --
+                        -- Opened optimistically, before PARTY_ROSTER: the room
+                        -- draws four empty chairs until the server answers,
+                        -- and a PARTY_ERROR closes it again (see on_message).
+                        self.dialog = {
+                            party_wait = true,
+                            party_id = party,
+                            entry = tonumber(self.dialog.party_entry) or 0,
+                            time_left = tonumber(self.dialog.time_left) or 20,
+                            max_time = tonumber(self.dialog.max_time) or 20,
+                            anim_t = 0,
+                        }
+                        self.dlg_alpha = 1
+                        -- A committed state, so it claims input: the entry is
+                        -- already spent and there is nothing behind this worth
+                        -- tapping for the next twenty seconds.
+                        app_state.modal_open("incoming")
+                        rebuild(self)
+                        return true
                     elseif cup then
                         -- Joining a cup is an HTTP call, not a socket message:
                         -- the cup is owned by the tournament controller, and

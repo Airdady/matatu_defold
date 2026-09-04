@@ -1,6 +1,8 @@
 local ws            = require("modules.websocket_manager")
 local search_clock = require("modules.search_clock")
 local dialog_search = require("modules.dialog_search")
+-- The request dialog draws the party waiting room too — see draw_party there.
+local dialog_incoming = require("modules.dialog_incoming")
 local tournament_window = require("modules.tournament_window")
 local GameMode      = require("modules.game_mode")
 local app_state     = require("modules.app_state")
@@ -123,6 +125,11 @@ M.PARTY_MODES = { "NORMAL", "SCORECAP" }
 -- Kept as its own name so a future change to one mode cannot silently move the
 -- other, and so this reads as a decision rather than as a coincidence.
 M.PARTY_CAPS = { 100, 200, 250, 300 }
+
+-- How many chairs a table has. PARTY_SIZE in be_matatu's partyRules.ts — the
+-- waiting room draws every one of them from the first frame, including the
+-- empty ones, so a player can see how many more are needed.
+M.PARTY_SEATS = 4
 M.PARTY_DEFAULT_CAP_I = 2 -- 200, matching PARTY_DEFAULT_SCORE_CAP on the server
 
 function M.party_mode_of(bm)
@@ -1229,7 +1236,48 @@ local function draw_savings_add(self, ctx)
 end
 
 -- ── Invite Modal Drawing ──────────────────────────────────────────────────────
+-- A PARTY IS NOT A SEARCH, AND NO LONGER BORROWS THE SEARCH DIALOG.
+--
+-- The reel dialog was built for an opponent hunt: a spinning slot, a rail of
+-- candidates held while the window runs, one of them chosen at the end. A
+-- table does none of that — everybody who sits down is in — and the one thing
+-- a player at a table actually watches, CHAIRS FILLING, was the one thing that
+-- surface could not show, because it had no idea a chair could be empty.
+--
+-- So a party draws the request dialog's own plate with the table in it: four
+-- places from the first frame, the ones still open drawn as open, the pot
+-- growing as they fill. See dialog_incoming.draw_party.
+--- The waiting room's state, from the live search record and the table.
+--
+-- Built here rather than at each call site because the DRAW and the per-frame
+-- update must be looking at the same table: a seat list assembled twice would
+-- let the pop play against one roster and the words describe another.
+--
+-- `seen` is kept on self and never reset, so a chair that filled ten seconds
+-- ago does not pop again on the next rebuild.
+function M.party_wait_state(self)
+    local sr = self.invite_search
+    if type(sr) ~= "table" or not sr.party then return nil end
+    local now = tonumber(sr.anim_t) or 0
+    self._party_seen = self._party_seen or {}
+    local seats = dialog_incoming.party_seats(
+        self._party_seen, ws.current_party, ws.get_current_user_id(), now)
+    return {
+        seats    = seats,
+        size     = M.PARTY_SEATS,
+        entry    = tonumber((sr.stake or {}).amount) or 0,
+        secs     = tonumber(sr.shown) or search_clock.target(sr),
+        now      = now,
+        subtitle = sr.subtitle,
+        found    = sr.found,
+        failed   = sr.failed,
+        fail_msg = sr.fail_msg,
+    }, sr
+end
+
 local function draw_invite_search(self, ctx)
+    local d = M.party_wait_state(self)
+    if d then return dialog_incoming.draw_party(self, ctx, d, 1) end
     dialog_search.draw(self, ctx, self.invite_search, "invite_reel_node")
 end
 
@@ -1813,6 +1861,11 @@ function M.start_invite_search(self, app_state, rebuild_cb, battle_type)
             party = true,
             subtitle = "opening your table",
         }
+        -- A NEW TABLE HAS NEW CHAIRS. The arrival stamps are keyed by user
+        -- id and kept between frames so a chair does not pop again on every
+        -- rebuild; carried into a SECOND table they would suppress the pop
+        -- for anybody who was also at the first.
+        self._party_seen = nil
         app_state.searching_invite = true
         -- The table does not exist yet, so there is no closesAt to count down
         -- to — the window is the backstop until the first PARTY_ROSTER states
@@ -1947,6 +2000,11 @@ function M.join_party_search(self, app_state, rebuild_cb, p)
         party = true,
         subtitle = "taking your seat",
     }
+    -- A NEW TABLE HAS NEW CHAIRS. The arrival stamps are keyed by user id
+    -- and kept between frames so a chair does not pop again on every
+    -- rebuild; carried into a SECOND table they would suppress the pop for
+    -- anybody who was also at the first.
+    self._party_seen = nil
     app_state.searching_invite = true
 
     M.arm_party_failsafe(self, app_state, rebuild_cb, left)
