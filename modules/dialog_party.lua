@@ -50,6 +50,7 @@
 -- ends up reading as a glitch.
 
 local ws = require("modules.websocket_manager")
+local ui = require("modules.ui")
 
 local M = {}
 
@@ -130,16 +131,15 @@ function M.pot_of(view)
     return (tonumber(view.entry) or 0) * math.max(1, #((view.seats) or {}))
 end
 
---- Which coin bundle stands for a pot this size. Same ladder and the same art
---- the challenge dialog uses, so 600 coins looks like 600 coins everywhere.
-function M.bundle_for(amount)
-    local n = tonumber(amount) or 0
-    if n >= 2000 then return "2000" end
-    if n >= 1000 then return "1000" end
-    if n >= 500  then return "500"  end
-    if n >= 200  then return "200"  end
-    return "100"
-end
+--- Which coin bundle stands for a pot this size.
+--
+-- Delegated to ui.lua, where the ladder now lives once. This used to be a
+-- fifth copy of it, and the bundle it fed was drawn with ui.image — which sets
+-- the "ui" atlas and asks it for an animation called "coins" that does not
+-- exist there. play_flipbook is pcall'd, so the miss was silent and the pot
+-- was an untextured box. The real pot is the "coins" atlas with the TIER as
+-- the animation, the way every other surface draws it.
+M.bundle_for = ui.coin_pot_image
 
 --- The first chair nobody is sitting in — where the reel stands.
 function M.next_empty(view)
@@ -305,12 +305,14 @@ function M.draw(self, ctx, d, a)
 
     local bundle
     if entry > 0 then
-        -- The coin art, on the pot's own line. Stepped up by animate as the
-        -- counting number crosses each tier, so the picture and the figure
-        -- never disagree about how much is on the table.
-        bundle = track(self, ui.image(vmath.vector3(CX - 96, pot_y + 2, 0),
-            vmath.vector3(52, 52, 0), "coins"))
-        pcall(gui.play_flipbook, bundle, M.bundle_for(pot_from))
+        -- THE REAL POT BUNDLE, the same one the challenge dialog and the board
+        -- HUD draw: the "coins" atlas, the tier as the animation, through the
+        -- one helper that knows that pair. Sized and placed like the search
+        -- dialog's — the pile above, the figure directly under it — rather
+        -- than as a small icon beside the text, because this is the thing on
+        -- the screen that says what the table is worth.
+        bundle = track(self, ui.coin_pot(
+            vmath.vector3(CX, pot_y + 46, 0), vmath.vector3(88, 88, 0), pot_from))
         gui.set_color(bundle, vmath.vector4(1, 1, 1, a))
     end
 
@@ -428,10 +430,12 @@ function M.animate(self, d, dt)
             if whole ~= an.last_pot then
                 an.last_pot = whole
                 gui.set_text(an.pot_node, an.commas(whole) .. " POT")
+                -- The pile keeps step with the figure as it climbs, so the
+                -- picture and the number never disagree about how much is on
+                -- the table.
                 local tier = M.bundle_for(whole)
                 if an.bundle and tier ~= an.pot_tier then
-                    an.pot_tier = tier
-                    pcall(gui.play_flipbook, an.bundle, tier)
+                    an.pot_tier = ui.set_coin_pot(an.bundle, whole)
                 end
             end
         end

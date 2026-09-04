@@ -47,6 +47,59 @@ function M.card(pos, size, anim)
 	return n
 end
 
+-- ── THE COIN POT, IN ONE PLACE ───────────────────────────────────────────────
+--
+-- The pot bundle is one picture with one ladder behind it, and it was written
+-- out five separate times: the in-game HUD (coins.gui_script), the incoming
+-- challenge dialog, the outgoing search dialog, the savings card, and the
+-- party table. Five copies of "which coin art stands for this many coins" is
+-- five chances for the same 600-coin pot to be drawn as three different piles.
+--
+-- Worse for the newest of them: the party table reached for M.image, which
+-- sets the "ui" atlas and asks it for an animation called "coins" — a name
+-- that does not exist there. play_flipbook is wrapped in pcall everywhere it
+-- is used, so that failed SILENTLY and the pot was drawn as an untextured
+-- box. The atlas is "coins" and the animation is the tier ("100", "200",
+-- "500", "1000", "2000"); getting that pair right is exactly the kind of thing
+-- that belongs behind one function rather than in five call sites.
+M.COIN_POT_TIERS = { 2000, 1000, 500, 200 }
+
+--- Which bundle stands for a pot of this size.
+--
+-- Descending, first match wins, and "100" is the floor rather than a special
+-- case: a pot below the smallest named tier is still a pot, and the smallest
+-- pile is the honest picture of it.
+function M.coin_pot_image(amount)
+	local n = tonumber(amount) or 0
+	for _, tier in ipairs(M.COIN_POT_TIERS) do
+		if n >= tier then return tostring(tier) end
+	end
+	return "100"
+end
+
+--- A pot bundle node, textured and showing the right pile for `amount`.
+--
+-- Returns the node and the animation it was given, so a caller that redraws
+-- the figure as it changes can step the picture with it without asking the
+-- ladder a second time.
+function M.coin_pot(pos, size, amount)
+	local n = gui.new_box_node(pos, size)
+	gui.set_color(n, vmath.vector4(1, 1, 1, 1))
+	local img = M.coin_pot_image(amount)
+	pcall(function()
+		gui.set_texture(n, "coins")
+		gui.play_flipbook(n, hash(img))
+	end)
+	return n, img
+end
+
+--- Step an existing pot bundle to the pile for `amount`.
+function M.set_coin_pot(node, amount)
+	local img = M.coin_pot_image(amount)
+	pcall(function() gui.play_flipbook(node, hash(img)) end)
+	return img
+end
+
 -- Textured node from the ui atlas (anim e.g. "hearts", "coins").
 function M.image(pos, size, anim)
 	local n = gui.new_box_node(pos, size)

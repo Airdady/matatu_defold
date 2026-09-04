@@ -70,6 +70,7 @@ do
                   COL_GREEN = COL, COL_RED = COL, COL_CYAN = COL },
             ui = {
                 box = node, btn9 = node, avatar = node, grad_backdrop = node, image = node,
+                coin_pot = require("modules.ui").coin_pot,
                 pie = function() return gui.new_pie_node(vmath.vector3(0,0,0), vmath.vector3(1,1,0)) end,
                 text = function(_, str)
                     local n = gui.new_text_node(vmath.vector3(0,0,0), tostring(str))
@@ -236,11 +237,33 @@ do
     -- the table started short, which is not a thing a pot should be seen doing.
     ok("...never the table's size", dp.pot_of(view(2, 4)) ~= 200 * 4)
 
-    -- And the coin art keeps step with the figure, on the ladder the challenge
-    -- dialog already uses, so 600 coins looks like 600 coins everywhere.
+    -- THE REAL COIN POT, out of the atlas every other surface draws it from.
+    --
+    -- This was ui.image(..., "coins"), which sets the "ui" atlas and asks it
+    -- for an animation called "coins" that does not exist there. Every
+    -- play_flipbook in this codebase is wrapped in pcall, so the miss was
+    -- silent and the pot was drawn as an untextured box.
+    local uilib = require("modules.ui")
+    check("the party pot reads the one ladder", dp.bundle_for, uilib.coin_pot_image)
     check("the bundle steps up with the pot", dp.bundle_for(600), "500")
     check("...and again at the next tier", dp.bundle_for(1000), "1000")
     check("a lone host's entry is the bottom rung", dp.bundle_for(200), "200")
+    check("...and anything under it is still a pot", dp.bundle_for(50), "100")
+
+    -- ONE LADDER, not five. It was written out in the board HUD, both request
+    -- dialogs, the savings card and here — five chances for the same 600-coin
+    -- pot to be drawn as three different piles.
+    for _, path in ipairs({ "modules/dialog_incoming.lua", "modules/dialog_search.lua",
+                            "modules/dialog_party.lua", "modules/online_right.lua",
+                            "main/coins.gui_script" }) do
+        local src = io.open(ROOT .. path):read("a")
+        ok(path .. " keeps no ladder of its own",
+            src:find(">= 2000 then", 1, true) == nil)
+    end
+    local uisrc = io.open(ROOT .. "modules/ui.lua"):read("a")
+    ok("...because ui.lua owns it", uisrc:find("function M%.coin_pot_image") ~= nil)
+    ok("...and pairs it with the atlas that has the art",
+        uisrc:match('coin_pot.-set_texture%(n, "coins"%)') ~= nil)
 end
 
 ----------------------------------------------------------------------
@@ -264,7 +287,11 @@ do
         return {
             C = { COL_DIM = COL, COL_MID = COL, COL_GOLD = COL, COL_WHITE = COL,
                   COL_GREEN = COL, COL_RED = COL, COL_CYAN = COL },
+            -- coin_pot comes from the REAL ui module: the pot bundle is the
+            -- thing under test in this file's own atlas assertions, and a stub
+            -- for it would let the wrong atlas through exactly as it did.
             ui = { box = node, btn9 = node, avatar = node, grad_backdrop = node, image = node,
+                   coin_pot = require("modules.ui").coin_pot,
                    pie = function() return gui.new_pie_node(vmath.vector3(0,0,0), vmath.vector3(1,1,0)) end,
                    text = function(_, str)
                        local n = gui.new_text_node(vmath.vector3(0,0,0), tostring(str))

@@ -203,19 +203,15 @@ function M.draw(self, ctx, sr, reel_key)
     -- meaning, and the word stacked above it was just repeating it.
     if show_coins then
         local pot = amt * 2
-        local img = "100"
-        if pot >= 2000 then img = "2000"
-        elseif pot >= 1000 then img = "1000"
-        elseif pot >= 500 then img = "500"
-        elseif pot >= 200 then img = "200"
-        end
         -- Centred ON the avatars' own centre line (both columns sit at ay), so
         -- the pot reads as sitting BETWEEN the two players. It used to be
         -- pushed down to make room for the VS above it; with that gone it can
         -- take the middle.
-        local bundle = track(self, gui.new_box_node(vmath.vector3(CX, ay, 0), vmath.vector3(88, 88, 0)))
+        -- The pile that stands for this figure comes from ui.lua, which owns
+        -- the ladder for every surface that draws a pot.
+        local bundle = track(self, ui.coin_pot(vmath.vector3(CX, ay, 0),
+            vmath.vector3(88, 88, 0), pot))
         gui.set_color(bundle, vmath.vector4(1, 1, 1, 1))
-        pcall(function() gui.set_texture(bundle, "coins"); gui.play_flipbook(bundle, hash(img)) end)
         track(self, ui.text(vmath.vector3(CX, ay - 58, 0), ctx.commas(pot), "helvetica_black", C.COL_GOLD))
     else
         track(self, ui.text(vmath.vector3(CX, ay, 0), "VS", "title", vmath.vector4(1, 0.4, 0.4, 1)))

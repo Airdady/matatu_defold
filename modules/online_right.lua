@@ -793,9 +793,9 @@ local function draw_savings_info(self, ctx)
     -- attention first" treatment the game-request dialogs use for their pot.
     -- Kept small enough (+ only a slight peek above the panel) to stay clear
     -- of the top of a 720-tall logical screen.
-    local bundle = track(self, gui.new_box_node(vmath.vector3(CX, top + 4, 0), vmath.vector3(100, 100, 0)))
+    local bundle = track(self, ui.coin_pot(vmath.vector3(CX, top + 4, 0),
+        vmath.vector3(100, 100, 0), 1000))
     gui.set_color(bundle, vmath.vector4(1, 1, 1, 1))
-    pcall(function() gui.set_texture(bundle, "coins"); gui.play_flipbook(bundle, hash("1000")) end)
 
     local cy = top - 66
     track(self, ui.text(vmath.vector3(CX, cy, 0), typed("SAVINGS"), "title", C.COL_GOLD))

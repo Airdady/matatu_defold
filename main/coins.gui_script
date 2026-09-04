@@ -18,6 +18,13 @@
 --   coin_clear       {}
 ----------------------------------------------------------------------
 local LOGICAL_W, LOGICAL_H = 1280, 720
+-- THE PILE THAT STANDS FOR A FIGURE lives in modules/ui.lua, which every
+-- surface that draws a pot now reads. It was written out here as well as in
+-- the two request dialogs, the savings card and the party table — five copies
+-- of one ladder, and five chances for the same 600-coin pot to be drawn as
+-- three different piles.
+local uilib = require("modules.ui")
+
 local ATLAS = "coins"
 local COIN  = 40
 local GOLD  = vmath.vector4(1.0, 0.84, 0.30, 1)
@@ -74,17 +81,7 @@ end
 -- ── the live pot ─────────────────────────────────────────────────────────────
 local function set_pot_bundle(self, amount)
     if not self.pot then return end
-    
-    -- Determine the correct bundle image based on the stake amount
-    local img = "100" 
-    if amount then
-        if amount >= 2000 then img = "2000"
-        elseif amount >= 1000 then img = "1000"
-        elseif amount >= 500 then img = "500"
-        elseif amount >= 200 then img = "200"
-        end
-    end
-    
+    local img = uilib.coin_pot_image(amount)
     pcall(function() gui.set_texture(self.pot.bundle, ATLAS); gui.play_flipbook(self.pot.bundle, hash(img)) end)
 end
 
