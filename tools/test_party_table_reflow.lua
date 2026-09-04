@@ -155,28 +155,78 @@ check("...while a live seat still gets its ring", #ids_sent("t4_active"), 1)
 check("...in the right chair", ids_sent("t4_active")[1].slot, "top")
 
 ----------------------------------------------------------------------
-print("WHAT IT DOES NOT DO: RESEAT THE TABLE AS PLAYERS LEAVE")
+print("DOWN TO TWO IS NOT A TABLE ANY MORE - IT IS AN ORDINARY DUEL")
 ----------------------------------------------------------------------
--- Pinned as it BEHAVES. The server fixes seatOrder when the cards are dealt
--- and marks eliminations as a flag rather than shrinking the list — which is
--- right, because the turn arithmetic reads through the flag — so the client is
--- handed four seats for the life of the table however many are still in it.
+-- A party seats its opponents in arches: backs at 85% scale, capped at ten, on
+-- 18px spacing. That is the right drawing for three people round a table and
+-- the wrong one for the last two players in the game, who are playing an
+-- ordinary duel — and the app already has a board for that, with its own hand
+-- spacing and its own card size, which every other two-player match uses.
 --
--- The offline chamber does collapse: tournament4 sets is_heads_up when two
--- survive and re-lays the opponent's hand across the centre. The party has no
--- equivalent, so a four-hander that comes down to two keeps a greyed chair on
--- either side rather than going face to face.
+-- So heads-up is not a party layout with two chairs hidden. The party board
+-- stands down entirely and the ordinary renderer takes the opponent back.
+check("four in, nobody out, is still a table", PB.is_heads_up(state(order)), false)
+check("one eliminated is still a table", PB.is_heads_up(state(order, { d = true })), false)
+check("two left is a duel", PB.is_heads_up(state(order, { c = true, d = true })), true)
+check("a table dealt as two is a duel from the first card",
+    PB.is_heads_up(state({ "a", "b" })), true)
+check("...and so is the moment before it ends",
+    PB.is_heads_up(state(order, { b = true, c = true, d = true })), true)
+check("a duel with no seat order is not a party at all",
+    PB.is_heads_up({ players = {} }), false)
+
+-- Survivors are read off the FLAGS, because the seat order never shrinks: the
+-- server fixes it at the deal and marks eliminations, which is right — the
+-- turn arithmetic reads through the flag.
+local live = PB.survivors(state(order, { b = true, d = true }))
+check("the survivors are the unflagged seats", table.concat(live, ","), "a,c")
+check("...in seat order", PB.survivors(state(order))[1], "a")
+
+-- THE BOARD ITSELF: no seats drawn, and any it had are torn down.
 sent = {}
-PB.sync(board(), state(order, { c = true, d = true }, "b"))
-drawn = seats_sent()
-check("two survivors still draw three chairs", #drawn, 3)
-check("...the last opponent still on the LEFT, not opposite", drawn[1].slot, "left")
-local chamber = io.open(ROOT .. "modules/tournament4.lua"):read("a")
-ok("the offline chamber, by contrast, knows about heads-up",
-    chamber:find("is_heads_up = %(#survivors == 2%)") ~= nil)
-local party = io.open(ROOT .. "modules/party_board.lua"):read("a")
-ok("...and the party board has no such switch yet",
-    party:find("is_heads_up", 1, true) == nil)
+local b3 = board()
+PB.sync(b3, state(order, nil, "b"))
+ok("a full table drew its chairs", #seats_sent() > 0)
+sent = {}
+PB.sync(b3, state(order, { c = true, d = true }, "b"))
+check("coming down to two draws no party seats at all", #seats_sent(), 0)
+ok("...and clears the ones it had", #ids_sent("t4_clear") == 1)
+ok("...leaving nothing behind to redraw", b3.party_seats == nil)
+-- Idempotent: every later sync must not keep re-posting the teardown.
+sent = {}
+PB.sync(b3, state(order, { c = true, d = true }, "b"))
+check("and it does not keep tearing down what is already gone", #sent, 0)
+
+-- A table that was only ever two never draws a chair in the first place.
+sent = {}
+PB.sync(board(), state({ "a", "b" }, nil, "a"))
+check("two who turned up alone get no party board either", #sent, 0)
+
+----------------------------------------------------------------------
+print("AND THE ORDINARY BOARD TAKES THE OPPONENT BACK")
+----------------------------------------------------------------------
+local handler = io.open(ROOT .. "modules/online_handler.lua"):read("a")
+ok("a heads-up party is not treated as a party by the board builder",
+    handler:match("local is_party = looks_like_party and duel_with == nil") ~= nil)
+-- ONE survivor is a game that has just ended, not a duel. Falling through to
+-- the ordinary path there would find no opponent, take the seven-card default,
+-- and deal a phantom arch across a board whose game is over — so the duel path
+-- is taken only when a surviving opponent was actually found.
+ok("...and only when a surviving opponent was actually found",
+    handler:match("if #live == 2 then") ~= nil)
+-- The eliminated players are still in the players map, so "the first who is
+-- not me" would hand the duel board a knocked-out player and their empty hand,
+-- at random, on a table that came down to two.
+ok("...and the opponent it picks is the SURVIVOR, not whoever pairs() yields",
+    handler:find("local duel_with", 1, true) ~= nil
+    and handler:match("not looks_like_party or pid == duel_with") ~= nil)
+ok("...chosen from the survivors rather than the seat order",
+    handler:match("PB%.survivors%(state%)") ~= nil)
+-- A drop-out that takes the table to two changes what game this is, so the
+-- duel board has to be built — syncing the seats alone would tear the party
+-- chairs down and leave nothing in their place.
+ok("a drop-out down to two rebuilds the board rather than only clearing it",
+    handler:match('ws%.on%("party_player_out".-PB%.is_heads_up%(live%).-M%.start_game') ~= nil)
 
 ----------------------------------------------------------------------
 print("A SEAT THAT DROPS OUT MID-HAND REDRAWS THE TABLE")

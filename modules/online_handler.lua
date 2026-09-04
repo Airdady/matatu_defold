@@ -477,8 +477,17 @@ function M.setup_ws_listeners(self)
     -- means this cannot quietly redraw the state as it was before the drop.
     table.insert(self.ws_listeners, ws.on("party_player_out", function()
         local live = ws.active_game_state
-        if type(live) == "table" and next(live) ~= nil then
-            self.game_state = live
+        if type(live) ~= "table" or next(live) == nil then return end
+        self.game_state = live
+        if PB.is_heads_up(live) then
+            -- The drop did not just grey a badge, it changed what game this
+            -- is: two players is a duel, and the duel board is the one
+            -- start_game builds — the opponent's arch, at the ordinary
+            -- spacing and size, instead of a party seat. Syncing the seats
+            -- alone would tear the party chairs down and leave nothing in
+            -- their place.
+            M.start_game(self, live)
+        else
             pcall(PB.sync, self, live)
         end
     end))
@@ -1202,14 +1211,49 @@ function M.start_game(self, state)
     -- opponent_id, no `op`, and opp_count below falls to zero rather than the
     -- seven-card default. party_board owns every seat, and there is one board
     -- again instead of two overlaid.
-    local is_party = (type(state.seatOrder) == "table" and #state.seatOrder > 0)
+    --
+    -- UNLESS THE TABLE IS DOWN TO TWO, WHICH IS NOT A TABLE ANY MORE.
+    --
+    -- Two players is a duel, whether they are all that is left of four or the
+    -- only two who ever sat down — and a duel is what this path draws, with
+    -- the hand spacing and the card size every other two-player match in the
+    -- game uses. A party arch at 85% scale on 18px spacing is the right
+    -- drawing for three people round a table and the wrong one for the last
+    -- two in the game.
+    --
+    -- So heads-up takes the ordinary path and party_board stands down (see the
+    -- note there): one board again, and the same board every other duel gets.
+    --
+    -- THE OPPONENT IS THE SURVIVOR, not whoever pairs() yields first. The
+    -- eliminated players are still in `players` — the server keeps them there,
+    -- flagged, because the seat order is fixed at the deal — so "the first who
+    -- is not me" would hand the duel board a knocked-out player and their
+    -- empty hand, at random, on a table that came down to two.
+    --
+    -- And the duel path is taken ONLY when that survivor was actually found.
+    -- A table with one player left is a game that has just ended, not a duel:
+    -- falling through to the ordinary path there would find no opponent, take
+    -- the seven-card default below, and deal a phantom arch across a board
+    -- whose game is over.
+    local duel_with = nil
+    local looks_like_party = PB.is_party(state)
         or (tostring(state.matchType or ""):upper() == "PARTY")
+    if looks_like_party then
+        local live = PB.survivors(state)
+        if #live == 2 then
+            for _, id in ipairs(live) do
+                if id ~= self.my_player_id then duel_with = id break end
+            end
+        end
+    end
+    local is_party = looks_like_party and duel_with == nil
 
     for k, v in pairs(players) do
         local pid = v.id or v._id or k
         if pid == self.my_player_id then
             mp = v
-        elseif not is_party and pid ~= self.my_player_id and self.opponent_id == "" then
+        elseif not is_party and pid ~= self.my_player_id and self.opponent_id == ""
+           and (not looks_like_party or pid == duel_with) then
             self.opponent_id = pid
             op = v
         end

@@ -44,6 +44,55 @@ local SLOTS_BY_COUNT = {
     [4] = { "left", "top", "right" },
 }
 
+-- ── WHEN A TABLE IS DOWN TO TWO, IT IS NOT A TABLE ANY MORE ──────────────────
+--
+-- A party seats its opponents in arches round the edge: face-down backs at 85%
+-- scale, capped at ten, on 18px spacing. That is the right drawing for three
+-- people you are looking at across a table and the wrong one for the last two
+-- players in the game, who are playing an ordinary duel — and the app already
+-- has a board for that, with its own hand spacing and its own card size, which
+-- every other two-player match in the game uses.
+--
+-- So heads-up is not a party layout with two of the chairs hidden. The party
+-- board stands DOWN entirely and hands the opponent back to the ordinary
+-- renderer, which is what draws every other duel in the app. Two players who
+-- started alone and two players who are all that is left of four get the same
+-- board, because they are playing the same game.
+--
+-- The seat order never shrinks — the server fixes it when the cards are dealt
+-- and marks eliminations as a flag, which is right, because the turn
+-- arithmetic reads through it. So "how many are left" is a question about the
+-- flags, not about the length of the list.
+
+--- Is this game state a party at all?
+function M.is_party(game_state)
+    if type(game_state) ~= "table" then return false end
+    local order = game_state.seatOrder
+    return type(order) == "table" and #order > 0
+end
+
+--- Everybody still in, in seat order.
+function M.survivors(game_state)
+    local out = {}
+    if type(game_state) ~= "table" then return out end
+    local order = type(game_state.seatOrder) == "table" and game_state.seatOrder or {}
+    local players = type(game_state.players) == "table" and game_state.players or {}
+    for _, raw in ipairs(order) do
+        local id = tostring(raw or "")
+        if id ~= "" and not (players[id] or {}).eliminated then out[#out + 1] = id end
+    end
+    return out
+end
+
+--- Is this party down to two players (or dealt as two)?
+--
+-- Two OR FEWER: a table with one survivor is a game that has just ended, and
+-- the last thing it should do on the way out is put an arch back on screen.
+function M.is_heads_up(game_state)
+    if not M.is_party(game_state) then return false end
+    return #M.survivors(game_state) <= 2
+end
+
 function M.seating(seat_order, my_id)
     local order = {}
     for _, id in ipairs(type(seat_order) == "table" and seat_order or {}) do
@@ -151,6 +200,16 @@ function M.sync(self, game_state)
     if type(order) ~= "table" or #order == 0 then
         -- No seat order means a game dealt by the two-player path; the ordinary
         -- board is already drawing it and must not be redrawn as a party.
+        return
+    end
+
+    -- DOWN TO TWO: STAND DOWN. See the note above — the last two players are
+    -- playing a duel, and the ordinary board draws that with its own spacing
+    -- and its own card size. Any seats this drew earlier go with it, so a
+    -- four-hander that came down to two does not leave two dead chairs and an
+    -- arch of backs behind the duel it has become.
+    if M.is_heads_up(game_state) then
+        if self.party_seats then M.clear(self) end
         return
     end
 
