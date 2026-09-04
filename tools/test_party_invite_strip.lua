@@ -44,6 +44,7 @@ local ONLINE   = read("main/online.gui_script")
 local SEARCH   = read("modules/dialog_search.lua")
 local OVERLAY  = read("main/incoming.gui_script")
 local RIGHT    = read("modules/online_right.lua")
+local PARTY    = read("modules/dialog_party.lua")
 local CTRL     = read("main/controller.script")
 
 -- Comments explain the very things these checks look for, so they are stripped
@@ -51,6 +52,7 @@ local CTRL     = read("main/controller.script")
 -- can trust.
 local function code(s) return (s:gsub("%-%-%[%[.-%]%]", ""):gsub("%-%-[^\n]*", "")) end
 local ONLINE_C, OVERLAY_C, RIGHT_C = code(ONLINE), code(OVERLAY), code(RIGHT)
+local PARTY_C = code(PARTY)
 local SEARCH_C = code(SEARCH)
 
 -- ── THE STRIP ITSELF, BUILT BY THE REAL FUNCTION ────────────────────────────
@@ -240,9 +242,23 @@ check("the table is ended by the server saying so, and nothing else",
   OVERLAY_C:find('hash%("party_over"%)') ~= nil
     and OVERLAY_C:find('ws%.on%("party_cancelled"') ~= nil
     and OVERLAY_C:find('ws%.on%("party_starting"') ~= nil)
-check("LEAVE sends the leave and waits to be told, rather than closing itself",
-  OVERLAY_C:match('id == "party_leave".-ws%.party_leave%(self%.dialog%.party_id%)') ~= nil,
-  "the host leaving takes the whole table, and a leave that raced the deal is too late")
+-- NOTHING TO PRESS. A seat is paid for the instant it is taken and leaving
+-- forfeits the entry, so a LEAVE button is a control whose only function is to
+-- take a player's money and give them nothing back — one tap away from a table
+-- that was about to deal. The table is resolved by the SERVER: it fills and
+-- starts, or the window closes on too few players and it is called off.
+check("the table offers no way to leave it by hand",
+  OVERLAY_C:find("party_leave", 1, true) == nil
+    and PARTY_C:find("party_leave", 1, true) == nil,
+  "a manual leave takes the entry and gives nothing back")
+-- The BACKEND's handlePartyLeave stays, and must: a dropped socket has to free
+-- the chair, because a player who is gone cannot hold a seat the others are
+-- waiting on. That path is the server's own disconnect handler, not a message
+-- from here — no screen sends PARTY_LEAVE any more.
+check("...and no screen sends one",
+  OVERLAY_C:find("party_leave", 1, true) == nil
+    and ONLINE_C:find("party_leave", 1, true) == nil
+    and RIGHT_C:find("party_leave", 1, true) == nil)
 
 -- THE SEAT FLAG IS NOT THE OFFER FLAG. `dialog.party` means a strip offering a
 -- table you are NOT at, and the offer handler closes any dialog carrying it as

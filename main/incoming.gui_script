@@ -90,6 +90,10 @@ local function clear(self)
     -- call on a deleted node.
     self.ban_bar = nil
     self.ban_anim = nil
+    -- The party table's per-frame record points at nodes in the list just
+    -- deleted. Driving it afterwards is a gui call on a dead node, which takes
+    -- the whole update() with it.
+    self.party_anim = nil
 end
 local function track(self, n) self.nodes[#self.nodes+1] = n; return n end
 
@@ -572,13 +576,32 @@ local function open_party_table(self, d)
     -- clock does not necessarily catch WHICH chair changed — and partyView
     -- sends the seats in join order precisely so this is answerable. Named on
     -- arrival, once, and never for our own seat: the player knows they joined.
+    -- WHICH CHAIR JUST FILLED, and what the pot was a moment ago.
+    --
+    -- Both have to be worked out HERE and carried into the redraw, because the
+    -- roster is the only place the before and after both exist: draw() tears
+    -- the dialog down and rebuilds it, so by the time it runs there is no
+    -- "previous" left to diff against.
+    local arrived_index, pot_from
     if same then
+        local prev_view = prev.party_view or {}
+        pot_from = dialog_party.pot_of(prev_view)
+
         local was = {}
-        for _, seat in ipairs((prev.party_view or {}).seats or {}) do was[seat.user_id] = true end
+        for _, seat in ipairs(prev_view.seats or {}) do was[seat.user_id] = true end
         local me = tostring(ws.get_current_user_id() or "")
-        for _, seat in ipairs(view.seats) do
-            if not was[seat.user_id] and seat.user_id ~= me then
-                toast.info(seat.username:upper() .. " joined the table")
+        for i, seat in ipairs(view.seats) do
+            if not was[seat.user_id] then
+                -- The first new chair drives the arrival animation. A roster
+                -- grows by one in practice; if two ever landed in the same
+                -- push the earlier chair is the one the eye should follow,
+                -- because it is the one the reel was standing in.
+                arrived_index = arrived_index or i
+                if seat.user_id ~= me then
+                    -- Named as well as drawn: the chairs show that the table
+                    -- filled, not necessarily who by.
+                    toast.info(seat.username:upper() .. " joined the table")
+                end
             end
         end
     end
@@ -613,6 +636,10 @@ local function open_party_table(self, d)
         -- which is the instant it fills.
         party_id = view.party_id,
         party_view = view,
+        -- Read by dialog_party.draw: which chair to pop, and what figure the
+        -- pot should count UP from.
+        arrived_index = arrived_index,
+        pot_from = pot_from,
         time_left = left,
         max_time = math.max(left, 1),
         -- Never the strip. A banner is one line of text and what the player is
@@ -803,10 +830,24 @@ function update(self, dt)
             end
         end
 
-        local cur_sec = math.floor(math.max(0, self.dialog.time_left))
-        if cur_sec ~= self.dialog._last_sec then
-            self.dialog._last_sec = cur_sec
-            need_reb = true
+        -- THE TABLE ANIMATES; IT DOES NOT REBUILD.
+        --
+        -- Every other dialog here redraws itself once a whole second, for a
+        -- countdown that genuinely ticks in seconds. The party table cannot:
+        -- it is full of tweens — a reel hunting through avatars, an avatar
+        -- popping into a chair, a ring blooming behind it, a pot counting up —
+        -- and tearing every node down once a second would restart all four,
+        -- forever, so none of them would ever finish. dialog_party.animate
+        -- owns the words instead, and the nodes are rebuilt only when the
+        -- roster actually changes.
+        if self.dialog.party_table then
+            dialog_party.animate(self, self.dialog, dt)
+        else
+            local cur_sec = math.floor(math.max(0, self.dialog.time_left))
+            if cur_sec ~= self.dialog._last_sec then
+                self.dialog._last_sec = cur_sec
+                need_reb = true
+            end
         end
 
         -- ZERO ON A TABLE'S CLOCK IS NOT AN ENDING.
@@ -1183,16 +1224,6 @@ function on_input(self, action_id, action)
                     self.dialog = nil
                     app_state.modal_close("incoming")
                     rebuild(self)
-                elseif id == "party_leave" then
-                    -- Leaving forfeits the entry, which the dialog says under
-                    -- the button. The table is NOT closed here: the server
-                    -- answers with PARTY_CANCELLED, and closing early would
-                    -- hide a refusal — the host leaving takes the whole table
-                    -- with them, and a leave that raced the deal is simply too
-                    -- late.
-                    if self.dialog and self.dialog.party_table and self.dialog.party_id then
-                        ws.party_leave(self.dialog.party_id)
-                    end
                 elseif id == "decline" then
                     -- LATER on a cup invitation sends nothing at all. There is
                     -- no decline endpoint and there should not be one: the

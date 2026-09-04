@@ -56,6 +56,10 @@ do
     -- A recording ctx, the same shape incoming.gui_script's make_ctx hands
     -- dialog_incoming. Every string that reaches the screen is collected, so
     -- what is asserted is what a player would actually read.
+    -- Text nodes are collected as NODES, not as the strings they were born
+    -- with: draw() creates the countdown and the pot empty and animate() fills
+    -- them in, so a list captured at creation time would miss exactly the two
+    -- lines that move.
     local said, buttons
     local function ctx()
         said, buttons = {}, {}
@@ -65,10 +69,13 @@ do
             C = { COL_DIM = COL, COL_MID = COL, COL_GOLD = COL, COL_WHITE = COL,
                   COL_GREEN = COL, COL_RED = COL, COL_CYAN = COL },
             ui = {
-                box = node, btn9 = node, avatar = node, grad_backdrop = node,
+                box = node, btn9 = node, avatar = node, grad_backdrop = node, image = node,
                 pie = function() return gui.new_pie_node(vmath.vector3(0,0,0), vmath.vector3(1,1,0)) end,
-                text = function(_, str) said[#said + 1] = tostring(str)
-                                        return gui.new_text_node(vmath.vector3(0,0,0), tostring(str)) end,
+                text = function(_, str)
+                    local n = gui.new_text_node(vmath.vector3(0,0,0), tostring(str))
+                    said[#said + 1] = n
+                    return n
+                end,
             },
             track = function(self, n) self.nodes[#self.nodes + 1] = n; return n end,
             mkbtn = function(self, id) buttons[#buttons + 1] = id
@@ -83,7 +90,10 @@ do
 
     local function count(word)
         local n = 0
-        for _, s in ipairs(said) do if s:find(word, 1, true) then n = n + 1 end end
+        for _, node in ipairs(said) do
+            local t = gui.get_text(node) or ""
+            if t:find(word, 1, true) then n = n + 1 end
+        end
         return n
     end
 
@@ -101,10 +111,15 @@ do
         return d
     end
 
-    local function draw(d, secs)
+    -- draw() paints the static half; animate() owns the words, so the test
+    -- drives both exactly as the overlay's update() does.
+    local last_surface
+    local function draw(d, secs, over)
         local surface = { nodes = {}, buttons = {} }
-        local drew = pcall(party_dialog.draw, surface, ctx(),
-            { party_view = party_dialog.view(d), time_left = secs }, 1)
+        local rec = { party_view = party_dialog.view(d), time_left = secs }
+        for k, v in pairs(over or {}) do rec[k] = v end
+        local drew = pcall(party_dialog.draw, surface, ctx(), rec, 1)
+        last_surface, last_rec = surface, rec
         return drew
     end
 
@@ -117,8 +132,15 @@ do
     ok("our own chair says YOU", count("YOU") >= 1)
     ok("the other player is named", count("VORTEX") >= 1)
     ok("how many seats are left is said in words", count("2 seats left") >= 1)
-    ok("leaving is the one thing offered", buttons[#buttons] == "party_leave")
-    ok("and it does not pretend the entry comes back", count("stays with the table") >= 1)
+    -- NOTHING TO PRESS, AND THAT IS THE DESIGN. A seat is paid for the instant
+    -- it is taken and leaving forfeits the entry, so a LEAVE button is a
+    -- control whose only function is to take a player's money and give nothing
+    -- back — one tap from a table that was about to deal. The table is
+    -- resolved by the server: it fills and starts, or the window closes on too
+    -- few players and it is called off.
+    check("the table offers no button at all", #buttons, 0)
+    ok("...and never says anything about leaving", count("LEAVE") == 0)
+    ok("...nor about an entry staying behind", count("stays with the table") == 0)
     -- The pot is what has been PAID IN: two seats at 200 is 400, never 800.
     ok("the pot counts filled seats only", count("400 POT") >= 1)
 
@@ -146,9 +168,11 @@ do
     draw(wire({ seatsRemaining = 4 }), 10)
     check("six seats draw four placeholders", count("WAITING"), 4)
 
-    -- STARTING: nothing left to leave.
+    -- STARTING: the reel stops hunting. There is no next chair to fill.
     draw(wire({ status = "STARTING" }), 0)
-    check("a starting table offers no way out", count("LEAVE"), 0)
+    ok("a starting table stops hunting for the next player",
+        last_surface.party_anim.chairs[3] == nil
+        or last_surface.party_anim.chairs[3].reel == nil)
 
     -- Zero while still FILLING is the server's decision point, not a failure.
     draw(wire({ seatsRemaining = 1 }), 0)
@@ -160,6 +184,179 @@ do
     ok("a capped table says so", count("CAP 250") >= 1)
     draw(wire(), 9)
     ok("and a normal one says what it is too", count("PLAY IT OUT") >= 1)
+end
+
+----------------------------------------------------------------------
+print("ONE REEL, ON THE CHAIR THAT IS NEXT TO FILL")
+----------------------------------------------------------------------
+do
+    for name in pairs(package.loaded) do
+        if name:match("^modules%%.") then package.loaded[name] = nil end
+    end
+    package.path = ROOT .. "?.lua;" .. package.path
+    local SIM = dofile(ROOT .. "tools/defold_sim.lua")
+    SIM.install_gui_stub()
+    local ws = require("modules.websocket_manager"); ws.current_user_id = "me"
+    local dp = require("modules.dialog_party")
+
+    -- WHERE THE REEL STANDS is the whole idea: the thing that is moving is
+    -- also the thing about to change, so the player is already looking at the
+    -- right chair when somebody lands in it.
+    local function view(filled, size)
+        local seats = {}
+        for i = 1, filled do
+            seats[i] = { userId = "u" .. i, username = "P" .. i, avatar = i, joinedAt = i }
+        end
+        return dp.view({ partyId = "P1", hostId = "u1", entry = 200, status = "FILLING",
+                         seats = seats, seatsRemaining = size - filled })
+    end
+
+    check("the reel stands in the first empty chair", dp.next_empty(view(2, 4)), 3)
+    check("...and moves on as they fill", dp.next_empty(view(3, 4)), 4)
+    check("a full table has no reel at all", dp.next_empty(view(4, 4)), nil)
+    check("a table with only the host has it in the second chair", dp.next_empty(view(1, 4)), 2)
+
+    -- SAME CADENCE AND SAME POOL as the search dialog's reel. A player who has
+    -- watched one search has already learned what a hunting reel means; a
+    -- party spinning at a different rate reads as a different thing.
+    local ONLINE = io.open(ROOT .. "main/online.gui_script"):read("a")
+    ok("the reel hunts at the rate the search reel does",
+        ONLINE:find("sr%.spin_t >= 0%.07") ~= nil and dp.REEL_STEP == 0.07)
+    ok("...out of the same pool of avatars",
+        ONLINE:find("math%.random%(60%)", 1, false) ~= nil and dp.REEL_AVATARS == 60)
+
+    -- THE POT IS WHAT HAS BEEN PAID IN, and it grows with the seats: 200 a
+    -- head means 200 alone, 400 with two, 600 on the third.
+    check("one seat", dp.pot_of(view(1, 4)), 200)
+    check("two seats", dp.pot_of(view(2, 4)), 400)
+    check("three seats", dp.pot_of(view(3, 4)), 600)
+    check("four seats", dp.pot_of(view(4, 4)), 800)
+    -- Never entry times the table SIZE. That would promise a four-way prize
+    -- out of money nobody has put in — and would then have to count DOWN if
+    -- the table started short, which is not a thing a pot should be seen doing.
+    ok("...never the table's size", dp.pot_of(view(2, 4)) ~= 200 * 4)
+
+    -- And the coin art keeps step with the figure, on the ladder the challenge
+    -- dialog already uses, so 600 coins looks like 600 coins everywhere.
+    check("the bundle steps up with the pot", dp.bundle_for(600), "500")
+    check("...and again at the next tier", dp.bundle_for(1000), "1000")
+    check("a lone host's entry is the bottom rung", dp.bundle_for(200), "200")
+end
+
+----------------------------------------------------------------------
+print("AN ARRIVAL IS ONE EVENT TOLD IN FOUR BEATS")
+----------------------------------------------------------------------
+do
+    for name in pairs(package.loaded) do
+        if name:match("^modules%%.") then package.loaded[name] = nil end
+    end
+    package.path = ROOT .. "?.lua;" .. package.path
+    local SIM = dofile(ROOT .. "tools/defold_sim.lua")
+    SIM.install_gui_stub()
+    local ws = require("modules.websocket_manager"); ws.current_user_id = "me"
+    local dp = require("modules.dialog_party")
+
+    local node = function() return gui.new_box_node(vmath.vector3(0,0,0), vmath.vector3(1,1,0)) end
+    local COL = vmath.vector4(1, 1, 1, 1)
+    local texts
+    local function ctx()
+        texts = {}
+        return {
+            C = { COL_DIM = COL, COL_MID = COL, COL_GOLD = COL, COL_WHITE = COL,
+                  COL_GREEN = COL, COL_RED = COL, COL_CYAN = COL },
+            ui = { box = node, btn9 = node, avatar = node, grad_backdrop = node, image = node,
+                   pie = function() return gui.new_pie_node(vmath.vector3(0,0,0), vmath.vector3(1,1,0)) end,
+                   text = function(_, str)
+                       local n = gui.new_text_node(vmath.vector3(0,0,0), tostring(str))
+                       texts[#texts + 1] = n; return n
+                   end },
+            track = function(self, n) self.nodes[#self.nodes + 1] = n; return n end,
+            mkbtn = function(self, id) self.buttons[#self.buttons + 1] = { id = id } end,
+            commas = function(n) return tostring(n) end,
+            with_a = function(c) return c end,
+            dlg_avatar = function(self)
+                self.nodes[#self.nodes + 1] = node(); self.nodes[#self.nodes + 1] = node()
+            end,
+            CX = 640, CY = 360, LOGICAL_W = 1280, LOGICAL_H = 720,
+            DLG_RED = vmath.vector4(1,0,0,1), DLG_SEARCH = vmath.vector4(1,1,0,1),
+        }
+    end
+    local function pot_text()
+        for _, n in ipairs(texts) do
+            local t = gui.get_text(n) or ""
+            if t:find("POT", 1, true) then return t end
+        end
+    end
+
+    local function wire(filled)
+        local seats = {}
+        for i = 1, filled do
+            seats[i] = { userId = "u" .. i, username = "P" .. i, avatar = i, joinedAt = i }
+        end
+        return { partyId = "P1", hostId = "u1", entry = 200, status = "FILLING",
+                 seats = seats, seatsRemaining = 4 - filled }
+    end
+
+    -- A third player sits down: the pot goes 400 -> 600, and the arrival is
+    -- the chair they landed in.
+    local surface = { nodes = {}, buttons = {} }
+    local rec = {
+        party_view = dp.view(wire(3)), time_left = 11,
+        arrived_index = 3, pot_from = 400,
+    }
+    dp.draw(surface, ctx(), rec, 1)
+    local an = surface.party_anim
+
+    check("the pot starts from what it was", an.pot_from, 400)
+    check("...and is on its way to what it is now", an.pot_to, 600)
+    check("the figure on screen has not jumped straight there", pot_text(), "400 POT")
+
+    -- THE ORDER OF THE BEATS. The chair first, the money a fraction later, the
+    -- reel last — two things competing for the eye at the moment somebody
+    -- arrives is how an animation ends up reading as a glitch.
+    ok("the money follows the chair, it does not race it", dp.POT_DELAY > 0)
+    ok("...and the reel waits until the pop has settled",
+        dp.REEL_RESUME > dp.POT_DELAY and dp.REEL_RESUME >= dp.POP_SECONDS)
+
+    -- The reel is dark while the arrival has the eye.
+    dp.animate(surface, rec, 0.05)
+    check("the reel is hidden for that moment", an.chairs[4].reel.color.w, 0)
+
+    -- Halfway through the count-up the figure is between the two, not at
+    -- either end: this is the property that separates a number climbing from
+    -- a number that jumped.
+    dp.animate(surface, rec, dp.POT_DELAY + dp.POT_SECONDS / 2)
+    local mid = tonumber((pot_text() or ""):match("^(%d+)"))
+    ok("the pot climbs rather than jumping", mid and mid > 400 and mid < 600,
+        "got " .. tostring(mid))
+
+    -- And it lands exactly on the real figure, never a rounding of it.
+    dp.animate(surface, rec, dp.POT_SECONDS)
+    check("...and lands on the true total", pot_text(), "600 POT")
+
+    -- Once the arrival is over the reel is back, hunting in the last chair.
+    dp.animate(surface, rec, dp.REEL_RESUME)
+    check("the reel comes back for the last chair", an.chairs[4].reel.color.w, 1)
+    local first = an.reel_ix
+    for _ = 1, 12 do dp.animate(surface, rec, dp.REEL_STEP) end
+    ok("...and it is actually hunting", an.reel_ix ~= 0)
+    -- Sixty avatars: two draws landing on the same one is possible, twelve
+    -- never moving is not.
+    ok("...through more than one face", an.reel_ix ~= first or first ~= 0)
+
+    -- A TABLE THAT SIMPLY APPEARED has no arrival to play. Nothing pops,
+    -- nothing blooms, and the pot is already correct.
+    local s2 = { nodes = {}, buttons = {} }
+    local r2 = { party_view = dp.view(wire(2)), time_left = 14 }
+    dp.draw(s2, ctx(), r2, 1)
+    check("a table opening shows its pot outright", pot_text(), "400 POT")
+    check("...with no arrival in flight", s2.party_anim.since, nil)
+
+    -- ANIMATE IS SAFE TO CALL ON ANYTHING. The overlay calls it every frame,
+    -- including frames where the record belongs to a table that has gone.
+    ok("a record for another table is ignored",
+        dp.animate(s2, { party_view = dp.view({ partyId = "OTHER" }) }, 0.1) == false)
+    ok("...and so is no record at all", dp.animate({}, r2, 0.1) == false)
 end
 
 ----------------------------------------------------------------------
