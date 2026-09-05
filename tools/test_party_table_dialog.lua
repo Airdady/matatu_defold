@@ -591,5 +591,104 @@ do
         src:find("if not playing then", 1, true) ~= nil)
 end
 
+----------------------------------------------------------------------
+print("A SEAT COSTS THE ENTRY AND THE CHARGE, AND THE TABLE SAYS SO")
+----------------------------------------------------------------------
+--
+-- A party used to take the entry and nothing else, alone among the paid
+-- modes: a duel takes stake + charge from both wallets, a battle's charge
+-- comes from its prize tier, a knockout's from the cap. The server now debits
+-- 25 a seat alongside the entry, BEFORE the cards are dealt, and this pins
+-- the two things that has to mean here:
+--
+--   1. the price is READABLE — a balance that moves by more than the number
+--      on screen is the bug this replaces
+--   2. the charge is NOT in the pot. The pot is the entries; adding the
+--      house's cut to it would promise the winner money the house kept.
+do
+    for name in pairs(package.loaded) do
+        if name:match("^modules%.") then package.loaded[name] = nil end
+    end
+    package.path = ROOT .. "?.lua;" .. package.path
+    local SIM = dofile(ROOT .. "tools/defold_sim.lua")
+    SIM.install_gui_stub()
+    local ws = require("modules.websocket_manager"); ws.current_user_id = "me"
+    local dp = require("modules.dialog_party")
+
+    local node = function() return gui.new_box_node(vmath.vector3(0,0,0), vmath.vector3(1,1,0)) end
+    local COL = vmath.vector4(1, 1, 1, 1)
+    local texts
+    local function ctx()
+        texts = {}
+        return {
+            C = { COL_DIM = COL, COL_MID = COL, COL_GOLD = COL, COL_WHITE = COL,
+                  COL_GREEN = COL, COL_RED = COL, COL_CYAN = COL },
+            ui = { box = node, btn9 = node, avatar = node, grad_backdrop = node, image = node,
+                   coin_pot = require("modules.ui").coin_pot,
+                   pie = function() return gui.new_pie_node(vmath.vector3(0,0,0), vmath.vector3(1,1,0)) end,
+                   text = function(_, str)
+                       local n = gui.new_text_node(vmath.vector3(0,0,0), tostring(str))
+                       texts[#texts + 1] = n; return n
+                   end },
+            track = function(self, n) self.nodes[#self.nodes + 1] = n; return n end,
+            mkbtn = function(self, id) self.buttons[#self.buttons + 1] = { id = id } end,
+            commas = function(n) return tostring(n) end,
+            with_a = function(c) return c end,
+            dlg_avatar = function(self)
+                self.nodes[#self.nodes + 1] = node(); self.nodes[#self.nodes + 1] = node()
+            end,
+            CX = 640, CY = 360, LOGICAL_W = 1280, LOGICAL_H = 720,
+            DLG_RED = vmath.vector4(1,0,0,1), DLG_SEARCH = vmath.vector4(1,1,0,1),
+        }
+    end
+    local function find(needle)
+        for _, n in ipairs(texts) do
+            local t = gui.get_text(n) or ""
+            if t:find(needle, 1, true) then return t end
+        end
+    end
+
+    local wire = {
+        partyId = "P1", hostId = "u1", entry = 200, charge = 25, status = "FILLING",
+        seatsRemaining = 2, closesAt = 0,
+        seats = {
+            { userId = "u1", username = "A", avatar = 1, joinedAt = 1 },
+            { userId = "me", username = "B", avatar = 2, joinedAt = 2 },
+        },
+    }
+
+    local view = dp.view(wire)
+    check("the charge comes off the wire, not from a copy of the ladder", view.charge, 25)
+
+    -- The POT is the entries. Two seats at 200 is 400 — the 50 of charge the
+    -- house took is nowhere in it.
+    check("the charge is not in the pot", dp.pot_of(view), 400)
+
+    local surface = { nodes = {}, buttons = {} }
+    local drew = pcall(dp.draw, surface, ctx(), { party_view = view, time_left = 12 }, 1)
+    ok("the table draws with a charge on it", drew)
+    ok("the seat price names the charge", (find("charge") or ""):find("25", 1, true) ~= nil)
+    ok("and still names the entry", (find("each") or ""):find("200", 1, true) ~= nil)
+
+    -- A PRACTICE TABLE IS STILL FREE. Entry zero draws no price line at all,
+    -- and a charge must not sneak one back in.
+    local free = dp.view({ partyId = "P2", hostId = "u1", entry = 0, charge = 0,
+                           status = "FILLING", seatsRemaining = 3,
+                           seats = { { userId = "u1", username = "A", avatar = 1, joinedAt = 1 } } })
+    local s2 = { nodes = {}, buttons = {} }
+    pcall(dp.draw, s2, ctx(), { party_view = free, time_left = 12 }, 1)
+    ok("a practice table shows no charge", find("charge") == nil)
+
+    -- AN OLDER SERVER SENDS NO CHARGE AT ALL. It reads as zero and the line
+    -- goes back to what it always said, rather than to "200 each + nil".
+    local old = dp.view({ partyId = "P3", hostId = "u1", entry = 200, status = "FILLING",
+                          seatsRemaining = 3,
+                          seats = { { userId = "u1", username = "A", avatar = 1, joinedAt = 1 } } })
+    check("a table with no charge on the wire reads as zero", old.charge, 0)
+    local s3 = { nodes = {}, buttons = {} }
+    pcall(dp.draw, s3, ctx(), { party_view = old, time_left = 12 }, 1)
+    ok("and says only the entry", find("each") ~= nil and find("charge") == nil)
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

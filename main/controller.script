@@ -1221,11 +1221,23 @@ function init(self)
     table.insert(self.tokens, ws.on("transaction_completed", function(d)
         d = type(d) == "table" and d or {}
         local new_bal = tonumber(d.newBalance)
+        local kind = tostring(d.type or "")
         local on_money_screens = (self.screen == "payments" or self.screen == "online")
-        if tostring(d.type or "") == "buy" and new_bal and on_money_screens then
+
+        -- THE DIALOG CLOSES ON ANY SETTLED TRANSACTION, NOT ONLY ON A DEPOSIT.
+        --
+        -- A player who has just sold coins is looking at the same screen, in
+        -- the same "Request sent - check your phone" state, and it is finished
+        -- for them too — the money left and the balance below has already
+        -- moved. Only the COINS are a deposit's own business, which is why the
+        -- animation below is still gated on one.
+        if self.screen == "payments" and (kind == "buy" or kind == "withdrawal") then
+            show(self, "online")
+        end
+
+        if kind == "buy" and new_bal and on_money_screens then
             local old_bal = tonumber((ws.current_user_data or {}).balance) or 0
             local gained = new_bal - old_bal
-            if self.screen == "payments" then show(self, "online") end
             if gained > 0 then
                 pcall(msg.post, "#coins", "coin_deposit", {
                     amount = gained, from_balance = old_bal, to_balance = new_bal,

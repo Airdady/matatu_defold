@@ -429,6 +429,42 @@ end
 check("party is still a type the maker can build", has(RIGHT, 'M.BATTLE_TYPES = { "NORMAL", "KNOCKOUT", "PARTY" }'))
 check("...and still submits as one", has(RIGHT, 'btype ~= "KNOCKOUT" and btype ~= "PARTY"'))
 
+----------------------------------------------------------------------
+print("")
+print("WHAT A PARTY SEAT COSTS")
+----------------------------------------------------------------------
+--
+-- A party took the entry and nothing else, alone among the paid modes: a duel
+-- takes stake + charge from both wallets, a battle's charge comes from its
+-- prize tier, a knockout's from the cap. The server now takes 25 UGX a seat
+-- alongside the entry, before the cards are dealt. This side does not debit
+-- anything — it has to SAY the price, and refuse for the right reason.
+check("a seat carries a charge", (R.PARTY_CHARGE or 0) > 0, tostring(R.PARTY_CHARGE))
+check("the total is the entry plus it", R.party_seat_total(200), 200 + R.PARTY_CHARGE)
+check("a missing entry is nothing, not an error", R.party_seat_total(nil), R.PARTY_CHARGE)
+
+-- FLAT, NOT A LADDER. The entry has two rungs and the charge is the same at
+-- both — mirroring PARTY_CHARGE_UGX in be_matatu's partyRules.ts, which is one
+-- constant rather than a table keyed by entry.
+check("the charge does not move with the entry",
+      R.party_seat_total(R.PARTY_TIERS[2]) - R.PARTY_TIERS[2]
+        == R.party_seat_total(R.PARTY_TIERS[1]) - R.PARTY_TIERS[1])
+
+-- PRICED IN THIS GAME'S OWN CURRENCY, exactly as the entry ladder above it is:
+-- 25 in matatu, x0.4 for whot, x0.04 for kadi. A flat 25 everywhere would ask
+-- a kadi player for more than their entry.
+check("and is priced against this game's ladder",
+      R.PARTY_CHARGE < R.PARTY_TIERS[1],
+      string.format("%s vs %s", tostring(R.PARTY_CHARGE), tostring(R.PARTY_TIERS[1])))
+
+-- THE BALANCE CHECK USES THE TOTAL. Against the entry alone, a player holding
+-- exactly the entry was sent to the server to be refused with a PARTY_ERROR
+-- instead of to the top-up screen.
+check("the create checks the total, not the entry",
+      has(RIGHT, "bal < M.party_seat_total(entry)"))
+check("and the form states the price before the tap",
+      has(RIGHT, "Charge: %s") and has(RIGHT, "M.PARTY_CHARGE"))
+
 print("")
 print(string.format("%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
