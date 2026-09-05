@@ -205,10 +205,46 @@ end
 -- ── Knockout (online elimination chamber) ────────────────────────────────────
 -- A knockout battle shows the offline-chamber score-cap standings table instead
 -- of the normal battle scoreboard. We reuse the t4 chamber messages.
-local function is_knockout_state(state)
-    local mt = tostring((state or {}).matchType or ""):upper()
-    return mt == "KNOCKOUT" or mt == "ELIMINATION"
+-- IS THIS A GAME PLAYED TO A SCORE CAP?
+--
+-- Everything the chamber does hangs off this one answer: the standings board
+-- is built from it, the battle scoreboard is suppressed by it, and the running
+-- totals are pushed on every sync because of it.
+--
+-- IT ONLY EVER SAID YES TO A KNOCKOUT BATTLE. A party has its own matchType —
+-- 'PARTY' — and carries the cap in its own fields, so picking SCORECAP at a
+-- party table produced a game the server scored, cumulated and eliminated on
+-- exactly like a knockout while the client drew an ordinary board: no
+-- chamber, no totals, nothing to say why a seat had just gone out. Reported as
+-- "nothing magical like how we handle score caps", and that is precisely it —
+-- the magic was all present and gated behind a name this state does not use.
+--
+-- A capped party IS a knockout by another name. The server says so itself:
+-- partyRules' cap ladder is "deliberately the SAME ladder a KNOCKOUT chamber
+-- uses", isEliminatedAtCap gives "the same reading a KNOCKOUT chamber gives
+-- it", and endPartyGame cumulates the hand into cumulativeScore and sets
+-- `eliminated` — the two fields this board reads.
+--
+-- THE PARTY BRANCH DOES NOT LOOK AT matchType. Some mid-game syncs do not echo
+-- it (which is why self._is_knockout is sticky at the call sites), and the
+-- mode and the cap are the facts that actually decide this. A cap of zero is
+-- not a capped game: partyMode can read SCORECAP with no meaningful cap
+-- attached, and the server treats that as a NORMAL party rather than a table
+-- where everybody is out on the first hand.
+--
+-- Exported so the rule can be proved on its own. Everything it gates needs a
+-- board, a socket and a dealt game to observe.
+function M.is_score_capped(state)
+    state = state or {}
+    local mt = tostring(state.matchType or ""):upper()
+    if mt == "KNOCKOUT" or mt == "ELIMINATION" then return true end
+    if tostring(state.partyMode or ""):upper() == "SCORECAP" then
+        return (tonumber(state.scoreCap) or 0) > 0
+    end
+    return false
 end
+
+local is_knockout_state = M.is_score_capped
 
 local function knockout_chamber_rows(self, state)
     local rows = {}
@@ -249,11 +285,28 @@ function M.seed_knockout_totals(self, state)
     if sum == 0 then self._knockout_history = nil end
 end
 
+--- WHERE THE CHAMBER SITS DEPENDS ON WHO ELSE IS AT THE TABLE.
+--
+-- left_center puts the board halfway down the left edge, which is empty in a
+-- two-player game and is exactly where the LEFT SEAT's avatar and its arch of
+-- cards are at a party of three or more. Four rows of standings laid over an
+-- opponent's hand is worse than no standings at all.
+--
+-- So a table with more than two seats takes the top-left corner instead —
+-- above the left seat's row and clear of the centre arch, which is the one
+-- corner a party leaves free. t4_ui's chamber_init recognises only the two
+-- *_center placements and defaults to the top-left for anything else.
+function M.chamber_placement(state)
+    local seats = 0
+    for _ in pairs((state or {}).players or {}) do seats = seats + 1 end
+    return (seats > 2) and "top_left" or "left_center"
+end
+
 local function knockout_init_chamber(self, state)
     msg.post(GUI_HUD, "t4_chamber_init", {
         threshold = tonumber(state.scoreCap) or 200,
         rows      = knockout_chamber_rows(self, state),
-        placement = "left_center",
+        placement = M.chamber_placement(state),
     })
 end
 
