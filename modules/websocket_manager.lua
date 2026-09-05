@@ -875,16 +875,29 @@ end
 -- nothing about the players it was leaving out.
 M.playing_count = 0
 
-local function handle_online_users(msg_data)
+-- `envelope` is the WHOLE message, not its `data`, and that is the point.
+--
+-- The count is a SIBLING of `data`, deliberately: `data` is the user array
+-- itself, and the server put the count beside it rather than wrapping the
+-- array so that a client which only reads `data` kept working on the day the
+-- list was capped. See broadcastOnlineUsers — "A SIBLING FIELD, NOT A CHANGE
+-- TO `data`".
+--
+-- Read off `data` and it is nil forever, because `data` is an array. That is
+-- exactly what happened: the badge was wired up, the count was always zero,
+-- and the badge never drew. `data.playingCount` is still read as a fallback
+-- in case a server ever does nest it, but the envelope is the real answer.
+local function handle_online_users(msg_data, envelope)
   local users = {}
   local playing = 0
   if type(msg_data) == "table" then
     if #msg_data > 0 then users = msg_data
     elseif msg_data.users then users = msg_data.users
     elseif msg_data.onlineUsers then users = msg_data.onlineUsers end
-    -- Rides alongside the list rather than inside it, so a payload that is
-    -- just an array (an older server) still parses and simply reports none.
     playing = tonumber(msg_data.playingCount) or 0
+  end
+  if playing == 0 and type(envelope) == "table" then
+    playing = tonumber(envelope.playingCount) or 0
   end
   M.online_users = users
   M.playing_count = math.max(0, math.floor(playing))
@@ -1030,7 +1043,9 @@ local function parse_message(json_string)
       emit("identify_success", M.current_user_data, d)
     end
   elseif t == "ONLINE_USERS" then
-    handle_online_users(d)
+    -- The whole message, because the count rides beside `data` rather than
+    -- inside it.
+    handle_online_users(d, message)
   elseif t == "PUBLIC_ANNOUNCEMENTS" then
     emit("announcements", d)
   elseif t == "GAME_REQUEST" then

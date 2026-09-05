@@ -49,12 +49,22 @@ do
 
     check("nothing has been said yet", ws.playing_count, 0)
 
-    -- Exactly the frame broadcastOnlineUsers sends: the playable rows, and the
-    -- count of everybody mid-game riding alongside them.
-    SIM.server_send({ type = "ONLINE_USERS", data = {
-        users = { { _id = "u1", username = "A" }, { _id = "u2", username = "B" } },
-        playingCount = 104,
-    } })
+    -- EXACTLY THE FRAME broadcastOnlineUsers SENDS, and the shape is the whole
+    -- point: `data` is the user ARRAY, and playingCount sits BESIDE it, not
+    -- inside it. The server says so in as many words — "A SIBLING FIELD, NOT A
+    -- CHANGE TO `data`" — because an older client that only reads `data` had
+    -- to keep working on the day the list was capped.
+    --
+    -- This test used to send { data = { users = ..., playingCount = ... } },
+    -- which is a shape nothing produces. It passed, and the badge still never
+    -- drew: the client was reading the count off an array, where it is nil
+    -- forever. A fixture invented to match the code proves only that the code
+    -- matches itself.
+    local function frame(users, playing)
+        return { type = "ONLINE_USERS", data = users, playingCount = playing }
+    end
+
+    SIM.server_send(frame({ { _id = "u1", username = "A" }, { _id = "u2", username = "B" } }, 104))
     SIM.pump(0.2)
 
     check("the count is what the server said", ws.playing_count, 104)
@@ -63,11 +73,14 @@ do
     check("...and not the number of rows", #ws.online_users, 2)
 
     -- A quiet lobby reports none rather than a stale figure.
-    SIM.server_send({ type = "ONLINE_USERS", data = {
-        users = { { _id = "u1", username = "A" } }, playingCount = 0,
-    } })
+    SIM.server_send(frame({ { _id = "u1", username = "A" } }, 0))
     SIM.pump(0.2)
     check("a quiet lobby clears it", ws.playing_count, 0)
+
+    -- Back to a busy lobby, so the checks below cannot pass on a stale zero.
+    SIM.server_send(frame({ { _id = "u1", username = "A" } }, 7))
+    SIM.pump(0.2)
+    check("and it comes back", ws.playing_count, 7)
 
     -- An older server sends a bare array and no count at all. That must parse
     -- and simply report none, not break the list.
@@ -79,13 +92,20 @@ do
     check("...and reports nobody playing rather than nil", ws.playing_count, 0)
 
     -- Nonsense is none, not a badge reading "nan".
-    SIM.server_send({ type = "ONLINE_USERS", data = { users = {}, playingCount = "many" } })
+    SIM.server_send(frame({}, "many"))
     SIM.pump(0.2)
     check("nonsense is nobody", ws.playing_count, 0)
 
-    SIM.server_send({ type = "ONLINE_USERS", data = { users = {}, playingCount = -5 } })
+    SIM.server_send(frame({}, -5))
     SIM.pump(0.2)
     check("and a negative count is never drawn", ws.playing_count, 0)
+
+    -- A server that DID nest it would still be read, so the fallback is not
+    -- dead code — but the envelope is where the real one lives.
+    SIM.server_send({ type = "ONLINE_USERS",
+        data = { users = { { _id = "u1" } }, playingCount = 12 } })
+    SIM.pump(0.2)
+    check("a nested count is still understood", ws.playing_count, 12)
 end
 
 ----------------------------------------------------------------------
@@ -94,6 +114,14 @@ print("AND IT IS DRAWN OVER THE HEADER, NOT AS ANOTHER ROW")
 do
     local src = io.open(ROOT .. "modules/online_center.lua"):read("a")
     local code = src:gsub("%-%-%[%[.-%]%]", ""):gsub("%-%-[^\n]*", "")
+
+    -- THE SHAPE, pinned where it is read. This is the bug: the count is a
+    -- sibling of `data`, and reading it off `data` is reading it off an array.
+    local wsm = io.open(ROOT .. "modules/websocket_manager.lua"):read("a")
+    ok("the count is read off the whole message, not off data",
+        wsm:match("handle_online_users%(d, message%)") ~= nil)
+    ok("...and the server really does send it beside data",
+        wsm:find("envelope.playingCount", 1, true) ~= nil)
 
     ok("the list header reads the count", code:find("ws.playing_count", 1, true) ~= nil)
     ok("...and says what it is", code:find('" PLAYING"', 1, true) ~= nil)

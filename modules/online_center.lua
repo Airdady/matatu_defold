@@ -77,9 +77,16 @@ function M.draw(self, ctx)
         -- resized to what the label actually measured. Guessing a width from
         -- the digit count is how a badge ends up clipping "104" and swimming
         -- around "7".
+        -- COL_BADGE_BG, the palette's own badge ground, on COL_HEADER_BG. Not
+        -- COL_BORDER: that is a 50%-alpha dark grey meant for hairlines, and a
+        -- pill drawn in it on a dark header is very nearly the header.
+        --
+        -- And the label is COL_BRIGHT, not COL_DIM. This is the figure that
+        -- says the lobby is busy — dimming it makes it furniture, which is the
+        -- one thing it must not read as.
         local pill = track(self, ui.box(vmath.vector3(content_r, hcy + 16, 0),
-            vmath.vector3(8, 22, 0), C.COL_BORDER))
-        local tx = txtR(self, content_r - 10, hcy + 16, label, "small", C.COL_DIM)
+            vmath.vector3(8, 22, 0), C.COL_BADGE_BG))
+        local tx = txtR(self, content_r - 10, hcy + 16, label, "small", C.COL_BRIGHT)
 
         local w = 60
         pcall(function()
