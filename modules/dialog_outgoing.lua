@@ -10,7 +10,6 @@ function M.draw(self, ctx, d, a)
     local C            = ctx.C
     local track        = ctx.track
     local ui           = ctx.ui
-    local mkbtn        = ctx.mkbtn
     local commas       = ctx.commas
     local with_a       = ctx.with_a
     local dlg_avatar   = ctx.dlg_avatar
@@ -126,20 +125,17 @@ function M.draw(self, ctx, d, a)
 
     if hv then draw_h2h_row(self, CX, CY - 118, hv, a) end
 
-    -- CANCEL, AND IT REALLY CANCELS.
+    -- NO BUTTON, AND THAT IS THE WHOLE SURFACE.
     --
-    -- There was no button here for a long time, for a good reason: the backend
-    -- had no way to withdraw a request once sent, so a Cancel would have been
-    -- a lie — the opponent could accept seconds after the sender "cancelled"
-    -- and the game would start with them looking at the lobby.
+    -- There is nothing here for the sender to do: the request is out, the
+    -- opponent has ten seconds, and the dialog closes itself when they answer
+    -- or when it lapses. A Cancel was tried and taken out again by request —
+    -- and the older reason it never existed still stands on its own, that a
+    -- challenge already sent cannot be un-sent from the sender's side without
+    -- the opponent being able to accept it in the same breath.
     --
-    -- That is fixed rather than worked around. CANCEL_GAME_REQUEST retires the
-    -- pending request server-side and tells the opponent, whose strip clears
-    -- (be_matatu's handlers/cancelGameRequest.ts). So the button does what it
-    -- says, and a player who tapped the wrong name is not held for ten seconds
-    -- by a decision they have already changed their mind about.
-    mkbtn(self, "cancel_wait", vmath.vector3(CX, CY - 162, 0), vmath.vector3(170, 48, 0),
-        "CANCEL", "secondary_btn")
+    -- The scrim swallows taps (see the dlg_block button the caller registers),
+    -- so the ten seconds are the ten seconds.
 end
 
 return M

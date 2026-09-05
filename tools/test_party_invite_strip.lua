@@ -151,19 +151,19 @@ check("...and every strip on the row still has both buttons",
     and not ONLINE_C:find("b%.outgoing"),
   "the one-button strip WAS the outgoing one")
 
--- AND THE CANCEL ON IT IS REAL.
+-- AND THERE IS NOTHING ON IT TO PRESS.
 --
--- There was no button there for years, and the comment beside it said why: the
--- backend had no way to withdraw a request once sent, so a Cancel would have
--- been a lie — the opponent could accept seconds after the sender gave up.
-check("CANCEL withdraws the request rather than hiding the dialog",
-  ONLINE_C:find("pcall%(ws%.cancel_game_request%)") ~= nil)
-check("...and the socket has a way to say it",
-  code(read("modules/websocket_manager.lua")):find('M%.send_message%("CANCEL_GAME_REQUEST", %{%}%)') ~= nil)
-check("...sending no id, because the sender has never been told one",
-  code(read("modules/websocket_manager.lua")):match("function M%.cancel_game_request%(%)") ~= nil)
-check("the dialog's own button asks for it",
-  code(read("modules/dialog_outgoing.lua")):find('mkbtn%(self, "cancel_wait"') ~= nil)
+-- A Cancel was tried and taken out again by request. The older reason it never
+-- existed stands on its own anyway: a challenge already sent cannot be un-sent
+-- from the sender's side without the opponent being able to accept it in the
+-- same breath. The dialog closes when they answer, or when it lapses.
+check("the waiting dialog carries no button",
+  code(read("modules/dialog_outgoing.lua")):find("mkbtn") == nil,
+  "there is nothing for the sender to do; the ten seconds are the ten seconds")
+check("...and the screen has no cancel branch left for one",
+  ONLINE_C:find("cancel_wait") == nil)
+check("...only the scrim, which swallows taps and does nothing",
+  ONLINE_C:find('elseif id == "dlg_block" then') ~= nil)
 
 -- ── EXPIRY: A STRIP ANSWERS ONLY WHERE THERE IS SOMETHING TO ANSWER ─────────
 check("a lapsed table is never declined",
