@@ -892,6 +892,12 @@ function update(self, dt)
     -- cosine and one set_scale, and only while the badge says OPEN.
     right_panel.pulse_badge(self, self.ui_clock)
 
+    -- ── And the in-play count at the foot of the list, beating ───────────
+    -- Same reason, same mechanism: draw() rebuilds the centre panel on every
+    -- socket burst, so the beat is recomputed from the clock each frame
+    -- instead of being a tween that never survives to its second frame.
+    center_panel.pulse_playing(self, self.ui_clock)
+
     -- ── Savings promo, typing itself out ─────────────────────────────────
     -- draw_savings_info works out how much of the copy to show from the wall
     -- clock, so this only has to ask for the redraws that make it animate —

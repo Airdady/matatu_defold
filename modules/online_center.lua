@@ -9,6 +9,187 @@ local TAB_BATTLES = 2
 
 local M = {}
 
+-- ── HOW MANY ARE MID-GAME ──────────────────────────────────────────────────
+--
+-- The list carries PLAYABLE opponents and is capped at thirty
+-- (LOBBY_LIST_MAX on the server). Somebody already in a game cannot be
+-- challenged, so a row for them is a row pushing a playable opponent off the
+-- screen — they are left out on purpose, and sent as a count instead.
+--
+-- Without it the lobby said nothing about them at all, and "AVAILABLE
+-- PLAYERS" over six rows on an app with a hundred people in it reads as an
+-- empty game rather than a busy one. The count is the whole difference
+-- between a quiet lobby and a full one, and it is precisely the number the
+-- cap makes invisible.
+--
+-- IT SITS AT THE FOOT OF THE LIST, not on the header it used to hang off.
+-- The header is the label for what IS here; this is the figure for what is
+-- not, and reading them as one line ("AVAILABLE PLAYERS ... 104 PLAYING")
+-- invites exactly the wrong sum. At the bottom it is the last thing the eye
+-- meets on its way down the rows, which is where the question it answers —
+-- "is that everybody?" — actually gets asked. Right-aligned on the same edge
+-- the stakes and the row figures already use, so it lines up with the column
+-- above it rather than floating.
+--
+-- A FIGURE, NOT SOMETHING TO TAP. It is never registered as a button, for the
+-- same reason those players are not rows.
+
+--- Pill height, and how far it clears the bottom of the list.
+M.BADGE_H    = 30
+M.BADGE_LIFT = 8
+
+--- Inside the pill: edge padding, the gap between its three pieces, and the
+--- diameter of the live dot.
+M.BADGE_PAD = 13
+M.BADGE_GAP = 8
+M.BADGE_DOT = 9
+
+-- The pill is drawn as a straight body between two round caps, and the caps
+-- are the ui atlas's `circle` — which is a flat, opaque #41060C disc. A GUI
+-- tint MULTIPLIES the texture, so that colour is the ceiling: it can be made
+-- darker but never brighter or another hue. So the BODY is set to the circle's
+-- own colour rather than the caps being tinted towards the body's, which is
+-- the only way the three pieces can be one shape and not a box with two
+-- bruises on the ends.
+M.BADGE_GROUND = vmath.vector4(0.255, 0.024, 0.047, 0.94)
+
+--- How long one beat of the live dot takes, and how far it swells.
+M.BADGE_PULSE_PERIOD = 1.3
+M.BADGE_PULSE_SWELL  = 0.42
+
+--- The dot's scale and alpha at a given moment. Pure, so the shape of the
+--- beat can be checked without a screen.
+--
+-- A raised cosine: it leaves rest and returns to it with zero velocity, so
+-- there is no corner at either end of the beat. A triangle wave would tick.
+function M.badge_pulse(clock)
+    local t = tonumber(clock)
+    if t == nil then return 1, 1 end
+    local p = (t % M.BADGE_PULSE_PERIOD) / M.BADGE_PULSE_PERIOD
+    local wave = 0.5 - 0.5 * math.cos(p * 2 * math.pi)
+    return 1 + M.BADGE_PULSE_SWELL * wave, 0.55 + 0.45 * wave
+end
+
+--- Where each piece of the badge sits, laid out from its right edge inwards.
+--
+-- Right-aligned because the count is read against the figures in the column
+-- above it, and a pill that grew leftwards from a fixed left edge would move
+-- that alignment every time the number gained a digit.
+--
+-- Pure and separate from the drawing for the usual reason: "the pill fits its
+-- own label" is a claim worth being able to prove, and proving it through a
+-- renderer means owning a screen.
+function M.badge_layout(right, cy, num_w, label_w)
+    local pad, gap, dot = M.BADGE_PAD, M.BADGE_GAP, M.BADGE_DOT
+    local label_x = right - pad
+    local num_x   = label_x - label_w - gap
+    local dot_x   = num_x - num_w - gap - dot / 2
+    local left    = dot_x - dot / 2 - pad
+    return {
+        left = left, right = right, width = right - left, cy = cy,
+        dot_x = dot_x, num_x = num_x, label_x = label_x,
+    }
+end
+
+--- Breathe the dot, if there is one.
+--
+-- Written straight into the node from a monotonic clock rather than through
+-- gui.animate, for the reasons online_right.lua sets out at length above its
+-- own badge pulse: draw() deletes and recreates every node on this panel — on
+-- every socket burst, which is up to twelve times a second — and a looping
+-- tween restarted that often never leaves the start of its first ease. It
+-- would sit perfectly still, which is the opposite of the thing being asked
+-- for. Recomputing from the clock cannot drift out of phase, and a rebuild
+-- mid-beat is invisible because the next frame lands on the same value.
+--
+-- Called every frame by the host (main/online.gui_script). Safe when the node
+-- has been deleted by a draw that has not happened yet, and safe when there is
+-- nobody playing and so no badge at all.
+function M.pulse_playing(self, clock)
+    local n = self and self.playing_dot_node
+    if not n then return false end
+    local k, a = M.badge_pulse(clock)
+    local col = self.playing_dot_color or vmath.vector4(0.90, 0.25, 0.25, 1)
+    local ok = pcall(function()
+        gui.set_scale(n, vmath.vector3(k, k, 1))
+        gui.set_color(n, vmath.vector4(col.x, col.y, col.z, a))
+    end)
+    if not ok then self.playing_dot_node = nil end
+    return ok
+end
+
+--- Draw it, right-aligned on `right`, sitting just above `bottom`.
+--
+-- Returns the pill node, or nil when there is nobody to report — a lobby with
+-- nobody playing says nothing rather than showing a zero, which would read as
+-- a broken badge rather than a quiet game.
+function M.draw_playing_badge(self, ctx, right, bottom)
+    self.playing_dot_node = nil
+
+    local playing = tonumber(ws.playing_count) or 0
+    if playing <= 0 then return nil end
+
+    local C, track, ui, txtR, commas = ctx.C, ctx.track, ctx.ui, ctx.txtR, ctx.commas
+    local h  = M.BADGE_H
+    local cy = bottom + M.BADGE_LIFT + h / 2
+
+    -- THE GROUND GOES DOWN FIRST so it sits behind its own contents — a gui
+    -- node drawn later is drawn on top — and is then resized to what the
+    -- labels actually measured. Guessing a width from the digit count is how a
+    -- badge ends up clipping "1,048" and swimming around "7".
+    local body  = track(self, ui.box(vmath.vector3(right, cy, 0), vmath.vector3(8, h, 0), M.BADGE_GROUND))
+    local cap_l = track(self, ui.image(vmath.vector3(right, cy, 0), vmath.vector3(h, h, 0), "circle"))
+    local cap_r = track(self, ui.image(vmath.vector3(right, cy, 0), vmath.vector3(h, h, 0), "circle"))
+    pcall(gui.set_color, cap_l, M.BADGE_GROUND)
+    pcall(gui.set_color, cap_r, M.BADGE_GROUND)
+
+    -- The live dot, in the same red the row badge uses for a player who is
+    -- playing: one colour, one meaning, wherever it appears.
+    local dot = track(self, ui.box(vmath.vector3(right, cy, 0), vmath.vector3(M.BADGE_DOT, M.BADGE_DOT, 0), C.COL_RED))
+
+    -- TWO PIECES, TWO WEIGHTS. The figure is the thing being reported, so it
+    -- is the size of a row's own numbers and as bright; the word is what the
+    -- figure MEANS and only has to be legible, so it is small and carries the
+    -- red the dot does. One string in one weight ("104 PLAYING") makes the
+    -- number and its unit weigh the same, and the number is the only part
+    -- anybody reads twice.
+    local num_t   = txtR(self, right, cy, commas(playing), "body", C.COL_WHITE)
+    local label_t = txtR(self, right, cy, "PLAYING", "small", vmath.vector4(1.0, 0.62, 0.62, 1.0))
+
+    local function width_of(node, fallback)
+        local w = fallback
+        pcall(function()
+            local m = gui.get_text_metrics_from_node(node)
+            if m and m.width and m.width > 0 then w = m.width end
+        end)
+        return w
+    end
+
+    local L = M.badge_layout(right, cy,
+        width_of(num_t, 34), width_of(label_t, 56))
+
+    -- Re-anchored as well as resized: a box grows about its own centre, so
+    -- leaving the position alone would push the pill's right edge off the
+    -- panel by half of whatever it grew by. The body stops half a cap short at
+    -- each end, where the round caps take over.
+    gui.set_size(body, vmath.vector3(math.max(L.width - h, 1), h, 0))
+    gui.set_position(body, vmath.vector3(L.left + L.width / 2, cy, 0))
+    gui.set_position(cap_l, vmath.vector3(L.left + h / 2, cy, 0))
+    gui.set_position(cap_r, vmath.vector3(L.right - h / 2, cy, 0))
+    gui.set_position(dot,   vmath.vector3(L.dot_x, cy, 0))
+    gui.set_position(num_t, vmath.vector3(L.num_x, cy, 0))
+    gui.set_position(label_t, vmath.vector3(L.label_x, cy, 0))
+
+    -- The host ticks this once a frame — see M.pulse_playing. Seeded here as
+    -- well so a still first frame is already somewhere sensible in the beat
+    -- rather than at full swell.
+    self.playing_dot_node  = dot
+    self.playing_dot_color = C.COL_RED
+    M.pulse_playing(self, self.ui_clock)
+
+    return body
+end
+
 -- ── Drawing Logic ─────────────────────────────────────────────────────────
 function M.draw(self, ctx)
     -- Initialize default stake on the first draw, using this game's own
@@ -54,59 +235,6 @@ function M.draw(self, ctx)
     -- the left panel (modules/online_left.lua) instead of this bare "<" icon.
     local title_l = content_l
     txtL(self, title_l, hcy + 16,  "AVAILABLE PLAYERS", "body", C.COL_BRIGHT)
-
-    -- HOW MANY ARE MID-GAME, on the header the list hangs off.
-    --
-    -- The list carries PLAYABLE opponents and is capped at thirty
-    -- (LOBBY_LIST_MAX on the server). Somebody already in a game cannot be
-    -- challenged, so a row for them is a row pushing a playable opponent off
-    -- the screen — they are left out on purpose, and sent as a count instead.
-    --
-    -- Without this the lobby said nothing about them at all, and "AVAILABLE
-    -- PLAYERS: 6" on an app with a hundred people in it reads as an empty
-    -- game rather than a busy one. The count is the difference between a
-    -- quiet lobby and a full one, and it is the number the cap makes
-    -- invisible.
-    --
-    -- Drawn as a pill OVER the header rather than as another row, for the same
-    -- reason those players are not rows: it is a figure, not something to tap.
-    local playing = tonumber(ws.playing_count) or 0
-    if playing > 0 then
-        local label = commas(playing) .. " PLAYING"
-        -- The pill goes down FIRST so it sits behind its own label, then is
-        -- resized to what the label actually measured. Guessing a width from
-        -- the digit count is how a badge ends up clipping "104" and swimming
-        -- around "7".
-        -- COL_BADGE_BG, the palette's own badge ground, on COL_HEADER_BG. Not
-        -- COL_BORDER: that is a 50%-alpha dark grey meant for hairlines, and a
-        -- pill drawn in it on a dark header is very nearly the header.
-        --
-        -- And the label is COL_BRIGHT, not COL_DIM. This is the figure that
-        -- says the lobby is busy — dimming it makes it furniture, which is the
-        -- one thing it must not read as.
-        local pill = track(self, ui.box(vmath.vector3(content_r, hcy + 16, 0),
-            vmath.vector3(8, 22, 0), C.COL_BADGE_BG))
-        local tx = txtR(self, content_r - 10, hcy + 16, label, "small", C.COL_BRIGHT)
-
-        local w = 60
-        pcall(function()
-            local m = gui.get_text_metrics_from_node(tx)
-            if m and m.width and m.width > 0 then w = m.width end
-        end)
-
-        -- 10 of padding on the label's side, and 24 on the other for the dot
-        -- and its gap. Re-anchored as well as resized: a box grows about its
-        -- own centre, so leaving the position alone would push the pill's
-        -- right edge off the panel by half of whatever it grew by.
-        local pill_w = w + 34
-        gui.set_size(pill, vmath.vector3(pill_w, 22, 0))
-        gui.set_position(pill, vmath.vector3(content_r - pill_w / 2, hcy + 16, 0))
-
-        -- The dot in the same red the row badge uses for a player who is
-        -- playing: one colour, one meaning, wherever it appears.
-        track(self, ui.box(vmath.vector3(content_r - pill_w + 12, hcy + 16, 0),
-            vmath.vector3(6, 6, 0), C.COL_RED))
-    end
 
     -- First-time visitor this session: type the hint out character by
     -- character (self._tap_hint_active/_t driven by online.gui_script's
@@ -341,6 +469,11 @@ function M.draw(self, ctx)
         end
         track(self, ui.text(vmath.vector3(cx, list_top - region_h/2, 0), msg, "body", C.COL_DIM))
         self.list_region = nil
+        -- STILL DRAWN ON AN EMPTY LIST, and this is the case it earns its
+        -- keep in: "no opponents online right now" with forty people mid-game
+        -- is a busy app that happens to have nobody free this second, and
+        -- without the count it is indistinguishable from a dead one.
+        M.draw_playing_badge(self, ctx, content_r, list_bottom)
         return
     end
 
@@ -452,6 +585,11 @@ function M.draw(self, ctx)
             end
         end
     end
+
+    -- LAST, so it floats over the rows rather than under them: a gui node
+    -- created later is drawn on top, and the foot of the list is exactly
+    -- where a row is.
+    M.draw_playing_badge(self, ctx, content_r, list_bottom)
 end
 
 return M
