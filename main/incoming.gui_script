@@ -487,7 +487,17 @@ local function open_dialog(self, d)
     -- it demotes to the strip and stays there for a cooldown, so every request
     -- is still shown and still acceptable while the app works again. The
     -- dialog is the default; the strip is what a burst degrades to.
-    local as_banner = budget.surface(self.budget, d.banner and true or false)
+    -- COMPARED, NOT COERCED. budget.surface answers with a WORD — "banner" or
+    -- "dialog" — and in Lua the string "dialog" is truthy, so
+    --
+    --     local as_banner = budget.surface(...)
+    --
+    -- made every plain challenge draw as a banner, which is the bug this line
+    -- was supposed to fix. It read correctly, it tested correctly (the test
+    -- asserted the CALL was there, not what it decided), and it was wrong on
+    -- every request. Reported four times before I stopped believing the code
+    -- and ran it.
+    local as_banner = budget.surface(self.budget, d.banner and true or false) == "banner"
     local title, desc = d.title, d.desc
     -- Copy for the strip, and only when the strip is what will be drawn: the
     -- dialog composes its own from the fields. A request demoted by a burst

@@ -71,9 +71,32 @@ local t4 = plain_banner_text({ name = "a very long username here", stake = {} })
 check("a long name is not truncated into nonsense", #t4 > 20)
 
 -- ── THE SURFACE ─────────────────────────────────────────────────────────────
-check("the surface is asked for, not assumed",
-  SRC:match("local as_banner = budget%.surface%(self%.budget, d%.banner and true or false%)") ~= nil,
-  "a plain request takes the centred dialog; an invite says banner for itself")
+-- THE DECISION, NOT THE CALL.
+--
+-- The check that used to be here asserted that budget.surface was CALLED. It
+-- was, and every plain challenge still drew as a banner: surface answers with
+-- a WORD, and in Lua the string "dialog" is truthy, so
+--
+--     local as_banner = budget.surface(...)
+--
+-- was true for both answers. A test that reads the call and not the result
+-- passes on exactly the code it exists to catch — which is what it did, four
+-- reports running.
+local budget = require("modules.incoming_budget")
+do
+  local st = budget.new()
+  check("a plain challenge takes the dialog", budget.surface(st, false) == "dialog")
+  check("an invite takes the strip", budget.surface(st, true) == "banner")
+  -- Both answers are strings, and both are truthy. This is the trap.
+  check("...and both answers are truthy, which is why they must be COMPARED",
+    budget.surface(st, false) and budget.surface(st, true) and true or false)
+  st.cooldown = 5
+  check("a burst demotes even a plain challenge", budget.surface(st, false) == "banner")
+end
+
+check("the surface is compared, never coerced",
+  SRC:match('local as_banner = budget%.surface%(self%.budget, d%.banner and true or false%) == "banner"') ~= nil,
+  'without `== "banner"` the string "dialog" reads as true and everything is a strip')
 
 check("...and the budget can still take the dialog away under a burst",
   SRC:match("budget%.tick") ~= nil and SRC:match('== "demote"') ~= nil,
