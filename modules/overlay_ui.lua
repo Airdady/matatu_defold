@@ -1,5 +1,10 @@
 local M = {}
 local app_state = require("modules.app_state")
+-- Read ONLY to word the exit warning: what leaving actually costs is decided
+-- by the server (be_matatu's handlers/leaveGame.ts), and this says which of
+-- the two endings the player is about to choose.
+local ws = require("modules.websocket_manager")
+local PartyRules = require("modules.party_rules")
 
 -- THE CHAMPIONSHIP WATERMARK.
 --
@@ -37,7 +42,11 @@ local C_CONN_URGENT = vmath.vector4(0.94, 0.27, 0.27, 1.0)
 local CONN_WARN_AT, CONN_URGENT_AT = 0.34, 0.20
 
 local EXIT_BTN_SIZE, EXIT_BTN_MARGIN_TOP, EXIT_BTN_MARGIN_RIGHT = 140, 20, 20
-local EXIT_POPOVER_WIDTH, EXIT_POPOVER_HEIGHT, EXIT_POPOVER_OFFSET_Y = 200, 120, 0
+-- Taller than it was by one line: the popover now says what leaving COSTS.
+-- "Exit Game?" with a Yes and a No is a question about navigation, and this
+-- has never been one — the game carries on being lost while you are away, and
+-- since the server is told it is lost immediately.
+local EXIT_POPOVER_WIDTH, EXIT_POPOVER_HEIGHT, EXIT_POPOVER_OFFSET_Y = 220, 148, 0
 
 local function box(pos, size, color, pivot)
     local n = gui.new_box_node(pos, size)
@@ -131,14 +140,20 @@ function M.build(self, logical_w, logical_h)
 
     self.exit_popover = box(vmath.vector3(logical_w - EXIT_BTN_MARGIN_RIGHT, logical_h - EXIT_BTN_MARGIN_TOP - EXIT_BTN_SIZE + EXIT_POPOVER_OFFSET_Y, 0), vmath.vector3(EXIT_POPOVER_WIDTH, EXIT_POPOVER_HEIGHT, 0), C_PANEL, gui.PIVOT_NE)
     gui.set_xanchor(self.exit_popover, gui.ANCHOR_RIGHT); gui.set_yanchor(self.exit_popover, gui.ANCHOR_TOP)
-    local ext_title = label(vmath.vector3(-EXIT_POPOVER_WIDTH/2, -30, 0), "Exit Game?", 16, C_WHITE, gui.PIVOT_CENTER, "subtitle2")
+    local ext_title = label(vmath.vector3(-EXIT_POPOVER_WIDTH/2, -28, 0), "Exit Game?", 16, C_WHITE, gui.PIVOT_CENTER, "subtitle2")
     gui.set_parent(ext_title, self.exit_popover)
-    
-    self.btn_yes = box(vmath.vector3(-EXIT_POPOVER_WIDTH/2 - 45, -80, 0), vmath.vector3(80, 40, 0), C_PANEL_BORDER, gui.PIVOT_CENTER)
+
+    -- WHAT IT COSTS, set when the popover opens (see M.on_input). Built empty
+    -- rather than conditionally, because a node that only exists sometimes can
+    -- only appear on a rebuild, and this panel is built once at init.
+    self.exit_note = label(vmath.vector3(-EXIT_POPOVER_WIDTH/2, -56, 0), "", 12, C_SKIP_TEXT, gui.PIVOT_CENTER, "small")
+    gui.set_parent(self.exit_note, self.exit_popover)
+
+    self.btn_yes = box(vmath.vector3(-EXIT_POPOVER_WIDTH/2 - 45, -104, 0), vmath.vector3(80, 40, 0), C_PANEL_BORDER, gui.PIVOT_CENTER)
     local ly = label(vmath.vector3(0,0,0), "Yes", 16, C_WHITE, gui.PIVOT_CENTER, "btn_sm"); gui.set_parent(ly, self.btn_yes)
     gui.set_parent(self.btn_yes, self.exit_popover)
 
-    self.btn_no = box(vmath.vector3(-EXIT_POPOVER_WIDTH/2 + 45, -80, 0), vmath.vector3(80, 40, 0), C_PANEL_BORDER, gui.PIVOT_CENTER)
+    self.btn_no = box(vmath.vector3(-EXIT_POPOVER_WIDTH/2 + 45, -104, 0), vmath.vector3(80, 40, 0), C_PANEL_BORDER, gui.PIVOT_CENTER)
     local ln = label(vmath.vector3(0,0,0), "No", 16, C_WHITE, gui.PIVOT_CENTER, "btn_sm"); gui.set_parent(ln, self.btn_no)
     gui.set_parent(self.btn_no, self.exit_popover)
     gui.set_enabled(self.exit_popover, false)
@@ -338,6 +353,34 @@ local function hit(node, action)
     return gui.is_enabled(node) and gui.pick_node(node, action.x, action.y)
 end
 
+--- What leaving this game costs, in one line.
+--
+-- Offline there is nothing at stake and nothing is said. Online there are
+-- exactly two endings, and the player is entitled to know which one they are
+-- choosing BEFORE they choose it:
+--
+--   a duel   the opponent is handed the game, stake and all — the same
+--            ending they would get by putting the phone down and letting the
+--            turn timer run out, which is why quitting cannot be cheaper
+--   a party  the seat drops out and the table plays on without them
+--
+-- Read off the last state the socket carried, which is what the board is
+-- drawn from. A count one seat stale would change nothing here: it decides
+-- the WORDS, and the server decides the ending.
+function M.word_exit_warning(self)
+    if not self.exit_note then return end
+    local text = ""
+    if ws and tostring(ws.active_game_id or "") ~= "" then
+        local live = PartyRules.live_count(ws.active_game_state)
+        if live and live > 2 then
+            text = "You leave the table; the others play on."
+        else
+            text = "Your opponent wins the game."
+        end
+    end
+    pcall(gui.set_text, self.exit_note, text)
+end
+
 function M.on_input(self, action)
     -- RECONNECTING/OFFLINE overlay: no buttons on it, just swallow every tap
     -- while it's up. This was previously missing entirely — M.set_conn_overlay
@@ -363,7 +406,10 @@ function M.on_input(self, action)
     end
 
     if self.exit_btn and hit(self.exit_btn, action) then
-        if self.exit_popover then gui.set_enabled(self.exit_popover, true) end
+        if self.exit_popover then
+            M.word_exit_warning(self)
+            gui.set_enabled(self.exit_popover, true)
+        end
         return true
     end
 

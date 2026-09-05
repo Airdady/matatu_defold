@@ -230,7 +230,19 @@ function M.layout_hand(self, hand, y, animate, geometry_n)
     local spacing = M.calc_spacing(self, gn, is_ai_hand and M.OPPONENT_SCALE_RATIO or 1.0)
     local start = self.CENTER.x - ((gn - 1) * spacing) / 2.0
 
-    local arch = self.t4 ~= nil and is_player_hand and self.t4.human_alive
+    -- THE ARCH IS A TABLE-OF-THREE-OR-MORE THING, whoever is running the
+    -- table. The offline chamber says so through self.t4; an online party says
+    -- so through party_live_count (party_board sets it from the seats still
+    -- in). Without the second half a party of four drew its own hand flat
+    -- while the identical offline table drew it arched — same game, two boards.
+    --
+    -- The chamber's own condition is untouched, deliberately: it keeps the
+    -- arch in a heads-up final, and changing that here would edit the offline
+    -- game to fix the online one.
+    local arch = is_player_hand and (
+        (self.t4 ~= nil and self.t4.human_alive)
+        or (tonumber(self.party_live_count) or 0) >= 3
+    )
     local arc_amt = arch and math.min(34, gn * 5.0) or 0
     local fan_amt = arch and math.min(8, gn * 1.3) or 0
     local dir     = is_ai_hand and -1 or 1   -- mirror the curve for the top hand
@@ -321,7 +333,14 @@ function M.update_layout(self)
     -- DECK POSITIONING LOGIC
     -- We safely evaluate whether we are genuinely inside a multi-player T4 mode
     -- using explicit length checks to prevent empty table bleed from 2P game mode.
-    local is_multiplayer_t4 = self.t4 and self.t4.seats and (#self.t4.seats > 0) and not self.t4.is_heads_up
+    -- ...and so is where the deck sits. Same two sources for the same
+    -- question: is this a table of three or more? An online party had no way
+    -- to answer it, so a four-seat table put its deck at the far right edge,
+    -- which is where a two-player match puts it.
+    local party_live = tonumber(self.party_live_count) or 0
+    local is_multiplayer_t4 =
+        (self.t4 and self.t4.seats and (#self.t4.seats > 0) and not self.t4.is_heads_up)
+        or party_live >= 3
     
     if is_multiplayer_t4 then
         -- 4 (or 3) active players: Deck shifts exactly midway between the center pile and the right player!

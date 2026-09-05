@@ -119,6 +119,49 @@ function M.kind(t, user_data)
     return nil
 end
 
+--- IS THIS INVITE A LADDER, OR JUST A GAME?
+--
+-- THE QUESTION THE SURFACE TURNS ON, and the one `gameType` cannot answer.
+--
+-- A battle — one player challenging another to a single game at a stake — goes
+-- out as `gameType: "TOURNAMENT"` with a tournament id, because that is how
+-- the battle plumbing routes it. So every check of the form
+--
+--     raw.gameType == "TOURNAMENT" or raw.tournament
+--
+-- calls it a tournament invite and gives it the inline strip, when what the
+-- player sees is somebody asking them for a normal game. Reported exactly that
+-- way, twice: "incoming game request for normal game is still showing up in
+-- inline banner".
+--
+-- So the surfaces ask what the invite IS:
+--
+--   a LADDER    a championship, a knockout, or any tournament with more than
+--               one level. One of several a player may be offered, often while
+--               they are doing something else, and none of them needs
+--               answering — the strip, which leaves the app working
+--   a GAME      a plain challenge, or a one-level battle. One person asking
+--               THIS player, with ten seconds on it and somebody watching the
+--               other end — the centred dialog, which takes the screen
+--
+-- Fails towards A GAME when the payload says nothing useful: an unlabelled
+-- invite is far more likely to be a challenge than a ladder, and the dialog is
+-- the surface that cannot be missed.
+--
+-- Shared so the two surfaces cannot disagree. They must answer this
+-- identically or a request is shown twice — the online screen's inline strip
+-- AND the global overlay — or not at all, since the overlay stands down for
+-- exactly what the online screen draws.
+function M.is_ladder(raw, user_data)
+    if type(raw) ~= "table" then return false end
+    local t = type(raw.tournament) == "table" and raw.tournament or nil
+    local kind = M.kind(t, user_data)
+    if kind == "CHAMPIONSHIP" or kind == "KNOCKOUT" then return true end
+    -- More than one level is a run at something, whatever kind() has a word
+    -- for: kind() answers nil for a plain multi-level tournament.
+    return level_count(t) > 1
+end
+
 -- WHAT THIS INVITE IS ASKING THE PLAYER TO DO.
 --
 -- Championship invites now reach every eligible player, joined or not, because

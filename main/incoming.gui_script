@@ -462,31 +462,47 @@ local function open_dialog(self, d)
     if d.cup_invite then window = CUP_BANNER_SECONDS
     elseif d.party_seconds then window = math.max(1, d.party_seconds) end
 
-    -- EVERY INVITE IS THE INLINE STRIP. There is no second surface any more.
+    -- A PLAIN CHALLENGE IS A DECISION, AND IT GETS THE CENTRED DIALOG.
     --
-    -- A plain game request used to open the full centred dialog: a scrim over
-    -- the whole app, a claim on the modal registry, and every screen's
-    -- on_input returning early for ten seconds. A tournament, battle,
-    -- championship or cup invite has always been the strip instead — same
-    -- slot, same clock, same two buttons — and that is the surface an
-    -- interruption should have. Being challenged is not a decision worth
-    -- taking the app away from someone for.
+    -- Both surfaces exist here and the choice between them is not stylistic:
     --
-    -- This is not a new drawing path, which is why it is a small change: the
-    -- strip already renders a plain request completely. incoming_budget existed
-    -- precisely to fall back to it — once the blocking dialog had held input
-    -- for 25 seconds, it demoted to the banner rather than freeze the app on a
-    -- burst of challenges. That fallback has been the plain request's surface
-    -- under load for a while; it is now its surface always, and the burst it
-    -- was written for can no longer happen, because nothing claims blocking
-    -- input to begin with.
+    --   a TOURNAMENT, battle, knockout, championship or cup invite is the
+    --     strip. It is one of several a player may be offered, often while
+    --     they are doing something else, and none of them needs answering —
+    --     letting one run out costs nothing
+    --   a plain GAME REQUEST is one person asking THIS player for a game, with
+    --     ten seconds on it and somebody watching the other end. It is the one
+    --     invite where not answering IS an answer, and it takes the screen
     --
-    -- budget.tick still runs in update(). It reports "banner" every frame now,
-    -- so it never demotes and never accumulates — kept rather than torn out
-    -- because it is what would measure the blocking claim if one ever returns.
-    local as_banner = true
+    -- It was made the strip too, on the argument that being challenged is not
+    -- worth taking the app away from someone for. Asked for back: on the strip
+    -- it read as a notification among notifications, which is exactly what it
+    -- is not.
+    --
+    -- THE BUDGET IS WHY THE DIALOG IS SAFE. It claims "incoming" in the modal
+    -- registry and every screen returns early from on_input while that claim
+    -- is held — so a BURST of challenges, each restarting the ten seconds,
+    -- could hold the whole app input-dead indefinitely. That is the freeze
+    -- incoming_budget was written for: past 25 continuous seconds of blocking
+    -- it demotes to the strip and stays there for a cooldown, so every request
+    -- is still shown and still acceptable while the app works again. The
+    -- dialog is the default; the strip is what a burst degrades to.
+    -- COMPARED, NOT COERCED. budget.surface answers with a WORD — "banner" or
+    -- "dialog" — and in Lua the string "dialog" is truthy, so
+    --
+    --     local as_banner = budget.surface(...)
+    --
+    -- made every plain challenge draw as a banner, which is the bug this line
+    -- was supposed to fix. It read correctly, it tested correctly (the test
+    -- asserted the CALL was there, not what it decided), and it was wrong on
+    -- every request. Reported four times before I stopped believing the code
+    -- and ran it.
+    local as_banner = budget.surface(self.budget, d.banner and true or false) == "banner"
     local title, desc = d.title, d.desc
-    if not d.banner and not title then
+    -- Copy for the strip, and only when the strip is what will be drawn: the
+    -- dialog composes its own from the fields. A request demoted by a burst
+    -- gets it too, which is what `as_banner` rather than `d.banner` covers.
+    if as_banner and not d.banner and not title then
         title, desc = plain_banner_text(d)
     end
 
@@ -500,8 +516,8 @@ local function open_dialog(self, d)
         -- the badge from the one head-to-head payload they all already carry,
         -- and none of them has to remember to thread a second field through.
         opp_winrate = (h2h_view(d.h2h) or {}).opp_winrate,
-        -- Always the top strip — tournament, battle, knockout, cup and a plain
-        -- challenge alike. See the note above.
+        -- The strip for an invite, the centred dialog for a plain challenge —
+        -- and the strip for either once a burst has spent the input budget.
         banner = as_banner,
         title = title, desc = desc,
         -- NOT `kind`: that key is already taken by the dialog's own type
@@ -900,8 +916,15 @@ function on_message(self, message_id, message)
         local r   = ws.last_game_request or {}
         local raw = (ws.last_game_request or {}).raw or {}
 
-        local is_tb = type(raw) == "table"
-            and (raw.gameType == "TOURNAMENT" or raw.gameType == "BATTLE" or raw.tournament or raw.tournamentId)
+        -- LADDER OR GAME, not TOURNAMENT-or-not.
+        --
+        -- This read `gameType == "TOURNAMENT" or raw.tournament`, and a
+        -- BATTLE — one player challenging another to a single game at a stake
+        -- — goes out as gameType TOURNAMENT with a tournament id, because that
+        -- is how the battle plumbing routes it. So a normal challenge from the
+        -- Battles tab was called a tournament invite and given the strip.
+        -- See champ.is_ladder, which both surfaces ask.
+        local is_tb = champ.is_ladder(raw, ws.current_user_data)
 
         -- Tournament / battle invites are rendered inline by online.gui_script
         -- while the user is ON the online screen. Everywhere else (the lobby and,
