@@ -906,8 +906,15 @@ function on_message(self, message_id, message)
         local r   = ws.last_game_request or {}
         local raw = (ws.last_game_request or {}).raw or {}
 
-        local is_tb = type(raw) == "table"
-            and (raw.gameType == "TOURNAMENT" or raw.gameType == "BATTLE" or raw.tournament or raw.tournamentId)
+        -- LADDER OR GAME, not TOURNAMENT-or-not.
+        --
+        -- This read `gameType == "TOURNAMENT" or raw.tournament`, and a
+        -- BATTLE — one player challenging another to a single game at a stake
+        -- — goes out as gameType TOURNAMENT with a tournament id, because that
+        -- is how the battle plumbing routes it. So a normal challenge from the
+        -- Battles tab was called a tournament invite and given the strip.
+        -- See champ.is_ladder, which both surfaces ask.
+        local is_tb = champ.is_ladder(raw, ws.current_user_data)
 
         -- Tournament / battle invites are rendered inline by online.gui_script
         -- while the user is ON the online screen. Everywhere else (the lobby and,

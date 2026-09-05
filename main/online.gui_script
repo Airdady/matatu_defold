@@ -1128,8 +1128,20 @@ function on_message(self, message_id, message, sender)
         -- sound never fire on a hidden screen (which previously played a sound
         -- with no visible notification).
         if self._active then
+            -- ONLY A LADDER GETS THE INLINE STRIP HERE.
+            --
+            -- This read `gameType == "TOURNAMENT" or raw.tournament`, and a
+            -- BATTLE goes out as gameType TOURNAMENT with a tournament id
+            -- because that is how the battle plumbing routes it — so a normal
+            -- challenge from the Battles tab took the strip. It is a game
+            -- between two people and it gets the centred dialog, which the
+            -- global overlay draws.
+            --
+            -- The SAME predicate the overlay uses to stand down, and it has to
+            -- be: the overlay skips exactly what this screen draws, so two
+            -- different answers would show one request twice or not at all.
             local raw = (ws.last_game_request or {}).raw or {}
-            if type(raw) == "table" and (raw.gameType == "TOURNAMENT" or raw.gameType == "BATTLE" or raw.tournament) then open_banner(self, raw) end
+            if champ.is_ladder(raw, ws.current_user_data) then open_banner(self, raw) end
         end
     elseif message_id == hash("ws_head_to_head") then
         -- THE RECORD BETWEEN THE TWO OF YOU, arriving after the challenge went

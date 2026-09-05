@@ -118,5 +118,70 @@ check("a cup invitation is still never auto-declined — nobody is waiting on it
 check("the arrival still makes a sound",
   SRC:match("msg%.post, \"#snd_notify\"") ~= nil)
 
+-- ── WHICH INVITE IS WHICH, DRIVEN FOR REAL ──────────────────────────────────
+--
+-- The predicate the whole split turns on, and the one `gameType` cannot
+-- answer: a BATTLE — one player challenging another to a single game at a
+-- stake — goes out as gameType TOURNAMENT with a tournament id, because that
+-- is how the battle plumbing routes it. Every check of the old shape
+--
+--     raw.gameType == "TOURNAMENT" or raw.tournament
+--
+-- therefore called a normal challenge a tournament invite and gave it the
+-- strip. Reported twice, the second time as "incoming game request for normal
+-- game is still showing up in inline banner".
+package.path = here .. "/../?.lua;" .. package.path
+local champ = require("modules.championship")
+
+local function ladder(raw, me) return champ.is_ladder(raw, me) end
+
+check("a plain challenge is a game", ladder({ stake = { amount = 200 } }) == false)
+check("...and so is nothing at all", ladder(nil) == false and ladder({}) == false)
+
+-- A one-level battle. gameType says TOURNAMENT and it is not one.
+check("a BATTLE is a game, whatever its gameType says",
+  ladder({ gameType = "TOURNAMENT", tournamentId = "t1",
+           tournament = { _id = "t1", levels = 1, matchFormat = 3 } }) == false,
+  "this is the one the report is about")
+check("...including one whose levels arrive as a list of one",
+  ladder({ gameType = "TOURNAMENT", tournament = { _id = "t1", levels = { {} }, matchFormat = 3 } }) == false)
+
+-- And the ladders, which keep the strip.
+check("a knockout is a ladder",
+  ladder({ gameType = "TOURNAMENT", tournament = { _id = "t1", levels = 1, matchType = "KNOCKOUT" } }) == true)
+check("...and so is a single-game format, which is how a knockout is spelled",
+  ladder({ gameType = "TOURNAMENT", tournament = { _id = "t1", levels = 1, matchFormat = 1 } }) == true)
+check("a multi-level tournament is a ladder",
+  ladder({ gameType = "TOURNAMENT", tournament = { _id = "t1", levels = 7, matchFormat = 3 } }) == true)
+check("the championship is a ladder",
+  ladder({ gameType = "TOURNAMENT", tournament = { _id = "t1", isChampionship = true, levels = 7 } }) == true)
+-- A payload that says nothing about itself, recognised by its id against the
+-- ladder this player is already in — which is how championship.known_id reads
+-- it, off their own tournament list.
+check("...and one recognised only by the player's own joined ladder",
+  ladder({ gameType = "TOURNAMENT", tournament = { _id = "champ-1", levels = 1, matchFormat = 3 } },
+         { tournaments = { { _id = "champ-1", isChampionship = true, levels = 7 } } }) == true)
+
+-- A tournamentId with no document behind it. Unlabelled, and the dialog is the
+-- surface that cannot be missed.
+check("an invite the payload cannot explain is treated as a game",
+  ladder({ gameType = "TOURNAMENT", tournamentId = "t1" }) == false)
+
+-- ── AND BOTH SURFACES ASK IT ────────────────────────────────────────────────
+-- They must answer identically: the overlay stands down for exactly what the
+-- online screen draws, so two different answers show one request twice or not
+-- at all.
+do
+  local f = assert(io.open(here .. "/../main/online.gui_script"))
+  local ONLINE = f:read("*a"); f:close()
+  check("the online screen opens its inline strip only for a ladder",
+    ONLINE:find("if champ%.is_ladder%(raw, ws%.current_user_data%) then open_banner") ~= nil)
+  check("...and the overlay decides with the same call",
+    SRC:find("local is_tb = champ%.is_ladder%(raw, ws%.current_user_data%)") ~= nil)
+  check("...so neither is left branching on gameType",
+    ONLINE:find('raw%.gameType == "TOURNAMENT"') == nil
+      and SRC:find('raw%.gameType == "TOURNAMENT" or raw%.gameType == "BATTLE"') == nil)
+end
+
 print(("incoming surface: %d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)
