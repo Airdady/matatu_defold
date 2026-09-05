@@ -1353,7 +1353,21 @@ function on_input(self, action_id, action)
                     local sd, ex = nil, nil
                     if self.tab == TAB_BATTLES and type(u.myBattle) == "table" then
                         sd = type(u.myBattle.stake) == "table" and u.myBattle.stake or { amount = tonumber(u.myBattle.stakeAmount) or 0 }
-                        ex = { gameType = "TOURNAMENT", tournamentId = u.myBattle._id or u.myBattle.id, rules = u.myBattle.rules }
+                        -- WHAT THIS BATTLE IS, not just which one it is.
+                        --
+                        -- This sent a tournament id and nothing else, so the
+                        -- invite that reached the opponent could not say
+                        -- whether it was a knockout played to a score cap or an
+                        -- ordinary best-of — the same omission start_invite_search
+                        -- does not make. The server reads the battle document
+                        -- either way (handleGameRequest's inviteShapeOf), so
+                        -- this is what makes the invite self-describing when
+                        -- that read finds nothing.
+                        ex = { gameType = "TOURNAMENT", tournamentId = u.myBattle._id or u.myBattle.id,
+                               rules = u.myBattle.rules,
+                               matchType = tostring(u.myBattle.matchType or "NORMAL"):upper(),
+                               scoreCap = tonumber(u.myBattle.scoreCap),
+                               matchFormat = tonumber(u.myBattle.matchFormat) }
                     else
                         sd = type(u.stake) == "table" and u.stake or { amount = tonumber((u.stake or {}).amount) or 0 }
                     end
