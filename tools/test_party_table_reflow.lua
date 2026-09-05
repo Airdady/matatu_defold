@@ -11,12 +11,14 @@
 -- "left" is. Pinned here because the day one of those message names drifts,
 -- the party board silently draws nothing.
 --
--- DOES IT REFLOW AS PLAYERS LEAVE? No — and that is a real gap, pinned as it
--- actually behaves rather than as the comments claim. The seat order is fixed
--- when the cards are dealt and the server never shrinks it (elimination is a
--- flag on the player, which is right: the turn arithmetic reads through it).
--- So a table of four that drops to two keeps left/top/right with dead chairs
--- greyed, where the offline chamber collapses to heads-up at two survivors.
+-- DOES IT REFLOW AS PLAYERS LEAVE? Yes, the way the chamber does. The seat
+-- ORDER is fixed when the cards are dealt and the server never shrinks it
+-- (elimination is a flag on the player, which is right: the turn arithmetic
+-- reads through it) — but the LAYOUT is a different question, and it is
+-- answered off the survivors. Four becoming three reseats the two who are
+-- left to left/right and takes the chair across the table away, exactly as
+-- tournament4's assign_slots does at three; two is not a table at all and the
+-- ordinary duel board takes it.
 local ROOT = (debug.getinfo(1, "S").source:match("@(.*/)") or "./") .. "../"
 package.path = ROOT .. "?.lua;" .. package.path
 
@@ -117,11 +119,97 @@ local active = ids_sent("t4_active")
 check("and exactly one turn ring", #active, 1)
 check("...on whoever's turn it is", active[1].slot, "left")
 
--- The chamber's own anchors, not a second set of coordinates.
-check("the left seat sits on the chamber's left anchor", drawn[1].x, 120)
+-- THE CHAMBER'S OWN ANCHORS, IN THE CHAMBER'S OWN ROLES.
+--
+-- Both modules read SEAT_LEFT / SEAT_RIGHT / AI_HAND_Y, and both offset by 66
+-- and 46 — but they had the two ROLES swapped. The chamber puts the CARDS on
+-- the seat anchor and the BADGE outboard of it; this module put the badge on
+-- the anchor and pushed the cards out past it, and dropped the top badge
+-- directly onto the top arch instead of 46px above it. So the same table drew
+-- with its avatars beside its hands offline and on top of them online.
+--
+-- Fixture: SEAT_LEFT.x 120, SEAT_RIGHT.x 1160, CENTER.x 640, AI_HAND_Y 600.
+check("the left badge sits outboard of the left seat, as the chamber's does",
+    drawn[1].x, 120 - 66)
 check("across sits on the centre line", drawn[2].x, 640)
-check("...at the opponent hand row", drawn[2].y, 600)
-check("the right seat on the right anchor", drawn[3].x, 1160)
+check("...and ABOVE the opponent's row, not on it", drawn[2].y, 600 + 46)
+check("the right badge outboard of the right seat", drawn[3].x, 1160 + 66)
+
+-- And the cards take the anchors the badges just gave up. Read off the deal
+-- plan, which is the same arithmetic the reconcile lays them out with.
+do
+    local bg = board()
+    local plan = PB.deal_plan(bg, state(order, nil, "a"))
+    local by_slot = {}
+    for _, sl in ipairs(plan) do by_slot[sl.slot] = sl.slots end
+    -- The middle card of a five-card hand: no offset along the row, so it
+    -- lands on the anchor itself in the direction the hand runs.
+    check("the left hand runs down the left seat anchor", by_slot.left[3].y, 360)
+    check("...the right hand down the right one", by_slot.right[3].y, 360)
+    check("...and the top hand across the opponent's row", by_slot.top[3].x, 640)
+end
+
+-- THE ARCH IS THE CHAMBER'S ARCH, NOT A FLAT LINE.
+--
+-- This was a fixed 18px pitch with every card at the seat's base rotation.
+-- The chamber fans its opponents: the pitch opens to 32px for a small hand
+-- and closes as the hand grows so a whole hand always spans about 150px, the
+-- row bows towards the middle of the table, and each card turns a little
+-- further than the one before. On a five-card hand that is 18px of flat stack
+-- against 32px of fanned arch — the squeezed hand, squeezed for no reason
+-- except that this file had invented its own spacing.
+do
+    local bg = board()
+    local plan = PB.deal_plan(bg, state(order, nil, "a"))
+    local top
+    for _, sl in ipairs(plan) do if sl.slot == "top" then top = sl.slots end end
+
+    -- spacing = min(32, 150/(n-1)); at five cards that is the 32px ceiling,
+    -- so the hand spans 4 x 32. The old flat pitch would have given 4 x 18.
+    check("five cards span 128, not the flat layout's 72",
+        math.floor(top[5].x - top[1].x + 0.5), 128)
+    ok("the row bows rather than lying flat", top[3].y ~= top[1].y)
+    ok("...towards the middle of the table", top[3].y < top[1].y)
+    ok("the hand fans", top[1].rot ~= top[5].rot)
+    ok("...symmetrically about its middle",
+        math.abs(top[1].rot + top[5].rot) < 1e-9)
+    ok("...and the middle card is the upright one", math.abs(top[3].rot) < 1e-9)
+
+    -- A side seat fans about its own base rotation, not about zero.
+    local left
+    for _, sl in ipairs(plan) do if sl.slot == "left" then left = sl.slots end end
+    check("the left hand is turned onto its side", left[3].rot, 90)
+    ok("...and fans about that, not about upright", left[1].rot > 90 and left[5].rot < 90)
+    ok("...running down the edge rather than across it",
+        math.abs(left[5].y - left[1].y) > 100 and math.abs(left[5].x - left[1].x) < 1e-9)
+
+    -- One card cannot divide by zero, and must sit exactly on the anchor.
+    local one = PB.deal_plan(bg, {
+        seatOrder = { "a", "b", "c", "d" },
+        players = { a = {}, b = { handCount = 1 }, c = { handCount = 1 }, d = { handCount = 1 } },
+        currentTurn = "a",
+    })
+    check("a single card sits on the anchor itself", one[2].slots[1].x, 640)
+    check("...unrotated", one[2].slots[1].rot, 0)
+end
+
+-- The numbers themselves, pinned against the chamber's own source: the day
+-- one of them is tuned there, this one has to be tuned with it or the two
+-- modes are two different tables again.
+do
+    local chamber = io.open(ROOT .. "modules/tournament4.lua"):read("a")
+    local party   = io.open(ROOT .. "modules/party_board.lua"):read("a")
+    for _, expr in ipairs({
+        "math.min(32, (n > 1 and 150 / (n - 1) or 0))",
+        "math.min(9, n * 1.4)",
+        "math.min(24, n * 3.4)",
+        "(0.25 - t * t) * arc * toward",
+        "br - t * fan * 2 * toward",
+    }) do
+        ok("the arch shares the chamber's `" .. expr .. "`",
+            chamber:find(expr, 1, true) ~= nil and party:find(expr, 1, true) ~= nil)
+    end
+end
 
 -- A game with no seatOrder is an ordinary duel: the two-player board is
 -- already drawing it and a party redraw on top would be a second table.
@@ -130,16 +218,67 @@ PB.sync(board(), { players = {}, currentTurn = "a" })
 check("a duel is left alone entirely", #sent, 0)
 
 ----------------------------------------------------------------------
-print("AN ELIMINATED SEAT GOES GREY, AND LOSES ITS CARDS")
+print("THE TABLE COLLAPSES AROUND WHOEVER IS LEFT")
 ----------------------------------------------------------------------
+-- THE LAYOUT IS A QUESTION ABOUT SURVIVORS, NOT ABOUT THE SEAT ORDER.
+--
+-- The order is fixed at the deal and never shrinks. The layout used to be read
+-- off its LENGTH, so a table of four that lost a player kept left/top/right
+-- with a dead chair greyed where the fourth had been, for the rest of the
+-- game. The offline chamber has never done that: assign_slots reseats the
+-- survivors, so three players sit bottom/left/right and there is nobody
+-- across. Three players online are playing the same game on the same board.
+check("four at the table seat three opponents",
+    #PB.seating(order, "a", {}), 3)
+local three = PB.seating(order, "a", { c = true })
+check("...and three seat two", #three, 2)
+check("the one who plays after me is still on my left", three[1].id .. three[1].slot, "bleft")
+check("...and the other takes the RIGHT chair, not the one across",
+    three[2].id .. three[2].slot, "dright")
+ok("nobody is left sitting across the table",
+    three[1].slot ~= "top" and three[2].slot ~= "top")
+
+-- The rotation is taken first and the eliminated dropped after, so who plays
+-- after whom is still the server's order rather than whoever is left.
+local skipped = PB.seating(order, "a", { b = true })
+check("dropping the player on my left promotes the next one", skipped[1].id, "c")
+check("...to the left chair", skipped[1].slot, "left")
+check("...and the rest keep their order", skipped[2].id .. skipped[2].slot, "dright")
+
+-- Omitting the set is "nobody is out", which is what a fresh deal wants.
+check("no set given means a full table", #PB.seating(order, "a"), 3)
+
+-- AND THE BOARD ITSELF REFLOWS.
 sent = {}
 local b2 = board()
+PB.sync(b2, state(order, nil, "b"))
+check("four in draws three chairs", #seats_sent(), 3)
+
+sent = {}
 PB.sync(b2, state(order, { c = true }, "b"))
-drawn = seats_sent()
-check("the table still draws every chair", #drawn, 3)
-check("...with the one that went out marked", drawn[2].eliminated, true)
-check("...and never shown as the active seat", drawn[2].active, false)
-ok("...while the live seats stay live", drawn[1].eliminated == false)
+local drawn = seats_sent()
+check("one out draws two", #drawn, 2)
+ok("...and neither of them is the one who went", drawn[1].name ~= "C" and drawn[2].name ~= "C")
+ok("...nor is any chair marked OUT — it is gone, not greyed",
+    drawn[1].eliminated == false and drawn[2].eliminated == false)
+check("they sit left and right, as three players do",
+    drawn[1].slot .. "," .. drawn[2].slot, "left,right")
+
+-- t4_ui keys badges by SLOT, so the chair that vanished has to be wiped: it is
+-- never addressed again, and nothing else would take it off the screen.
+check("the badges are rebuilt so no empty chair is left behind",
+    #ids_sent("t4_clear"), 1)
+-- But only when the arrangement actually CHANGES. This runs on every state
+-- push — a wipe per move is a table that flickers all game.
+sent = {}
+PB.sync(b2, state(order, { c = true }, "d"))
+check("an ordinary move rebuilds nothing", #ids_sent("t4_clear"), 0)
+check("...and still draws the same two chairs", #seats_sent(), 2)
+
+-- Their cards go with them, or an arch belonging to nobody sits face down on
+-- the board for the rest of the game.
+ok("the seat that went is no longer held", b2.party_seats["c"] == nil)
+ok("...while the survivors still are", b2.party_seats["b"] ~= nil and b2.party_seats["d"] ~= nil)
 
 -- THE TURN RING NEVER LANDS ON A CHAIR NOBODY IS IN.
 --
@@ -150,7 +289,7 @@ ok("...while the live seats stay live", drawn[1].eliminated == false)
 -- arrives — and a countdown was being started on it in that window.
 sent = {}
 PB.sync(board(), state(order, { c = true }, "c"))
-check("no ring is drawn on an eliminated seat", #ids_sent("t4_active"), 0)
+check("no ring is drawn on a seat that is not there", #ids_sent("t4_active"), 0)
 -- The control: the same state with that player still in gets one.
 sent = {}
 PB.sync(board(), state(order, nil, "c"))
@@ -204,6 +343,37 @@ check("and it does not keep tearing down what is already gone", #sent, 0)
 sent = {}
 PB.sync(board(), state({ "a", "b" }, nil, "a"))
 check("two who turned up alone get no party board either", #sent, 0)
+
+-- AND IT DEALS NO PARTY CARDS EITHER — the bug that put two hands on one
+-- opponent.
+--
+-- The board stands down at heads-up and online_handler hands the opponent to
+-- the ordinary duel renderer, but the DEAL is planned before either of those
+-- runs, and it was planned off the seats alone. So the last two players got
+-- BOTH: the duel's arch at the ordinary spacing and card size, and a party
+-- arch of squeezed 85%-scale backs on 18px spacing flown to whichever chair
+-- that opponent had been sitting in. Two hands, two card designs, one
+-- opponent — which is exactly how it was reported.
+do
+    local b4 = board()
+    b4.my_player_id = "a"
+    check("four in still plans a party deal",
+        PB.deal_plan(b4, state(order, nil, "a")) ~= nil, true)
+    check("three in still plans one",
+        PB.deal_plan(b4, state(order, { d = true }, "a")) ~= nil, true)
+    check("but a table down to two plans NO party backs at all",
+        PB.deal_plan(b4, state(order, { c = true, d = true }, "a")), nil)
+    check("...and neither does a table that was only ever two",
+        PB.deal_plan(b4, state({ "a", "b" }, nil, "a")), nil)
+    check("...nor a game already decided, with one player left",
+        PB.deal_plan(b4, state(order, { b = true, c = true, d = true }, "a")), nil)
+
+    -- Which is what makes the mock deck the right size: the deal spawns a back
+    -- for every party card it plans, so a plan that should not exist is a
+    -- fistful of extra cards flying to a chair that is not there.
+    check("so the deal spawns nothing extra for a duel",
+        PB.deal_card_count(PB.deal_plan(b4, state(order, { c = true, d = true }, "a"))), 0)
+end
 
 ----------------------------------------------------------------------
 print("AND THE ORDINARY BOARD TAKES THE OPPONENT BACK")
@@ -275,6 +445,20 @@ do
     -- The mock deck is sized off this. A card short and the deal runs out half
     -- way round the table.
     check("the deal knows how many backs it has to spawn", PB.deal_card_count(plan), 15)
+
+    -- CAPPED AT WHAT THE ARCH ACTUALLY SHOWS. The mock deck is sized off this
+    -- plan, so an uncapped hand spawns backs that fly to a slot that does not
+    -- exist, land stacked on the tenth, and are deleted by the next
+    -- reconcile — real cards, spawned and thrown away, on every big hand.
+    do
+        local big = { seatOrder = order, currentTurn = "a", players = {
+            a = {}, b = { handCount = 14 }, c = { handCount = 3 }, d = { handCount = 9 },
+        } }
+        local capped = PB.deal_plan(b, big)
+        check("a hand past the cap deals only what the arch shows", capped[1].count, 10)
+        check("...with a slot for each of them", #capped[1].slots, 10)
+        ok("...and hands under it are untouched", capped[2].count == 3 and capped[3].count == 9)
+    end
     check("...and nothing to spawn for a duel", PB.deal_card_count(nil), 0)
 
     -- A duel has no plan at all, so the ordinary two-player deal is untouched.

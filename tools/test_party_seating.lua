@@ -54,4 +54,25 @@ eq(s5[1].slot, "top", "unmapped size falls back to opposite")
 eq(#PB.seating({}, "a"), 0, "empty table")
 eq(#PB.seating(nil, "a"), 0, "nil order")
 
+-- THE TABLE COLLAPSES AROUND WHOEVER IS LEFT, the way the offline chamber's
+-- assign_slots does. The seat ORDER never shrinks — the server fixes it at the
+-- deal and marks eliminations as a flag, because the turn arithmetic reads
+-- through it — but the LAYOUT is keyed on the survivors, so three players sit
+-- left/right with nobody across, exactly as they do offline.
+local s3r = PB.seating(order, "a", { c = true })
+eq(#s3r, 2, "one out leaves two opponents")
+eq(s3r[1].id, "b", "turn order survives the drop"); eq(s3r[1].slot, "left", "b still left")
+eq(s3r[2].id, "d", "then d"); eq(s3r[2].slot, "right", "d takes right, not across")
+
+-- The rotation is taken first and the eliminated dropped after, so the chair
+-- someone is promoted into is still decided by the server's order.
+local sp = PB.seating(order, "a", { b = true })
+eq(sp[1].id, "c", "the next in order is promoted"); eq(sp[1].slot, "left", "into the left chair")
+
+local s1 = PB.seating(order, "a", { b = true, d = true })
+eq(#s1, 1, "two left is one opponent"); eq(s1[1].slot, "top", "opposite, as a duel")
+
+-- Omitted set means nobody is out, which is what a fresh deal wants.
+eq(#PB.seating(order, "a"), 3, "no set given is a full table")
+
 print("party_board.seating: all assertions passed")
