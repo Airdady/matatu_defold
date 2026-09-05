@@ -148,5 +148,105 @@ do
         code:match('ws%.on%("party_next_hand".-M%.start_game') ~= nil)
 end
 
+----------------------------------------------------------------------
+print("AND THE WHOLE CHAIN, DRIVEN THROUGH THE REAL start_game")
+----------------------------------------------------------------------
+-- The checks above prove the RULE and the source scan proves the WIRING. This
+-- runs the actual code: a capped party state goes into online_handler's own
+-- start_game and the messages it posts to the game HUD are read back. If the
+-- chamber does not reach the HUD here, it does not reach it on a phone.
+do
+    local ws = require("modules.websocket_manager")
+    SIM.add_recorder("game")
+    SIM.add_recorder("controller")
+    _G.window = _G.window or {}
+    _G.window.set_listener = function() end
+    _G.window.set_dim_mode = function() end
+    _G.window.DIMMING_OFF = 0
+    ws.connect()
+    SIM.pump(0.3)
+    ws.current_user_id = "a"
+
+    local function capped_state()
+        return {
+            gameId = "pg1", id = "pg1", status = "STARTED",
+            matchType = "PARTY", partyMode = "SCORECAP", scoreCap = 200,
+            seatOrder = { "a", "b", "c" }, currentTurn = "a", deckCount = 20,
+            stake = { amount = 200, charge = 25 },
+            players = {
+                a = { id="a", _id="a", username="A", avatar=1,
+                      hand={{v=3,s="H"}}, handCount=1, cumulativeScore=40 },
+                b = { id="b", _id="b", username="B", avatar=2,
+                      handCount=5, cumulativeScore=120 },
+                c = { id="c", _id="c", username="C", avatar=3,
+                      handCount=5, cumulativeScore=0 },
+            },
+        }
+    end
+
+    -- Enough of the board for start_game to run: it spawns cards, moves them
+    -- and hands off to the shuffle, none of which needs to be real for the
+    -- decision under test.
+    local function board()
+        return {
+            my_player_id = "a", online_mode = true,
+            CENTER = { x=640, y=360 }, PLAYER_HAND_Y = 120, AI_HAND_Y = 600,
+            SEAT_LEFT = { x=120, y=360 }, SEAT_RIGHT = { x=1160, y=360 },
+            Z_FLY = 1, Z_PILE = 0.5,
+            deck = {}, ai_hand = {}, player_hand = {}, played_cards = {},
+            ws_listeners = {}, buttons = {},
+            spawn_card = function() return { id = {} } end,
+            set_back = function() end, set_face = function() end,
+            play_sound = function() end, position_hands = function() end,
+            animate_shuffle = function() end,
+            is_player_turn = function() return true end,
+        }
+    end
+
+    local function posted(name)
+        local out = {}
+        for _, m in ipairs(SIM.components["game"].received) do
+            if tostring(m.mid) == "h#" .. name then out[#out + 1] = m.msg end
+        end
+        return out
+    end
+
+    SIM.components["game"].received = {}
+    local ok_run, err = pcall(OH.start_game, board(), capped_state())
+    SIM.pump(0.3)
+    ok("start_game ran to completion", ok_run, err)
+
+    local init = posted("t4_chamber_init")
+    check("the standings chamber is built", #init, 1)
+    check("...with the table's own cap on it", init[1] and init[1].threshold, 200)
+    check("...a row for every seat", init[1] and #(init[1].rows or {}), 3)
+    check("...clear of the left seat, because there is one", init[1] and init[1].placement, "top_left")
+
+    -- The running totals the server has been keeping are what the rows open on
+    -- — not zero, which would make the first frame of every hand a lie.
+    local by_name = {}
+    for _, r in ipairs((init[1] or {}).rows or {}) do by_name[r.name] = r end
+    check("A's total is the server's", by_name.A and by_name.A.total, 40)
+    check("...and B's", by_name.B and by_name.B.total, 120)
+
+    -- The battle scoreboard stands down: two tables of numbers on one board is
+    -- the thing the chamber replaces.
+    local sb = posted("update_scoreboard")
+    ok("the battle scoreboard is suppressed", #sb >= 1 and sb[1].show == false)
+
+    -- And the HUD is told this is a table, not a duel.
+    local mode = posted("t4_mode")
+    ok("the duel chrome is taken down", #mode >= 1 and mode[1].on == true)
+
+    -- THE CONTROL. The same board, the same seats, NOT capped: no chamber.
+    SIM.components["game"].received = {}
+    local plain = capped_state()
+    plain.partyMode = "NORMAL"
+    pcall(OH.start_game, board(), plain)
+    SIM.pump(0.3)
+    check("an uncapped party builds no chamber", #posted("t4_chamber_init"), 0)
+    ok("...but is still drawn as a table", #posted("t4_mode") >= 1)
+end
+
 print(("\n%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

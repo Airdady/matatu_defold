@@ -445,6 +445,29 @@ function M.sync(self, game_state)
     local seats = M.seating(order, self.my_player_id, M.eliminated_set(game_state))
     self.party_seats = self.party_seats or {}
 
+    -- THIS IS A TABLE, NOT A DUEL — AND THE HUD HAS TO BE TOLD.
+    --
+    -- t4_mode is what swaps the board's chrome from a two-player match to a
+    -- table: it takes down the duel's opponent avatar plate, their name label
+    -- and the two network badges, because at a table every seat has its own
+    -- badge and the one plate at the top belongs to nobody in particular.
+    --
+    -- The offline chamber sends it (tournament4's start). An online party
+    -- never did, so a party of four ran with the duel's opponent plate still
+    -- up — parked at the top of the screen, over the top seat's own badge,
+    -- naming whichever player the ordinary board had picked. One board's
+    -- furniture left standing on another's, which is the same class of bug as
+    -- the two hands of cards, and it is a large part of why a party "looks
+    -- like a normal game".
+    --
+    -- Latched: reset_hud turns it back off on every board rebuild, so this is
+    -- re-asserted whenever the arrangement is (re)established, and only when
+    -- it changes rather than on every state push.
+    if not self._party_t4_mode then
+        self._party_t4_mode = true
+        util.notify_gui(GUI_HUD, "t4_mode", { on = true })
+    end
+
     -- THE CHAIRS THAT ARE NO LONGER THERE.
     --
     -- Seating collapses around the survivors, the way the offline chamber's
@@ -606,6 +629,14 @@ function M.clear(self)
     self._party_slot_plan = nil
     pcall(BL.update_layout, self)
     util.notify_gui(GUI_HUD, "t4_clear", {})
+    -- And the duel's chrome comes back with the duel. A party that has come
+    -- down to two hands the opponent to the ordinary renderer, and that board
+    -- wants its avatar plate and its name label — the same two the table took
+    -- down when it opened.
+    if self._party_t4_mode then
+        self._party_t4_mode = nil
+        util.notify_gui(GUI_HUD, "t4_mode", { on = false })
+    end
 end
 
 return M

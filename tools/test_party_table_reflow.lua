@@ -114,7 +114,28 @@ local drawn = seats_sent()
 check("one seat message per opponent", #drawn, 3)
 ok("...addressed to the game HUD, where t4_ui lives", sent[1].target == "#game")
 ok("...as t4_seat, the message the chamber already understands",
-    sent[1].id == "t4_seat")
+    #ids_sent("t4_seat") == 3)
+
+-- AND THE HUD IS TOLD IT IS LOOKING AT A TABLE.
+--
+-- t4_mode swaps the board's chrome from a two-player match to a table: it
+-- takes down the duel's opponent avatar plate, their name label and the two
+-- network badges, because at a table every seat has its own badge and the one
+-- plate at the top belongs to nobody. The offline chamber sends it; an online
+-- party never did, so a party of four ran with the duel's plate still parked
+-- over the top seat's badge — one board's furniture standing on another's.
+check("the HUD is switched out of duel chrome", #ids_sent("t4_mode"), 1)
+check("...on", ids_sent("t4_mode")[1].on, true)
+-- reset_hud turns it back off on every board rebuild, so it is re-asserted
+-- when the arrangement is established — but not on every state push, which
+-- would be one message per move for the life of the table.
+do
+    local keep = sent
+    sent = {}
+    PB.sync(b, state(order, nil, "b"))
+    check("an ordinary move does not re-send it", #ids_sent("t4_mode"), 0)
+    sent = keep
+end
 local active = ids_sent("t4_active")
 check("and exactly one turn ring", #active, 1)
 check("...on whoever's turn it is", active[1].slot, "left")
@@ -333,6 +354,11 @@ sent = {}
 PB.sync(b3, state(order, { c = true, d = true }, "b"))
 check("coming down to two draws no party seats at all", #seats_sent(), 0)
 ok("...and clears the ones it had", #ids_sent("t4_clear") == 1)
+-- The duel's chrome comes back with the duel: the ordinary renderer is taking
+-- the opponent, and it wants the avatar plate and the name label the table
+-- took down when it opened.
+check("...and hands the duel its chrome back", #ids_sent("t4_mode"), 1)
+check("...off", ids_sent("t4_mode")[1].on, false)
 ok("...leaving nothing behind to redraw", b3.party_seats == nil)
 -- Idempotent: every later sync must not keep re-posting the teardown.
 sent = {}
