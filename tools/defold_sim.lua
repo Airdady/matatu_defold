@@ -298,7 +298,16 @@ function SIM.install_gui_stub()
     set_adjust_mode = function() end, set_rotation = function() end,
     set_font = function() end, set_shadow = function() end, set_outline = function() end,
     set_tracking = function() end, set_render_order = function() end,
-    set_fill_angle = function() end, set_perimeter_vertices = function() end,
+    -- A PIE'S FILL ANGLE IS THE WHOLE OF WHETHER IT CAN BE SEEN.
+    --
+    -- This was a no-op, so a test could tell that a turn ring had been
+    -- ENABLED but not that it had been given an angle to draw — and a pie
+    -- node enabled at zero degrees draws nothing at all. That is exactly the
+    -- state the timer used to come back in after a restart, and no test could
+    -- have caught it while the setter forgot its argument.
+    set_fill_angle = function(n, a) n.fill = a end,
+    get_fill_angle = function(n) return n.fill or 0 end,
+    set_perimeter_vertices = function() end,
     set_texture = function() end, play_flipbook = function() end,
     new_texture = function() return true end,
     pick_node = function() return false end,

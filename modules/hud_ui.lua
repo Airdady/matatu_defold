@@ -151,17 +151,62 @@ function M.start_timer(self, is_player, duration, expires_at_ms, grace_seconds)
         self.timer_remaining = self.total_duration
     end
 
+    -- A CLOCK THAT ARRIVES ALREADY SPENT MUST NOT SIT IN LIMBO.
+    --
+    -- update() has three phases — grace, expired, and the countdown — and each
+    -- is entered by a latch. Two of those latches are only ever set by the
+    -- countdown CROSSING zero, and the countdown branch is guarded on
+    -- `timer_remaining > 0`. So a timer that starts at zero enters none of
+    -- them: the ring is enabled, drawn at a fill angle of zero, and left
+    -- there. An enabled ring that draws nothing is an invisible ring, and it
+    -- stays invisible until the next state arrives — which on a board waiting
+    -- for the other player is never.
+    --
+    -- THAT IS THE STATE EVERY LAPSED DEADLINE PRODUCES, and they are not rare:
+    -- a server restart hands back a turn deadline from before the outage, a
+    -- reconnect resumes from a state the client cached before it dropped, and
+    -- a phone coming back from the background has been away longer than a
+    -- turn. game.script works around two of those by hunting for a fresher
+    -- state before it re-syncs; this is the reason it had to.
+    --
+    -- So a spent clock latches straight into the phase the countdown would
+    -- have reached anyway — grace where there is one, the red alarm where
+    -- there is not. Nothing new is invented: it is the same two branches, the
+    -- same labels and the same colours, entered from the other side. A fresh
+    -- deadline arriving a moment later calls this function again and clears
+    -- both latches at the top, so the correction costs nothing.
+    local spent = (self.timer_remaining or 0) <= 0
+    if spent then
+        if self.grace_total > 0 then
+            self.timer_grace = true
+            self.grace_remaining = self.grace_total
+            if not is_player and self.o_avatar_name then
+                gui.set_text(self.o_avatar_name, GRACE_LABEL)
+            end
+        else
+            self.timer_expired = true
+            self.pulse_t = 0
+        end
+    end
+
+    -- Full and purple, or full and red, when the clock is already spent —
+    -- update() will paint it the same way on its next frame, and this is what
+    -- stops the frame in between being blank.
+    local angle = spent and 360 or (self.timer_remaining / self.total_duration) * 360
+    local colour = C_T_GREEN
+    if spent then colour = self.timer_grace and C_T_PURPLE or C_T_RED end
+
     if is_player then
         if self.p_timer then
-            gui.set_fill_angle(self.p_timer, (self.timer_remaining / self.total_duration) * 360)
-            gui.set_color(self.p_timer, C_T_GREEN)
+            gui.set_fill_angle(self.p_timer, angle)
+            gui.set_color(self.p_timer, colour)
             gui.set_enabled(self.p_timer, true)
         end
         if self.o_timer then gui.set_enabled(self.o_timer, false) end
     else
         if self.o_timer then
-            gui.set_fill_angle(self.o_timer, (self.timer_remaining / self.total_duration) * 360)
-            gui.set_color(self.o_timer, C_T_GREEN)
+            gui.set_fill_angle(self.o_timer, angle)
+            gui.set_color(self.o_timer, colour)
             gui.set_enabled(self.o_timer, true)
         end
         if self.p_timer then gui.set_enabled(self.p_timer, false) end
