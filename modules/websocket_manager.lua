@@ -861,14 +861,33 @@ function M.party_list()
 end
 
 -- ── message parsing ─────────────────────────────────────────────────────────
+-- HOW MANY PLAYERS ARE MID-GAME, which is not a number this list can count.
+--
+-- The lobby list is capped at thirty (LOBBY_LIST_MAX on the server) and it
+-- carries PLAYABLE opponents only: somebody already in a game cannot be
+-- challenged, so a row for them is a row pushing a playable opponent off the
+-- screen. They are sent as a COUNT instead — four bytes for a figure that would
+-- otherwise be a hundred rows the client draws and nobody can tap.
+--
+-- So the count cannot be derived from `users`; it is the number of players who
+-- are deliberately NOT in it. The server has sent it on every frame since the
+-- list was capped and nothing here read it, which is why the lobby said
+-- nothing about the players it was leaving out.
+M.playing_count = 0
+
 local function handle_online_users(msg_data)
   local users = {}
+  local playing = 0
   if type(msg_data) == "table" then
     if #msg_data > 0 then users = msg_data
     elseif msg_data.users then users = msg_data.users
     elseif msg_data.onlineUsers then users = msg_data.onlineUsers end
+    -- Rides alongside the list rather than inside it, so a payload that is
+    -- just an array (an older server) still parses and simply reports none.
+    playing = tonumber(msg_data.playingCount) or 0
   end
   M.online_users = users
+  M.playing_count = math.max(0, math.floor(playing))
   emit("online_users", users)
 end
 

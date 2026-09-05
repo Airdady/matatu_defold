@@ -55,6 +55,52 @@ function M.draw(self, ctx)
     local title_l = content_l
     txtL(self, title_l, hcy + 16,  "AVAILABLE PLAYERS", "body", C.COL_BRIGHT)
 
+    -- HOW MANY ARE MID-GAME, on the header the list hangs off.
+    --
+    -- The list carries PLAYABLE opponents and is capped at thirty
+    -- (LOBBY_LIST_MAX on the server). Somebody already in a game cannot be
+    -- challenged, so a row for them is a row pushing a playable opponent off
+    -- the screen — they are left out on purpose, and sent as a count instead.
+    --
+    -- Without this the lobby said nothing about them at all, and "AVAILABLE
+    -- PLAYERS: 6" on an app with a hundred people in it reads as an empty
+    -- game rather than a busy one. The count is the difference between a
+    -- quiet lobby and a full one, and it is the number the cap makes
+    -- invisible.
+    --
+    -- Drawn as a pill OVER the header rather than as another row, for the same
+    -- reason those players are not rows: it is a figure, not something to tap.
+    local playing = tonumber(ws.playing_count) or 0
+    if playing > 0 then
+        local label = commas(playing) .. " PLAYING"
+        -- The pill goes down FIRST so it sits behind its own label, then is
+        -- resized to what the label actually measured. Guessing a width from
+        -- the digit count is how a badge ends up clipping "104" and swimming
+        -- around "7".
+        local pill = track(self, ui.box(vmath.vector3(content_r, hcy + 16, 0),
+            vmath.vector3(8, 22, 0), C.COL_BORDER))
+        local tx = txtR(self, content_r - 10, hcy + 16, label, "small", C.COL_DIM)
+
+        local w = 60
+        pcall(function()
+            local m = gui.get_text_metrics_from_node(tx)
+            if m and m.width and m.width > 0 then w = m.width end
+        end)
+
+        -- 10 of padding on the label's side, and 24 on the other for the dot
+        -- and its gap. Re-anchored as well as resized: a box grows about its
+        -- own centre, so leaving the position alone would push the pill's
+        -- right edge off the panel by half of whatever it grew by.
+        local pill_w = w + 34
+        gui.set_size(pill, vmath.vector3(pill_w, 22, 0))
+        gui.set_position(pill, vmath.vector3(content_r - pill_w / 2, hcy + 16, 0))
+
+        -- The dot in the same red the row badge uses for a player who is
+        -- playing: one colour, one meaning, wherever it appears.
+        track(self, ui.box(vmath.vector3(content_r - pill_w + 12, hcy + 16, 0),
+            vmath.vector3(6, 6, 0), C.COL_RED))
+    end
+
     -- First-time visitor this session: type the hint out character by
     -- character (self._tap_hint_active/_t driven by online.gui_script's
     -- init()/update()) so it visibly draws the eye instead of just being
