@@ -23,7 +23,9 @@ package.path = ROOT .. "?.lua;" .. package.path
 _G.vmath = { vector3 = function(x, y, z) return { x = x or 0, y = y or 0, z = z or 0 } end,
              vector4 = function(a, b, c, d) return { a, b, c, d } end }
 _G.go  = { animate = function() end, set = function() end, delete = function() end,
-           PLAYBACK_ONCE_FORWARD = 1, EASING_OUTQUAD = 1 }
+           set_position = function() end,
+           PLAYBACK_ONCE_FORWARD = 1, EASING_OUTQUAD = 1, EASING_OUTCUBIC = 1 }
+_G.timer = { delay = function(_, _, fn) if fn then fn() end end }
 _G.msg = { post = function() end }
 _G.gui = {}
 _G.hash = function(s) return s end
@@ -81,6 +83,7 @@ local function board()
         SEAT_LEFT = { x = 120, y = 360 }, SEAT_RIGHT = { x = 1160, y = 360 },
         spawn_card = function() return { id = {} } end,
         set_back = function() end,
+        play_sound = function() end,
     }
 end
 local function state(seats, eliminated, turn)
@@ -243,6 +246,81 @@ ok("...and re-syncs the seats when it lands",
     handler:match('ws%.on%("party_player_out".-PB%.sync') ~= nil)
 ok("...from the state the socket actually mutated",
     handler:match('ws%.on%("party_player_out".-ws%.active_game_state') ~= nil)
+
+----------------------------------------------------------------------
+print("THE TABLE IS DEALT ROUND, NOT JUST TO YOU")
+----------------------------------------------------------------------
+-- online_handler's deal loop was written for a duel: a card to you, a card to
+-- the opponent, round after round. A party has no "the opponent" — opp_count
+-- deliberately falls to zero there — so the loop dealt the local hand and
+-- nothing else, and the other seats' cards did not fly anywhere. They were
+-- popped into their arches fully formed the moment the roster synced.
+--
+-- The offline chamber has always dealt properly: for each round, one card to
+-- every surviving seat IN TURN, each a stagger behind the last. Same table,
+-- same shape.
+do
+    sent = {}
+    local b = board()
+    b.my_player_id = "a"
+    local plan = PB.deal_plan(b, state(order, nil, "a"))
+    ok("a party produces a deal plan", plan ~= nil)
+    check("one entry per opponent seat", #plan, 3)
+    check("...in turn order from your left", plan[1].id .. plan[1].slot, "bleft")
+    check("...then across", plan[2].slot, "top")
+    check("...then right", plan[3].slot, "right")
+    check("each getting the hand the server dealt them", plan[1].count, 5)
+    check("and a slot per card to fly to", #plan[1].slots, 5)
+
+    -- The mock deck is sized off this. A card short and the deal runs out half
+    -- way round the table.
+    check("the deal knows how many backs it has to spawn", PB.deal_card_count(plan), 15)
+    check("...and nothing to spawn for a duel", PB.deal_card_count(nil), 0)
+
+    -- A duel has no plan at all, so the ordinary two-player deal is untouched.
+    check("a game with no seat order deals the old way",
+        PB.deal_plan(board(), { players = {}, currentTurn = "a" }), nil)
+    -- Nor does a seat that is out get dealt to.
+    local out_plan = PB.deal_plan(b, state(order, { c = true }, "a"))
+    check("an eliminated seat is not dealt a hand", #out_plan, 2)
+    for _, s in ipairs(out_plan) do
+        ok("...and it is not the one who went out", s.id ~= "c")
+    end
+end
+
+do
+    -- The cards actually fly, from the middle to their own seat, and end up
+    -- held by that seat so the reconcile does not deal them a second time.
+    sent = {}
+    local b = board()
+    b.my_player_id = "a"
+    local plan = PB.deal_plan(b, state(order, nil, "a"))
+    for i = 1, plan[1].count do
+        PB.deal_back(b, plan[1], { id = {} }, i, 0, nil)
+    end
+    check("the seat is holding what it was dealt", #b.party_seats["b"].cards, 5)
+    check("...at the slot the plan gave it", b.party_seats["b"].slot, "left")
+
+    -- And a fresh deal takes the old cards off first, or a hand shows twice.
+    PB.clear_cards(b)
+    check("clear_cards empties the seats", #b.party_seats["b"].cards, 0)
+    ok("...but leaves the seats themselves", b.party_seats["b"] ~= nil)
+end
+
+do
+    -- The wiring, in the handler that drives it.
+    local handler = io.open(ROOT .. "modules/online_handler.lua"):read("a")
+    ok("the deal loop deals to every party seat",
+        handler:match("if party_plan then.-PB%.deal_back") ~= nil)
+    ok("...staggered, like the chamber's",
+        handler:match("PB%.deal_back.-delay = delay %+ deal_step") ~= nil)
+    ok("...with the mock deck sized for their cards",
+        handler:find("PB.deal_card_count(party_plan)", 1, true) ~= nil)
+    ok("...and the loop running as long as the widest hand at the table",
+        handler:match("for _, s in ipairs%(party_plan or {}%) do.-max_deal = s%.count") ~= nil)
+    ok("...clearing the synced backs before it deals them again",
+        handler:match("if party_plan then pcall%(PB%.clear_cards, self%) end") ~= nil)
+end
 
 print(("\n%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)
