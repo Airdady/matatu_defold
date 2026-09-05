@@ -2,7 +2,7 @@
 --
 --   Run: lua5.4 tools/test_player_sort.lua
 --
--- Two keys, in this order:
+-- Three keys, in this order:
 --
 --   1. SKILL     my own tier first, then the neighbouring tier, then further
 --                out. A viewer with no known tier ties every row on this, and
@@ -20,6 +20,18 @@
 -- The third is the same ladder read around a pivot of ZERO, which is why there
 -- is one ordering in modules/player_sort.lua rather than two: the broke case is
 -- a value, not a branch, and a branch is what would have drifted.
+--
+--   3. FREE      and this one sits ABOVE the tier, not inside it. A free game
+--                wins nothing, so for a player who has chosen a stake it is
+--                not a worse match but a different activity, and it belongs
+--                under everybody they could play for coins however well
+--                matched. Free was already last WITHIN a tier (key 2 puts it
+--                on rung 3), but a well-matched free row still outranked a
+--                paid row one tier out, so free players surfaced wherever the
+--                tiers happened to fall.
+--
+--                Off for the broke case above, where free is the only game
+--                there is — the pivot says so, so this needs no branch either.
 --
 -- Runs under plain Lua with no simulator — player_sort requires nothing,
 -- deliberately, so "which player should be at the top" can be proven without
@@ -239,11 +251,62 @@ check("inside one tier: my stake, other stakes, free, playing",
     trow("p_other", "PRO", 500),         trow("p_mine", "PRO", 200),
   }, topts)), "p_mine,p_other,p_free,p_playing")
 
+-- The paid rows come first in tier order, then the free ones in tier order,
+-- then playing. pro_free used to lead this list on its perfect tier match;
+-- it now sits under the BEGINNER who is actually playing for coins.
 check("and that order repeats in the next tier out, with every playing row under both",
   tnames(ps.sort({
     trow("am_mine", "BEGINNER", 200), trow("pro_playing", "PRO", 200, true),
     trow("am_free", "BEGINNER", 0),   trow("pro_free", "PRO", 0),
-  }, topts)), "pro_free,am_mine,am_free,pro_playing")
+  }, topts)), "am_mine,pro_free,am_free,pro_playing")
+
+----------------------------------------------------------------------
+print("\n── free players go to the bottom, whatever their tier ──")
+----------------------------------------------------------------------
+-- A free game wins nothing, so it is not a worse MATCH — it is a different
+-- activity, and it belongs under everybody the viewer could play for coins.
+check("a perfect tier match on free sits under a paid stranger",
+  tnames(ps.sort({ trow("pro_free", "PRO", 0), trow("gm_paid", "GRANDMASTER", 500) }, topts)),
+  "gm_paid,pro_free")
+
+check("...and under a paid row at the far end of the ladder",
+  tnames(ps.sort({ trow("pro_free", "PRO", 0), trow("am_paid", "BEGINNER", 1000) }, topts)),
+  "am_paid,pro_free")
+
+check("every free row sinks, not just the well-matched one",
+  tnames(ps.sort({
+    trow("pro_free", "PRO", 0),  trow("gm_paid", "GRANDMASTER", 500),
+    trow("am_free", "BEGINNER", 0), trow("pro_paid", "PRO", 200),
+  }, topts)), "pro_paid,gm_paid,pro_free,am_free")
+
+check("...and the tier still orders them among themselves",
+  tnames(ps.sort({
+    trow("gm_free", "GRANDMASTER", 0), trow("pro_free", "PRO", 0),
+    trow("ma_free", "MASTER", 0),
+  }, topts)), "pro_free,ma_free,gm_free")
+
+-- BUT NEVER BELOW A ROW NOBODY CAN TAP. Free is still a game that can be
+-- started; a player mid-game is not.
+check("free still beats playing", 
+  tnames(ps.sort({ trow("pro_busy", "PRO", 200, true), trow("am_free", "BEGINNER", 0) }, topts)),
+  "am_free,pro_busy")
+
+-- AND NOT AT ALL WHEN FREE IS THE ONLY GAME THERE IS. The pivot is zero for a
+-- player who cannot afford any paid stake, and sinking free rows there would
+-- bury every game they can start.
+local broke = { selected_stake = 200, balance = 0,
+                levels = { { amount = 0 }, { amount = 200, charge = 20 } }, my_tier = "PRO" }
+-- Same tier on both sides, because skill outranks activity and always has —
+-- what is being shown here is that free is not pushed DOWN, which is the only
+-- thing this rule changes.
+check("a player who can afford nothing still gets free first",
+  tnames(ps.sort({ trow("pro_paid", "PRO", 200), trow("pro_free", "PRO", 0) }, broke)),
+  "pro_free,pro_paid")
+check("the rule is off entirely at a zero pivot",
+  ps.is_free_row(trow("x", "PRO", 0), 0), false)
+check("...and on for a player with a stake to play for",
+  ps.is_free_row(trow("x", "PRO", 0), 200), true)
+check("a paid row is never a free row", ps.is_free_row(trow("x", "PRO", 500), 200), false)
 
 -- The whole rule in one list: everybody playable, in tier-then-activity
 -- order, and then every playing row after them regardless of tier or stake.

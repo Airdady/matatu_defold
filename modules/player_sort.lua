@@ -143,6 +143,29 @@ function M.pivot_stake(selected, balance, levels)
     return num(type(selected) == "table" and selected.amount or selected)
 end
 
+--- Does this row sink to the bottom for being FREE?
+--
+-- A free game wins nothing. For a player who has chosen a stake it is not a
+-- worse match, it is a different activity — so it belongs under everybody they
+-- could actually play for coins, however well matched, rather than shuffled in
+-- among them by tier.
+--
+-- That is a rung ABOVE the tier gap, which is what makes it "always at the
+-- bottom" rather than "at the bottom of its own tier". It was already below
+-- paid rows inside a tier (rank() puts free on rung 3), but a well-matched
+-- free row still outranked a paid row one tier out — so free players were
+-- scattered up the list wherever the tiers happened to fall.
+--
+-- NOT WHEN FREE IS WHAT THEY ARE AFTER. The pivot is zero for a player who
+-- cannot afford any paid stake at all (pivot_stake), and for one sitting on
+-- the free tier by choice. Sinking free rows there would bury the only games
+-- they can start — which is the exact opposite of the rule the pivot exists
+-- to express, and the third case in this file's header.
+function M.is_free_row(pu, pivot)
+    if (tonumber(pivot) or 0) <= 0 then return false end
+    return M.row_stake(pu) <= 0
+end
+
 --- Which rung a row sits on. Lower sorts first.
 -- THE SKILL LADDER, weakest to strongest. Index is ladder position, which is
 -- what makes "one tier away" a subtraction. Mirrors be_matatu's SKILL_TIERS
@@ -229,6 +252,11 @@ function M.sort(rows, opts)
             -- gap, and a playing row must not be reachable by a good tier
             -- match.
             b = M.is_playing(pu) and 1 or 0,
+            -- Sorted on after "playing" and before everything else, so a free
+            -- row sits under every paid one whatever their tiers are. Its own
+            -- key rather than folded into the rung for the same reason `b` is:
+            -- the rung is compared AFTER the tier gap.
+            f = M.is_free_row(pu, pivot) and 1 or 0,
             r = M.rank(pu, pivot),
             -- 0 when the viewer's tier is unknown, so every row ties on it and
             -- the arrival index decides — the old behaviour, exactly.
@@ -236,13 +264,15 @@ function M.sort(rows, opts)
         }
     end
 
-    -- Playing last, unconditionally. Then, among the playable, tier gap before
-    -- activity. With `g` at 0 for everybody — which is what an unknown viewer
-    -- tier gives — the order collapses back to what it was before the tier key
-    -- existed, so a client talking to a server that does not send skillTier
-    -- yet is unaffected.
+    -- Playing last, unconditionally. Free next-to-last, for a player who has a
+    -- stake to play for. Then, among the rest, tier gap before activity. With
+    -- `g` at 0 for everybody — which is what an unknown viewer tier gives —
+    -- the order collapses back to what it was before the tier key existed, so
+    -- a client talking to a server that does not send skillTier yet is
+    -- unaffected.
     table.sort(decorated, function(a, b)
         if a.b ~= b.b then return a.b < b.b end
+        if a.f ~= b.f then return a.f < b.f end
         if a.g ~= b.g then return a.g < b.g end
         if a.r ~= b.r then return a.r < b.r end
         return a.i < b.i
