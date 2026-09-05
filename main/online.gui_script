@@ -23,6 +23,14 @@ local season_clock    = require("modules.season_clock")
 local search_clock    = require("modules.search_clock")
 local list_gesture    = require("modules.list_gesture")
 local dialog_search   = require("modules.dialog_search")
+-- WAITING FOR AN ANSWER IS NOT A NOTIFICATION.
+--
+-- A challenge you SENT was drawn as a strip at the top of the screen for a
+-- while, and it read as one arriving — reported twice, the second time as "it
+-- still shows up on my screen yet I am the one who sent it". A banner is the
+-- surface for things that arrive; this is the surface for waiting, and it is
+-- the one this screen had before.
+local dialog_outgoing = require("modules.dialog_outgoing")
 
 local LOGICAL_W, LOGICAL_H = 1280, 720
 local VISIBLE_W, VISIBLE_H = 1280, 720
@@ -203,16 +211,6 @@ local BAN_BADGE = {
     -- strip is violet, which is the point: a party is the one invite that did
     -- not come from a person choosing YOU, and it is the one that seats four.
     PARTY        = { bg = vmath.vector4(0.60, 0.25, 0.78, 1.00), tx = vmath.vector4(1.00, 0.96, 1.00, 1.00) },
-    -- A CHALLENGE THIS PLAYER SENT, which is the one strip on this row that is
-    -- not somebody asking THEM for something.
-    --
-    -- Reported as "I sent a request and it came back to me": the outgoing
-    -- strip was drawn in the same grey plate, with the same avatar on the
-    -- left, as an arriving invite — and an avatar-plus-name on the left of a
-    -- notification reads as "this person is contacting you" whatever the
-    -- title says. Muted on purpose: it is a receipt, not a decision, and
-    -- nothing on it needs answering.
-    SENT         = { bg = vmath.vector4(0.24, 0.28, 0.34, 1.00), tx = vmath.vector4(0.78, 0.84, 0.92, 1.00) },
 }
 
 -- WHERE THE INLINE BADGE GOES, AND WHY H2H MOVES FOR IT.
@@ -316,12 +314,7 @@ local function draw_banner(self)
             self.ban_bars[#self.ban_bars + 1] = anim
         else
             self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(CX, cy, 0), vmath.vector3(bw, bh, 0), vmath.vector4(0.06, 0.10, 0.14, 0.97 * alpha))), id = "banner_block" }
-            -- THE RULE ALONG THE TOP SAYS WHICH DIRECTION THIS STRIP POINTS.
-            -- Cyan is the app's "somebody wants something from you" colour and
-            -- it is on every arriving invite; a challenge you SENT is not one
-            -- of those, and sharing the colour is most of why it read as one.
-            track(self, ui.box(vmath.vector3(CX, cy + half, 0), vmath.vector3(bw, 3, 0),
-                b.outgoing and vmath.vector4(0.55, 0.60, 0.68, alpha) or vmath.vector4(0.2, 0.9, 1.0, alpha)))
+            track(self, ui.box(vmath.vector3(CX, cy + half, 0), vmath.vector3(bw, 3, 0), vmath.vector4(0.2, 0.9, 1.0, alpha)))
             -- Sits ON the top rule, centred — a fixed position rather than
             -- trailing the title, which carries a player name of unpredictable
             -- length while the right-hand side is already crowded by H2H and
@@ -365,17 +358,15 @@ local function draw_banner(self)
             -- A party offer has no request id — it is a table, not a challenge
             -- addressed to anybody — and keying on the id would have every
             -- open table share the empty string with every other.
+            -- EVERY STRIP ON THIS ROW ARRIVED, so every one of them has both
+            -- buttons. The one-button variant here was the challenge you SENT,
+            -- and that is a dialog again — see open_outgoing_dialog and the
+            -- note on the require at the top of this file.
             local key = b.key or b.request_id
-            if not b.outgoing then
-                self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(EDGE_R - 90, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.0, 0.9, 0.63, 0.30 * alpha))), id = "banner_accept", data = key }
-                track(self, ui.text(vmath.vector3(EDGE_R - 90, cy, 0), b.accept_label or "ACCEPT", "btn_md", vmath.vector4(1,1,1,alpha)))
-            end
-            -- On an outgoing strip the single button takes ACCEPT's slot, so
-            -- the one thing that can be pressed sits where a thumb already
-            -- expects to find a button on this strip.
-            local dec_x = b.outgoing and 90 or 225
-            self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(EDGE_R - dec_x, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.12, 0.19, 0.27, 0.85 * alpha))), id = "banner_decline", data = key }
-            track(self, ui.text(vmath.vector3(EDGE_R - dec_x, cy, 0), b.decline_label or "DECLINE", "btn_md", vmath.vector4(0.82,0.86,0.91,alpha)))
+            self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(EDGE_R - 90, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.0, 0.9, 0.63, 0.30 * alpha))), id = "banner_accept", data = key }
+            track(self, ui.text(vmath.vector3(EDGE_R - 90, cy, 0), b.accept_label or "ACCEPT", "btn_md", vmath.vector4(1,1,1,alpha)))
+            self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(EDGE_R - 225, cy, 0), vmath.vector3(120, 46, 0), vmath.vector4(0.12, 0.19, 0.27, 0.85 * alpha))), id = "banner_decline", data = key }
+            track(self, ui.text(vmath.vector3(EDGE_R - 225, cy, 0), b.decline_label or "DECLINE", "btn_md", vmath.vector4(0.82,0.86,0.91,alpha)))
             -- Inline badge: same centre line as H2H and the buttons, in the
             -- space the shifted H2H anchor opens up.
             draw_badge(self, b.badge, EDGE_R - BAN_CHAMP_X, cy, BAN_CHAMP_H, alpha)
@@ -408,6 +399,7 @@ rebuild = function(self)
     right_panel.draw(self, ctx, left_panel)
 
     draw_banner(self)
+    if self.dialog then dialog_outgoing.draw(self, ctx, self.dialog, self.dlg_alpha or 1) end
 end
 
 -- ── ISO-8601 UTC date parsing ──────────────────────────────────────────────────
@@ -488,17 +480,20 @@ local function update_season(self)
     end
 end
 
--- ── Banner Lifecycle ──────────────────────────────────────────────────────────
+-- ── Invite Lifecycle ──────────────────────────────────────────────────────────
 --
--- EVERY REQUEST ON THIS SCREEN IS THE SAME STRIP. Incoming, outgoing, party.
+-- EVERYTHING THAT ARRIVES IS THE STRIP. An invite, an open table, a challenge
+-- from another player: same slot, same clock, same two buttons, and the app
+-- still works underneath. Being asked something is not worth taking the app
+-- away from somebody for.
 --
--- The two centred dialogs this replaced were the last modal surfaces in the
--- invite flow: a scrim over the whole lobby, and every screen's on_input
--- returning early behind it for ten seconds. A tournament, battle, knockout or
--- championship invite has been the strip for a long time — same slot, same
--- clock, same buttons — and neither being challenged nor waiting on an answer
--- is worth taking the app away from someone for. The strip already draws all
--- of it; what is added below is three constructors, not three designs.
+-- WHAT YOU SENT IS NOT ONE OF THOSE, and this is the line the strip was on the
+-- wrong side of. A challenge you sent asks you nothing — you are waiting to be
+-- answered — and drawn as a row at the top of the screen, with the opponent's
+-- avatar and name on the left exactly where a sender's goes, it read as an
+-- invite arriving. Reported twice, the second time as "it still shows up on my
+-- screen yet I am the one who sent it". So it is the centred waiting dialog it
+-- always was: see open_outgoing_dialog below.
 
 --- Seconds left on a server deadline, in epoch milliseconds.
 --
@@ -525,43 +520,28 @@ local PARTY_WINDOW_FALLBACK = 20
 -- offered either, so one still open when a slot frees can take it.
 local PARTY_BANNERS_MAX = 2
 
---- The strip for a challenge THIS PLAYER SENT.
+--- The dialog for a challenge THIS PLAYER SENT.
 --
--- Same row, same clock, one button. `key` rather than a request id because
--- there is not one: GAME_REQUEST is fire-and-forget, and the server answers
--- with a match or a decline rather than an id to cancel by. Keyed on the
--- opponent instead, which is what a second challenge to the same player would
--- collide with, and exactly what should.
-local function open_outgoing_banner(self, u, stake)
-    local amount = tonumber((stake or {}).amount) or 0
-    local name   = string.upper(tostring(u.username or "OPPONENT"))
-    local b = {
-        outgoing      = true,
-        key           = "out:" .. tostring(u._id or name),
-        request_id    = "",
-        opponent_id   = u._id and tostring(u._id) or nil,
-        -- THE STATE FIRST, THE NAME SECOND. "CHALLENGE SENT - RIVAL" has the
-        -- same shape as "TOURNAMENT - RIVAL" two pixels away on the same
-        -- strip, and a player reading quickly sees a name in the place a
-        -- sender's name goes. "WAITING FOR RIVAL" cannot be read as an
-        -- arrival: nobody is waiting for you.
-        title         = "WAITING FOR " .. name,
-        desc          = "Challenge sent"
-                        .. "   -   " .. (amount > 0 and (commas(amount * 2) .. " Coins pot") or "Practice Mode"),
-        -- The badge slot, which every other kind of strip uses to say what it
-        -- is. This one says it is yours.
-        badge         = "SENT",
-        avatar        = tonumber(u.avatar) or 1,
-        stake         = stake or {},
-        time_left     = 10,
-        max_time      = 10,
-        alpha         = 1,
-        y_off         = 0,
-        decline_label = "CANCEL",
-    }
-    self.banners = self.banners or {}
-    for _, ex in ipairs(self.banners) do if ex.key == b.key then return end end
-    table.insert(self.banners, b)
+-- Not a strip. The strip is where things that ARRIVE go — an invite, an open
+-- table — and a challenge you sent is the opposite of that: you are not being
+-- asked anything, you are waiting to be answered. Drawn as the centred surface
+-- it always was: both avatars, the pot between them, the countdown, and a
+-- CANCEL that now genuinely withdraws the request.
+--
+-- `time_left` is the server's own ten seconds, the window handleGameRequest
+-- arms its expiry timeout with, so the dialog closes when the request actually
+-- lapses rather than at some number of our own.
+local function open_outgoing_dialog(self, u, stake, h2h)
+    self.dialog, self.dlg_alpha = {
+        kind = "challenging",
+        name = u.username or "opponent",
+        stake = stake or {},
+        avatar = tonumber(u.avatar) or 1,
+        opponent_id = u._id and tostring(u._id) or nil,
+        h2h = h2h,
+        time_left = 10,
+        max_time = 10,
+    }, 1
     if self._active then rebuild(self) end
 end
 
@@ -816,10 +796,10 @@ function update(self, dt)
             -- A LAPSED STRIP ANSWERS FOR THE PLAYER — but only where there is
             -- something to answer. An unanswered challenge is declined so the
             -- opponent is not left watching a spinner until the server's own
-            -- timeout; a table that closed and a challenge we SENT have nobody
-            -- waiting on us, and a decline for either would be a message about
-            -- a request that never existed.
-            if not b.party_id and not b.outgoing
+            -- timeout; a table that closed has nobody waiting on us, and a
+            -- decline for it would be a message about a request that never
+            -- existed.
+            if not b.party_id
                and b.request_id and b.request_id ~= "" then
                 ws.decline_game_request(b.request_id)
             end
@@ -874,6 +854,25 @@ function update(self, dt)
         -- out of date — somebody joined, a winner was named, the search ended.
         local key = dialog_search.structure_key(sr)
         if key ~= sr._layout_key then sr._layout_key = key; need_rebuild = true end
+    end
+
+    -- ── The challenge we are waiting on ───────────────────────────────────
+    --
+    -- Ten seconds, the same window the server arms its own expiry with, so the
+    -- dialog closes when the request actually lapses. Nothing is sent at zero:
+    -- the server has already retired it by then, and a cancel arriving after
+    -- would be a message about a request that no longer exists.
+    if self.dialog then
+        self.dialog.time_left = (self.dialog.time_left or 10) - dt
+        local cur_sec = math.floor(math.max(0, self.dialog.time_left))
+        if cur_sec ~= self.dialog._last_sec then
+            self.dialog._last_sec = cur_sec
+            need_rebuild = true
+        end
+        if self.dialog.time_left <= 0 then
+            self.dialog, self.list_scroll = nil, 0
+            need_rebuild = true
+        end
     end
 
     -- ── Debounced Rebuild Coalescing for rapid socket bursts ──────────────
@@ -947,7 +946,7 @@ end
 
 function on_message(self, message_id, message, sender)
     if message_id == hash("screen_enter") then
-        msg.post(".", "acquire_input_focus"); self._active, self.banners, self.list_scroll, self.battle_modal, self.invite_search, app_state.searching_invite, self.savings_info_open, self.savings_add_open, self.savings_plans_open = true, nil, 0, nil, nil, false, nil, nil, nil
+        msg.post(".", "acquire_input_focus"); self._active, self.dialog, self.banners, self.list_scroll, self.battle_modal, self.invite_search, app_state.searching_invite, self.savings_info_open, self.savings_add_open, self.savings_plans_open = true, nil, nil, 0, nil, nil, false, nil, nil, nil
         -- Auto-open the Savings explainer (modules/online_right.lua's
         -- draw_savings_info, normally only reached via a small "i" icon a
         -- first-time player would likely never notice) exactly once EVER —
@@ -1134,34 +1133,29 @@ function on_message(self, message_id, message, sender)
         end
     elseif message_id == hash("ws_head_to_head") then
         -- THE RECORD BETWEEN THE TWO OF YOU, arriving after the challenge went
-        -- out. It used to land on the outgoing dialog; the outgoing strip is
-        -- the same request drawn on the same surface as every other, and
-        -- draw_banner already renders an h2h row when a banner carries one.
+        -- out — the request is sent first and this follows, so the dialog is
+        -- already up and simply gains a row.
         local d = ws.last_head_to_head or {}
         local oid = tostring(d.opponentId or "")
-        if oid ~= "" then
-            for _, b in ipairs(self.banners or {}) do
-                if b.opponent_id == oid then
-                    b.h2h = d.headToHead
-                    b.opp_winrate = (h2h_view(d.headToHead) or {}).opp_winrate
-                    if self._active then rebuild(self) end
-                end
-            end
+        if oid ~= "" and self.dialog and self.dialog.opponent_id == oid then
+            self.dialog.h2h = d.headToHead
+            if self._active then rebuild(self) end
         end
     elseif message_id == hash("ws_request_declined") or message_id == hash("ws_request_cancelled") then
-        -- The named request, and any challenge we have out — an unanswered
-        -- decline carries no id of ours to match on, and leaving the strip up
-        -- after the opponent has said no is worse than closing one strip too
-        -- many on a screen that only ever holds one outgoing challenge.
+        -- The named strip, if one of ours matches it — and the challenge we
+        -- are waiting on, whose answer this IS. A decline for our own request
+        -- carries no id we know (the server only ever tells the RECIPIENT the
+        -- id), so the dialog is closed on the message itself; the screen only
+        -- ever holds one outgoing challenge.
         if self.banners then
             local rid = message and message.request_id
             for i = #self.banners, 1, -1 do
-                local b = self.banners[i]
-                if b.outgoing or (rid and rid ~= "" and b.request_id == rid) then table.remove(self.banners, i) end
+                if rid and rid ~= "" and self.banners[i].request_id == rid then table.remove(self.banners, i) end
             end
             if #self.banners == 0 then self.banners = nil end
         end
-        self.list_scroll = 0; if self._active then rebuild(self) end
+        -- And the challenge we were waiting on: this IS its answer.
+        self.dialog, self.list_scroll = nil, 0; if self._active then rebuild(self) end
     elseif message_id == hash("ws_savings_status") then
         -- SAVINGS_STATUS parked on ws.current_savings_status — nothing to seed
         -- here (the "savings_add" dispatch seeds self.savings_add lazily on
@@ -1229,14 +1223,14 @@ function on_input(self, action_id, action)
     -- entirely while one is up. The half-finished gesture would then still be
     -- recorded, and the next release to reach here would be read as a tap on
     -- whatever now occupies that point. Dropped instead.
-    if self.battle_modal or self.invite_search or self.banners
+    if self.dialog or self.battle_modal or self.invite_search or self.banners
         or not self.list_region then
         if self._gesture then list_gesture.cancel(self._gesture) end
         self._tap_at = nil
     end
 
     -- Handle natural scrolling (Touch Dragging + Mouse Wheel Support)
-    if not self.battle_modal and not self.invite_search and not self.banners and self.list_region and action.x and action.y then
+    if not self.dialog and not self.battle_modal and not self.invite_search and not self.banners and self.list_region and action.x and action.y then
         local reg = self.list_region
         local in_reg = action.x >= reg.left and action.x <= reg.right and action.y >= reg.bottom and action.y <= reg.top
 
@@ -1348,8 +1342,21 @@ function on_input(self, action_id, action)
                     if not can_afford(sd) then
                         msg.post("#controller", "goto_payments")
                     else
-                        ws.send_game_request({ _id=u._id, username=u.username, isAI=u.isAI, avatar=u.avatar }, sd, ex); open_outgoing_banner(self, u, sd); ws.request_head_to_head(u._id)
+                        ws.send_game_request({ _id=u._id, username=u.username, isAI=u.isAI, avatar=u.avatar }, sd, ex); open_outgoing_dialog(self, u, sd); ws.request_head_to_head(u._id)
                     end
+                elseif id == "cancel_wait" then
+                    -- IT REALLY WITHDRAWS IT. There was no button here for
+                    -- years because there was nothing behind it — the request
+                    -- stayed live and the opponent could accept seconds after
+                    -- the sender gave up. CANCEL_GAME_REQUEST retires it on
+                    -- the server and clears the strip on their screen.
+                    pcall(ws.cancel_game_request)
+                    self.dialog, self.list_scroll = nil, 0; rebuild(self)
+                elseif id == "dlg_block" then
+                    -- The scrim. Swallows the tap and does nothing else: the
+                    -- request is out, and dismissing the dialog by tapping
+                    -- past it would leave it live with nothing on screen
+                    -- saying so.
                 elseif id == "banner_accept" or id == "banner_decline" then
                     -- THREE KINDS OF STRIP, ONE PAIR OF BUTTONS.
                     --
@@ -1376,13 +1383,6 @@ function on_input(self, action_id, action)
                                     closes_at = hit.closes_at,
                                 })
                             end
-                        elseif hit.outgoing then
-                            -- CANCEL. GAME_REQUEST is fire-and-forget — there
-                            -- is no id to withdraw by — so this takes the
-                            -- strip down and stops the player waiting on a
-                            -- row. An opponent who answers a moment later
-                            -- still lands on the board, exactly as they did
-                            -- when this was a dialog. Nothing to send.
                         elseif hit.request_id and hit.request_id ~= "" then
                             if id == "banner_accept" then ws.accept_game_request(hit.request_id)
                             else ws.decline_game_request(hit.request_id) end

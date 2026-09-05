@@ -829,6 +829,21 @@ function M.party_leave(party_id)
   M.send_message("PARTY_LEAVE", { partyId = id and tostring(id) or nil })
 end
 
+--- TAKE BACK THE CHALLENGE I JUST SENT.
+--
+-- There was no way to for years, and the outgoing dialog carried no Cancel
+-- button because of it: the request stayed live whatever the sender did, so a
+-- button would have been a lie — the opponent could accept seconds after they
+-- gave up.
+--
+-- No id is sent, and none is needed. The server generates the request id and
+-- only ever tells the RECIPIENT, so the sender does not have one; it retires
+-- every pending request from this socket instead, which is the only thing this
+-- button could honestly mean anyway.
+function M.cancel_game_request()
+  M.send_message("CANCEL_GAME_REQUEST", {})
+end
+
 --- WALKING OUT OF A GAME THAT IS STILL RUNNING.
 --
 -- EXIT used to be a navigation and nothing more: the client went back to the

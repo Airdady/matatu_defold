@@ -9,12 +9,10 @@
 -- a reason nobody could see. So both ends of every band are checked, and so are
 -- the gaps between them.
 --
--- The second is drift. Four surfaces show a player's standing: the incoming
--- request dialog, the online screen's inline invite strip, the global overlay's
--- strip, and the game-over panel. (There were five. The outgoing "CHALLENGING"
--- dialog is gone — a challenge you SENT is drawn on the same inline strip as
--- every other request now, so it reads its badge from the strip's own code.)
--- They used to each render it their own way — three of them printed "WR nn%" with their own colour thresholds and
+-- The second is drift. Five surfaces show a player's standing: the incoming and
+-- outgoing request dialogs, the online screen's inline invite strip, the global
+-- overlay's strip, and the game-over panel. They used to each render it their
+-- own way — three of them printed "WR nn%" with their own colour thresholds and
 -- two showed nothing at all — which is exactly how the same opponent could look
 -- like two different players on two screens. Those checks are source-level,
 -- because the drawing lives inside gui_scripts whose nodes only exist in a
@@ -141,6 +139,7 @@ end
 
 local SURFACES = {
   "modules/dialog_incoming.lua",
+  "modules/dialog_outgoing.lua",
   "modules/champ_banner.lua",
   "main/online.gui_script",
   "main/incoming.gui_script",
@@ -257,7 +256,7 @@ local ctx = {
                                         opp_winrate = h.wr } or nil end,
   draw_h2h_row = function() end,
 }
-for _, mod in ipairs({ "modules.dialog_incoming" }) do
+for _, mod in ipairs({ "modules.dialog_incoming", "modules.dialog_outgoing" }) do
   local dlg = require(mod)
   for _, wr in ipairs({ 33, 47, 51, 77 }) do
     ok(mod .. " draws at " .. wr, pcall(dlg.draw, { nodes = {}, buttons = {} }, ctx,

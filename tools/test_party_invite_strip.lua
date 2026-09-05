@@ -134,42 +134,40 @@ check("...and the lobby has no state for one", not ONLINE_C:find("party_open", 1
 check("...nor the buttons that were on it",
   not ONLINE_C:find("party_close", 1, true) and not ONLINE_C:find("party_leave", 1, true))
 
--- ── AND NEITHER DIALOG SURVIVES IN THE INVITE FLOW ──────────────────────────
-check("the lobby has no request dialog left at all",
-  not ONLINE_C:find("self%.dialog"),
-  "a modal in the invite flow is the thing this replaced")
-check("...so nothing requires the outgoing one", not ONLINE_C:find("dialog_outgoing", 1, true))
-check("a challenge the player SENDS opens a strip",
-  ONLINE_C:find("open_outgoing_banner(self, u, sd)", 1, true) ~= nil)
-
--- ONE BUTTON ON AN OUTGOING STRIP. The answer belongs to the opponent; there is
--- nothing here to accept.
-check("the outgoing strip draws no ACCEPT",
-  ONLINE_C:find("if not b%.outgoing then") ~= nil)
-check("...and its one button is CANCEL",
-  ONLINE_C:find('decline_label = "CANCEL"', 1, true) ~= nil)
-
--- AND IT CANNOT BE READ AS AN ARRIVING INVITE.
+-- ── WHAT YOU SENT IS NOT WHAT ARRIVED ───────────────────────────────────────
 --
--- Reported as "I sent a request and it came back to me". It had not: the
--- outgoing strip was drawn in the same plate, with the same cyan rule and the
--- same avatar on the left, as an arriving one — and an avatar-plus-name on the
--- left of a notification reads as "this person is contacting you" whatever the
--- title says.
-check("the outgoing strip leads with the STATE, not with a name",
-  ONLINE_C:find('title         = "WAITING FOR " %.%. name') ~= nil,
-  '"CHALLENGE SENT - RIVAL" has the same shape as "TOURNAMENT - RIVAL"')
-check("...carries a badge saying it is yours",
-  ONLINE_C:find('badge         = "SENT"') ~= nil
-    and ONLINE_C:find("SENT         = { bg") ~= nil)
-check("...and does not wear the cyan every arriving invite wears",
-  ONLINE_C:find("b%.outgoing and vmath%.vector4%(0%.55, 0%.60, 0%.68, alpha%)") ~= nil)
-check("...sitting where the primary button always sits",
-  ONLINE_C:find("local dec_x = b%.outgoing and 90 or 225") ~= nil)
+-- The strip is where things that ARRIVE go. A challenge you sent asks you
+-- nothing — you are waiting to be answered — and drawn as a row at the top of
+-- the screen, with the opponent's avatar and name on the left exactly where a
+-- sender's goes, it read as an invite arriving. Reported twice, the second
+-- time as "it still shows up on my screen yet I am the one who sent it".
+check("a challenge the player SENDS opens the waiting dialog",
+  ONLINE_C:find("open_outgoing_dialog%(self, u, sd%)") ~= nil,
+  "a banner is the surface for things that arrive")
+check("...drawn by the dialog module, not by the strip",
+  ONLINE_C:find("dialog_outgoing%.draw%(self, ctx, self%.dialog") ~= nil)
+check("...and every strip on the row still has both buttons",
+  ONLINE_C:find("id = \"banner_accept\", data = key") ~= nil
+    and not ONLINE_C:find("b%.outgoing"),
+  "the one-button strip WAS the outgoing one")
+
+-- AND THE CANCEL ON IT IS REAL.
+--
+-- There was no button there for years, and the comment beside it said why: the
+-- backend had no way to withdraw a request once sent, so a Cancel would have
+-- been a lie — the opponent could accept seconds after the sender gave up.
+check("CANCEL withdraws the request rather than hiding the dialog",
+  ONLINE_C:find("pcall%(ws%.cancel_game_request%)") ~= nil)
+check("...and the socket has a way to say it",
+  code(read("modules/websocket_manager.lua")):find('M%.send_message%("CANCEL_GAME_REQUEST", %{%}%)') ~= nil)
+check("...sending no id, because the sender has never been told one",
+  code(read("modules/websocket_manager.lua")):match("function M%.cancel_game_request%(%)") ~= nil)
+check("the dialog's own button asks for it",
+  code(read("modules/dialog_outgoing.lua")):find('mkbtn%(self, "cancel_wait"') ~= nil)
 
 -- ── EXPIRY: A STRIP ANSWERS ONLY WHERE THERE IS SOMETHING TO ANSWER ─────────
-check("a lapsed table is never declined, and neither is a challenge we sent",
-  ONLINE_C:find("if not b%.party_id and not b%.outgoing") ~= nil,
+check("a lapsed table is never declined",
+  ONLINE_C:find("if not b%.party_id\n") ~= nil,
   "GAME_REQUEST_DECLINED for a party id is a message about a request that never existed")
 check("an unanswered CHALLENGE still is, so nobody watches a spinner",
   ONLINE_C:find("ws%.decline_game_request%(b%.request_id%)") ~= nil)
