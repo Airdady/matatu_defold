@@ -1168,6 +1168,7 @@ function M.start_game(self, state)
     -- Seat the table before anything else is drawn: the badges are where a
     -- player reads who they are playing, and a party that dealt its cards
     -- before naming its seats reads as a game against nobody.
+    local party_plan = PB.deal_plan(self, self.game_state)
     pcall(PB.sync, self, self.game_state)
     self._seq = (self._seq or 0) + 1
     self.move_queue = {}
@@ -1330,7 +1331,13 @@ function M.start_game(self, state)
     local p_count = #hand_data
     local a_count = opp_count
     local deck_count = state.deckCount or (state.deck and #state.deck) or 30
-    local total_cards = deck_count + p_count + a_count + (cut_card and cut_card.v and 1 or 0)
+    -- EVERY SEAT'S CARDS, not just this player's and one opponent's. A party
+    -- deals round the table, so the mock deck has to hold a back for each of
+    -- the other seats' cards too — a card short and the deal runs out half way
+    -- round. Zero when this is not a party, which is every other game.
+    local party_backs = party_plan and PB.deal_card_count(party_plan) or 0
+    local total_cards = deck_count + p_count + a_count + party_backs
+        + (cut_card and cut_card.v and 1 or 0)
 
     local mock_deck = {}
     for i = 1, total_cards do
@@ -1415,8 +1422,20 @@ function M.start_game(self, state)
     local function run_deal()
         if seq ~= self._seq then return end
 
+        -- The seats' cards come OFF before they are dealt back on. sync laid
+        -- them out when the roster arrived — right for a resync, wrong the
+        -- instant before a deal, because flying cards to a chair that already
+        -- holds a full hand shows the hand twice. The badges stay up.
+        if party_plan then pcall(PB.clear_cards, self) end
+
         local delay = 0.0
+        -- The widest hand AT THE TABLE. Counting only this player's and one
+        -- opponent's would stop the loop early on a party where somebody was
+        -- dealt more — and the seats behind that count would never be dealt to.
         local max_deal = math.max(p_count, a_count)
+        for _, s in ipairs(party_plan or {}) do
+            if s.count > max_deal then max_deal = s.count end
+        end
 
         local p_spacing = self.calc_spacing(p_count)
         -- Same tightened ratio layout_hand uses for the smaller opponent
@@ -1441,6 +1460,20 @@ function M.start_game(self, state)
                 timer.delay(delay, false, function() if seq == self._seq then self.play_sound("SoundDraw") end end)
                 timer.delay(delay + 0.15, false, function() if seq == self._seq then self.set_face(pc) end end)
                 delay = delay + deal_step
+            end
+
+            -- ROUND THE TABLE, the way the offline chamber deals: after this
+            -- player's card, one to every other seat in turn, each a stagger
+            -- behind the last. A party has no "the opponent" for the branch
+            -- below to deal to, so without this the loop dealt the local hand
+            -- and nothing else and the other seats' cards simply appeared.
+            if party_plan then
+                for _, s in ipairs(party_plan) do
+                    if i <= s.count then
+                        PB.deal_back(self, s, table.remove(mock_deck), i, delay, seq)
+                        delay = delay + deal_step
+                    end
+                end
             end
 
             if i <= a_count then

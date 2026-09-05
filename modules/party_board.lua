@@ -190,6 +190,112 @@ local function layout_backs(self, seat, count)
     end
 end
 
+-- ── dealing, the way the offline chamber deals ──────────────────────────────
+--
+-- A party used to deal to ONE seat. online_handler's deal loop was written for
+-- a duel — a card to you, a card to the opponent, round after round — and a
+-- party has no "the opponent", so opp_count fell to zero and the loop dealt
+-- the local hand and nothing else. The other seats' cards did not fly
+-- anywhere: layout_backs popped them into their arches, fully formed, the
+-- moment the roster synced.
+--
+-- The offline chamber has always done this properly: for each of the seven
+-- rounds it gives one card to every surviving seat IN TURN, each a stagger
+-- behind the last, so the deal reads as a deal. That is the shape adopted
+-- here, and it is the same shape because it is the same table.
+--
+-- The two halves are split so online_handler can interleave them with the
+-- local player's own card: deal_plan works out where every back is going
+-- BEFORE any of them moves (the slots depend on the final count, so they
+-- cannot be discovered one card at a time), and deal_back flies one.
+
+--- Where this seat's backs will end up, for a hand of `n`.
+--
+-- The same arithmetic layout_backs uses, lifted out so the deal and the
+-- reconcile cannot drift into disagreeing about where a seat's cards live.
+local function back_slots(self, slot, n)
+    local base = anchor_for(self, slot)
+    local horizontal = (slot == "top")
+    local spacing = 18
+    local start = -((n - 1) * spacing) / 2
+    local out = {}
+    for i = 1, n do
+        local off = start + (i - 1) * spacing
+        out[i] = horizontal
+            and vmath.vector3(base.x + off, base.y, BL.Z_HAND + i * 0.001)
+            or  vmath.vector3(base.x, base.y + off, BL.Z_HAND + i * 0.001)
+    end
+    return out
+end
+
+--- Who is being dealt to, in turn order from the player on your left, and how
+--- many cards each is getting.
+--
+-- Returns nil for anything that is not a party, so the caller can fall through
+-- to the ordinary two-player deal without asking twice.
+function M.deal_plan(self, game_state)
+    if type(game_state) ~= "table" then return nil end
+    local order = game_state.seatOrder
+    if type(order) ~= "table" or #order == 0 then return nil end
+
+    local players = type(game_state.players) == "table" and game_state.players or {}
+    local seats = M.seating(order, self.my_player_id)
+    if #seats == 0 then return nil end
+
+    local plan = {}
+    for _, s in ipairs(seats) do
+        local p = players[s.id] or {}
+        local count = tonumber(p.handCount) or (type(p.hand) == "table" and #p.hand) or 0
+        if not p.eliminated and count > 0 then
+            plan[#plan + 1] = {
+                id = s.id, slot = s.slot, count = count,
+                slots = back_slots(self, s.slot, count),
+            }
+        end
+    end
+    if #plan == 0 then return nil end
+    return plan
+end
+
+--- How many cards the deal has to spawn for the other seats.
+-- The caller sizes its mock deck from this: a card short and the deal runs out
+-- half way round the table.
+function M.deal_card_count(plan)
+    local n = 0
+    for _, s in ipairs(plan or {}) do n = n + s.count end
+    return n
+end
+
+--- Fly ONE back to seat `s`, as its `i`th card.
+--
+-- Face-down and at the seat scale from the instant it leaves the middle: an
+-- opponent's card has a known size here, so there is no shrink tween to watch
+-- and nothing to resize once the deal lands.
+function M.deal_back(self, s, card, i, delay, seq)
+    local held = self.party_seats and self.party_seats[s.id]
+    if not held then
+        held = { slot = s.slot, cards = {} }
+        self.party_seats = self.party_seats or {}
+        self.party_seats[s.id] = held
+    end
+    held.slot = s.slot
+    held.cards[#held.cards + 1] = card
+
+    local f = BL.CARD_SCALE_F * 0.85
+    go.set(card.id, "scale", vmath.vector3(f, f, 1))
+    go.set(card.id, "euler.z", rot_for(s.slot))
+    self.set_back(card)
+
+    local target = s.slots[i] or s.slots[#s.slots]
+    if not target then return end
+    go.set_position(vmath.vector3(self.CENTER.x, self.CENTER.y, BL.Z_HAND), card.id)
+    go.animate(card.id, "position", go.PLAYBACK_ONCE_FORWARD, target,
+        go.EASING_OUTCUBIC, 0.3, delay)
+    timer.delay(delay, false, function()
+        if (not seq) or seq == self._seq then self.play_sound("SoundDraw") end
+    end)
+end
+
 -- ── the one entry point ─────────────────────────────────────────────────────
 --
 -- Called whenever party game state arrives. Idempotent: it reconciles what is
@@ -305,6 +411,20 @@ function M.sync(self, game_state)
             util.notify_gui(GUI_HUD, "t4_active", { slot = s.slot, duration = 3.0 })
             break
         end
+    end
+end
+
+--- Take every seat's CARDS off the table, leaving the seats themselves.
+--
+-- What a fresh deal needs. sync lays the backs out the moment a roster
+-- arrives, which is right for a resync and wrong immediately before a deal:
+-- the cards are what the deal is about, and flying them to chairs that already
+-- hold a full hand shows the hand twice. The badges stay, because a table that
+-- deals before it names its seats reads as a game against nobody.
+function M.clear_cards(self)
+    for _, seat in pairs(self.party_seats or {}) do
+        for _, c in ipairs(seat.cards or {}) do pcall(go.delete, c.id) end
+        seat.cards = {}
     end
 end
 
