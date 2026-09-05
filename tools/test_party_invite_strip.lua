@@ -148,6 +148,22 @@ check("the outgoing strip draws no ACCEPT",
   ONLINE_C:find("if not b%.outgoing then") ~= nil)
 check("...and its one button is CANCEL",
   ONLINE_C:find('decline_label = "CANCEL"', 1, true) ~= nil)
+
+-- AND IT CANNOT BE READ AS AN ARRIVING INVITE.
+--
+-- Reported as "I sent a request and it came back to me". It had not: the
+-- outgoing strip was drawn in the same plate, with the same cyan rule and the
+-- same avatar on the left, as an arriving one — and an avatar-plus-name on the
+-- left of a notification reads as "this person is contacting you" whatever the
+-- title says.
+check("the outgoing strip leads with the STATE, not with a name",
+  ONLINE_C:find('title         = "WAITING FOR " %.%. name') ~= nil,
+  '"CHALLENGE SENT - RIVAL" has the same shape as "TOURNAMENT - RIVAL"')
+check("...carries a badge saying it is yours",
+  ONLINE_C:find('badge         = "SENT"') ~= nil
+    and ONLINE_C:find("SENT         = { bg") ~= nil)
+check("...and does not wear the cyan every arriving invite wears",
+  ONLINE_C:find("b%.outgoing and vmath%.vector4%(0%.55, 0%.60, 0%.68, alpha%)") ~= nil)
 check("...sitting where the primary button always sits",
   ONLINE_C:find("local dec_x = b%.outgoing and 90 or 225") ~= nil)
 

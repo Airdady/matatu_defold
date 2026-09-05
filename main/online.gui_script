@@ -203,6 +203,16 @@ local BAN_BADGE = {
     -- strip is violet, which is the point: a party is the one invite that did
     -- not come from a person choosing YOU, and it is the one that seats four.
     PARTY        = { bg = vmath.vector4(0.60, 0.25, 0.78, 1.00), tx = vmath.vector4(1.00, 0.96, 1.00, 1.00) },
+    -- A CHALLENGE THIS PLAYER SENT, which is the one strip on this row that is
+    -- not somebody asking THEM for something.
+    --
+    -- Reported as "I sent a request and it came back to me": the outgoing
+    -- strip was drawn in the same grey plate, with the same avatar on the
+    -- left, as an arriving invite — and an avatar-plus-name on the left of a
+    -- notification reads as "this person is contacting you" whatever the
+    -- title says. Muted on purpose: it is a receipt, not a decision, and
+    -- nothing on it needs answering.
+    SENT         = { bg = vmath.vector4(0.24, 0.28, 0.34, 1.00), tx = vmath.vector4(0.78, 0.84, 0.92, 1.00) },
 }
 
 -- WHERE THE INLINE BADGE GOES, AND WHY H2H MOVES FOR IT.
@@ -306,7 +316,12 @@ local function draw_banner(self)
             self.ban_bars[#self.ban_bars + 1] = anim
         else
             self.buttons[#self.buttons+1] = { node = track(self, ui.box(vmath.vector3(CX, cy, 0), vmath.vector3(bw, bh, 0), vmath.vector4(0.06, 0.10, 0.14, 0.97 * alpha))), id = "banner_block" }
-            track(self, ui.box(vmath.vector3(CX, cy + half, 0), vmath.vector3(bw, 3, 0), vmath.vector4(0.2, 0.9, 1.0, alpha)))
+            -- THE RULE ALONG THE TOP SAYS WHICH DIRECTION THIS STRIP POINTS.
+            -- Cyan is the app's "somebody wants something from you" colour and
+            -- it is on every arriving invite; a challenge you SENT is not one
+            -- of those, and sharing the colour is most of why it read as one.
+            track(self, ui.box(vmath.vector3(CX, cy + half, 0), vmath.vector3(bw, 3, 0),
+                b.outgoing and vmath.vector4(0.55, 0.60, 0.68, alpha) or vmath.vector4(0.2, 0.9, 1.0, alpha)))
             -- Sits ON the top rule, centred — a fixed position rather than
             -- trailing the title, which carries a player name of unpredictable
             -- length while the right-hand side is already crowded by H2H and
@@ -525,9 +540,17 @@ local function open_outgoing_banner(self, u, stake)
         key           = "out:" .. tostring(u._id or name),
         request_id    = "",
         opponent_id   = u._id and tostring(u._id) or nil,
-        title         = "CHALLENGE SENT  -  " .. name,
-        desc          = "Waiting for them to accept"
+        -- THE STATE FIRST, THE NAME SECOND. "CHALLENGE SENT - RIVAL" has the
+        -- same shape as "TOURNAMENT - RIVAL" two pixels away on the same
+        -- strip, and a player reading quickly sees a name in the place a
+        -- sender's name goes. "WAITING FOR RIVAL" cannot be read as an
+        -- arrival: nobody is waiting for you.
+        title         = "WAITING FOR " .. name,
+        desc          = "Challenge sent"
                         .. "   -   " .. (amount > 0 and (commas(amount * 2) .. " Coins pot") or "Practice Mode"),
+        -- The badge slot, which every other kind of strip uses to say what it
+        -- is. This one says it is yours.
+        badge         = "SENT",
         avatar        = tonumber(u.avatar) or 1,
         stake         = stake or {},
         time_left     = 10,
