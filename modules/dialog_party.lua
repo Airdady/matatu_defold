@@ -102,10 +102,16 @@ function M.view(d)
     local remaining = tonumber(d.seatsRemaining) or 0
     if remaining < 0 then remaining = 0 end
     local entry = tonumber(d.entry) or 0
+    -- The house's cut per seat, taken alongside the entry. Read from the
+    -- server rather than assumed, so a table that was opened at one price
+    -- keeps stating that price. It is NOT part of the pot — see M.pot_of.
+    local charge = tonumber(d.charge) or 0
+    if charge < 0 then charge = 0 end
     return {
         party_id  = tostring(d.partyId or ""),
         host_id   = tostring(d.hostId or ""),
         entry     = entry,
+        charge    = charge,
         mode      = tostring(d.mode or "NORMAL"),
         score_cap = tonumber(d.scoreCap) or 0,
         status    = tostring(d.status or "FILLING"),
@@ -374,8 +380,15 @@ function M.draw(self, ctx, d, a)
         entry > 0 and (commas(math.floor(pot_from)) .. " POT") or "PRACTICE TABLE",
         "helvetica_black", with_a(C.COL_GOLD, a)))
     if entry > 0 then
+        -- WHAT LEFT THE WALLET, not just what went into the pot. The seat costs
+        -- the entry plus the charge and both are debited as the player sits
+        -- down, so "200 each" alone understated it by exactly the charge.
+        local charge = tonumber(p.charge) or 0
+        local each = (charge > 0)
+            and string.format("%s each  ·  +%s charge", commas(entry), commas(charge))
+            or (commas(entry) .. " each")
         track(self, ui.text(vmath.vector3(CX, L.each_y, 0),
-            commas(entry) .. " each", "small", with_a(C.COL_MID, a)))
+            each, "small", with_a(C.COL_MID, a)))
     end
 
     -- ── How long is left ─────────────────────────────────────────────────────

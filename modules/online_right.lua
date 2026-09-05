@@ -110,6 +110,31 @@ local PARTY_TIERS_BY_GAME = {
 }
 M.PARTY_TIERS = PARTY_TIERS_BY_GAME[GameMode.GAME] or PARTY_TIERS_BY_GAME.MATATU
 
+-- WHAT A SEAT COSTS ON TOP OF THE ENTRY.
+--
+-- Every other paid mode takes a charge — a duel takes stake + charge from both
+-- wallets, a battle's comes from its prize tier, a knockout's from the cap —
+-- and a party took the entry and nothing else. It now takes 25 UGX a seat,
+-- converted by the same UGX_CONVERSION_RATES the entries above use (whot x0.4,
+-- kadi x0.04), and priced FLAT rather than as a ladder: the entry has two
+-- rungs and the charge is the same at both.
+--
+-- Mirrors PARTY_CHARGE_UGX in be_matatu's common/services/partyRules.ts. The
+-- server is what actually debits; this exists so the form can SAY the price
+-- before the tap, and so the balance check refuses for the right reason
+-- instead of sending a player who cannot afford the seat to a PARTY_ERROR.
+local PARTY_CHARGE_BY_GAME = {
+    MATATU = 25,
+    WHOT   = 10,  -- x0.4
+    KADI   = 1,   -- x0.04
+}
+M.PARTY_CHARGE = PARTY_CHARGE_BY_GAME[GameMode.GAME] or PARTY_CHARGE_BY_GAME.MATATU
+
+--- What a party seat costs all in: the entry into the pot, plus the charge.
+function M.party_seat_total(entry)
+    return (tonumber(entry) or 0) + M.PARTY_CHARGE
+end
+
 -- HOW A PARTY IS WON. Mirrors PartyMode in be_matatu's partyRules.ts.
 --   NORMAL    play it out; when somebody goes out the rest are counted
 --   SCORECAP  a running total per player, cross the cap and you're out
@@ -514,7 +539,11 @@ local function draw_battle_modal(self, ctx)
     if is_norm then
         hint(fee_y, string.format("Winner Takes: %s + %d Pts", commas(winner_takes), fmt.points))
     elseif is_party then
-        hint(fee_y, "Pooled prize · last player standing wins")
+        -- The charge is stated, not left to be discovered when the balance
+        -- moves by more than the entry. Same shape as the knockout and battle
+        -- hints below, which have always named theirs.
+        hint(fee_y, string.format("Charge: %s · pooled prize · last player standing wins",
+            commas(M.PARTY_CHARGE)))
     else
         hint(fee_y, "Staked score chamber · charge from the cap")
     end
@@ -1772,7 +1801,9 @@ function M.start_invite_search(self, app_state, rebuild_cb, battle_type)
         -- zero and always passes. The server refuses the create either way,
         -- but arriving at a PARTY_ERROR is a worse answer than the top-up
         -- screen every other battle type sends the player to.
-        if entry > 0 and bal < entry then
+        -- Against the TOTAL. A player holding exactly the entry cannot pay for
+        -- the seat, and the server would refuse the create after the tap.
+        if entry > 0 and bal < M.party_seat_total(entry) then
             msg.post("#controller", "goto_payments")
             return false
         end
